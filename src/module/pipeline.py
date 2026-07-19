@@ -11,7 +11,7 @@ runs.
 
 Stage order:
     image_filter -> ocr -> extractor -> seam_merger (even, odd)
-    -> exercise_refiner -> instruction_refiner -> instruction_distributor
+    -> exercise_refiner -> instruction_governor
 
 image_filter runs before ocr so the transcriber only emits placeholders for
 pictures that survived filtering. Seam healing runs right after extraction (per
@@ -30,8 +30,7 @@ from .ocr import OCRNode
 from .extractor import ExtractorNode
 from .seam_merger import SeamMergerNode
 from .exercise_refiner import ExerciseRefinerNode
-from .instruction_refiner import InstructionRefinerNode
-from .instruction_distributor import InstructionDistributorNode
+from .instruction_governor import InstructionGovernorNode
 
 
 def build_graph():
@@ -41,8 +40,7 @@ def build_graph():
     extractor = ExtractorNode()
     seam = SeamMergerNode()
     exercise = ExerciseRefinerNode()
-    instruction = InstructionRefinerNode()
-    distributor = InstructionDistributorNode()
+    governor = InstructionGovernorNode()
 
     g = StateGraph(State)
 
@@ -59,10 +57,8 @@ def build_graph():
     g.add_node("seam_odd_collect", seam.odd_collect)
     g.add_node("exercise_refiner_worker", exercise.worker)
     g.add_node("exercise_refiner_collect", exercise.collect)
-    g.add_node("instruction_refiner_worker", instruction.worker)
-    g.add_node("instruction_refiner_collect", instruction.collect)
-    g.add_node("instruction_distributor_worker", distributor.worker)
-    g.add_node("instruction_distributor_collect", distributor.collect)
+    g.add_node("governor_worker", governor.worker)
+    g.add_node("governor_collect", governor.collect)
 
     # A stage's dispatch is a conditional edge off the previous collect: it either
     # fans out Sends to the worker or short-circuits straight to its own collect.
@@ -85,13 +81,11 @@ def build_graph():
     g.add_conditional_edges("seam_odd_collect", exercise.dispatch, ["exercise_refiner_worker", "exercise_refiner_collect"])
     g.add_edge("exercise_refiner_worker", "exercise_refiner_collect")
 
-    g.add_conditional_edges("exercise_refiner_collect", instruction.dispatch, ["instruction_refiner_worker", "instruction_refiner_collect"])
-    g.add_edge("instruction_refiner_worker", "instruction_refiner_collect")
+    # Instruction governance: annotate each governed exercise with its lead (no rewrite).
+    g.add_conditional_edges("exercise_refiner_collect", governor.dispatch, ["governor_worker", "governor_collect"])
+    g.add_edge("governor_worker", "governor_collect")
 
-    g.add_conditional_edges("instruction_refiner_collect", distributor.dispatch, ["instruction_distributor_worker", "instruction_distributor_collect"])
-    g.add_edge("instruction_distributor_worker", "instruction_distributor_collect")
-
-    g.add_edge("instruction_distributor_collect", END)
+    g.add_edge("governor_collect", END)
 
     return g.compile()
 
