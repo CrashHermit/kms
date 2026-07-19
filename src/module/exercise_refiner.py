@@ -30,7 +30,11 @@ def _clean_number(number: str | None) -> str | None:
     if number is None:
         return None
     cleaned = number.strip().strip("\"'").strip()
-    return cleaned or None
+    # v4-flash JSON mode sometimes writes the string "null"/"None" instead of a real
+    # null; normalise those (and empty) to None so the label stays clean metadata.
+    if cleaned.lower() in ("", "null", "none", "nan"):
+        return None
+    return cleaned
 
 
 class Signature(dspy.Signature):

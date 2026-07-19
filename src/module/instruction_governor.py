@@ -118,10 +118,21 @@ class InstructionGovernorNode:
         return {"governance_results": results}
 
     def collect(self, state: State) -> dict:
-        """Write the governing lead onto each governed exercise's `instruction` field."""
+        """Write the governing lead onto each governed exercise's `instruction` field,
+        then drop the instruction nodes that were distributed — the lead now lives on
+        the exercises, so the standalone node is redundant."""
         by_index = {seg.index: seg for seg in state["segments"]}
+        applied_leads: set[str] = set()
         for seg_index, pos, instruction in state.get("governance_results", []):
             seg = by_index.get(seg_index)
             if seg is not None and 0 <= pos < len(seg.nodes):
                 seg.nodes[pos].instruction = instruction
+                applied_leads.add(instruction)
+        # Remove a lead node only if it actually governed something (its text is now
+        # on ≥1 exercise); an orphan lead that governed nothing is kept, not deleted.
+        for seg in state["segments"]:
+            seg.nodes = [
+                n for n in seg.nodes
+                if not (n.type == NodeType.INSTRUCTION and n.content in applied_leads)
+            ]
         return {"segments": state["segments"]}
