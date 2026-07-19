@@ -54,6 +54,8 @@ class ASTNode:
     """A single extracted block node in the AST."""
     type: NodeType | None = None
     content: str | None = None
+    number: str | None = None                                   # exercise label, filled by the exercise refiner
+    exercise_numbers: list[str] = field(default_factory=list)   # flat exercise labels an instruction governs, filled by the instruction refiner
 
 
 @dataclass
@@ -81,6 +83,8 @@ class State(TypedDict, total=False):
     filter_results: Annotated[list[tuple[int, list[Picture]]], operator.add]
     ocr_results: Annotated[list[tuple[int, str]], operator.add]
     extract_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
+    exercise_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
+    instruction_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     seam_even_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     seam_odd_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
 
