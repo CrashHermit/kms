@@ -1,8 +1,39 @@
+import re
+
 import dspy
 from langgraph.types import Send
 
 from .state import State, Segment, NodeType
 from .llm import text_lm
+
+# Hyphen, en dash, or em dash between two numeric range bounds.
+_RANGE_SEP = re.compile(r"\s*[-–—]\s*")
+
+
+def parse_exercise_range(spec: str | None) -> list[str]:
+    """Expand a compact exercise-range token into a flat list of number labels.
+
+    Deterministic in code rather than asked of the model — LLMs miscount long
+    ranges. Handles single numbers and numeric ranges separated by commas:
+    ``"1-20"`` -> ``["1", ..., "20"]``, ``"1, 3, 5-9"`` -> ``["1","3","5",...,"9"]``.
+    Unparseable parts are skipped so a messy token can never crash the stage.
+    """
+    if not spec:
+        return []
+    labels: list[str] = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        bounds = _RANGE_SEP.split(part)
+        if len(bounds) == 2 and bounds[0].isdigit() and bounds[1].isdigit():
+            lo, hi = int(bounds[0]), int(bounds[1])
+            if lo <= hi and hi - lo <= 500:  # guard against an absurd expansion
+                labels.extend(str(n) for n in range(lo, hi + 1))
+        elif part.isdigit():
+            labels.append(part)
+        # else: non-numeric / malformed token — skip it
+    return labels
 
 
 class Signature(dspy.Signature):
@@ -12,27 +43,27 @@ class Signature(dspy.Signature):
     function.`).
 
     Two jobs:
-    1. Find the exercise range the instruction covers and expand it into a flat list
-       of individual exercise number labels, as strings, in order:
-       - Enumerate every number explicitly. `1-20` becomes
-         `["1", "2", "3", ..., "20"]` — list all twenty, do not abbreviate or skip.
-       - Handle compound ranges: `1, 3, 5-9` becomes `["1", "3", "5", "6", "7", "8", "9"]`.
-       - Return an empty list if the instruction states no exercise range.
-    2. Return the instruction's content with that range removed and nothing else
-       changed — leaving just the instruction prose (e.g. `Find the derivative of
-       the function.`). Preserve all other text and LaTeX (`$ $` inline, `$$ $$`
+    1. Extract the exercise-range token the instruction states — the raw range as
+       written, NOT an enumerated list. Examples:
+       - `1-20 Find the derivative...` -> `"1-20"`
+       - `1, 3, 5-9 Evaluate...` -> `"1, 3, 5-9"`
+       - `For the following exercises, convert...` (no range) -> None
+       Return only the compact numeric token (commas and dashes are fine); do not
+       expand it, and do not invent a range that is not written.
+    2. Return the instruction's content with that range token removed and nothing
+       else changed — leaving just the instruction prose (e.g. `Find the derivative
+       of the function.`). Preserve all other text and LaTeX (`$ $` inline, `$$ $$`
        display) verbatim; if there is no range, return the content unchanged.
 
-    Do not include exercise content, invent numbers beyond the stated range, or
-    reword the instruction beyond removing the range.
+    Do not include exercise content or reword the instruction beyond removing the range.
     """
 
     instruction_content: str = dspy.InputField(
         description="The full markdown content of a single instruction node."
     )
 
-    exercise_numbers: list[str] = dspy.OutputField(
-        description="The flat, fully-enumerated list of exercise number labels this instruction governs, as strings in order."
+    exercise_range: str | None = dspy.OutputField(
+        description="The raw exercise-range token as written (e.g. '1-20' or '1, 3, 5-9'), or None if the instruction states no range."
     )
 
     cleaned_content: str = dspy.OutputField(
@@ -49,7 +80,7 @@ class Module(dspy.Module):
     async def aforward(self, instruction_content: str):
         result = await self.refiner.acall(instruction_content=instruction_content)
         return dspy.Prediction(
-            exercise_numbers=result.exercise_numbers,
+            exercise_range=result.exercise_range,
             cleaned_content=result.cleaned_content,
         )
 
@@ -76,7 +107,7 @@ class InstructionRefinerNode:
         for node in segment.nodes:
             if node.type == NodeType.INSTRUCTION and node.content:
                 prediction = await self.module.aforward(instruction_content=node.content)
-                node.exercise_numbers = prediction.exercise_numbers
+                node.exercise_numbers = parse_exercise_range(prediction.exercise_range)
                 node.content = prediction.cleaned_content
         return {"instruction_results": [(segment.index, segment.nodes)]}
 
