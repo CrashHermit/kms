@@ -75,12 +75,20 @@ def text_lm() -> dspy.LM:
     Uses litellm's ``deepseek/`` provider (base https://api.deepseek.com), which
     reads the key we pass from DEEPSEEK_API_KEY. DeepSeek caches context
     server-side automatically, so there is no provider to pin.
+
+    Thinking mode is disabled: v4-flash defaults to thinking and intermittently
+    emits the whole answer into ``reasoning_content`` with an empty content
+    channel, which makes dspy's adapter fail to parse. These nodes are extraction
+    / classification and dspy's ChainOfThought already elicits its own reasoning
+    field, so model-level thinking is redundant here — turning it off is both more
+    reliable and cheaper.
     """
     return dspy.LM(
         os.environ.get("TEXT_MODEL", "deepseek/deepseek-v4-flash"),
         api_key=_require_key(DEEPSEEK_ENV_KEY, "sk-..."),
         temperature=0.0,
         max_tokens=8000,
+        extra_body={"thinking": {"type": "disabled"}},
     )
 
 
