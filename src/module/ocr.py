@@ -77,3 +77,26 @@ class Signature(dspy.Signature):
     current_node_content: str = dspy.OutputField(
         description="The faithfully transcribed markdown content of the current node, exactly as it appears — including any partial blocks at the top or bottom."
     )
+
+
+class Module(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.transcriber = dspy.ChainOfThought(Signature)
+
+    async def aforward(
+        self,
+        current_node_image: dspy.Image,
+        current_node_picture_indices: list[int],
+        previous_node_image_context: dspy.Image | None = None,
+        next_node_image_context: dspy.Image | None = None,
+        current_node_pictures: list[dspy.Image] | None = None,
+    ):
+        result = await self.transcriber.acall(
+            previous_node_image_context=previous_node_image_context,
+            current_node_image=current_node_image,
+            next_node_image_context=next_node_image_context,
+            current_node_pictures=current_node_pictures,
+            current_node_picture_indices=current_node_picture_indices,
+        )
+        return dspy.Prediction(current_node_content=result.current_node_content)

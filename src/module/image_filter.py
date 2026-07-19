@@ -67,3 +67,20 @@ class Signature(dspy.Signature):
             "False if it should be discarded (decorative or navigational noise)."
         )
     )
+
+
+class Module(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.classifier = dspy.ChainOfThought(Signature)
+
+    async def aforward(
+        self,
+        parent_image: dspy.Image,
+        image_image: dspy.Image,
+    ):
+        result = await self.classifier.acall(
+            parent_image=parent_image,
+            image_image=image_image,
+        )
+        return dspy.Prediction(is_substantive=result.is_substantive)

@@ -95,3 +95,22 @@ class Signature(dspy.Signature):
             "Flat list of top-level nodes extracted from current_node. Follow the class docstring for taxonomy and extraction rules."
         )
     )
+
+
+class Module(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.extractor = dspy.ChainOfThought(Signature)
+
+    async def aforward(
+        self,
+        current_node: str,
+        previous_node_context: str | None = None,
+        next_node_context: str | None = None,
+    ):
+        result = await self.extractor.acall(
+            previous_node_context=previous_node_context,
+            current_node=current_node,
+            next_node_context=next_node_context,
+        )
+        return dspy.Prediction(nodes=result.nodes)

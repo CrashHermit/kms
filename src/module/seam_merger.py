@@ -45,3 +45,24 @@ class Signature(dspy.Signature):
     node: SeamNodeDTO | None = dspy.OutputField(
         description="The merged result. If the two edge nodes are split halves of the same node, return a single merged node combining their content. If they are already complete independent nodes, return None."
     )
+
+
+class Module(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.merger = dspy.ChainOfThought(Signature)
+
+    async def aforward(
+        self,
+        top_bottom_edge_node: SeamNodeDTO,
+        bottom_top_edge_node: SeamNodeDTO,
+        top_node_context: SeamNodeDTO | None = None,
+        bottom_node_context: SeamNodeDTO | None = None,
+    ):
+        result = await self.merger.acall(
+            top_node_context=top_node_context,
+            top_bottom_edge_node=top_bottom_edge_node,
+            bottom_top_edge_node=bottom_top_edge_node,
+            bottom_node_context=bottom_node_context,
+        )
+        return dspy.Prediction(node=result.node)
