@@ -92,37 +92,36 @@ class Module(dspy.Module):
 
 # --- LangGraph node: keep substantive pictures, drop noise ---
 
-_module = Module()
+class ImageFilterNode:
+    def __init__(self, module: Module | None = None):
+        self.module = module or Module()
 
+    def dispatch(self, state: State) -> list[Send] | str:
+        """Fan out one worker per segment that has pictures to evaluate."""
+        segments = state.get("segments", [])
+        sends = [Send("image_filter_worker", {"segment": seg}) for seg in segments if seg.pictures]
+        return sends or "image_filter_collect"
 
-def dispatch(state: State) -> list[Send] | str:
-    """Fan out one worker per segment that has pictures to evaluate."""
-    segments = state.get("segments", [])
-    sends = [Send("image_filter_worker", {"segment": seg}) for seg in segments if seg.pictures]
-    return sends or "image_filter_collect"
+    async def worker(self, state: dict) -> dict:
+        """Classify each picture on one segment, keeping only the substantive ones."""
+        segment: Segment = state["segment"]
+        parent_image = load_dspy_image(segment.image_path)
 
+        kept: list[Picture] = []
+        for picture in segment.pictures:
+            prediction = await self.module.aforward(
+                parent_image=parent_image,
+                image_image=load_dspy_image(picture.image_path),
+            )
+            if prediction.is_substantive:
+                kept.append(picture)
 
-async def image_filter_worker(state: dict) -> dict:
-    """Classify each picture on one segment, keeping only the substantive ones."""
-    segment: Segment = state["segment"]
-    parent_image = load_dspy_image(segment.image_path)
+        return {"filter_results": [(segment.index, kept)]}
 
-    kept: list[Picture] = []
-    for picture in segment.pictures:
-        prediction = await _module.aforward(
-            parent_image=parent_image,
-            image_image=load_dspy_image(picture.image_path),
-        )
-        if prediction.is_substantive:
-            kept.append(picture)
-
-    return {"filter_results": [(segment.index, kept)]}
-
-
-def image_filter_collect(state: State) -> dict:
-    """Merge each segment's surviving pictures back into the ordered backbone."""
-    kept_by_index = dict(state.get("filter_results", []))
-    for segment in state["segments"]:
-        if segment.index in kept_by_index:
-            segment.pictures = kept_by_index[segment.index]
-    return {"segments": state["segments"]}
+    def collect(self, state: State) -> dict:
+        """Merge each segment's surviving pictures back into the ordered backbone."""
+        kept_by_index = dict(state.get("filter_results", []))
+        for segment in state["segments"]:
+            if segment.index in kept_by_index:
+                segment.pictures = kept_by_index[segment.index]
+        return {"segments": state["segments"]}

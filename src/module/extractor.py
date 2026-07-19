@@ -115,40 +115,39 @@ class Module(dspy.Module):
 
 # --- LangGraph node: parse each segment's markdown into AST nodes ---
 
-_module = Module()
+class ExtractorNode:
+    def __init__(self, module: Module | None = None):
+        self.module = module or Module()
 
+    def dispatch(self, state: State) -> list[Send] | str:
+        """Fan out one worker per segment that has OCR'd content, with neighbour text as context."""
+        segments = state.get("segments", [])
+        sends = [
+            Send("extractor_worker", {
+                "segment": seg,
+                "previous_content": segments[i - 1].content if i > 0 else None,
+                "next_content": segments[i + 1].content if i < len(segments) - 1 else None,
+            })
+            for i, seg in enumerate(segments)
+            if seg.content
+        ]
+        return sends or "extractor_collect"
 
-def dispatch(state: State) -> list[Send] | str:
-    """Fan out one worker per segment that has OCR'd content, with neighbour text as context."""
-    segments = state.get("segments", [])
-    sends = [
-        Send("extractor_worker", {
-            "segment": seg,
-            "previous_content": segments[i - 1].content if i > 0 else None,
-            "next_content": segments[i + 1].content if i < len(segments) - 1 else None,
-        })
-        for i, seg in enumerate(segments)
-        if seg.content
-    ]
-    return sends or "extractor_collect"
+    async def worker(self, state: dict) -> dict:
+        """Parse one segment's markdown into a flat list of AST nodes."""
+        segment: Segment = state["segment"]
+        prediction = await self.module.aforward(
+            current_node=segment.content,
+            previous_node_context=state.get("previous_content"),
+            next_node_context=state.get("next_content"),
+        )
+        nodes = [ASTNode(type=node.type, content=node.content) for node in prediction.nodes]
+        return {"extract_results": [(segment.index, nodes)]}
 
-
-async def extractor_worker(state: dict) -> dict:
-    """Parse one segment's markdown into a flat list of AST nodes."""
-    segment: Segment = state["segment"]
-    prediction = await _module.aforward(
-        current_node=segment.content,
-        previous_node_context=state.get("previous_content"),
-        next_node_context=state.get("next_content"),
-    )
-    nodes = [ASTNode(type=node.type, content=node.content) for node in prediction.nodes]
-    return {"extract_results": [(segment.index, nodes)]}
-
-
-def extractor_collect(state: State) -> dict:
-    """Merge each segment's extracted AST nodes back into the ordered backbone."""
-    nodes_by_index = dict(state.get("extract_results", []))
-    for segment in state["segments"]:
-        if segment.index in nodes_by_index:
-            segment.nodes = nodes_by_index[segment.index]
-    return {"segments": state["segments"]}
+    def collect(self, state: State) -> dict:
+        """Merge each segment's extracted AST nodes back into the ordered backbone."""
+        nodes_by_index = dict(state.get("extract_results", []))
+        for segment in state["segments"]:
+            if segment.index in nodes_by_index:
+                segment.nodes = nodes_by_index[segment.index]
+        return {"segments": state["segments"]}

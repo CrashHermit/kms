@@ -80,9 +80,6 @@ class Module(dspy.Module):
 # they fan out safely; the passes run sequentially (even -> collect -> odd -> collect),
 # and each pass writes its own reducer channel to avoid cross-pass contamination.
 
-_module = Module()
-
-
 def _to_dto(node: ASTNode | None) -> SeamNodeDTO:
     if node is None:
         return SeamNodeDTO(content=None, types=[])
@@ -97,7 +94,7 @@ def _pairs(segments: list[Segment], parity: int) -> list[tuple[Segment, Segment]
     ]
 
 
-async def _merge_pair(top: Segment, bottom: Segment) -> list[tuple[int, list[ASTNode]]]:
+async def _merge_pair(module: Module, top: Segment, bottom: Segment) -> list[tuple[int, list[ASTNode]]]:
     """Decide whether the top's tail and the bottom's head are one split node; if so,
     fold the merged content into the tail and drop the head."""
     top_nodes = list(top.nodes)
@@ -108,7 +105,7 @@ async def _merge_pair(top: Segment, bottom: Segment) -> list[tuple[int, list[AST
     top_context = top_nodes[-2] if len(top_nodes) > 1 else None
     bottom_context = bottom_nodes[1] if len(bottom_nodes) > 1 else None
 
-    prediction = await _module.aforward(
+    prediction = await module.aforward(
         top_bottom_edge_node=_to_dto(tail),
         bottom_top_edge_node=_to_dto(head),
         top_node_context=_to_dto(top_context),
@@ -123,37 +120,35 @@ async def _merge_pair(top: Segment, bottom: Segment) -> list[tuple[int, list[AST
     return [(top.index, top_nodes), (bottom.index, bottom_nodes)]
 
 
-def dispatch_even(state: State) -> list[Send] | str:
-    pairs = _pairs(state.get("segments", []), parity=0)
-    sends = [Send("seam_even_worker", {"top": t, "bottom": b}) for t, b in pairs]
-    return sends or "seam_even_collect"
+class SeamMergerNode:
+    def __init__(self, module: Module | None = None):
+        self.module = module or Module()
 
+    def dispatch_even(self, state: State) -> list[Send] | str:
+        pairs = _pairs(state.get("segments", []), parity=0)
+        sends = [Send("seam_even_worker", {"top": t, "bottom": b}) for t, b in pairs]
+        return sends or "seam_even_collect"
 
-def dispatch_odd(state: State) -> list[Send] | str:
-    pairs = _pairs(state.get("segments", []), parity=1)
-    sends = [Send("seam_odd_worker", {"top": t, "bottom": b}) for t, b in pairs]
-    return sends or "seam_odd_collect"
+    def dispatch_odd(self, state: State) -> list[Send] | str:
+        pairs = _pairs(state.get("segments", []), parity=1)
+        sends = [Send("seam_odd_worker", {"top": t, "bottom": b}) for t, b in pairs]
+        return sends or "seam_odd_collect"
 
+    async def even_worker(self, state: dict) -> dict:
+        return {"seam_even_results": await _merge_pair(self.module, state["top"], state["bottom"])}
 
-async def seam_even_worker(state: dict) -> dict:
-    return {"seam_even_results": await _merge_pair(state["top"], state["bottom"])}
+    async def odd_worker(self, state: dict) -> dict:
+        return {"seam_odd_results": await _merge_pair(self.module, state["top"], state["bottom"])}
 
+    def _collect(self, state: State, channel: str) -> dict:
+        nodes_by_index = dict(state.get(channel, []))
+        for segment in state["segments"]:
+            if segment.index in nodes_by_index:
+                segment.nodes = nodes_by_index[segment.index]
+        return {"segments": state["segments"]}
 
-async def seam_odd_worker(state: dict) -> dict:
-    return {"seam_odd_results": await _merge_pair(state["top"], state["bottom"])}
+    def even_collect(self, state: State) -> dict:
+        return self._collect(state, "seam_even_results")
 
-
-def _collect(state: State, channel: str) -> dict:
-    nodes_by_index = dict(state.get(channel, []))
-    for segment in state["segments"]:
-        if segment.index in nodes_by_index:
-            segment.nodes = nodes_by_index[segment.index]
-    return {"segments": state["segments"]}
-
-
-def seam_even_collect(state: State) -> dict:
-    return _collect(state, "seam_even_results")
-
-
-def seam_odd_collect(state: State) -> dict:
-    return _collect(state, "seam_odd_results")
+    def odd_collect(self, state: State) -> dict:
+        return self._collect(state, "seam_odd_results")
