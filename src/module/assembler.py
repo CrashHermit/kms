@@ -21,7 +21,7 @@ import re
 import shutil
 from pathlib import Path
 
-from .state import Picture, Segment, NodeType
+from .state import Picture, Segment
 
 # Tolerant match for an image placeholder: ![N]() with optional surrounding
 # whitespace and an empty link target.
@@ -79,10 +79,10 @@ def assemble(
         for node in segment.nodes:
             if node.content is None:
                 continue
-            if node.type == NodeType.IMAGE:
-                parts.append(_resolve_content(node.content, segment.index, pictures_by_index, images_dir))
-            else:
-                parts.append(node.content)
+            # Resolve image placeholders wherever they appear — not only in image
+            # nodes (e.g. a checkpoint exercise can embed a ![N]() figure). Nodes
+            # with no placeholder pass through unchanged.
+            parts.append(_resolve_content(node.content, segment.index, pictures_by_index, images_dir))
 
     document = "\n\n".join(parts) + "\n"
     output_path = output_dir / filename

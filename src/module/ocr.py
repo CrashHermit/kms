@@ -1,8 +1,32 @@
+import re
+
 import dspy
 from langgraph.types import Send
 
 from .state import State, Segment, load_dspy_image
 from .llm import vision_lm
+
+# Tolerant match for an image placeholder: ![N]() with optional surrounding whitespace.
+_PLACEHOLDER = re.compile(r"!\[\s*\d+\s*\]\(\s*\)")
+
+
+def _reconcile_placeholders(content: str, num_pictures: int) -> str:
+    """Relabel image placeholders to a contiguous 1..N by order of appearance.
+
+    OCR is asked to number pictures 1..N in reading order, but the vision model is
+    unreliable at it — it reuses a number for two figures or emits one past the
+    surviving count. Rather than trust those numbers, renumber the ![N]()
+    placeholders positionally to match the pictures that survived filtering
+    (segment.pictures, already 1..N), and drop any extras beyond the count.
+    """
+    counter = 0
+
+    def repl(_match: re.Match) -> str:
+        nonlocal counter
+        counter += 1
+        return f"![{counter}]()" if counter <= num_pictures else ""
+
+    return _PLACEHOLDER.sub(repl, content)
 
 
 class Signature(dspy.Signature):
@@ -147,9 +171,12 @@ class OCRNode:
         return {"ocr_results": [(segment.index, prediction.current_node_content)]}
 
     def collect(self, state: State) -> dict:
-        """Merge each segment's transcribed markdown back into the ordered backbone."""
+        """Merge each segment's transcribed markdown back into the ordered backbone,
+        reconciling its image placeholders against the surviving pictures."""
         content_by_index = dict(state.get("ocr_results", []))
         for segment in state["segments"]:
             if segment.index in content_by_index:
-                segment.content = content_by_index[segment.index]
+                segment.content = _reconcile_placeholders(
+                    content_by_index[segment.index], len(segment.pictures)
+                )
         return {"segments": state["segments"]}
