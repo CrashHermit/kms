@@ -17,6 +17,7 @@ separate sort — the reducer's arrival order does not matter.
 import base64
 import operator
 from dataclasses import dataclass, field
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, TypedDict
 
@@ -24,6 +25,21 @@ import dspy
 
 
 # --- AST data structures ---
+
+class NodeType(StrEnum):
+    """The block-level node types the extractor may emit. Blocks only — inline
+    structure (bold, inline math, links) stays inside a node's markdown content."""
+    PARAGRAPH = "paragraph"
+    MATH = "math"                # standalone display math block
+    CODE = "code"                # fenced code block
+    LIST = "list"
+    TABLE = "table"
+    IMAGE = "image"
+    CAPTION = "caption"
+    HEADER = "header"
+    INSTRUCTION = "instruction"  # math-book specific: shared lead for a group of exercises
+    EXERCISE = "exercise"        # math-book specific: a single student problem to solve
+
 
 @dataclass
 class Picture:
@@ -35,8 +51,8 @@ class Picture:
 
 @dataclass
 class ASTNode:
-    """A single extracted node in the AST (paragraph, math, activity, ...)."""
-    type: str | None = None
+    """A single extracted block node in the AST."""
+    type: NodeType | None = None
     content: str | None = None
 
 
