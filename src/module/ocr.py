@@ -1,4 +1,8 @@
 import dspy
+from langgraph.types import Send
+
+from .state import State, Segment, load_dspy_image
+
 
 class Signature(dspy.Signature):
     r"""
@@ -77,3 +81,73 @@ class Signature(dspy.Signature):
     current_node_content: str = dspy.OutputField(
         description="The faithfully transcribed markdown content of the current node, exactly as it appears — including any partial blocks at the top or bottom."
     )
+
+
+class Module(dspy.Module):
+    def __init__(self):
+        super().__init__()
+        self.transcriber = dspy.ChainOfThought(Signature)
+
+    async def aforward(
+        self,
+        current_node_image: dspy.Image,
+        current_node_picture_indices: list[int],
+        previous_node_image_context: dspy.Image | None = None,
+        next_node_image_context: dspy.Image | None = None,
+        current_node_pictures: list[dspy.Image] | None = None,
+    ):
+        result = await self.transcriber.acall(
+            previous_node_image_context=previous_node_image_context,
+            current_node_image=current_node_image,
+            next_node_image_context=next_node_image_context,
+            current_node_pictures=current_node_pictures,
+            current_node_picture_indices=current_node_picture_indices,
+        )
+        return dspy.Prediction(current_node_content=result.current_node_content)
+
+
+# --- LangGraph node: transcribe each segment page to markdown ---
+
+_module = Module()
+
+
+def dispatch(state: State) -> list[Send] | str:
+    """Fan out one worker per segment, passing its neighbours as read-only context."""
+    segments = state.get("segments", [])
+    if not segments:
+        return "ocr_collect"
+    return [
+        Send("ocr_worker", {
+            "segment": seg,
+            "previous": segments[i - 1] if i > 0 else None,
+            "next": segments[i + 1] if i < len(segments) - 1 else None,
+        })
+        for i, seg in enumerate(segments)
+    ]
+
+
+async def ocr_worker(state: dict) -> dict:
+    """Transcribe one segment's page image into markdown."""
+    segment: Segment = state["segment"]
+    previous: Segment | None = state.get("previous")
+    following: Segment | None = state.get("next")
+
+    pictures = segment.pictures
+    prediction = await _module.aforward(
+        current_node_image=load_dspy_image(segment.image_path),
+        current_node_picture_indices=[p.index for p in pictures],
+        previous_node_image_context=load_dspy_image(previous.image_path) if previous else None,
+        next_node_image_context=load_dspy_image(following.image_path) if following else None,
+        current_node_pictures=[load_dspy_image(p.image_path) for p in pictures] or None,
+    )
+
+    return {"ocr_results": [(segment.index, prediction.current_node_content)]}
+
+
+def ocr_collect(state: State) -> dict:
+    """Merge each segment's transcribed markdown back into the ordered backbone."""
+    content_by_index = dict(state.get("ocr_results", []))
+    for segment in state["segments"]:
+        if segment.index in content_by_index:
+            segment.content = content_by_index[segment.index]
+    return {"segments": state["segments"]}
