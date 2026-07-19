@@ -25,13 +25,13 @@ class Signature(dspy.Signature):
     nodes that happen to sit at the boundary), return None.
 
     SUBPART CONTINUATION:
-    Also merge when the tail and head are subparts of the SAME exercise — they share a
-    base exercise number (e.g. the tail is exercise 12 part `a`; the head is exercise 12
-    parts `b`, `c`). A page break landing between an exercise's parts still splits that
-    one exercise, even though each part reads as a complete sentence. Merge into a single
-    exercise node holding all the parts together, factoring out the repeated base number
+    Also merge when the tail and head are subparts of the SAME problem — they share a
+    base problem number (e.g. the tail is problem 12 part `a`; the head is problem 12
+    parts `b`, `c`). A page break landing between a problem's parts still splits that
+    one problem, even though each part reads as a complete sentence. Merge into a single
+    problem node holding all the parts together, factoring out the repeated base number
     so it reads `12. a) ... b) ... c) ...`, preserving each part's content verbatim.
-    Distinct base numbers (`12` then `13`) are separate exercises — return None.
+    Distinct base numbers (`12` then `13`) are separate problems — return None.
 
     Use the context nodes (the neighbor just inside each run) only to inform your
     judgment — never include their content in the merged output.

@@ -37,8 +37,8 @@ class NodeType(StrEnum):
     IMAGE = "image"
     CAPTION = "caption"
     HEADER = "header"
-    INSTRUCTION = "instruction"  # math-book specific: shared lead for a group of exercises
-    EXERCISE = "exercise"        # math-book specific: a single student problem to solve
+    INSTRUCTION = "instruction"  # math-book specific: shared lead for a group of problems
+    PROBLEM = "problem"          # math-book specific: a single student problem to solve (exercise or worked example)
 
 
 @dataclass
@@ -83,7 +83,7 @@ class State(TypedDict, total=False):
     filter_results: Annotated[list[tuple[int, list[Picture]]], operator.add]
     ocr_results: Annotated[list[tuple[int, str]], operator.add]
     extract_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
-    exercise_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
+    problem_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     governance_results: Annotated[list[tuple[int, int, str]], operator.add]
     seam_even_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     seam_odd_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]

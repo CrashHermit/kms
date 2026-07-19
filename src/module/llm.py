@@ -7,8 +7,8 @@ being duplicated across nodes.
 
 Two backends, each on its native/best gateway:
 
-- Text reasoning nodes (extractor, seam merger, exercise/instruction refiners,
-  instruction distributor) run on DeepSeek V4 Flash via DeepSeek's own API
+- Text reasoning nodes (extractor, seam merger, problem refiner, instruction
+  governor) run on DeepSeek V4 Flash via DeepSeek's own API
   (litellm ``deepseek/`` provider, base https://api.deepseek.com). DeepSeek does
   automatic server-side context caching, so no provider pinning is needed. The
   key is read from DEEPSEEK_API_KEY.

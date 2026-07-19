@@ -99,7 +99,7 @@ class InstructionGovernorNode:
                 elif node.type == NodeType.INSTRUCTION:
                     flush()
                     lead, members = (node.content or None), []
-                elif node.type == NodeType.EXERCISE and lead and node.content:
+                elif node.type == NodeType.PROBLEM and lead and node.content:
                     members.append((seg.index, pos, node.content))
         flush()
         return sends or "governor_collect"
