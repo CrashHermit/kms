@@ -8,15 +8,20 @@ class Signature(dspy.Signature):
     """
     You are refining a single student exercise extracted from a technical textbook.
 
-    Your only job is to read the exercise's content and pull out its own number
-    label — the identifier the book uses to refer to this problem (e.g. `12`, `12a`,
-    `3.4`, `(iv)`). Return it exactly as written, as a string, with no surrounding
-    punctuation (drop a trailing `.` or `)`, keep intrinsic parts like a subpart
-    letter).
+    Two jobs:
+    1. Pull out the exercise's own number label — the identifier the book uses to
+       refer to this problem (e.g. `12`, `12a`, `3.4`, `(iv)`). Return it exactly as
+       written, as a string, with no surrounding punctuation (drop a trailing `.` or
+       `)`, keep intrinsic parts like a subpart letter). Return None if the exercise
+       carries no visible number label.
+    2. Return the exercise's content with that number label removed and nothing else
+       changed. Preserve every other character verbatim — prose, LaTeX math (`$ $`
+       inline, `$$ $$` display), subparts, and any attached material — exactly as
+       given. Only the label is stripped; if there is no label, return the content
+       unchanged.
 
-    Return None if the exercise carries no visible number label.
-
-    Do not renumber, normalise, or invent a label — transcribe only what is present.
+    Do not renumber, normalise, invent, solve, or reword — extract the label and
+    remove it, nothing more.
     """
 
     exercise_content: str = dspy.InputField(
@@ -27,6 +32,10 @@ class Signature(dspy.Signature):
         description="The exercise's own number label as a string (e.g. '12', '12a'), or None if it has none."
     )
 
+    cleaned_content: str = dspy.OutputField(
+        description="The exercise content with its own number label removed and everything else preserved verbatim."
+    )
+
 
 class Module(dspy.Module):
     def __init__(self):
@@ -35,7 +44,7 @@ class Module(dspy.Module):
 
     async def aforward(self, exercise_content: str):
         result = await self.refiner.acall(exercise_content=exercise_content)
-        return dspy.Prediction(number=result.number)
+        return dspy.Prediction(number=result.number, cleaned_content=result.cleaned_content)
 
 
 # --- LangGraph node: extract each exercise's number label ---
@@ -55,12 +64,13 @@ class ExerciseRefinerNode:
         return sends or "exercise_refiner_collect"
 
     async def worker(self, state: dict) -> dict:
-        """Fill `number` on every exercise node in one segment."""
+        """Fill `number` and strip the label from `content` on every exercise node in one segment."""
         segment: Segment = state["segment"]
         for node in segment.nodes:
             if node.type == NodeType.EXERCISE and node.content:
                 prediction = await self.module.aforward(exercise_content=node.content)
                 node.number = prediction.number
+                node.content = prediction.cleaned_content
         return {"exercise_results": [(segment.index, segment.nodes)]}
 
     def collect(self, state: State) -> dict:

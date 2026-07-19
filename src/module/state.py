@@ -85,6 +85,7 @@ class State(TypedDict, total=False):
     extract_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     exercise_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     instruction_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
+    distribute_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     seam_even_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     seam_odd_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
 
