@@ -18,9 +18,9 @@ OpenRouter can route the same model to different upstream providers between
 requests, which defeats provider-side prompt caching. To keep cache hits warm we
 pin each model to a single upstream provider (``allow_fallbacks: false``) via
 OpenRouter's provider-routing preference. The provider is configurable per
-backend; the text path defaults to DeepSeek (a known-correct slug), the vision
-path is left unpinned by default because the right Qwen provider slug depends on
-availability — set VISION_PROVIDER to pin it once chosen.
+backend; the text path defaults to DeepSeek and the vision path to DeepInfra
+(both known to serve their model with a warm prompt cache). Override TEXT_PROVIDER
+/ VISION_PROVIDER to pin a different upstream, or set either to empty to unpin.
 
 The API key is read from the OPENROUTER_API_KEY environment variable — never
 hard-code it. LM objects are cached so every module sharing a backend shares one
@@ -85,5 +85,5 @@ def vision_lm() -> dspy.LM:
         api_key=_require_key(),
         temperature=0.0,
         max_tokens=8000,
-        **_provider_routing(os.environ.get("VISION_PROVIDER", "")),
+        **_provider_routing(os.environ.get("VISION_PROVIDER", "DeepInfra")),
     )
