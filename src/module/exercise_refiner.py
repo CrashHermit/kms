@@ -5,6 +5,21 @@ from .state import State, Segment, NodeType
 from .llm import text_lm
 
 
+def _strip_orphan_label_separator(content: str) -> str:
+    """Drop a leading separator left behind when only the number was removed.
+
+    The refiner is asked to strip an exercise's number label; models sometimes
+    remove just the digits (e.g. ``44``) and leave the trailing ``.``/``)`` and
+    space, so the content comes back as ``. $x$``. This removes a single such
+    orphan separator so the exercise starts cleanly, while leaving genuine
+    content (e.g. a leading ``(a)`` subpart) untouched.
+    """
+    stripped = content.lstrip()
+    if stripped[:1] in (".", ")"):
+        stripped = stripped[1:].lstrip()
+    return stripped
+
+
 class Signature(dspy.Signature):
     """
     You are refining a single student exercise extracted from a technical textbook.
@@ -16,10 +31,12 @@ class Signature(dspy.Signature):
        `)`, keep intrinsic parts like a subpart letter). Return None if the exercise
        carries no visible number label.
     2. Return the exercise's content with that number label removed and nothing else
-       changed. Preserve every other character verbatim — prose, LaTeX math (`$ $`
-       inline, `$$ $$` display), subparts, and any attached material — exactly as
-       given. Only the label is stripped; if there is no label, return the content
-       unchanged.
+       changed. Remove the whole label token — the digits AND any trailing
+       separator such as `.` or `)` and the whitespace after it — so the content
+       does not start with a dangling `.` or `)`. Preserve every other character
+       verbatim — prose, LaTeX math (`$ $` inline, `$$ $$` display), subparts, and
+       any attached material — exactly as given. Only the label is stripped; if
+       there is no label, return the content unchanged.
 
     Do not renumber, normalise, invent, solve, or reword — extract the label and
     remove it, nothing more.
@@ -46,7 +63,10 @@ class Module(dspy.Module):
 
     async def aforward(self, exercise_content: str):
         result = await self.refiner.acall(exercise_content=exercise_content)
-        return dspy.Prediction(number=result.number, cleaned_content=result.cleaned_content)
+        cleaned = result.cleaned_content
+        if cleaned:
+            cleaned = _strip_orphan_label_separator(cleaned)
+        return dspy.Prediction(number=result.number, cleaned_content=cleaned)
 
 
 # --- LangGraph node: extract each exercise's number label ---
