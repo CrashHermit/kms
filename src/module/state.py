@@ -114,10 +114,11 @@ def load_segments(output_dir: str | Path = "output") -> list[Segment]:
         pictures: list[Picture] = []
         images_dir = seg_dir / "Images"
         if images_dir.is_dir():
-            for pic_path in sorted(images_dir.glob("Image_*.png")):
-                file_no = int(pic_path.stem.split("_")[1])
-                # picture_extractor saved pictures 0-based; the OCR placeholder id is 1-based.
-                pictures.append(Picture(index=file_no + 1, image_path=str(pic_path)))
+            # Provisional 1-based numbering by reading order. The image filter
+            # re-establishes a contiguous 1..N over the survivors once noise
+            # pictures are dropped, so this initial id is only a placeholder.
+            for pic_no, pic_path in enumerate(sorted(images_dir.glob("Image_*.png")), start=1):
+                pictures.append(Picture(index=pic_no, image_path=str(pic_path)))
         segments.append(Segment(
             index=index,
             image_path=str(seg_dir / "Segment.png"),

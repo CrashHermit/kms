@@ -45,8 +45,9 @@ class Signature(dspy.Signature):
       visual location where the image appears in the node flow:
       `![{N}]()`
       where `{N}` is the corresponding value from `current_node_picture_indices`.
-      For example, if `current_node_picture_indices` is `[1, 3]`, use `![1]()` for
-      the first image and `![3]()` for the second image.
+      These indices run 1, 2, 3, … in the same order as `current_node_pictures`
+      and the reading order of the images on the page, so the first image is
+      `![1]()`, the second `![2]()`, and so on.
     - Place the caption or figure label (if any) as plain text immediately after
       the placeholder, e.g.:
       ![1]()
@@ -76,7 +77,7 @@ class Signature(dspy.Signature):
         description="The images of the pictures in the current node, in order."
     )
     current_node_picture_indices: list[int] = dspy.InputField(
-        description="The actual image indices corresponding to each picture in current_node_pictures. Use these indices for the ![N]() placeholders, not sequential numbering."
+        description="The number to use for each picture in current_node_pictures, in the same order — running 1, 2, 3, … in reading order. Use these for the ![N]() placeholders."
     )
 
     current_node_content: str = dspy.OutputField(
