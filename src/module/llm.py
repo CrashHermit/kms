@@ -2,21 +2,28 @@
 Central LLM configuration for the DSPy modules.
 
 Every DSPy module in this package delegates to a shared language model built
-here, so the model choice, credentials, and generation settings live in one place
-instead of being duplicated across nodes.
+here, so the model choice, credentials, and routing live in one place instead of
+being duplicated across nodes.
 
-Two backends are used:
+Everything is routed through OpenRouter (one OPENROUTER_API_KEY):
 
 - Text reasoning nodes (extractor, seam merger, exercise/instruction refiners,
-  instruction distributor) run on DeepSeek's chat model over its
-  OpenAI-compatible API. The API key is read from the DEEPSEEK_API_KEY
-  environment variable — never hard-code it.
-- Vision nodes (OCR, image filter) send images, which DeepSeek's chat model does
-  not accept, so they run on the local Granite Vision server started by serve.sh
-  (an OpenAI-compatible endpoint). Its location defaults to localhost:8080 and is
-  overridable through the environment.
+  instruction distributor) run on DeepSeek V4 Flash.
+- Vision nodes (OCR, image filter) send images, so they run on Qwen3-VL-235B,
+  a vision-language model.
 
-LM objects are cached so every module that asks for the same backend shares one
+Provider pinning
+----------------
+OpenRouter can route the same model to different upstream providers between
+requests, which defeats provider-side prompt caching. To keep cache hits warm we
+pin each model to a single upstream provider (``allow_fallbacks: false``) via
+OpenRouter's provider-routing preference. The provider is configurable per
+backend; the text path defaults to DeepSeek (a known-correct slug), the vision
+path is left unpinned by default because the right Qwen provider slug depends on
+availability — set VISION_PROVIDER to pin it once chosen.
+
+The API key is read from the OPENROUTER_API_KEY environment variable — never
+hard-code it. LM objects are cached so every module sharing a backend shares one
 instance (and therefore one connection pool and prompt cache).
 """
 
@@ -25,43 +32,58 @@ from functools import lru_cache
 
 import dspy
 
-DEEPSEEK_ENV_KEY = "DEEPSEEK_API_KEY"
+OPENROUTER_ENV_KEY = "OPENROUTER_API_KEY"
+
+
+def _require_key() -> str:
+    """Return the OpenRouter API key, raising a clear error if it is unset.
+
+    We raise on use rather than at import time so the modules stay importable
+    without credentials — the key is only required once a node actually runs.
+    """
+    key = os.environ.get(OPENROUTER_ENV_KEY)
+    if not key:
+        raise RuntimeError(
+            f"{OPENROUTER_ENV_KEY} is not set. Export your OpenRouter API key "
+            f"(e.g. `export {OPENROUTER_ENV_KEY}=sk-or-...`) before running the pipeline."
+        )
+    return key
+
+
+def _provider_routing(provider: str | None) -> dict:
+    """OpenRouter provider-routing kwargs that pin a single upstream provider.
+
+    Pinning keeps repeated calls on the same backend so its prompt cache stays
+    warm. An empty/None provider means "let OpenRouter choose" (no pinning).
+    """
+    if not provider:
+        return {}
+    return {
+        "extra_body": {
+            "provider": {"order": [provider], "allow_fallbacks": False},
+        }
+    }
 
 
 @lru_cache(maxsize=1)
 def text_lm() -> dspy.LM:
-    """DeepSeek chat model for the text reasoning nodes.
-
-    The API key is read from the ``DEEPSEEK_API_KEY`` environment variable. We
-    raise here (rather than at import time) so the modules stay importable without
-    credentials — the key is only required once a node actually runs.
-    """
-    api_key = os.environ.get(DEEPSEEK_ENV_KEY)
-    if not api_key:
-        raise RuntimeError(
-            f"{DEEPSEEK_ENV_KEY} is not set. Export your DeepSeek API key "
-            f"(e.g. `export {DEEPSEEK_ENV_KEY}=sk-...`) before running the pipeline."
-        )
+    """DeepSeek V4 Flash (via OpenRouter) for the text reasoning nodes."""
     return dspy.LM(
-        os.environ.get("DEEPSEEK_MODEL", "deepseek/deepseek-chat"),
-        api_key=api_key,
+        os.environ.get("TEXT_MODEL", "openrouter/deepseek/deepseek-v4-flash"),
+        api_key=_require_key(),
         temperature=0.0,
         max_tokens=8000,
+        **_provider_routing(os.environ.get("TEXT_PROVIDER", "DeepSeek")),
     )
 
 
 @lru_cache(maxsize=1)
 def vision_lm() -> dspy.LM:
-    """Local Granite Vision server for the image-consuming nodes (OCR, image filter).
-
-    DeepSeek's chat API is text-only, so these nodes target the OpenAI-compatible
-    ``llama-server`` that serve.sh launches. Every setting is overridable via the
-    environment; the defaults match serve.sh (localhost:8080).
-    """
+    """Qwen3-VL-235B (via OpenRouter) for the image-consuming nodes (OCR, image filter)."""
     return dspy.LM(
-        os.environ.get("VISION_MODEL", "openai/granite-vision"),
-        api_base=os.environ.get("VISION_API_BASE", "http://localhost:8080/v1"),
-        api_key=os.environ.get("VISION_API_KEY", "not-needed"),
+        os.environ.get("VISION_MODEL", "openrouter/qwen/qwen3-vl-235b-a22b-instruct"),
+        api_key=_require_key(),
         temperature=0.0,
         max_tokens=8000,
+        **_provider_routing(os.environ.get("VISION_PROVIDER", "")),
     )
