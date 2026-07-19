@@ -1,4 +1,8 @@
 import dspy
+from langgraph.types import Send
+
+from .state import State, Segment, Picture, load_dspy_image
+
 
 class Signature(dspy.Signature):
     """
@@ -84,3 +88,41 @@ class Module(dspy.Module):
             image_image=image_image,
         )
         return dspy.Prediction(is_substantive=result.is_substantive)
+
+
+# --- LangGraph node: keep substantive pictures, drop noise ---
+
+_module = Module()
+
+
+def dispatch(state: State) -> list[Send] | str:
+    """Fan out one worker per segment that has pictures to evaluate."""
+    segments = state.get("segments", [])
+    sends = [Send("image_filter_worker", {"segment": seg}) for seg in segments if seg.pictures]
+    return sends or "image_filter_collect"
+
+
+async def image_filter_worker(state: dict) -> dict:
+    """Classify each picture on one segment, keeping only the substantive ones."""
+    segment: Segment = state["segment"]
+    parent_image = load_dspy_image(segment.image_path)
+
+    kept: list[Picture] = []
+    for picture in segment.pictures:
+        prediction = await _module.aforward(
+            parent_image=parent_image,
+            image_image=load_dspy_image(picture.image_path),
+        )
+        if prediction.is_substantive:
+            kept.append(picture)
+
+    return {"filter_results": [(segment.index, kept)]}
+
+
+def image_filter_collect(state: State) -> dict:
+    """Merge each segment's surviving pictures back into the ordered backbone."""
+    kept_by_index = dict(state.get("filter_results", []))
+    for segment in state["segments"]:
+        if segment.index in kept_by_index:
+            segment.pictures = kept_by_index[segment.index]
+    return {"segments": state["segments"]}

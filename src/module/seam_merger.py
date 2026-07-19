@@ -1,5 +1,8 @@
 import dspy
 from pydantic import BaseModel
+from langgraph.types import Send
+
+from .state import State, Segment, ASTNode
 
 
 class SeamNodeDTO(BaseModel):
@@ -66,3 +69,91 @@ class Module(dspy.Module):
             bottom_node_context=bottom_node_context,
         )
         return dspy.Prediction(node=result.node)
+
+
+# --- LangGraph node: stitch nodes split across segment boundaries ---
+#
+# A worker touches two adjacent segments (top tail + bottom head), so adjacent
+# pairs cannot run at once without racing on the shared segment. We run two passes:
+# the even pass handles pairs whose top index is even (0-1, 2-3, ...), the odd pass
+# handles the rest (1-2, 3-4, ...). Within a pass no two pairs share a segment, so
+# they fan out safely; the passes run sequentially (even -> collect -> odd -> collect),
+# and each pass writes its own reducer channel to avoid cross-pass contamination.
+
+_module = Module()
+
+
+def _to_dto(node: ASTNode | None) -> SeamNodeDTO:
+    if node is None:
+        return SeamNodeDTO(content=None, types=[])
+    return SeamNodeDTO(content=node.content, types=[node.type] if node.type else [])
+
+
+def _pairs(segments: list[Segment], parity: int) -> list[tuple[Segment, Segment]]:
+    return [
+        (segments[i], segments[i + 1])
+        for i in range(len(segments) - 1)
+        if segments[i].index % 2 == parity and segments[i].nodes and segments[i + 1].nodes
+    ]
+
+
+async def _merge_pair(top: Segment, bottom: Segment) -> list[tuple[int, list[ASTNode]]]:
+    """Decide whether the top's tail and the bottom's head are one split node; if so,
+    fold the merged content into the tail and drop the head."""
+    top_nodes = list(top.nodes)
+    bottom_nodes = list(bottom.nodes)
+
+    tail = top_nodes[-1]
+    head = bottom_nodes[0]
+    top_context = top_nodes[-2] if len(top_nodes) > 1 else None
+    bottom_context = bottom_nodes[1] if len(bottom_nodes) > 1 else None
+
+    prediction = await _module.aforward(
+        top_bottom_edge_node=_to_dto(tail),
+        bottom_top_edge_node=_to_dto(head),
+        top_node_context=_to_dto(top_context),
+        bottom_node_context=_to_dto(bottom_context),
+    )
+
+    merged = prediction.node
+    if merged is not None and merged.content:
+        tail.content = merged.content
+        bottom_nodes = bottom_nodes[1:]
+
+    return [(top.index, top_nodes), (bottom.index, bottom_nodes)]
+
+
+def dispatch_even(state: State) -> list[Send] | str:
+    pairs = _pairs(state.get("segments", []), parity=0)
+    sends = [Send("seam_even_worker", {"top": t, "bottom": b}) for t, b in pairs]
+    return sends or "seam_even_collect"
+
+
+def dispatch_odd(state: State) -> list[Send] | str:
+    pairs = _pairs(state.get("segments", []), parity=1)
+    sends = [Send("seam_odd_worker", {"top": t, "bottom": b}) for t, b in pairs]
+    return sends or "seam_odd_collect"
+
+
+async def seam_even_worker(state: dict) -> dict:
+    return {"seam_even_results": await _merge_pair(state["top"], state["bottom"])}
+
+
+async def seam_odd_worker(state: dict) -> dict:
+    return {"seam_odd_results": await _merge_pair(state["top"], state["bottom"])}
+
+
+def _collect(state: State, channel: str) -> dict:
+    nodes_by_index = dict(state.get(channel, []))
+    for segment in state["segments"]:
+        if segment.index in nodes_by_index:
+            segment.nodes = nodes_by_index[segment.index]
+    return {"segments": state["segments"]}
+
+
+def seam_even_collect(state: State) -> dict:
+    return _collect(state, "seam_even_results")
+
+
+def seam_odd_collect(state: State) -> dict:
+    return _collect(state, "seam_odd_results")
