@@ -2,6 +2,7 @@ import dspy
 from langgraph.types import Send
 
 from .state import State, Segment, NodeType
+from .llm import text_lm
 
 
 class Signature(dspy.Signature):
@@ -39,9 +40,10 @@ class Signature(dspy.Signature):
 
 
 class Module(dspy.Module):
-    def __init__(self):
+    def __init__(self, lm: dspy.LM | None = None):
         super().__init__()
         self.distributor = dspy.ChainOfThought(Signature)
+        self.set_lm(lm or text_lm())
 
     async def aforward(self, instruction: str, exercise_content: str):
         result = await self.distributor.acall(

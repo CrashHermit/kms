@@ -2,6 +2,7 @@ import dspy
 from langgraph.types import Send
 
 from .state import State, Segment, Picture, load_dspy_image
+from .llm import vision_lm
 
 
 class Signature(dspy.Signature):
@@ -74,9 +75,10 @@ class Signature(dspy.Signature):
 
 
 class Module(dspy.Module):
-    def __init__(self):
+    def __init__(self, lm: dspy.LM | None = None):
         super().__init__()
         self.classifier = dspy.ChainOfThought(Signature)
+        self.set_lm(lm or vision_lm())
 
     async def aforward(
         self,
