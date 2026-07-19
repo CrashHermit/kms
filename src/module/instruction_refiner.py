@@ -20,9 +20,10 @@ def parse_exercise_range(spec: str | None) -> list[str]:
     """
     if not spec:
         return []
+    spec = spec.strip().strip("\"'").strip()  # tolerate JSON-mode over-quoting
     labels: list[str] = []
     for part in spec.split(","):
-        part = part.strip()
+        part = part.strip().strip("\"'").strip()
         if not part:
             continue
         bounds = _RANGE_SEP.split(part)

@@ -20,6 +20,19 @@ def _strip_orphan_label_separator(content: str) -> str:
     return stripped
 
 
+def _clean_number(number: str | None) -> str | None:
+    """Strip stray surrounding quotes/whitespace off an extracted number label.
+
+    DeepSeek's JSON-mode output sometimes wraps a short string field's value in
+    literal quotes (``"113"`` instead of ``113``), which would break the range
+    membership check downstream. Normalise it here; an empty result becomes None.
+    """
+    if number is None:
+        return None
+    cleaned = number.strip().strip("\"'").strip()
+    return cleaned or None
+
+
 class Signature(dspy.Signature):
     """
     You are refining a single student exercise extracted from a technical textbook.
@@ -47,7 +60,7 @@ class Signature(dspy.Signature):
     )
 
     number: str | None = dspy.OutputField(
-        description="The exercise's own number label as a string (e.g. '12', '12a'), or None if it has none."
+        description="The exercise's own number label, e.g. 12 or 12a (no surrounding quotes), or None if it has none."
     )
 
     cleaned_content: str = dspy.OutputField(
@@ -66,7 +79,7 @@ class Module(dspy.Module):
         cleaned = result.cleaned_content
         if cleaned:
             cleaned = _strip_orphan_label_separator(cleaned)
-        return dspy.Prediction(number=result.number, cleaned_content=cleaned)
+        return dspy.Prediction(number=_clean_number(result.number), cleaned_content=cleaned)
 
 
 # --- LangGraph node: extract each exercise's number label ---
