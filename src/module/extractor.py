@@ -58,11 +58,18 @@ class Signature(dspy.Signature):
       that exercise node. [math-book specific]
 
     EXERCISE GROUPING:
-    - Always emit one exercise node per numbered/bulleted exercise; never bundle multiple exercises together.
-    - Two common forms:
-      1) Single self-contained exercise, possibly with subparts `(a)(b)(c)` or `(i)(ii)(iii)`.
-         Treat stem + all subparts as one exercise node.
-      2) Shared lead instruction + list of exercises.
+    - Emit one exercise node per distinct exercise. Subparts of the same exercise are
+      never split into separate nodes; distinct exercises are never bundled together.
+    - Subparts come in two forms, both kept together in a single exercise node:
+      1) A stem followed by unnumbered parts `(a)(b)(c)` or `(i)(ii)(iii)`: keep the
+         stem and all its parts as one exercise node.
+      2) A repeated base number with letter suffixes — `12a`, `12b`, `12c` — is ONE
+         exercise, not three. Emit a single exercise node for base number `12` whose
+         body holds every part together, each kept as a labelled subpart (a, b, c);
+         factor out the repeated base number so the node reads `12. a) ... b) ... c) ...`.
+         Preserve each part's own content verbatim — only the redundant base number is
+         factored out. Distinct base numbers (`12`, `13`, `14`) stay separate exercises.
+    - Shared lead instruction + list of exercises:
          Emit one instruction node followed by one exercise node per item.
          Each exercise node contains only its own item content.
          Do not repeat the lead instruction inside exercise nodes.
