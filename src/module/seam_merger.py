@@ -24,6 +24,15 @@ class Signature(dspy.Signature):
     into one coherent node. If they are not (i.e. they are already complete, independent
     nodes that happen to sit at the boundary), return None.
 
+    SUBPART CONTINUATION:
+    Also merge when the tail and head are subparts of the SAME exercise — they share a
+    base exercise number (e.g. the tail is exercise 12 part `a`; the head is exercise 12
+    parts `b`, `c`). A page break landing between an exercise's parts still splits that
+    one exercise, even though each part reads as a complete sentence. Merge into a single
+    exercise node holding all the parts together, factoring out the repeated base number
+    so it reads `12. a) ... b) ... c) ...`, preserving each part's content verbatim.
+    Distinct base numbers (`12` then `13`) are separate exercises — return None.
+
     Use the context nodes (the neighbor just inside each run) only to inform your
     judgment — never include their content in the merged output.
 
