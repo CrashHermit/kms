@@ -1,7 +1,32 @@
+import re
+
 import dspy
 from langgraph.types import Send
 
 from .state import State, Segment, load_dspy_image
+from .llm import vision_lm
+
+# Tolerant match for an image placeholder: ![N]() with optional surrounding whitespace.
+_PLACEHOLDER = re.compile(r"!\[\s*\d+\s*\]\(\s*\)")
+
+
+def _reconcile_placeholders(content: str, num_pictures: int) -> str:
+    """Relabel image placeholders to a contiguous 1..N by order of appearance.
+
+    OCR is asked to number pictures 1..N in reading order, but the vision model is
+    unreliable at it — it reuses a number for two figures or emits one past the
+    surviving count. Rather than trust those numbers, renumber the ![N]()
+    placeholders positionally to match the pictures that survived filtering
+    (segment.pictures, already 1..N), and drop any extras beyond the count.
+    """
+    counter = 0
+
+    def repl(_match: re.Match) -> str:
+        nonlocal counter
+        counter += 1
+        return f"![{counter}]()" if counter <= num_pictures else ""
+
+    return _PLACEHOLDER.sub(repl, content)
 
 
 class Signature(dspy.Signature):
@@ -44,8 +69,9 @@ class Signature(dspy.Signature):
       visual location where the image appears in the node flow:
       `![{N}]()`
       where `{N}` is the corresponding value from `current_node_picture_indices`.
-      For example, if `current_node_picture_indices` is `[1, 3]`, use `![1]()` for
-      the first image and `![3]()` for the second image.
+      These indices run 1, 2, 3, … in the same order as `current_node_pictures`
+      and the reading order of the images on the page, so the first image is
+      `![1]()`, the second `![2]()`, and so on.
     - Place the caption or figure label (if any) as plain text immediately after
       the placeholder, e.g.:
       ![1]()
@@ -75,7 +101,7 @@ class Signature(dspy.Signature):
         description="The images of the pictures in the current node, in order."
     )
     current_node_picture_indices: list[int] = dspy.InputField(
-        description="The actual image indices corresponding to each picture in current_node_pictures. Use these indices for the ![N]() placeholders, not sequential numbering."
+        description="The number to use for each picture in current_node_pictures, in the same order — running 1, 2, 3, … in reading order. Use these for the ![N]() placeholders."
     )
 
     current_node_content: str = dspy.OutputField(
@@ -84,9 +110,10 @@ class Signature(dspy.Signature):
 
 
 class Module(dspy.Module):
-    def __init__(self):
+    def __init__(self, lm: dspy.LM | None = None):
         super().__init__()
         self.transcriber = dspy.ChainOfThought(Signature)
+        self.set_lm(lm or vision_lm())
 
     async def aforward(
         self,
@@ -144,9 +171,12 @@ class OCRNode:
         return {"ocr_results": [(segment.index, prediction.current_node_content)]}
 
     def collect(self, state: State) -> dict:
-        """Merge each segment's transcribed markdown back into the ordered backbone."""
+        """Merge each segment's transcribed markdown back into the ordered backbone,
+        reconciling its image placeholders against the surviving pictures."""
         content_by_index = dict(state.get("ocr_results", []))
         for segment in state["segments"]:
             if segment.index in content_by_index:
-                segment.content = content_by_index[segment.index]
+                segment.content = _reconcile_placeholders(
+                    content_by_index[segment.index], len(segment.pictures)
+                )
         return {"segments": state["segments"]}

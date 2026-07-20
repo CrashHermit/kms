@@ -2,6 +2,7 @@ import dspy
 from langgraph.types import Send
 
 from .state import State, Segment, Picture, load_dspy_image
+from .llm import vision_lm
 
 
 class Signature(dspy.Signature):
@@ -74,9 +75,10 @@ class Signature(dspy.Signature):
 
 
 class Module(dspy.Module):
-    def __init__(self):
+    def __init__(self, lm: dspy.LM | None = None):
         super().__init__()
         self.classifier = dspy.ChainOfThought(Signature)
+        self.set_lm(lm or vision_lm())
 
     async def aforward(
         self,
@@ -119,9 +121,20 @@ class ImageFilterNode:
         return {"filter_results": [(segment.index, kept)]}
 
     def collect(self, state: State) -> dict:
-        """Merge each segment's surviving pictures back into the ordered backbone."""
+        """Merge each segment's surviving pictures back into the ordered backbone,
+        renumbering them to a contiguous 1..N in reading order.
+
+        Filtering leaves gaps in the original numbering (drop 3 of 7 and the
+        survivors might be 2, 3, 5, 6). Rather than ask the OCR vision model to emit
+        those exact non-contiguous ids — which it does not do reliably; it just
+        counts 1, 2, 3 by sight — we relabel the survivors 1..N here so the
+        placeholders it naturally produces line up with the pictures that remain.
+        """
         kept_by_index = dict(state.get("filter_results", []))
         for segment in state["segments"]:
             if segment.index in kept_by_index:
-                segment.pictures = kept_by_index[segment.index]
+                survivors = kept_by_index[segment.index]
+                for new_index, picture in enumerate(survivors, start=1):
+                    picture.index = new_index
+                segment.pictures = survivors
         return {"segments": state["segments"]}

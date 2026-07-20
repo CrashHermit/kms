@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from langgraph.types import Send
 
 from .state import State, Segment, ASTNode
+from .llm import text_lm
 
 
 class SeamNodeDTO(BaseModel):
@@ -22,6 +23,15 @@ class Signature(dspy.Signature):
     bottom run are two halves of the same interrupted node. If they are, merge them
     into one coherent node. If they are not (i.e. they are already complete, independent
     nodes that happen to sit at the boundary), return None.
+
+    SUBPART CONTINUATION:
+    Also merge when the tail and head are subparts of the SAME problem — they share a
+    base problem number (e.g. the tail is problem 12 part `a`; the head is problem 12
+    parts `b`, `c`). A page break landing between a problem's parts still splits that
+    one problem, even though each part reads as a complete sentence. Merge into a single
+    problem node holding all the parts together, factoring out the repeated base number
+    so it reads `12. a) ... b) ... c) ...`, preserving each part's content verbatim.
+    Distinct base numbers (`12` then `13`) are separate problems — return None.
 
     Use the context nodes (the neighbor just inside each run) only to inform your
     judgment — never include their content in the merged output.
@@ -51,9 +61,10 @@ class Signature(dspy.Signature):
 
 
 class Module(dspy.Module):
-    def __init__(self):
+    def __init__(self, lm: dspy.LM | None = None):
         super().__init__()
         self.merger = dspy.ChainOfThought(Signature)
+        self.set_lm(lm or text_lm())
 
     async def aforward(
         self,

@@ -37,8 +37,8 @@ class NodeType(StrEnum):
     IMAGE = "image"
     CAPTION = "caption"
     HEADER = "header"
-    INSTRUCTION = "instruction"  # math-book specific: shared lead for a group of exercises
-    EXERCISE = "exercise"        # math-book specific: a single student problem to solve
+    INSTRUCTION = "instruction"  # math-book specific: shared lead for a group of problems
+    PROBLEM = "problem"          # math-book specific: a single student problem to solve (exercise or worked example)
 
 
 @dataclass
@@ -54,8 +54,8 @@ class ASTNode:
     """A single extracted block node in the AST."""
     type: NodeType | None = None
     content: str | None = None
-    number: str | None = None                                   # exercise label, filled by the exercise refiner
-    exercise_numbers: list[str] = field(default_factory=list)   # flat exercise labels an instruction governs, filled by the instruction refiner
+    number: str | None = None          # exercise label, filled by the exercise refiner (metadata only)
+    instruction: str | None = None     # governing lead text, filled by the instruction governor (exercises only)
 
 
 @dataclass
@@ -83,9 +83,8 @@ class State(TypedDict, total=False):
     filter_results: Annotated[list[tuple[int, list[Picture]]], operator.add]
     ocr_results: Annotated[list[tuple[int, str]], operator.add]
     extract_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
-    exercise_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
-    instruction_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
-    distribute_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
+    problem_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
+    governance_results: Annotated[list[tuple[int, int, str]], operator.add]
     seam_even_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     seam_odd_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
 
@@ -114,10 +113,11 @@ def load_segments(output_dir: str | Path = "output") -> list[Segment]:
         pictures: list[Picture] = []
         images_dir = seg_dir / "Images"
         if images_dir.is_dir():
-            for pic_path in sorted(images_dir.glob("Image_*.png")):
-                file_no = int(pic_path.stem.split("_")[1])
-                # picture_extractor saved pictures 0-based; the OCR placeholder id is 1-based.
-                pictures.append(Picture(index=file_no + 1, image_path=str(pic_path)))
+            # Provisional 1-based numbering by reading order. The image filter
+            # re-establishes a contiguous 1..N over the survivors once noise
+            # pictures are dropped, so this initial id is only a placeholder.
+            for pic_no, pic_path in enumerate(sorted(images_dir.glob("Image_*.png")), start=1):
+                pictures.append(Picture(index=pic_no, image_path=str(pic_path)))
         segments.append(Segment(
             index=index,
             image_path=str(seg_dir / "Segment.png"),
