@@ -195,14 +195,24 @@ Groundwork for replacing hand-tuned prompts with data-driven optimization.
 
 ## Next steps (suggested order)
 
-1. **Graph tier** — the big unbuilt piece, and all LLM-only (no new infra): relationship/
-   edge discovery between entities (AutoMathKG's 9 tactic labels), then later MathVD
-   (embeddings/vector DB) for fusion and the Math-LLM completion step. `neo4j` is already a
-   dep. Start with edge discovery over the `entities` list.
-2. **Grow the trainset** — a few more sections/books through `KMS_CAPTURE_DIR`, then compile
-   with a real `TEACHER_MODEL` and evaluate on held-out pages; wire `load_into` in behind a
-   flag if it wins.
-3. **Harden the extractor front-end** against the two edge cases if they recur at scale.
+> **Current focus: extraction.** Make the front-end (ocr → extractor → seam) produce clean,
+> faithful nodes before building more on top — the entity layer is only as good as its
+> input, and both known artifacts originate here.
+
+1. **Harden the extraction front-end** — the active priority:
+   - `ocr.py` and `extractor.py`: faithful structure, reliable statement/proof(-solution)
+     block separation, single reading order / no duplication on complex or boxed layouts.
+     The two known artifacts (fused statement+proof; duplicated content) live here.
+   - Test *broadly*: run more sections/books through the docling bypass
+     (`scripts/pdf_to_segments.py`) and inspect `document.md` and the **node structure**,
+     not just `entities.json`.
+   - Build an **extractor trainset** via the capture harness and optimize it — this needs a
+     fuzzier metric than exact-match (type-sequence + content similarity), currently unbuilt.
+2. **Grow the trainset** (esp. extractor) through `KMS_CAPTURE_DIR`; compile with a real
+   `TEACHER_MODEL`, evaluate on held-out pages, wire `load_into` in behind a flag if it wins.
+3. **Graph tier** (deferred until extraction is solid) — relationship/edge discovery between
+   entities (AutoMathKG's 9 tactic labels), later MathVD (embeddings/vector DB) for fusion and
+   the Math-LLM completion step. `neo4j` is already a dep.
 
 ---
 
