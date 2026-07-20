@@ -51,11 +51,22 @@ class Picture:
 
 @dataclass
 class ASTNode:
-    """A single extracted block node in the AST."""
+    """A single extracted block node in the AST.
+
+    Through the per-page ingestion phase (ocr, extractor, seam) a node lives inside
+    its Segment. The seam merger then flattens all segments into one global ordered
+    node list (see `flatten_segments`), stamping each node with a stable `id` and the
+    `seg_index` of the page it came from. From that point the flat list is the single
+    source of truth; `id` is how every later stage and the entity overlay reference a
+    node, and `seg_index` is retained only so the assembler can resolve `![N]()`
+    picture placeholders against the right page's pictures.
+    """
     type: NodeType | None = None
     content: str | None = None
-    number: str | None = None          # exercise label, filled by the exercise refiner (metadata only)
-    instruction: str | None = None     # governing lead text, filled by the instruction governor (exercises only)
+    number: str | None = None          # problem label, filled by the problem refiner (metadata only)
+    instruction: str | None = None     # governing lead text, filled by the instruction governor (problems only)
+    id: int | None = None              # stable global id, assigned once when the flat list is born
+    seg_index: int | None = None       # originating page, for picture resolution after flattening
 
 
 @dataclass
@@ -73,20 +84,28 @@ class Segment:
 class State(TypedDict, total=False):
     """Shared state for every stage.
 
-    `segments` is the ordered AST backbone; only the sequential collect steps write
-    it, so the default overwrite reducer is correct. The `*_results` channels are
-    map-reduce scratch space: parallel Send workers append one entry per segment and
-    the stage's collect step drains them back into `segments`. They carry an
-    operator.add reducer so concurrent worker writes merge rather than clash.
+    Two backbones, one after the other. During per-page ingestion (image_filter, ocr,
+    extractor, seam) `segments` is the ordered backbone. The seam merger then flattens
+    the healed per-page nodes into `nodes` — the global ordered node list that every
+    refinement stage after it (problem_refiner, governor, entity grouping) works on.
+    `segments` is retained past that point only for its pictures (picture resolution
+    at assembly). Both backbones use the default overwrite reducer because only the
+    sequential collect steps write them.
+
+    The `*_results` channels are map-reduce scratch space: parallel Send workers append
+    entries and the stage's collect step drains them back into the active backbone. They
+    carry an operator.add reducer so concurrent worker writes merge rather than clash.
+    Ingestion channels key by segment index; post-flatten channels key by node id.
     """
     segments: list[Segment]
+    nodes: list[ASTNode]
     filter_results: Annotated[list[tuple[int, list[Picture]]], operator.add]
     ocr_results: Annotated[list[tuple[int, str]], operator.add]
     extract_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
-    problem_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
-    governance_results: Annotated[list[tuple[int, int, str]], operator.add]
     seam_even_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     seam_odd_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
+    problem_results: Annotated[list[tuple[int, str | None]], operator.add]      # (node id, number)
+    governance_results: Annotated[list[tuple[int, str]], operator.add]          # (node id, instruction)
 
 
 # --- Helpers ---
@@ -97,6 +116,27 @@ def load_dspy_image(path: str | None) -> dspy.Image | None:
         return None
     encoded = base64.b64encode(Path(path).read_bytes()).decode("utf-8")
     return dspy.Image(url=f"data:image/png;base64,{encoded}")
+
+
+def flatten_segments(segments: list[Segment]) -> list[ASTNode]:
+    """Project the per-page segment backbone into one global ordered node list.
+
+    Called once, by the seam merger, after page-splits are healed. Walks segments in
+    document order and each segment's nodes in order, stamping every node with a stable
+    monotonic `id` and its originating `seg_index`. The nodes are the same objects the
+    segments hold — this assigns identity in place and returns the flat ordering. After
+    this the flat list is the single source of truth; `segments[].nodes` is left as-is
+    but is no longer read (picture resolution uses `seg_index`, not the node nesting).
+    """
+    flat: list[ASTNode] = []
+    next_id = 0
+    for segment in segments:
+        for node in segment.nodes:
+            node.id = next_id
+            node.seg_index = segment.index
+            next_id += 1
+            flat.append(node)
+    return flat
 
 
 def load_segments(output_dir: str | Path = "output") -> list[Segment]:

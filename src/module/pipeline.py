@@ -13,10 +13,14 @@ Stage order:
     image_filter -> ocr -> extractor -> seam_merger (even, odd)
     -> problem_refiner -> instruction_governor
 
-image_filter runs before ocr so the transcriber only emits placeholders for
-pictures that survived filtering. Seam healing runs right after extraction (per
-the extractor's contract) so the problem/instruction stages see whole nodes.
-Assembly runs after the graph returns.
+Two phases split at the seam merger. Ingestion (image_filter -> ocr -> extractor)
+is per-page: `segments` is the backbone. image_filter runs before ocr so the
+transcriber only emits placeholders for pictures that survived filtering. The seam
+merger heals nodes split across page breaks and then flattens the healed backbone
+into the global ordered `nodes` list (stable ids + seg_index); every refinement
+stage after it (problem_refiner, instruction_governor, and the future entity
+grouping) works on `nodes`, not on the per-segment nesting. Assembly walks `nodes`
+after the graph returns, consulting `segments` only for picture inventories.
 """
 
 from pathlib import Path
@@ -112,7 +116,7 @@ async def run(
     segments = load_segments(output_dir)
     graph = build_graph()
     result = await graph.ainvoke({"segments": segments}, {"recursion_limit": 1000})
-    return assemble(result["segments"], output_dir=output_dir, filename=filename)
+    return assemble(result["nodes"], result["segments"], output_dir=output_dir, filename=filename)
 
 
 if __name__ == "__main__":

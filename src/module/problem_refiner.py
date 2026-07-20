@@ -1,7 +1,7 @@
 import dspy
 from langgraph.types import Send
 
-from .state import State, Segment, NodeType
+from .state import State, ASTNode, NodeType
 from .llm import text_lm
 
 
@@ -62,28 +62,24 @@ class ProblemRefinerNode:
         self.module = module or Module()
 
     def dispatch(self, state: State) -> list[Send] | str:
-        """Fan out one worker per segment that carries at least one problem node."""
-        segments = state.get("segments", [])
+        """Fan out one worker per problem node in the flat stream."""
         sends = [
-            Send("problem_refiner_worker", {"segment": seg})
-            for seg in segments
-            if any(n.type == NodeType.PROBLEM for n in seg.nodes)
+            Send("problem_refiner_worker", {"node": node})
+            for node in state.get("nodes", [])
+            if node.type == NodeType.PROBLEM and node.content
         ]
         return sends or "problem_refiner_collect"
 
     async def worker(self, state: dict) -> dict:
-        """Record each problem node's `number` label; content is left untouched."""
-        segment: Segment = state["segment"]
-        for node in segment.nodes:
-            if node.type == NodeType.PROBLEM and node.content:
-                prediction = await self.module.aforward(problem_content=node.content)
-                node.number = prediction.number
-        return {"problem_results": [(segment.index, segment.nodes)]}
+        """Extract one problem node's `number` label; content is left untouched."""
+        node: ASTNode = state["node"]
+        prediction = await self.module.aforward(problem_content=node.content)
+        return {"problem_results": [(node.id, prediction.number)]}
 
     def collect(self, state: State) -> dict:
-        """Merge each segment's refined nodes back into the ordered backbone."""
-        nodes_by_index = dict(state.get("problem_results", []))
-        for segment in state["segments"]:
-            if segment.index in nodes_by_index:
-                segment.nodes = nodes_by_index[segment.index]
-        return {"segments": state["segments"]}
+        """Write each refined `number` back onto its node by id."""
+        number_by_id = dict(state.get("problem_results", []))
+        for node in state["nodes"]:
+            if node.id in number_by_id:
+                node.number = number_by_id[node.id]
+        return {"nodes": state["nodes"]}

@@ -21,7 +21,7 @@ import re
 import shutil
 from pathlib import Path
 
-from .state import Picture, Segment
+from .state import ASTNode, Picture, Segment
 
 # Tolerant match for an image placeholder: ![N]() with optional surrounding
 # whitespace and an empty link target.
@@ -59,30 +59,37 @@ def _resolve_content(
 
 
 def assemble(
+    nodes: list[ASTNode],
     segments: list[Segment],
     output_dir: str | Path = "output",
     filename: str = "document.md",
 ) -> Path:
-    """Resolve image links and write the ordered AST to a single markdown file.
+    """Resolve image links and write the ordered flat node list to a single markdown file.
 
-    Only pictures that are actually referenced by a surviving placeholder are
-    copied into `<output_dir>/images/`; anything filtered out upstream simply never
-    gets linked. Returns the path of the written document.
+    Walks the global node stream in document order. Each node carries its originating
+    `seg_index`, so an `![N]()` placeholder resolves against that page's pictures — the
+    segments are consulted only for their picture inventories now that the nodes are flat.
+    Only pictures actually referenced by a surviving placeholder are copied into
+    `<output_dir>/images/`; anything filtered out upstream simply never gets linked.
+    Returns the path of the written document.
     """
     output_dir = Path(output_dir)
     images_dir = output_dir / IMAGES_DIRNAME
     images_dir.mkdir(parents=True, exist_ok=True)
 
+    pictures_by_seg = {
+        seg.index: {p.index: p for p in seg.pictures} for seg in segments
+    }
+
     parts: list[str] = []
-    for segment in segments:
-        pictures_by_index = {p.index: p for p in segment.pictures}
-        for node in segment.nodes:
-            if node.content is None:
-                continue
-            # Resolve image placeholders wherever they appear — not only in image
-            # nodes (e.g. a checkpoint exercise can embed a ![N]() figure). Nodes
-            # with no placeholder pass through unchanged.
-            parts.append(_resolve_content(node.content, segment.index, pictures_by_index, images_dir))
+    for node in nodes:
+        if node.content is None:
+            continue
+        # Resolve image placeholders wherever they appear — not only in image nodes
+        # (e.g. a checkpoint problem can embed a ![N]() figure). Nodes with no
+        # placeholder pass through unchanged.
+        pictures_by_index = pictures_by_seg.get(node.seg_index, {})
+        parts.append(_resolve_content(node.content, node.seg_index, pictures_by_index, images_dir))
 
     document = "\n\n".join(parts) + "\n"
     output_path = output_dir / filename
