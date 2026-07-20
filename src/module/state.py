@@ -127,13 +127,12 @@ class Segment:
 class State(TypedDict, total=False):
     """Shared state for every stage.
 
-    Two backbones, one after the other. During per-page ingestion (image_filter, ocr,
-    extractor, seam) `segments` is the ordered backbone. The seam merger then flattens
-    the healed per-page nodes into `nodes` — the global ordered node list that every
-    refinement stage after it (problem_refiner, governor, entity grouping) works on.
-    `segments` is retained past that point only for its pictures (picture resolution
-    at assembly). Both backbones use the default overwrite reducer because only the
-    sequential collect steps write them.
+    Two backbones, one after the other. During per-page ingestion (corrector, extractor,
+    seam) `segments` is the ordered backbone. The seam merger then flattens the healed
+    per-page nodes into `nodes` — the global ordered node list that every refinement stage
+    after it (problem_refiner, governor, entity grouping) works on. `segments` is retained
+    past that point only for its pictures (picture resolution at assembly). Both backbones
+    use the default overwrite reducer because only the sequential collect steps write them.
 
     The `*_results` channels are map-reduce scratch space: parallel Send workers append
     entries and the stage's collect step drains them back into the active backbone. They
@@ -143,8 +142,7 @@ class State(TypedDict, total=False):
     segments: list[Segment]
     nodes: list[ASTNode]
     entities: list[Entity]
-    filter_results: Annotated[list[tuple[int, list[Picture]]], operator.add]
-    ocr_results: Annotated[list[tuple[int, str]], operator.add]
+    correction_results: Annotated[list[tuple[int, str]], operator.add]  # (segment index, corrected markdown)
     extract_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     seam_even_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     seam_odd_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
@@ -183,30 +181,3 @@ def flatten_segments(segments: list[Segment]) -> list[ASTNode]:
             next_id += 1
             flat.append(node)
     return flat
-
-
-def load_segments(output_dir: str | Path = "output") -> list[Segment]:
-    """Build the initial ordered Segment list from the picture_extractor disk tree.
-
-    Expects the layout written by picture_extractor.extract:
-        <output_dir>/Segments/Segment_XXXX/Segment.png
-        <output_dir>/Segments/Segment_XXXX/Images/Image_YYY.png
-    """
-    segments_dir = Path(output_dir) / "Segments"
-    segments: list[Segment] = []
-    for seg_dir in sorted(segments_dir.glob("Segment_*")):
-        index = int(seg_dir.name.split("_")[1])
-        pictures: list[Picture] = []
-        images_dir = seg_dir / "Images"
-        if images_dir.is_dir():
-            # Provisional 1-based numbering by reading order. The image filter
-            # re-establishes a contiguous 1..N over the survivors once noise
-            # pictures are dropped, so this initial id is only a placeholder.
-            for pic_no, pic_path in enumerate(sorted(images_dir.glob("Image_*.png")), start=1):
-                pictures.append(Picture(index=pic_no, image_path=str(pic_path)))
-        segments.append(Segment(
-            index=index,
-            image_path=str(seg_dir / "Segment.png"),
-            pictures=pictures,
-        ))
-    return segments

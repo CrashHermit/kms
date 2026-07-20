@@ -4,7 +4,6 @@ from langgraph.types import Send
 
 from .state import State, Segment, ASTNode, NodeType
 from .llm import text_lm
-from . import capture
 
 
 class DSPyModel(BaseModel):
@@ -127,16 +126,6 @@ class Module(dspy.Module):
             current_node=current_node,
             next_node_context=next_node_context,
         )
-        if capture.enabled():
-            capture.record(
-                "extractor",
-                {
-                    "previous_node_context": previous_node_context,
-                    "current_node": current_node,
-                    "next_node_context": next_node_context,
-                },
-                {"nodes": [{"type": n.type.value, "content": n.content} for n in result.nodes]},
-            )
         return dspy.Prediction(nodes=result.nodes)
 
 
