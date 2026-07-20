@@ -3,17 +3,28 @@ name = "kms"
 version = "0.1.0"
 description = "knowledge management and metacognitive learning system"
 requires-python = ">=3.12, <=3.14"
+# Light, portable core: the LLM pipeline (OCR/extract/seam/refine/govern/entity) and
+# its runtime. Everything here is CPU-only and installs in seconds — this is what
+# `uv sync` installs and what web sessions need.
 dependencies = [
   "pydantic>=2.0",
   "dspy-ai>=3.2.1",
   "langgraph>=0.2",
-  "docling[vlm]>=2.113.0",
   "fsrs>=6.3.1",
+  "neo4j>=6.2.0",
+  "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+# Heavy, GPU-oriented document-extraction front-end (docling VLM + CUDA torch). Only
+# the picture_extractor stage needs it, and it is imported lazily, so the pipeline's
+# LLM stages and the whole test suite run without it. Install locally, where a GPU
+# lives, with:  uv sync --extra extract
+extract = [
+  "docling[vlm]>=2.113.0",
   "torch",
   "torchvision",
   "torchaudio",
-  "neo4j>=6.2.0",
-  "python-dotenv>=1.0",
 ]
 
 [dependency-groups]
