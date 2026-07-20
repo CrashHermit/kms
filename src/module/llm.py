@@ -103,6 +103,25 @@ def text_lm() -> dspy.LM:
 
 
 @lru_cache(maxsize=1)
+def teacher_lm() -> dspy.LM:
+    """A stronger DeepSeek model used as the TEACHER during DSPy optimization.
+
+    The teacher generates the demonstration traces that a bootstrap optimizer filters
+    (by metric) and compiles into few-shot demos for the production (student) model —
+    so the cheap fast model runs in production while a more capable model does the
+    one-off teaching. Set TEACHER_MODEL to the stronger model id (e.g. a DeepSeek
+    reasoning/"pro" model). Defaults to the student model, so optimization self-
+    bootstraps until a stronger teacher is configured. Uses the same DEEPSEEK_API_KEY.
+    """
+    return dspy.LM(
+        os.environ.get("TEACHER_MODEL", os.environ.get("TEXT_MODEL", "deepseek/deepseek-v4-flash")),
+        api_key=_require_key(DEEPSEEK_ENV_KEY, "sk-..."),
+        temperature=0.0,
+        max_tokens=8000,
+    )
+
+
+@lru_cache(maxsize=1)
 def vision_lm() -> dspy.LM:
     """Qwen3-VL-235B (via OpenRouter) for the image-consuming nodes (OCR, image filter)."""
     return dspy.LM(

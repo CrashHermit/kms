@@ -8,6 +8,9 @@ __pycache__/
 # Generated output
 output_document.md
 
+# Compiled DSPy programs (derived; regenerate with module.optimize)
+data/compiled/
+
 # Large test data
 test.pdf
 
