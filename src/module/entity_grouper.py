@@ -90,7 +90,12 @@ class Signature(dspy.Signature):
       problem statement AND a worked-out solution. Emit type `problem` for these.
 
     ANCHOR + GATHER:
-    - Anchor on the node that opens a definition, theorem, or worked example (its cue).
+    - Anchor on the node that opens a definition, theorem, or worked example — its cue:
+      the labelled heading or the opening statement itself. START the span AT that cue
+      node. Do NOT include a narrative sentence that merely leads up to the cue: prose
+      like "By applying the definition of continuity, we can state the following
+      theorem." is connective text, not part of the entity — exclude it and begin the
+      span at the "Theorem" cue that follows.
     - Gather forward from the anchor, including every node that is part of that entity:
       a theorem's statement plus the nodes of its proof; a definition's statement and
       any nodes that complete it; a worked example's statement plus every node of its

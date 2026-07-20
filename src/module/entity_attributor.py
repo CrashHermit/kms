@@ -10,11 +10,12 @@ For every entity it labels each member node with the role it plays and lifts the
                (repeatable); an atomic 1:1-wrapped exercise is a single `statement`.
   * Definition — every member is `statement` (mechanical, no LLM).
 
-Only multi-member Theorems and Problems need the LLM (there is a statement/proof or
-statement/solution boundary to find). Definitions and single-member entities are all
-`statement` and are handled mechanically in collect. As in the governor/grouper, the
-LLM never touches ids: it sees member contents in order and returns a role per member,
-which collect zips back onto the entity's members.
+The statement→proof/solution boundary is usually an explicit "Proof"/"Solution" marker
+node, so collect splits there deterministically with no LLM (this is reliable where the
+LLM was not). The LLM is only used for a multi-member Theorem/Problem that has no such
+marker; Definitions and single-member entities are all `statement`. As in the
+governor/grouper, the LLM never touches ids: it sees member contents in order and
+returns a role per member, which collect zips back onto the entity's members.
 """
 
 import dspy
@@ -28,19 +29,52 @@ from .llm import text_lm
 _SECONDARY = {EntityType.THEOREM: EntityRole.PROOF, EntityType.PROBLEM: EntityRole.SOLUTION}
 
 
+def _is_marker(content: str | None) -> bool:
+    """True if a node's content is just a 'Proof' or 'Solution' heading — the explicit
+    boundary between an entity's statement and its proof/solution."""
+    if not content:
+        return False
+    stripped = content.strip().lstrip("#").strip().strip("*").strip().rstrip(":").strip().lower()
+    return stripped in ("proof", "solution")
+
+
+def _marker_index(entity, node_by_id) -> int | None:
+    """Position of the first member that is an explicit Proof/Solution marker, provided
+    it has statement nodes before it. This gives a deterministic statement→proof/solution
+    split (everything before the marker is statement, the marker and after are the
+    secondary role) so the common case needs no LLM. Returns None when there is no such
+    marker, leaving the judgment to the LLM."""
+    for i, member in enumerate(entity.members):
+        node = node_by_id.get(member.node_id)
+        if node is not None and _is_marker(node.content):
+            return i if i > 0 else None
+    return None
+
+
 class Signature(dspy.Signature):
     r"""
     Label the role each member node plays within a single mathematical entity.
 
-    You are given the entity's type and its member nodes, in document order. Assign
-    each member exactly one role:
+    You are given the entity's type and its member nodes, in document order. Split the
+    members into an opening STATEMENT run followed by a proof/solution run. The split
+    point is the explicit "Proof" / "Solution" marker: every node up to (but NOT
+    including) that marker is `statement`; the marker node and every node after it are
+    the proof/solution.
 
-    - For a `theorem`: `statement` — the claim being asserted — or `proof` — a part of
-      its proof. The statement comes first; the proof nodes follow it. A theorem may
-      have several proof nodes (label each `proof`); it may also have none.
-    - For a `problem` (a worked example): `statement` — the problem being posed — or
-      `solution` — a part of the worked-out solution. The statement comes first; the
-      solution nodes follow. A problem may have several solution nodes.
+    - For a `theorem`: `statement` covers the theorem's label/title heading AND its
+      claim — every node before the "Proof" heading. `proof` covers the "Proof" heading
+      and every node of the proof after it. A theorem may have several proof nodes, or
+      none at all (then every member is `statement`).
+    - For a `problem` (a worked example): `statement` covers the example's label/title
+      heading AND the question being posed — every node before the "Solution" heading.
+      `solution` covers the "Solution" heading and every node after it. A problem may
+      have several solution nodes.
+
+    The statement usually spans MULTIPLE nodes — commonly a label node ("Example 2.30"),
+    a title node ("Classifying a Discontinuity"), and the actual claim/question node.
+    Do NOT stop at the first node: keep labelling `statement` until you reach the
+    Proof/Solution marker. If there is no explicit marker, judge where the claim or
+    question ends and its justification begins.
 
     Return `roles`: one role per member, in the SAME order and the SAME length as the
     members given.
@@ -87,13 +121,18 @@ class EntityAttributorNode:
         self.module = module or Module()
 
     def dispatch(self, state: State) -> list[Send] | str:
-        """Fan out one worker per entity that has a role boundary to find — a Theorem
-        or Problem with more than one member. Definitions and single-member entities
-        are all `statement`, handled mechanically in collect."""
+        """Fan out one worker only for entities whose statement→proof/solution split
+        can't be found mechanically — a multi-member Theorem/Problem with no explicit
+        Proof/Solution marker. Marker-delimited entities are split deterministically in
+        collect; Definitions and single-member entities are all `statement`."""
         node_by_id = {n.id: n for n in state.get("nodes", [])}
         sends: list[Send] = []
         for entity in state.get("entities", []):
-            if entity.type in _SECONDARY and len(entity.members) > 1:
+            if (
+                entity.type in _SECONDARY
+                and len(entity.members) > 1
+                and _marker_index(entity, node_by_id) is None
+            ):
                 contents = [
                     (node_by_id[m.node_id].content or "")
                     for m in entity.members if m.node_id in node_by_id
@@ -117,8 +156,15 @@ class EntityAttributorNode:
         roles_by_entity = dict(state.get("attribute_results", []))
 
         for entity in state.get("entities", []):
+            secondary = _SECONDARY.get(entity.type)
+            split = _marker_index(entity, node_by_id) if secondary else None
             labels = roles_by_entity.get(entity.id)
-            if labels is not None and len(labels) == len(entity.members):
+            if split is not None:
+                # Deterministic split at the Proof/Solution marker: statement before it,
+                # the secondary role from it onward.
+                for i, member in enumerate(entity.members):
+                    member.role = EntityRole.STATEMENT if i < split else secondary
+            elif labels is not None and len(labels) == len(entity.members):
                 for member, role in zip(entity.members, labels):
                     member.role = EntityRole(role)
             else:
