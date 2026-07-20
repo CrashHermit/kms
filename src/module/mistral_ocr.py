@@ -40,6 +40,10 @@ MISTRAL_OCR_URL = "https://api.mistral.ai/v1/ocr"
 MISTRAL_OCR_MODEL = "mistral-ocr-latest"
 MISTRAL_ENV_KEY = "MISTRAL_API_KEY"
 
+# Page-render resolution for the correction pass — the scale the corrector was validated
+# on (see corrector.py). Higher is sharper but heavier; 2.5 was sufficient.
+RENDER_SCALE = 2.5
+
 # OCR of a full page can take a while; be generous. httpx reads HTTPS_PROXY and the
 # CA bundle (SSL_CERT_FILE) from the environment via trust_env, exactly like the
 # DSPy backends, so no explicit proxy/verify wiring is needed here.
@@ -176,12 +180,50 @@ def build_segments(response: dict, output_dir: str | Path) -> list[Segment]:
     return segments
 
 
+def _render_page_images(pdf_path: str | Path, segments: list[Segment], pages: list[int] | None) -> None:
+    """Rasterize each segment's source page to its ``Segment.png`` with pypdfium2.
+
+    Mistral does not return a full-page render (only figure crops), but the downstream
+    correction pass needs the page image to check the transcription against. Render it
+    here — CPU-only, no GPU — at the same scale the corrector was validated on. The source
+    page for segment ``i`` is ``pages[i]`` when a subset was requested, else ``i`` (a whole-
+    document request returns pages densely in order). pypdfium2 is an optional dep (the
+    ``mistral`` extra); its import is deferred so the light core stays installable.
+    """
+    try:
+        import pypdfium2 as pdfium
+    except ImportError as exc:
+        raise MistralOCRError(
+            "pypdfium2 is required to render page images for the correction pass. "
+            "Install the Mistral front-end deps:  uv sync --extra mistral"
+        ) from exc
+
+    pdf = pdfium.PdfDocument(str(pdf_path))
+    try:
+        for i, segment in enumerate(segments):
+            source_page = pages[i] if pages is not None else i
+            image = pdf[source_page].render(scale=RENDER_SCALE).to_pil()
+            Path(segment.image_path).parent.mkdir(parents=True, exist_ok=True)
+            image.save(segment.image_path)
+    finally:
+        pdf.close()
+
+
 def extract(
     pdf_path: str | Path,
     output_dir: str | Path = "output",
     pages: list[int] | None = None,
+    render_pages: bool = True,
 ) -> list[Segment]:
-    """PDF → Mistral OCR → Segments with content + pictures. No GPU, no docling."""
+    """PDF → Mistral OCR → Segments with content + pictures. No GPU, no docling.
+
+    When ``render_pages`` is True (default) each page is also rasterized to its
+    ``Segment.png`` so the correction pass has an image to proofread against; pass False
+    to skip rendering (e.g. text-only runs with no correction pass).
+    """
     pdf_bytes = Path(pdf_path).read_bytes()
     response = ocr_pdf(pdf_bytes, pages=pages)
-    return build_segments(response, output_dir)
+    segments = build_segments(response, output_dir)
+    if render_pages:
+        _render_page_images(pdf_path, segments, pages)
+    return segments

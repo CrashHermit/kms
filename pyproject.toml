@@ -16,6 +16,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Light, no-GPU document front-end: the Mistral OCR API replaces docling's local
+# render + figure crop, and pypdfium2 rasterizes pages so the correction pass has an
+# image to check the transcription against. CPU-only, installs in seconds:
+#   uv sync --extra mistral
+mistral = [
+  "pypdfium2>=4",
+  "pillow>=10",
+]
+
 # Heavy, GPU-oriented document-extraction front-end (docling VLM + CUDA torch). Only
 # the picture_extractor stage needs it, and it is imported lazily, so the pipeline's
 # LLM stages and the whole test suite run without it. Install locally, where a GPU

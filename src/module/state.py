@@ -145,6 +145,7 @@ class State(TypedDict, total=False):
     entities: list[Entity]
     filter_results: Annotated[list[tuple[int, list[Picture]]], operator.add]
     ocr_results: Annotated[list[tuple[int, str]], operator.add]
+    correction_results: Annotated[list[tuple[int, str]], operator.add]  # (segment index, corrected markdown)
     extract_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     seam_even_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     seam_odd_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]

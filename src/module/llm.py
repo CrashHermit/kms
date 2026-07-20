@@ -131,3 +131,26 @@ def vision_lm() -> dspy.LM:
         max_tokens=8000,
         **_provider_routing(os.environ.get("VISION_PROVIDER", "DeepInfra")),
     )
+
+
+@lru_cache(maxsize=1)
+def corrector_lm() -> dspy.LM:
+    """Vision LM for the correction pass on the Mistral front-end.
+
+    The corrector reads a page image *and* the OCR markdown and returns a corrected
+    transcription — a verification task that a strong vision model does reliably (tested:
+    Qwen3-VL-235B fixed subtle math errors, e.g. a misread root index, without disturbing
+    correct content, where smaller models were less reliable). Defaults to the same
+    Qwen3-VL as the OCR stage but is a separate knob: set CORRECTOR_MODEL to swap only the
+    corrector (e.g. to a cheaper model) without touching OCR. Same OpenRouter key/pinning.
+    """
+    return dspy.LM(
+        os.environ.get(
+            "CORRECTOR_MODEL",
+            os.environ.get("VISION_MODEL", "openrouter/qwen/qwen3-vl-235b-a22b-instruct"),
+        ),
+        api_key=_require_key(OPENROUTER_ENV_KEY, "sk-or-..."),
+        temperature=0.0,
+        max_tokens=8000,
+        **_provider_routing(os.environ.get("VISION_PROVIDER", "DeepInfra")),
+    )

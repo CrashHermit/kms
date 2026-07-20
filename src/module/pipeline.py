@@ -31,6 +31,7 @@ from .assembler import assemble
 from .state import State, load_segments
 from .image_filter import ImageFilterNode
 from .ocr import OCRNode
+from .corrector import CorrectorNode
 from .extractor import ExtractorNode
 from .seam_merger import SeamMergerNode
 from .problem_refiner import ProblemRefinerNode
@@ -48,13 +49,15 @@ def build_graph(vision_frontend: bool = True):
       vision stages (image_filter → ocr), which transcribe each page render to markdown
       before the extractor runs.
     - ``False``: the Mistral OCR front-end. ``segments`` already carry ``content`` +
-      ``pictures`` (see ``mistral_ocr``), so those two vision stages are omitted and the
-      graph starts at the extractor. Reading order, duplication avoidance, and figure
-      placement were handled server-side, so image_filter's noise-picture pruning is
-      not applied on this path.
+      ``pictures`` (see ``mistral_ocr``), so those two vision stages are omitted; instead
+      the graph starts with the correction pass (which proofreads each transcription
+      against its page image) and then the extractor. Reading order, duplication
+      avoidance, and figure placement were handled server-side, so image_filter's
+      noise-picture pruning is not applied on this path.
     """
     image_filter = ImageFilterNode()
     ocr = OCRNode()
+    corrector = CorrectorNode()
     extractor = ExtractorNode()
     seam = SeamMergerNode()
     problem = ProblemRefinerNode()
@@ -71,6 +74,9 @@ def build_graph(vision_frontend: bool = True):
         g.add_node("image_filter_collect", image_filter.collect)
         g.add_node("ocr_worker", ocr.worker)
         g.add_node("ocr_collect", ocr.collect)
+    else:
+        g.add_node("corrector_worker", corrector.worker)
+        g.add_node("corrector_collect", corrector.collect)
     g.add_node("extractor_worker", extractor.worker)
     g.add_node("extractor_collect", extractor.collect)
     g.add_node("seam_even_worker", seam.even_worker)
@@ -100,7 +106,10 @@ def build_graph(vision_frontend: bool = True):
 
         g.add_conditional_edges("ocr_collect", extractor.dispatch, ["extractor_worker", "extractor_collect"])
     else:
-        g.add_conditional_edges(START, extractor.dispatch, ["extractor_worker", "extractor_collect"])
+        # Correction pass first (proofread each page against its image), then the extractor.
+        g.add_conditional_edges(START, corrector.dispatch, ["corrector_worker", "corrector_collect"])
+        g.add_edge("corrector_worker", "corrector_collect")
+        g.add_conditional_edges("corrector_collect", extractor.dispatch, ["extractor_worker", "extractor_collect"])
     g.add_edge("extractor_worker", "extractor_collect")
 
     # Seam healing: even pass then odd pass, so no two concurrent workers touch the
