@@ -34,6 +34,16 @@ from functools import lru_cache
 
 import dspy
 
+# Load a local .env (if present) so the two API keys can live in a file instead of
+# being exported by hand. Guarded: python-dotenv is a convenience, not a hard dep,
+# and a missing .env is fine — keys still resolve from the real environment.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
 DEEPSEEK_ENV_KEY = "DEEPSEEK_API_KEY"
 OPENROUTER_ENV_KEY = "OPENROUTER_API_KEY"
 
@@ -89,6 +99,25 @@ def text_lm() -> dspy.LM:
         temperature=0.0,
         max_tokens=8000,
         extra_body={"thinking": {"type": "disabled"}},
+    )
+
+
+@lru_cache(maxsize=1)
+def teacher_lm() -> dspy.LM:
+    """A stronger DeepSeek model used as the TEACHER during DSPy optimization.
+
+    The teacher generates the demonstration traces that a bootstrap optimizer filters
+    (by metric) and compiles into few-shot demos for the production (student) model —
+    so the cheap fast model runs in production while a more capable model does the
+    one-off teaching. Set TEACHER_MODEL to the stronger model id (e.g. a DeepSeek
+    reasoning/"pro" model). Defaults to the student model, so optimization self-
+    bootstraps until a stronger teacher is configured. Uses the same DEEPSEEK_API_KEY.
+    """
+    return dspy.LM(
+        os.environ.get("TEACHER_MODEL", os.environ.get("TEXT_MODEL", "deepseek/deepseek-v4-flash")),
+        api_key=_require_key(DEEPSEEK_ENV_KEY, "sk-..."),
+        temperature=0.0,
+        max_tokens=8000,
     )
 
 

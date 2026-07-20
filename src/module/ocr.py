@@ -54,6 +54,26 @@ class Signature(dspy.Signature):
     - Skip running headers, footers, node numbers, and repeated chapter/book
       titles — these are navigational chrome, not content.
 
+    ## READING ORDER — TRANSCRIBE EACH ELEMENT EXACTLY ONCE
+
+    - Follow a single reading order: top to bottom, and for a multi-column or boxed
+      layout, read each column or box fully in order. Do NOT jump between columns
+      mid-paragraph.
+    - Transcribe every element (paragraph, list item, numbered exercise/checkpoint,
+      figure, equation) exactly ONCE. Never repeat or re-emit content you have already
+      transcribed, even when it sits in a sidebar, callout box, or spans a column break.
+      Duplicated blocks are a serious error.
+
+    ## THEOREMS, PROOFS, AND WORKED SOLUTIONS — KEEP THE BLOCKS SEPARATE
+
+    - Keep a labelled statement (e.g. `Theorem 3.2`, `Proposition 15.7`, `Definition`,
+      `Example 4`) together with the statement text that follows it, as one block.
+    - When a proof or worked solution follows, PRESERVE its opening marker (`Proof.`,
+      `Solution.`, and the closing `∎`/`□` if present) and start the proof/solution on a
+      NEW paragraph, visually separated from the statement — even when the book runs
+      `Proof.` inline immediately after the statement. The statement and its
+      proof/solution must be DISTINCT blocks, never merged into one paragraph.
+
     ## PARTIAL CONTENT AT node BOUNDARIES
 
     - If the node begins mid-sentence, mid-equation, mid-table, or mid-block,

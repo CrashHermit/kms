@@ -2,7 +2,7 @@ import dspy
 from pydantic import BaseModel
 from langgraph.types import Send
 
-from .state import State, Segment, ASTNode
+from .state import State, Segment, ASTNode, flatten_segments
 from .llm import text_lm
 
 
@@ -162,4 +162,11 @@ class SeamMergerNode:
         return self._collect(state, "seam_even_results")
 
     def odd_collect(self, state: State) -> dict:
-        return self._collect(state, "seam_odd_results")
+        """Drain the odd pass, then birth the flat global node list. The seam merger is
+        the last stage that splits/merges nodes structurally, so page-splits are now
+        healed and node identity is stable — flatten the per-page backbone into `nodes`,
+        stamping each with its global id and originating seg_index. Every stage after
+        this works on `nodes`, not on the per-segment nesting."""
+        result = self._collect(state, "seam_odd_results")
+        segments = result["segments"]
+        return {"segments": segments, "nodes": flatten_segments(segments)}

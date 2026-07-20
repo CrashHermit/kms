@@ -79,11 +79,10 @@ class InstructionGovernorNode:
         self.module = module or Module()
 
     def dispatch(self, state: State) -> list[Send] | str:
-        """Build instruction-anchored groups across the flat node stream and fan out
+        """Build instruction-anchored groups over the flat node stream and fan out
         one Send per group (splitting oversized pools into POOL_CAP batches)."""
-        segments = state.get("segments", [])
         lead: str | None = None
-        members: list[tuple[int, int, str]] = []  # (seg_index, pos, content)
+        members: list[tuple[int, str]] = []  # (node id, content)
         sends: list[Send] = []
 
         def flush() -> None:
@@ -91,48 +90,46 @@ class InstructionGovernorNode:
                 for i in range(0, len(members), POOL_CAP):
                     sends.append(Send("governor_worker", {"instruction": lead, "members": members[i:i + POOL_CAP]}))
 
-        for seg in segments:
-            for pos, node in enumerate(seg.nodes):
-                if node.type == NodeType.HEADER:
-                    flush()
-                    lead, members = None, []
-                elif node.type == NodeType.INSTRUCTION:
-                    flush()
-                    lead, members = (node.content or None), []
-                elif node.type == NodeType.PROBLEM and lead and node.content:
-                    members.append((seg.index, pos, node.content))
+        for node in state.get("nodes", []):
+            if node.type == NodeType.HEADER:
+                flush()
+                lead, members = None, []
+            elif node.type == NodeType.INSTRUCTION:
+                flush()
+                lead, members = (node.content or None), []
+            elif node.type == NodeType.PROBLEM and lead and node.content:
+                members.append((node.id, node.content))
         flush()
         return sends or "governor_collect"
 
     async def worker(self, state: dict) -> dict:
-        """Judge which exercises in one group the lead governs; emit (seg, pos, lead)
+        """Judge which problems in one group the lead governs; emit (node id, lead)
         for the governed ones."""
         instruction: str = state["instruction"]
-        members: list[tuple[int, int, str]] = state["members"]
-        governed = await self.module.aforward(instruction, [content for _s, _p, content in members])
+        members: list[tuple[int, str]] = state["members"]
+        governed = await self.module.aforward(instruction, [content for _id, content in members])
         results = [
-            (seg_index, pos, instruction)
-            for (seg_index, pos, _content), keep in zip(members, governed)
+            (node_id, instruction)
+            for (node_id, _content), keep in zip(members, governed)
             if keep
         ]
         return {"governance_results": results}
 
     def collect(self, state: State) -> dict:
-        """Write the governing lead onto each governed exercise's `instruction` field,
+        """Write the governing lead onto each governed problem's `instruction` field,
         then drop the instruction nodes that were distributed — the lead now lives on
-        the exercises, so the standalone node is redundant."""
-        by_index = {seg.index: seg for seg in state["segments"]}
+        the problems, so the standalone node is redundant."""
+        by_id = {node.id: node for node in state["nodes"]}
         applied_leads: set[str] = set()
-        for seg_index, pos, instruction in state.get("governance_results", []):
-            seg = by_index.get(seg_index)
-            if seg is not None and 0 <= pos < len(seg.nodes):
-                seg.nodes[pos].instruction = instruction
+        for node_id, instruction in state.get("governance_results", []):
+            node = by_id.get(node_id)
+            if node is not None:
+                node.instruction = instruction
                 applied_leads.add(instruction)
         # Remove a lead node only if it actually governed something (its text is now
-        # on ≥1 exercise); an orphan lead that governed nothing is kept, not deleted.
-        for seg in state["segments"]:
-            seg.nodes = [
-                n for n in seg.nodes
-                if not (n.type == NodeType.INSTRUCTION and n.content in applied_leads)
-            ]
-        return {"segments": state["segments"]}
+        # on ≥1 problem); an orphan lead that governed nothing is kept, not deleted.
+        state["nodes"] = [
+            n for n in state["nodes"]
+            if not (n.type == NodeType.INSTRUCTION and n.content in applied_leads)
+        ]
+        return {"nodes": state["nodes"]}

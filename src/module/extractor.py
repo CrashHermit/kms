@@ -4,6 +4,7 @@ from langgraph.types import Send
 
 from .state import State, Segment, ASTNode, NodeType
 from .llm import text_lm
+from . import capture
 
 
 class DSPyModel(BaseModel):
@@ -29,6 +30,11 @@ class Signature(dspy.Signature):
     - `previous_node_context` and `next_node_context` are read-only and only for resolving classification ambiguity.
     - A top-level node is the outermost structural unit; do not break sub-parts into separate nodes.
     - If content starts or ends abruptly at a segment boundary, extract it as-is.
+    - A run-in proof or worked solution starts a NEW node: when a block opens with (or a
+      paragraph runs into) a `Proof.` / `Solution.` marker that begins the justification
+      of a preceding statement, split there. Never merge a theorem/proposition/lemma
+      statement with its proof, or a worked example's statement with its solution, into a
+      single node — the statement is one node, the proof/solution begins another.
 
     NODE TYPES (emit `type` as exactly one of these values):
     - paragraph: Standard prose text. Inline math remains in the paragraph. Callout/sidebar
@@ -121,6 +127,16 @@ class Module(dspy.Module):
             current_node=current_node,
             next_node_context=next_node_context,
         )
+        if capture.enabled():
+            capture.record(
+                "extractor",
+                {
+                    "previous_node_context": previous_node_context,
+                    "current_node": current_node,
+                    "next_node_context": next_node_context,
+                },
+                {"nodes": [{"type": n.type.value, "content": n.content} for n in result.nodes]},
+            )
         return dspy.Prediction(nodes=result.nodes)
 
 
