@@ -34,6 +34,16 @@ from functools import lru_cache
 
 import dspy
 
+# Load a local .env (if present) so the two API keys can live in a file instead of
+# being exported by hand. Guarded: python-dotenv is a convenience, not a hard dep,
+# and a missing .env is fine — keys still resolve from the real environment.
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
 DEEPSEEK_ENV_KEY = "DEEPSEEK_API_KEY"
 OPENROUTER_ENV_KEY = "OPENROUTER_API_KEY"
 

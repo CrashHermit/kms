@@ -11,8 +11,14 @@ output_document.md
 # Large test data
 test.pdf
 
+# Secrets
+.env
+
 # IDE/editor
 .vscode/
 .idea/
 *.swp
 *.swo
+
+# pytest
+.pytest_cache/
