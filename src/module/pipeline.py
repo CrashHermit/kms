@@ -39,8 +39,20 @@ from .entity_grouper import EntityGrouperNode
 from .entity_attributor import EntityAttributorNode
 
 
-def build_graph():
-    """Assemble and compile the LangGraph pipeline over the shared State."""
+def build_graph(vision_frontend: bool = True):
+    """Assemble and compile the LangGraph pipeline over the shared State.
+
+    ``vision_frontend`` controls how ``segments`` get their markdown ``content``:
+
+    - ``True`` (default): the docling front-end. The graph starts with the ingestion
+      vision stages (image_filter → ocr), which transcribe each page render to markdown
+      before the extractor runs.
+    - ``False``: the Mistral OCR front-end. ``segments`` already carry ``content`` +
+      ``pictures`` (see ``mistral_ocr``), so those two vision stages are omitted and the
+      graph starts at the extractor. Reading order, duplication avoidance, and figure
+      placement were handled server-side, so image_filter's noise-picture pruning is
+      not applied on this path.
+    """
     image_filter = ImageFilterNode()
     ocr = OCRNode()
     extractor = ExtractorNode()
@@ -52,11 +64,13 @@ def build_graph():
 
     g = StateGraph(State)
 
-    # Each stage registers its worker (Send target) and collect (drain) nodes.
-    g.add_node("image_filter_worker", image_filter.worker)
-    g.add_node("image_filter_collect", image_filter.collect)
-    g.add_node("ocr_worker", ocr.worker)
-    g.add_node("ocr_collect", ocr.collect)
+    # Each stage registers its worker (Send target) and collect (drain) nodes. The
+    # ingestion vision stages are only added when the docling front-end is in use.
+    if vision_frontend:
+        g.add_node("image_filter_worker", image_filter.worker)
+        g.add_node("image_filter_collect", image_filter.collect)
+        g.add_node("ocr_worker", ocr.worker)
+        g.add_node("ocr_collect", ocr.collect)
     g.add_node("extractor_worker", extractor.worker)
     g.add_node("extractor_collect", extractor.collect)
     g.add_node("seam_even_worker", seam.even_worker)
@@ -74,13 +88,19 @@ def build_graph():
 
     # A stage's dispatch is a conditional edge off the previous collect: it either
     # fans out Sends to the worker or short-circuits straight to its own collect.
-    g.add_conditional_edges(START, image_filter.dispatch, ["image_filter_worker", "image_filter_collect"])
-    g.add_edge("image_filter_worker", "image_filter_collect")
+    # The docling front-end runs image_filter → ocr before the extractor; the Mistral
+    # front-end feeds segments that already have content, so the graph starts at the
+    # extractor.
+    if vision_frontend:
+        g.add_conditional_edges(START, image_filter.dispatch, ["image_filter_worker", "image_filter_collect"])
+        g.add_edge("image_filter_worker", "image_filter_collect")
 
-    g.add_conditional_edges("image_filter_collect", ocr.dispatch, ["ocr_worker", "ocr_collect"])
-    g.add_edge("ocr_worker", "ocr_collect")
+        g.add_conditional_edges("image_filter_collect", ocr.dispatch, ["ocr_worker", "ocr_collect"])
+        g.add_edge("ocr_worker", "ocr_collect")
 
-    g.add_conditional_edges("ocr_collect", extractor.dispatch, ["extractor_worker", "extractor_collect"])
+        g.add_conditional_edges("ocr_collect", extractor.dispatch, ["extractor_worker", "extractor_collect"])
+    else:
+        g.add_conditional_edges(START, extractor.dispatch, ["extractor_worker", "extractor_collect"])
     g.add_edge("extractor_worker", "extractor_collect")
 
     # Seam healing: even pass then odd pass, so no two concurrent workers touch the
@@ -117,22 +137,42 @@ async def run(
     output_dir: str | Path = "output",
     filename: str = "document.md",
     extract_pictures: bool = True,
+    frontend: str = "docling",
+    pages: list[int] | None = None,
 ) -> Path:
     """Run the full pipeline on a PDF and write the assembled markdown.
 
-    When ``extract_pictures`` is True (default) the docling picture_extractor runs
-    first to build the ``<output_dir>/Segments`` tree. Pass False to reuse an
-    existing tree (e.g. to re-run just the LLM stages). Returns the written path.
+    ``frontend`` selects how pages become markdown-bearing segments:
+
+    - ``"docling"`` (default): render + crop locally, then transcribe each page with
+      the vision OCR stage. When ``extract_pictures`` is True the docling
+      picture_extractor runs first to build the ``<output_dir>/Segments`` tree; pass
+      False to reuse an existing tree (e.g. to re-run just the LLM stages, or to feed
+      a tree produced by ``scripts/pdf_to_segments.py`` on a GPU-less box).
+    - ``"mistral"``: call the Mistral OCR API, which returns reading-ordered markdown
+      plus extracted figures per page — no GPU, no docling. ``extract_pictures`` is
+      ignored; ``pages`` (0-based) optionally limits which pages are sent.
+
+    Returns the written path.
     """
     output_dir = Path(output_dir)
-    if extract_pictures:
-        # Lazy import: pulls in docling/torch, which the LLM-only path does not need.
-        from . import picture_extractor
+    if frontend == "mistral":
+        # Lazy import: keeps the module out of the docling path's import graph.
+        from . import mistral_ocr
 
-        picture_extractor.extract(pdf_path, output_dir=output_dir)
+        segments = mistral_ocr.extract(pdf_path, output_dir=output_dir, pages=pages)
+        graph = build_graph(vision_frontend=False)
+    elif frontend == "docling":
+        if extract_pictures:
+            # Lazy import: pulls in docling/torch, which the LLM-only path does not need.
+            from . import picture_extractor
 
-    segments = load_segments(output_dir)
-    graph = build_graph()
+            picture_extractor.extract(pdf_path, output_dir=output_dir)
+        segments = load_segments(output_dir)
+        graph = build_graph(vision_frontend=True)
+    else:
+        raise ValueError(f"unknown frontend {frontend!r} (expected 'docling' or 'mistral')")
+
     result = await graph.ainvoke({"segments": segments}, {"recursion_limit": 1000})
     written = assemble(result["nodes"], result["segments"], output_dir=output_dir, filename=filename)
     _write_entities(result.get("entities", []), output_dir)
