@@ -41,6 +41,30 @@ class NodeType(StrEnum):
     PROBLEM = "problem"          # math-book specific: a single student problem to solve (exercise or worked example)
 
 
+class EntityType(StrEnum):
+    """The three math-semantic entity categories the grouping layer produces
+    (AutoMathKG's taxonomy). Distinct from NodeType, which is document structure."""
+    DEFINITION = "definition"
+    THEOREM = "theorem"      # subsumes proposition, corollary, lemma
+    PROBLEM = "problem"
+
+
+@dataclass
+class Entity:
+    """A math-semantic entity: a typed grouping that references its member nodes by
+    id, a sparse overlay on the flat node stream (most nodes belong to no entity).
+
+    v1 carries only identity, type, and membership — no roles/attributes yet.
+    `tail_open`/`head_continuation` are transient reconciliation flags set by the
+    per-window worker for entities at a window edge; the collect step clears them
+    once cross-window continuations have been stitched."""
+    type: EntityType
+    members: list[int] = field(default_factory=list)   # node ids, in document order
+    id: int | None = None                              # assigned in collect, document order
+    tail_open: bool = False                            # last run hit window end still gathering
+    head_continuation: bool = False                    # first run continues an entity from a prior window
+
+
 @dataclass
 class Picture:
     """An image extracted from a page. `index` is the 1-based placeholder id that
@@ -99,6 +123,7 @@ class State(TypedDict, total=False):
     """
     segments: list[Segment]
     nodes: list[ASTNode]
+    entities: list[Entity]
     filter_results: Annotated[list[tuple[int, list[Picture]]], operator.add]
     ocr_results: Annotated[list[tuple[int, str]], operator.add]
     extract_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
@@ -106,6 +131,7 @@ class State(TypedDict, total=False):
     seam_odd_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     problem_results: Annotated[list[tuple[int, str | None]], operator.add]      # (node id, number)
     governance_results: Annotated[list[tuple[int, str]], operator.add]          # (node id, instruction)
+    entity_results: Annotated[list[tuple[int, list[Entity]]], operator.add]     # (window index, entities)
 
 
 # --- Helpers ---

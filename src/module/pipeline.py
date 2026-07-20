@@ -35,6 +35,7 @@ from .extractor import ExtractorNode
 from .seam_merger import SeamMergerNode
 from .problem_refiner import ProblemRefinerNode
 from .instruction_governor import InstructionGovernorNode
+from .entity_grouper import EntityGrouperNode
 
 
 def build_graph():
@@ -45,6 +46,7 @@ def build_graph():
     seam = SeamMergerNode()
     problem = ProblemRefinerNode()
     governor = InstructionGovernorNode()
+    entity = EntityGrouperNode()
 
     g = StateGraph(State)
 
@@ -63,6 +65,8 @@ def build_graph():
     g.add_node("problem_refiner_collect", problem.collect)
     g.add_node("governor_worker", governor.worker)
     g.add_node("governor_collect", governor.collect)
+    g.add_node("entity_grouper_worker", entity.worker)
+    g.add_node("entity_grouper_collect", entity.collect)
 
     # A stage's dispatch is a conditional edge off the previous collect: it either
     # fans out Sends to the worker or short-circuits straight to its own collect.
@@ -89,7 +93,12 @@ def build_graph():
     g.add_conditional_edges("problem_refiner_collect", governor.dispatch, ["governor_worker", "governor_collect"])
     g.add_edge("governor_worker", "governor_collect")
 
-    g.add_edge("governor_collect", END)
+    # Entity grouping: gather def/thm across dumb-greedy windows, wrap problems 1:1,
+    # reconcile cross-window spans into the sparse `entities` overlay.
+    g.add_conditional_edges("governor_collect", entity.dispatch, ["entity_grouper_worker", "entity_grouper_collect"])
+    g.add_edge("entity_grouper_worker", "entity_grouper_collect")
+
+    g.add_edge("entity_grouper_collect", END)
 
     return g.compile()
 
@@ -116,7 +125,23 @@ async def run(
     segments = load_segments(output_dir)
     graph = build_graph()
     result = await graph.ainvoke({"segments": segments}, {"recursion_limit": 1000})
-    return assemble(result["nodes"], result["segments"], output_dir=output_dir, filename=filename)
+    written = assemble(result["nodes"], result["segments"], output_dir=output_dir, filename=filename)
+    _write_entities(result.get("entities", []), output_dir)
+    return written
+
+
+def _write_entities(entities, output_dir: Path) -> Path:
+    """Persist the sparse entity overlay as JSON beside the assembled document — the
+    artifact the later graph phase (edges, fusion, completion) consumes."""
+    import json
+
+    path = Path(output_dir) / "entities.json"
+    payload = [
+        {"id": e.id, "type": e.type.value, "members": e.members}
+        for e in entities
+    ]
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return path
 
 
 if __name__ == "__main__":
