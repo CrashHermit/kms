@@ -18,6 +18,8 @@ governor/grouper, the LLM never touches ids: it sees member contents in order an
 returns a role per member, which collect zips back onto the entity's members.
 """
 
+import re
+
 import dspy
 from langgraph.types import Send
 
@@ -29,13 +31,28 @@ from .llm import text_lm
 _SECONDARY = {EntityType.THEOREM: EntityRole.PROOF, EntityType.PROBLEM: EntityRole.SOLUTION}
 
 
+# A node that opens with "Proof." / "Solution:" and keeps going — the run-in proof/
+# solution style (e.g. Judson's "*Proof.* Suppose that ..."), as opposed to a bare
+# "### Solution" heading node.
+_RUN_IN_MARKER = re.compile(r"^(?:proof|solution)\b\s*[.:]", re.IGNORECASE)
+
+
 def _is_marker(content: str | None) -> bool:
-    """True if a node's content is just a 'Proof' or 'Solution' heading — the explicit
-    boundary between an entity's statement and its proof/solution."""
+    """True if a node marks the boundary between an entity's statement and its
+    proof/solution — either a bare 'Proof'/'Solution' heading node, or a node that
+    opens run-in with 'Proof.'/'Solution:'. In both cases everything before this node
+    is the statement and this node begins the proof/solution."""
     if not content:
         return False
-    stripped = content.strip().lstrip("#").strip().strip("*").strip().rstrip(":").strip().lower()
-    return stripped in ("proof", "solution")
+    # Strip leading heading/emphasis markup so the first word is visible.
+    stripped = content.strip().lstrip("#").strip().lstrip("*").strip()
+    lowered = stripped.lower()
+    # Bare heading: the node is just "Proof"/"Solution" (+ optional trailing markup).
+    bare = lowered.rstrip("*").strip().rstrip(".:").strip()
+    if bare in ("proof", "solution"):
+        return True
+    # Run-in: the node opens with "Proof."/"Solution:" and continues.
+    return bool(_RUN_IN_MARKER.match(lowered))
 
 
 def _marker_index(entity, node_by_id) -> int | None:

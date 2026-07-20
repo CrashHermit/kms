@@ -30,10 +30,31 @@ def test_dispatch_only_fans_out_multi_member_theorem_or_problem():
     assert [s.arg["entity_id"] for s in sends] == [0]  # def + single-member problem are mechanical
 
 
-def test_is_marker_recognizes_proof_and_solution_headings():
+def test_is_marker_recognizes_bare_and_run_in_proof_solution():
+    # Bare headings.
     assert _is_marker("Solution") and _is_marker("### Solution") and _is_marker("**Proof**") and _is_marker("Proof:")
-    assert not _is_marker("Solution: compute x")  # has a body -> not a bare marker
-    assert not _is_marker("The proof follows") and not _is_marker(None)
+    # Run-in markers (Judson-style) — node opens with "Proof."/"Solution:" and continues.
+    assert _is_marker("*Proof.* Suppose that $\\alpha \\in F$ and $p(\\alpha)=0$.")
+    assert _is_marker("Solution: The rational function is continuous.")
+    # Not markers: prose that merely mentions the word.
+    assert not _is_marker("The proof follows from the lemma.")
+    assert not _is_marker("Solution sets are defined below.")
+    assert not _is_marker(None)
+
+
+def test_run_in_proof_marker_splits_statement_from_proof():
+    # Corollary label + claim, then a run-in "*Proof.*" node — the case Judson broke.
+    nodes = [
+        ASTNode(type=NodeType.HEADER, content="Corollary 15.5.", id=0, seg_index=0),
+        ASTNode(type=NodeType.PARAGRAPH, content="An element a of F is a zero of p(x) ...", id=1, seg_index=0),
+        ASTNode(type=NodeType.PARAGRAPH, content="*Proof.* Suppose that p(a) = 0 ...", id=2, seg_index=0),
+        ASTNode(type=NodeType.MATH, content="p(x) = (x-a)q(x) + r(x)", id=3, seg_index=0),
+    ]
+    ent = Entity(type=EntityType.THEOREM, members=[Member(i) for i in range(4)], id=0)
+    at = EntityAttributorNode(module=object())
+    assert at.dispatch({"nodes": nodes, "entities": [ent]}) == "entity_attributor_collect"  # no LLM
+    out = at.collect({"nodes": nodes, "entities": [ent]})["entities"][0]
+    assert [m.role.value for m in out.members] == ["statement", "statement", "proof", "proof"]
 
 
 def test_marker_split_is_deterministic_and_skips_the_llm():
