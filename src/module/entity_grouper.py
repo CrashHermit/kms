@@ -34,7 +34,6 @@ from langgraph.types import Send
 
 from .state import State, ASTNode, Entity, EntityType, Member, NodeType
 from .llm import text_lm
-from . import capture
 
 # Soft token budgets (approximate: ~4 chars/token). The current-window budget caps
 # how much a single window judges; prev/next cap the read-only context on each side.
@@ -159,23 +158,6 @@ class Module(dspy.Module):
             next_context=next_context,
         )
         entities = result.entities or []
-        if capture.enabled():
-            capture.record(
-                "entity_grouper",
-                {
-                    "previous_context": previous_context,
-                    "current_nodes": [
-                        {"position": w.position, "type": w.type, "content": w.content}
-                        for w in current_nodes
-                    ],
-                    "next_context": next_context,
-                },
-                {"entities": [
-                    {"type": s.type, "start": s.start, "end": s.end,
-                     "continues_before": bool(s.continues_before), "continues_after": bool(s.continues_after)}
-                    for s in entities
-                ]},
-            )
         return dspy.Prediction(entities=entities)
 
 

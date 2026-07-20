@@ -1,30 +1,25 @@
 """
-Mistral OCR front-end — an API alternative to the local docling picture_extractor
-plus the vision OCR stage.
+Mistral OCR front-end — the pipeline's page ingestion, over an API (no GPU).
 
-The docling front-end needs a GPU (it renders pages and crops figures locally with
-torch), and the OCR stage then asks a vision LLM to transcribe a whole page and
-*infer* its reading order. Mistral's document OCR endpoint (``mistral-ocr-latest``)
-does layout analysis, reading-order transcription, and figure extraction server-side
-and returns, per page:
+Mistral's document OCR endpoint (``mistral-ocr-latest``) does layout analysis,
+reading-order transcription, and figure extraction server-side and returns, per page:
 
   - ``markdown``: the page transcribed in reading order, with each detected figure
     referenced inline as ``![<id>](<id>)`` at the spot it appears;
   - ``images``: each detected figure as a cropped image (base64) plus its bounding box.
 
-This module turns that response into the same ``Segment`` backbone the rest of the
-pipeline already consumes — ``content`` (markdown) + ``pictures`` (cropped figures on
-disk) — so every downstream text stage (extractor → seam → … → entity) runs unchanged.
-It needs only ``MISTRAL_API_KEY`` and outbound HTTPS; no GPU, no docling, no torch.
+This module turns that response into the ``Segment`` backbone the rest of the pipeline
+consumes — ``content`` (markdown) + ``pictures`` (cropped figures on disk) — so every
+downstream stage (corrector → extractor → seam → … → entity) runs on it directly. It
+needs only ``MISTRAL_API_KEY`` and outbound HTTPS; no GPU, no torch.
 
-Reading order, duplication avoidance, and figure *placement* are all handled by
-Mistral server-side, so the ingestion vision stages (image_filter, ocr) are skipped
-when this front-end is used (see ``pipeline.build_graph(vision_frontend=False)``).
+Because reading order, duplication avoidance, and figure placement are handled by
+Mistral, the correction pass (see ``corrector``) is the next stage: it proofreads each
+transcription against its page image before the extractor parses it.
 
 The markdown's figure references are rewritten from Mistral's ids to the pipeline's
-positional ``![N]()`` convention (1-based, reading order), matching the picture
-indices saved to disk, so the extractor and assembler treat a Mistral-sourced figure
-exactly like a docling-sourced one.
+positional ``![N]()`` convention (1-based, reading order), matching the picture indices
+saved to disk, so the extractor and assembler resolve them like any other figure.
 """
 
 import base64

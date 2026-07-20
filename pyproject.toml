@@ -16,24 +16,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Light, no-GPU document front-end: the Mistral OCR API replaces docling's local
-# render + figure crop, and pypdfium2 rasterizes pages so the correction pass has an
-# image to check the transcription against. CPU-only, installs in seconds:
+# No-GPU document front-end: the Mistral OCR API turns each page into markdown +
+# extracted figures, and pypdfium2 rasterizes pages so the correction pass has an image
+# to check the transcription against. CPU-only, installs in seconds:
 #   uv sync --extra mistral
 mistral = [
   "pypdfium2>=4",
   "pillow>=10",
-]
-
-# Heavy, GPU-oriented document-extraction front-end (docling VLM + CUDA torch). Only
-# the picture_extractor stage needs it, and it is imported lazily, so the pipeline's
-# LLM stages and the whole test suite run without it. Install locally, where a GPU
-# lives, with:  uv sync --extra extract
-extract = [
-  "docling[vlm]>=2.113.0",
-  "torch",
-  "torchvision",
-  "torchaudio",
 ]
 
 [dependency-groups]
@@ -48,14 +37,4 @@ venv = ".venv"
 
 [tool.uv]
 package = false  # Disables the local build requirement entirely!
-
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
-
-[tool.uv.sources]
-torch = { index = "pytorch-cu128" }
-torchvision = { index = "pytorch-cu128" }
-torchaudio = { index = "pytorch-cu128" }
 
