@@ -108,14 +108,8 @@ class Signature(dspy.Signature):
       formatting needed.
     """
 
-    previous_node_image_context: dspy.Image | None = dspy.InputField(
-        description="The image of the node immediately before the current node, if available. Use for context only — do not transcribe it."
-    )
     current_node_image: dspy.Image = dspy.InputField(
         description="The image of the node to transcribe. Extract content from this node only, exactly as it appears."
-    )
-    next_node_image_context: dspy.Image | None = dspy.InputField(
-        description="The image of the node immediately after the current node, if available. Use for context only — do not transcribe it."
     )
     current_node_pictures: list[dspy.Image] | None = dspy.InputField(
         description="The images of the pictures in the current node, in order."
@@ -139,14 +133,10 @@ class Module(dspy.Module):
         self,
         current_node_image: dspy.Image,
         current_node_picture_indices: list[int],
-        previous_node_image_context: dspy.Image | None = None,
-        next_node_image_context: dspy.Image | None = None,
         current_node_pictures: list[dspy.Image] | None = None,
     ):
         result = await self.transcriber.acall(
-            previous_node_image_context=previous_node_image_context,
             current_node_image=current_node_image,
-            next_node_image_context=next_node_image_context,
             current_node_pictures=current_node_pictures,
             current_node_picture_indices=current_node_picture_indices,
         )
@@ -160,34 +150,25 @@ class OCRNode:
         self.module = module or Module()
 
     def dispatch(self, state: State) -> list[Send] | str:
-        """Fan out one worker per segment, passing its neighbours as read-only context."""
+        """Fan out one worker per segment. Each page is transcribed in isolation: a node
+        split across a page break is healed downstream by the seam merger, which works on
+        the extracted node text rather than the page image, so neighbour page images buy
+        the transcriber nothing here — dropping them cuts the per-call image payload from
+        three pages to one."""
         segments = state.get("segments", [])
         if not segments:
             return "ocr_collect"
-        return [
-            Send("ocr_worker", {
-                "segment": seg,
-                "previous": segments[i - 1] if i > 0 else None,
-                "next": segments[i + 1] if i < len(segments) - 1 else None,
-            })
-            for i, seg in enumerate(segments)
-        ]
+        return [Send("ocr_worker", {"segment": seg}) for seg in segments]
 
     async def worker(self, state: dict) -> dict:
         """Transcribe one segment's page image into markdown."""
         segment: Segment = state["segment"]
-        previous: Segment | None = state.get("previous")
-        following: Segment | None = state.get("next")
-
         pictures = segment.pictures
         prediction = await self.module.aforward(
             current_node_image=load_dspy_image(segment.image_path),
             current_node_picture_indices=[p.index for p in pictures],
-            previous_node_image_context=load_dspy_image(previous.image_path) if previous else None,
-            next_node_image_context=load_dspy_image(following.image_path) if following else None,
             current_node_pictures=[load_dspy_image(p.image_path) for p in pictures] or None,
         )
-
         return {"ocr_results": [(segment.index, prediction.current_node_content)]}
 
     def collect(self, state: State) -> dict:
