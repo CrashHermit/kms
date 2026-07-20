@@ -46,6 +46,14 @@ def _dspy():
         def __init__(self, **k):
             self.__dict__.update(k)
 
+    class Example:
+        def __init__(self, **k):
+            self.__dict__.update(k)
+
+        def with_inputs(self, *keys):
+            self.__dict__["_input_keys"] = set(keys)
+            return self
+
     class LM:
         def __init__(self, *a, **k):
             pass
@@ -54,6 +62,7 @@ def _dspy():
     m.Signature = Signature
     m.Module = Module
     m.Prediction = Prediction
+    m.Example = Example
     m.LM = LM
     m.InputField = lambda *a, **k: None
     m.OutputField = lambda *a, **k: None

@@ -25,6 +25,7 @@ from langgraph.types import Send
 
 from .state import State, EntityType, EntityRole
 from .llm import text_lm
+from . import capture
 
 # Roles the LLM may assign, by entity type. The statement comes first; the secondary
 # role (proof for theorems, solution for problems) covers the rest.
@@ -197,5 +198,20 @@ class EntityAttributorNode:
                 if first is not None:
                     entity.number = first.number
                     entity.instruction = first.instruction
+
+            # Capture a role-labelling example (inputs = type + member contents, output
+            # = the final roles). The roles are post-split, so marker-delimited entities
+            # yield high-quality labels for the role signature — not just LLM calls.
+            if capture.enabled() and secondary and len(entity.members) > 1:
+                contents = [
+                    (node_by_id[m.node_id].content or "")
+                    for m in entity.members if m.node_id in node_by_id
+                ]
+                if len(contents) == len(entity.members):
+                    capture.record(
+                        "entity_attributor",
+                        {"entity_type": entity.type.value, "members": contents},
+                        {"roles": [m.role.value for m in entity.members if m.role]},
+                    )
 
         return {"entities": state.get("entities", [])}
