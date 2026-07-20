@@ -36,6 +36,7 @@ from .seam_merger import SeamMergerNode
 from .problem_refiner import ProblemRefinerNode
 from .instruction_governor import InstructionGovernorNode
 from .entity_grouper import EntityGrouperNode
+from .entity_attributor import EntityAttributorNode
 
 
 def build_graph():
@@ -47,6 +48,7 @@ def build_graph():
     problem = ProblemRefinerNode()
     governor = InstructionGovernorNode()
     entity = EntityGrouperNode()
+    attributor = EntityAttributorNode()
 
     g = StateGraph(State)
 
@@ -67,6 +69,8 @@ def build_graph():
     g.add_node("governor_collect", governor.collect)
     g.add_node("entity_grouper_worker", entity.worker)
     g.add_node("entity_grouper_collect", entity.collect)
+    g.add_node("entity_attributor_worker", attributor.worker)
+    g.add_node("entity_attributor_collect", attributor.collect)
 
     # A stage's dispatch is a conditional edge off the previous collect: it either
     # fans out Sends to the worker or short-circuits straight to its own collect.
@@ -93,12 +97,17 @@ def build_graph():
     g.add_conditional_edges("problem_refiner_collect", governor.dispatch, ["governor_worker", "governor_collect"])
     g.add_edge("governor_worker", "governor_collect")
 
-    # Entity grouping: gather def/thm across dumb-greedy windows, wrap problems 1:1,
-    # reconcile cross-window spans into the sparse `entities` overlay.
+    # Entity grouping: gather def/thm/example spans across dumb-greedy windows, wrap
+    # atomic problems 1:1, reconcile cross-window spans into the sparse `entities` overlay.
     g.add_conditional_edges("governor_collect", entity.dispatch, ["entity_grouper_worker", "entity_grouper_collect"])
     g.add_edge("entity_grouper_worker", "entity_grouper_collect")
 
-    g.add_edge("entity_grouper_collect", END)
+    # Entity attribution (Stage 2): label member roles (statement/proof/solution) and
+    # lift number/instruction onto the entities.
+    g.add_conditional_edges("entity_grouper_collect", attributor.dispatch, ["entity_attributor_worker", "entity_attributor_collect"])
+    g.add_edge("entity_attributor_worker", "entity_attributor_collect")
+
+    g.add_edge("entity_attributor_collect", END)
 
     return g.compile()
 
@@ -137,7 +146,16 @@ def _write_entities(entities, output_dir: Path) -> Path:
 
     path = Path(output_dir) / "entities.json"
     payload = [
-        {"id": e.id, "type": e.type.value, "members": e.members}
+        {
+            "id": e.id,
+            "type": e.type.value,
+            "number": e.number,
+            "instruction": e.instruction,
+            "members": [
+                {"node_id": m.node_id, "role": m.role.value if m.role else None}
+                for m in e.members
+            ],
+        }
         for e in entities
     ]
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")

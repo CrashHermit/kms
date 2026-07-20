@@ -46,7 +46,23 @@ class EntityType(StrEnum):
     (AutoMathKG's taxonomy). Distinct from NodeType, which is document structure."""
     DEFINITION = "definition"
     THEOREM = "theorem"      # subsumes proposition, corollary, lemma
-    PROBLEM = "problem"
+    PROBLEM = "problem"      # atomic exercises (wrapped 1:1) and gathered worked examples
+
+
+class EntityRole(StrEnum):
+    """The role a member node plays within its entity — the attribute the Stage 2
+    pass assigns (AutoMathKG's bodylist action labels)."""
+    STATEMENT = "statement"  # the definition/theorem/problem statement (all types)
+    PROOF = "proof"          # theorem only, repeatable
+    SOLUTION = "solution"    # problem only, repeatable
+
+
+@dataclass
+class Member:
+    """One member node of an entity, with the role it plays. `role` is None until the
+    Stage 2 attribute pass fills it."""
+    node_id: int
+    role: EntityRole | None = None
 
 
 @dataclass
@@ -54,15 +70,18 @@ class Entity:
     """A math-semantic entity: a typed grouping that references its member nodes by
     id, a sparse overlay on the flat node stream (most nodes belong to no entity).
 
-    v1 carries only identity, type, and membership — no roles/attributes yet.
-    `tail_open`/`head_continuation` are transient reconciliation flags set by the
-    per-window worker for entities at a window edge; the collect step clears them
-    once cross-window continuations have been stitched."""
+    `members` carry roles once the Stage 2 attribute pass runs; `number`/`instruction`
+    are lifted there from the member nodes (problems only). `tail_open`/
+    `head_continuation` are transient reconciliation flags set by the per-window worker
+    for entities at a window edge; the grouper's collect clears them once cross-window
+    continuations have been stitched."""
     type: EntityType
-    members: list[int] = field(default_factory=list)   # node ids, in document order
-    id: int | None = None                              # assigned in collect, document order
-    tail_open: bool = False                            # last run hit window end still gathering
-    head_continuation: bool = False                    # first run continues an entity from a prior window
+    members: list[Member] = field(default_factory=list)  # member nodes in document order
+    id: int | None = None                                # assigned in collect, document order
+    number: str | None = None                            # lifted from the member node (problems)
+    instruction: str | None = None                       # lifted governing lead (problems)
+    tail_open: bool = False                              # last run hit window end still gathering
+    head_continuation: bool = False                     # first run continues an entity from a prior window
 
 
 @dataclass
@@ -132,6 +151,7 @@ class State(TypedDict, total=False):
     problem_results: Annotated[list[tuple[int, str | None]], operator.add]      # (node id, number)
     governance_results: Annotated[list[tuple[int, str]], operator.add]          # (node id, instruction)
     entity_results: Annotated[list[tuple[int, list[Entity]]], operator.add]     # (window index, entities)
+    attribute_results: Annotated[list[tuple[int, list[str]]], operator.add]     # (entity id, role per member)
 
 
 # --- Helpers ---

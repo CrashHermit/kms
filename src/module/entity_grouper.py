@@ -3,19 +3,21 @@ Entity grouping — the higher-level assembly pass that turns the flat node stre
 into a sparse overlay of typed math entities (AutoMathKG's Definition / Theorem /
 Problem), one level above the structural nodes and below the knowledge graph.
 
-Two ways into the `entities` list:
+Two ways into the `entities` list, split by structure rather than by type:
 
-  * Definitions and Theorems are *gathered* from runs of structural nodes. This is
-    the genuinely-hard case (ambiguous boundaries, multi-node spans), so it uses an
-    LLM anchor-and-gather pass. The stream is cut into dumb-greedy windows of whole
-    nodes (a block is never split; the budget is soft, so one oversized node still
-    forms a window). Each window is judged independently — the parallel fan-out — with
-    read-only previous/next context so an entity that spills over a window edge can be
-    flagged. A single-threaded reconciler then stitches those cross-window spans.
+  * Unbounded multi-node spans — Definitions, Theorems, and worked Examples (typed
+    `problem`) — are *gathered* from runs of structural nodes. This is the genuinely-
+    hard case (ambiguous boundaries, spans that cross pages), so it uses an LLM
+    anchor-and-gather pass. The stream is cut into dumb-greedy windows of whole nodes
+    (a block is never split; the budget is soft, so one oversized node still forms a
+    window). Each window is judged independently — the parallel fan-out — with read-only
+    previous/next context so an entity that spills over a window edge can be flagged. A
+    single-threaded reconciler then stitches those cross-window spans.
 
-  * Problems are already atomic — the extractor emits one cohesive `problem` node per
-    problem — so they need no gathering. They are wrapped 1:1 into Problem entities
-    mechanically in the collect step, no LLM involved.
+  * Atomic exercises are already bounded — the extractor emits one cohesive `problem`
+    node each — so they need no gathering. They are wrapped 1:1 into Problem entities
+    mechanically in the collect step, no LLM involved. (Worked Examples are the OTHER
+    kind of Problem: unbounded, so they take the gathered path above.)
 
 v1 does entity *extraction* only: an entity is `{id, type, members}`. Roles
 (statement/proof/solution/instruction), numbers, and the graph edges come later.
@@ -30,7 +32,7 @@ import dspy
 from pydantic import BaseModel, Field
 from langgraph.types import Send
 
-from .state import State, ASTNode, Entity, EntityType, NodeType
+from .state import State, ASTNode, Entity, EntityType, Member, NodeType
 from .llm import text_lm
 
 # Soft token budgets (approximate: ~4 chars/token). The current-window budget caps
@@ -39,8 +41,10 @@ CURRENT_BUDGET = 2000
 PREV_BUDGET = 500
 NEXT_BUDGET = 500
 
-# The two types the LLM gathers. Problems are wrapped mechanically, not gathered.
-_GATHERED = {EntityType.DEFINITION.value, EntityType.THEOREM.value}
+# The types the LLM gathers from runs of prose nodes: definitions, theorems, and
+# worked examples (typed `problem`). Atomic `problem` NODES (exercises) are not
+# gathered — they are wrapped 1:1 in collect — and are excluded from gathered spans.
+_GATHERED = {EntityType.DEFINITION.value, EntityType.THEOREM.value, EntityType.PROBLEM.value}
 
 
 def _est_tokens(node: ASTNode) -> int:
@@ -56,7 +60,7 @@ class WindowNode(BaseModel):
 
 class EntitySpan(BaseModel):
     """An entity the LLM found, as an inclusive span of local positions in the window."""
-    type: str = Field(description="Entity type: exactly 'definition' or 'theorem'.")
+    type: str = Field(description="Entity type: exactly 'definition', 'theorem', or 'problem'.")
     start: int = Field(description="First current-window position of the entity (inclusive).")
     end: int = Field(description="Last current-window position of the entity (inclusive).")
     continues_before: bool = Field(
@@ -71,9 +75,10 @@ class EntitySpan(BaseModel):
 
 class Signature(dspy.Signature):
     r"""
-    Find the mathematical Definitions and Theorems in a run of textbook nodes and
-    return each as a span of node positions. This is anchor-and-gather: anchor on a
-    cue, gather the run of nodes that belongs to the entity, stop at its boundary.
+    Find the mathematical Definitions, Theorems, and worked Examples in a run of
+    textbook nodes and return each as a span of node positions. This is
+    anchor-and-gather: anchor on a cue, gather the run of nodes that belongs to the
+    entity, stop at its boundary.
 
     ENTITY TYPES (general, not tied to any one textbook's formatting):
     - definition: a marked, self-contained statement that introduces and fixes the
@@ -81,20 +86,25 @@ class Signature(dspy.Signature):
     - theorem: a marked, self-contained statement asserting a mathematical claim
       presented as established or provable, together with its proof if one is shown.
       This ALSO covers propositions, corollaries, and lemmas — all are `theorem`.
+    - problem: a worked EXAMPLE — a solved problem shown in the exposition, with a
+      problem statement AND a worked-out solution. Emit type `problem` for these.
 
     ANCHOR + GATHER:
-    - Anchor on the node that opens a definition or theorem (its cue/label/lead).
-    - Gather forward from the anchor, including every node that is part of that entity
-      (a theorem's statement plus the nodes of its proof; a definition's statement and
-      any nodes that complete it).
-    - Stop at the entity's boundary: the next definition/theorem anchor, a section
-      header, a problem node, the end of a proof, or a clear return to ordinary
-      narrative that is not part of the statement or proof.
+    - Anchor on the node that opens a definition, theorem, or worked example (its cue).
+    - Gather forward from the anchor, including every node that is part of that entity:
+      a theorem's statement plus the nodes of its proof; a definition's statement and
+      any nodes that complete it; a worked example's statement plus every node of its
+      solution (the solution may run across several nodes — prose, display math, steps).
+    - Stop at the entity's boundary: the next anchor, a section header, an atomic
+      problem node (see below), the end of a proof/solution, or a clear return to
+      ordinary narrative that is not part of the statement, proof, or solution.
 
-    DO NOT EMIT:
-    - problem nodes (type `problem`) — those are handled separately; never span one.
-    - ordinary narrative prose, figures, plain examples, or anything that is not a
-      definition or theorem. If the window has none, return an empty list.
+    DO NOT EMIT / DO NOT SPAN:
+    - Nodes already of type `problem` are ATOMIC exercises, handled separately. Never
+      include such a node in a span and never emit an entity for one. (Worked examples
+      you gather are prose nodes, NOT these pre-typed problem nodes.)
+    - Ordinary narrative prose, figures, or anything that is not a definition, theorem,
+      or worked example. If the window has none, return an empty list.
 
     POSITIONS:
     - Emit spans over current_nodes ONLY, using their `position` values. A span is the
@@ -249,7 +259,6 @@ class EntityGrouperNode:
             next_context=state.get("next_context"),
         )
 
-        ids = [n.id for n in current]
         last = len(current) - 1
         entities: list[Entity] = []
         for span in prediction.entities:
@@ -258,12 +267,17 @@ class EntityGrouperNode:
             # Clamp the LLM's positions into range and keep the span non-empty.
             start = min(max(span.start, 0), last)
             end = min(max(span.end, start), last)
-            member_ids = [i for i in ids[start:end + 1] if i is not None]
+            # Resolve to stable ids, dropping any atomic problem node that slipped into
+            # the span — those are wrapped 1:1 separately and must not be double-counted.
+            member_ids = [
+                n.id for n in current[start:end + 1]
+                if n.id is not None and n.type != NodeType.PROBLEM
+            ]
             if not member_ids:
                 continue
             entities.append(Entity(
                 type=EntityType(span.type),
-                members=member_ids,
+                members=[Member(node_id=i) for i in member_ids],
                 head_continuation=bool(span.continues_before),
                 tail_open=bool(span.continues_after),
             ))
@@ -286,7 +300,7 @@ class EntityGrouperNode:
 
         # 3. Wrap each atomic problem node 1:1 (no LLM, no gathering).
         problems = [
-            Entity(type=EntityType.PROBLEM, members=[n.id])
+            Entity(type=EntityType.PROBLEM, members=[Member(node_id=n.id)])
             for n in nodes if n.type == NodeType.PROBLEM and n.id is not None
         ]
 
@@ -294,7 +308,7 @@ class EntityGrouperNode:
         #    first member's position in the stream, and assign stream-order ids.
         position = {n.id: i for i, n in enumerate(nodes)}
         combined = gathered + problems
-        combined.sort(key=lambda e: position.get(e.members[0], len(nodes)) if e.members else len(nodes))
+        combined.sort(key=lambda e: position.get(e.members[0].node_id, len(nodes)) if e.members else len(nodes))
         for i, entity in enumerate(combined):
             entity.id = i
             entity.tail_open = False
