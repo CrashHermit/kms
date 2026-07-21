@@ -1,4 +1,4 @@
-"""
+r"""
 Correction pass for the Mistral OCR front-end.
 
 Mistral transcribes a page faithfully most of the time, but it makes occasional
@@ -21,6 +21,13 @@ A **divergence guard** (`_within_tolerance`) keeps it safe: a "correction" whose
 swings far from the original is treated as a runaway rewrite (or a truncation) and
 rejected — we keep the original transcription rather than trust a wholesale rewrite. Real
 fixes are small.
+
+The corrector also **normalizes math delimiters** to the pipeline's dollar convention so the
+extractor and every downstream stage see uniform math. The unambiguous escape-sequence
+delimiters (`\[ … \]`, `\( … \)`) are swapped deterministically by `_normalize_math_delimiters`
+on every page (whether or not the vision correction was accepted); wrapping display equations the
+OCR left *undelimited* needs to know what is display math, so that is asked of the vision model in
+the prompt.
 
 The corrector is always-rewrite: it returns the whole corrected page. A cheaper
 conditional-output variant (emit a sentinel when the page is already clean, to skip the
@@ -48,6 +55,22 @@ def _within_tolerance(original: str, corrected: str) -> bool:
     return lo <= len(corrected) <= hi
 
 
+# LaTeX math-delimiter escape sequences → the pipeline's dollar convention. `\[`/`\]` and
+# `\(`/`\)` are unambiguous math delimiters (they do not occur in prose), so a straight,
+# whitespace-preserving token swap is safe and deterministic.
+_DELIMITER_SWAPS = ((r"\[", "$$"), (r"\]", "$$"), (r"\(", "$"), (r"\)", "$"))
+
+
+def _normalize_math_delimiters(text: str) -> str:
+    """Rewrite LaTeX math delimiters to `$`/`$$`: `\\[ … \\]` → `$$ … $$` (display) and
+    `\\( … \\)` → `$ … $` (inline). Runs on every proofread page — whether or not the vision
+    correction was accepted — so display math is uniform for the extractor and downstream
+    stages. Bare, *undelimited* display blocks are handled in the prompt, not here."""
+    for old, new in _DELIMITER_SWAPS:
+        text = text.replace(old, new)
+    return text
+
+
 class Signature(dspy.Signature):
     r"""
     You are a meticulous mathematics proofreader. You are given the image of a single
@@ -55,8 +78,10 @@ class Signature(dspy.Signature):
     return a corrected transcription.
 
     Correct ONLY genuine transcription errors — do not rewrite, restructure, reformat,
-    or re-transcribe text that already matches the image. Preserve the transcription's
-    wording, structure, and markdown exactly except where it disagrees with the image.
+    or re-transcribe text that already matches the image (the one deliberate exception is
+    math-delimiter normalization, described under LATEX FORMAT below). Preserve the
+    transcription's wording, structure, and markdown exactly except where it disagrees
+    with the image.
 
     Scrutinize mathematical notation token by token against the image, since that is
     where transcription errors hide:
@@ -65,11 +90,16 @@ class Signature(dspy.Signature):
     - subscripts/superscripts: attach each to the correct symbol (`f(x_1)`, not `f(x)_1`);
     - operators, relations, delimiters, and Greek letters.
 
-    LATEX FORMAT: keep all math in LaTeX — single dollars `$ $` for inline, double
-    `$$ $$` for display — matching the image.
+    LATEX FORMAT — keep all math in LaTeX and normalize its delimiters to dollar signs:
+    inline math in single dollars `$ … $`, display math in double `$$ … $$`. This delimiter
+    normalization is required (the one allowed exception to "do not reformat"); change only
+    the delimiters, never the math content:
+    - convert `\( … \)` to `$ … $` and `\[ … \]` to `$$ … $$`;
+    - wrap any display equation the transcription left undelimited — a standalone equation
+      line, or a bare `\begin{array}` / `aligned` / `cases` / `equation` block — in `$$ … $$`.
 
-    Return the full corrected markdown for the page and nothing else. If the
-    transcription is already faithful, return it unchanged.
+    Return the full corrected markdown for the page and nothing else. If the transcription
+    is already faithful (apart from any delimiter normalization above), return it unchanged.
     """
 
     page_image: dspy.Image = dspy.InputField(
@@ -122,6 +152,9 @@ class CorrectorNode:
         )
         corrected = prediction.corrected
         final = corrected if _within_tolerance(segment.content, corrected) else segment.content
+        # Normalize math delimiters on the chosen text — even when the correction was
+        # rejected, so a kept-original page still gets uniform `$$`/`$` delimiters.
+        final = _normalize_math_delimiters(final)
         return {"correction_results": [(segment.index, final)]}
 
     def collect(self, state: State) -> dict:

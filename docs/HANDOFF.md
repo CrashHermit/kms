@@ -5,7 +5,12 @@ Knowledge-management pipeline that turns a math textbook PDF into a structured
 AutoMathKG's model (arXiv:2505.13406). This doc is the pick-up point for the next
 session.
 
-**Working branch:** `claude/design-plan-review-7zs2ii` (all work below is pushed there).
+**Working branch:** `claude/handoff-extra-testing-9taw2m`. The shipped work (extractor
+context-bleed fix, multi-column validation, corrector delimiter normalization) is committed
+and pushed there. **An in-progress entity-layer redesign — the Problem finder
+(`src/module/problem_finder.py`) and an OCR header/footer change — is validated but NOT yet
+committed** (see "In progress: entity-layer redesign" below; the container is ephemeral, so it
+must be committed to reach the next session).
 
 ---
 
@@ -110,6 +115,12 @@ Phase 2 — flat node stream (backbone = `nodes`, global ordered list)
    a math-only gate or a conditional-output router for simplicity and robustness; the divergence
    guard is the safety net. A cheaper conditional-output ("emit a sentinel when clean") variant
    is a drop-in future optimization behind the same interface. `CORRECTOR_MODEL` swaps the model.
+   The corrector also **normalizes math delimiters** to the pipeline's `$`/`$$` convention so all
+   downstream stages see uniform math: a deterministic token swap (`\[\]`→`$$`, `\(\)`→`$`, in
+   `_normalize_math_delimiters`) runs on every page regardless of whether the vision correction was
+   accepted, and the prompt asks the model to wrap any display equation the OCR left undelimited
+   (bare `\begin{array}`/aligned/cases). Validated on the Oohama two-column paper (174 raw
+   delimiters → 0, all array blocks fenced).
 4. **The docling-geometry re-architecture was considered and rejected.** The original plan was
    to use docling's layout geometry to drive segmentation and kill the "duplication on complex
    layouts" artifact. A measurement (below) showed that artifact is **not systemic** — 0
@@ -124,7 +135,11 @@ Phase 2 — flat node stream (backbone = `nodes`, global ordered list)
 6. **Typing lives only at the entity layer.** The extractor stays structural. Grouping-cohesion
    happens where it's reliable: **atomic exercises stay cohesive at the extractor** (one node →
    wrapped 1:1); **worked Examples and Def/Thm are unbounded spans gathered at the entity
-   layer**. Split by *structure*, not by type.
+   layer**. Split by *structure*, not by type. **The extractor parses each page in isolation — no
+   neighbour context.** Feeding neighbour pages as context made the LLM bleed their content into
+   the current page's node list (measured ~25% duplicate entities; see Validation). Cross-page
+   continuations are healed by the seam merger and shared instruction leads are attached
+   positionally by the instruction governor, so the extractor needs only its own page.
 7. **Dumb-greedy windows** over the flat stream; the LLM emits window-local positions and code
    resolves them to stable ids. **Reconciler = single-threaded post-pass** over the ordered
    entity list, merging `tail_open` ↔ `head_continuation` spans across windows.
@@ -161,6 +176,154 @@ Prior entity-layer validation (still valid): OpenStax continuity § — 13 entit
 roles 13/13; Judson polynomials § — 9 entities, types 9/9 (theorem-subsumption confirmed:
 Corollary/Proposition/Lemma → Theorem), roles 9/9.
 
+### Broadening run — Hefferon *Linear Algebra*, Ch.3 §III.2–§IV.2 (this session)
+
+First **new-book** run since the front-end switch (Next-steps #1). Twelve pages (0-based
+228–239) covering definitions, theorems, a Lemma + Corollary, run-in proofs, worked Examples,
+and two dense Exercises sets — all three entity types and all three roles, matrix-heavy math.
+End-to-end in ~155s → `document.md` + 63 entities. Two takeaways:
+
+- **Good:** OCR reading order, matrix/LaTeX fidelity, and theorem-subsumption held; the corrector
+  left content clean (no false rewrites, guard never misfired). Types and role splits looked right.
+- **Defect found and fixed — extractor context bleed.** The first run produced ~25% duplicate
+  entities: **13 extra Problem entities** (duplicated numbers 1.8, 2.12–2.22, 2.16 tripled) plus a
+  malformed Theorem (`id=60`, two statements + four proofs = a duplicated statement/proof pair).
+  Root cause, isolated by measurement:
+  - **Bisected stage-by-stage:** page-local marker counts were `(1,1)` after OCR and after the
+    corrector, jumped to `(2,2)` after the **extractor**, and persisted through seam-merge/flatten.
+  - **Mechanism = context bleed, not self-repeat.** The extractor was fed each segment's neighbours
+    as `previous_node_context` / `next_node_context`. Across 44 extractions **with** context there
+    were **0 self-repeat** events but frequent neighbour bleed (a segment emitting a neighbour's
+    content as its own nodes); the seam merger only heals boundary splits and never dedupes, so the
+    bleed flowed into the entity layer. Since self-repeat never happens, a segment can only emit a
+    neighbour's *content* via those context inputs.
+  - **Fix:** the extractor now parses each segment **in isolation — no neighbour context** (see
+    Key design decisions #6). Cross-page continuations are already healed by the seam merger and
+    shared instruction leads are attached positionally by the instruction governor, so the context
+    was only advisory. Re-run on the same 12 pages: **63→53 entities, duplicate problem numbers
+    12→0**, the malformed Theorem gone, content markers `2→1`, and ~3× faster (155s→45s).
+  - **Note on the earlier "duplication ≈ 0" result:** that measured the *OCR front-end's*
+    reading-order/duplication (Mistral vs the old vision OCR) and still holds — Mistral's page
+    markdown was clean. This defect was at a *different stage* (the extractor LLM's context inputs),
+    which the 11-page front-end study never exercised.
+
+### Multi-column run — Oohama, *On Two Strong Converse Theorems for DMCs* (this session)
+
+Closes the long-standing **true multi-column** gap. A genuinely two-column IEEEtran
+information-theory paper (arXiv:1008.1140, 5 pages) — dense Theorem/Lemma/Property/Proof
+structure and heavy min/max display math, with strict column-major reading order (whole
+left column, then whole right). End-to-end → `document.md` + 15 entities. Verified against
+the page images:
+
+- **Reading order: perfect.** On every page Mistral read the entire left column then the
+  entire right column with **no cross-column interleaving** — e.g. page 3: Property 2 →
+  Theorem 1 → Property 3 → Proof (all left), then eqs (3)/(4) → Theorem 2 → Theorem 3 → §4
+  (all right), in exactly that order. This is the artifact the docling-geometry re-architecture
+  feared; Mistral handles it server-side.
+- **No duplication** (the extractor context-bleed fix holds on dense two-column pages).
+- **Entity typing correct.** 13 theorem-type entities (Property 1–3 + Theorem 1–4 + Lemma 1–6,
+  all subsumed to Theorem) + 2 definition clusters, **0 spurious Problems** (correct — a paper
+  has no exercises). Statement/proof role split worked (4 entities carry proof members).
+- **Two minor issues (not blockers):**
+  1. *Coarse grouping* — the entity grouper bundles a run of adjacent `define X` display-math
+     blocks into one multi-member Definition (6 statement members), and a Property + its long
+     proof becomes one entity with ~10 members (one member per structural node). Defensible but
+     coarse; revisit grouping granularity if downstream needs finer entities.
+  2. *Inconsistent math delimiters* — **found and fixed.** Complex multi-line display equations
+     arrived as raw `\[ … \]` / `\( … \)` / bare `\begin{array}` from OCR while simpler blocks used
+     `$$`. The **corrector now normalizes delimiters** (see Key design decisions #3): a
+     deterministic swap (`\[\]`→`$$`, `\(\)`→`$`) runs on every page, and the vision prompt wraps
+     any display equation the OCR left undelimited. Re-run on the same paper: **174 raw delimiters
+     → 0**, all `\begin{array}` blocks wrapped in `$$`, fences balanced. Side benefit: cleaner
+     display blocks let the grouper separate the `define X` cluster (definitions 2→8), softening
+     issue #1 above.
+
+---
+
+## In progress: entity-layer redesign (this session — NOT yet committed)
+
+The current `entity_grouper` (windowed span-extraction) + `entity_attributor` (one combined
+role prompt) over-merge and conflate concerns. Following AutoMathKG more closely (§4.3 in
+`docs/automathkg/markdown.md`: rule-based **structural** extraction + **per-attribute** LLM
+augmentation — 12 prompt templates in Appendix C), we are rebuilding the entity layer from the
+ground up. Design was worked out in detail this session; only the Problem finder is built.
+
+**Target architecture (decided; mostly not built):**
+- **Extractor → pure structural.** Drop the math-specific `problem`/`instruction` node types; the
+  extractor emits only general document structure (paragraph/math/list/header/table/image/caption).
+  Makes it domain-agnostic (reusable beyond math) and honours "typing lives at the entity layer."
+  NOT DONE.
+- **Grouper → three per-type finders** (Definition / Theorem / Problem), each a focused cursor-walk
+  over the structural stream. Only the **Problem finder is built**. When all three run they need
+  overlap arbitration (entities are a NON-overlapping overlay) — deferred while one finder exists.
+- **Problem = worked examples AND exercises, unified** (AutoMathKG's model: same type, different
+  place in the text). **Solution-agnostic** — a problem is a posed task whether or not a solution
+  is shown ("left to the reader" = a Problem with an empty solution).
+- **Attributor → per-attribute LLM prompts** (AutoMathKG Step-2 style): statement/solution/proof
+  roles, `number`, `instruction`, and later `title`/`field`/`bodylist`/`refs`, each its own prompt.
+  NOT BUILT.
+- **Instructions → a later attribute**, not a node type and not a finder job. A prompt over the
+  found Problems + preceding context picks the governing lead — carry over today's governor's
+  batched-pool insight (judge a whole run against a candidate lead in one call; not every problem
+  in the run is governed).
+- **LLM-only at this stage** — no deterministic shortcuts (regex numbers, marker splits); those are
+  future optimizations behind the same interface.
+
+**Built — `src/module/problem_finder.py` (validated standalone, NOT wired in):**
+- A cursor-walk over the flat structural node stream. Sparse **overlay**: emits Problem entities
+  referencing member node-ids; nodes are never mutated or renumbered.
+- From the cursor, take a token look-ahead window (`LOOKAHEAD_BUDGET=2000`); the LLM returns
+  problems as position spans.
+- **Advance rule — elastic grow, structural (no LLM self-report):** bank every problem a node is
+  seen to follow (bounded = ends before the window edge) and move the cursor just past the last
+  bounded one; if the *only* problem reaches the window edge it may continue, so **grow** the
+  window (double, capped at `MAX_LOOKAHEAD_BUDGET=8000`) and re-read — never rewind, no size guard.
+  Growth terminates at the document end, so a problem larger than the window is captured whole, not
+  truncated. (We iterated to this: fixed-window+rewind needed a size guard that truncated long
+  problems; elastic grow removed both.)
+- **Prompt commitments:** solution-agnostic; START the span at the problem's OWN label/heading node
+  ("Example 6.7", "6.3 Check Your Understanding") — a problem's own label ≠ a section heading;
+  subparts kept together (`12a/b/c` = one problem); distinct numbers = distinct problems; a worked
+  example's internal Strategy/Solution/Significance headers are interior (kept). No instructions,
+  no roles (deferred to the attributor).
+
+**Validation (standalone; `scratch_*` harnesses are gitignored — rebuild per below):**
+- Hefferon §III.2 (5 pages, exercises + terse examples): **24 problems** (2 examples + 22
+  exercises); multi-node example gathered whole; Definition/Lemma/Proof/prose/headers excluded; no
+  duplication; document order.
+- OpenStax University Physics ch.6 (5 pages, long worked examples): long multi-node examples
+  (17–24 nodes, incl. the cross-page Example 6.9) gathered whole. **Budget-invariance test** over
+  look-ahead budgets [250,600,1200,2500]: elastic-grow captures long examples whole (the earlier
+  size-guard version truncated them); **7/8 problems byte-identical across all budgets**, the only
+  wobble being one example's Significance-tail by ±2 nodes — **inherent LLM boundary judgment on a
+  fuzzy transition, not the algorithm** (it is not budget-monotonic). Don't chase byte-invariance.
+
+**Also built (uncommitted) — OCR page-chrome removal.** `mistral_ocr.ocr_pdf` now sends
+`extract_header: True` + `extract_footer: True`, so Mistral splits running heads / page numbers /
+footers into separate response fields (which we don't read) instead of leaving them inline in the
+page markdown. Validated on University Physics: "Chapter 6 | …" running heads vanished from the
+node stream with **no legitimate headings lost**, and it removed a running head that had been
+splitting an example mid-sentence. Requires OCR 2512+ (`mistral-ocr-latest` resolves to it). A
+general front-end win (cleaner `document.md` too), independent of the finder.
+
+**Rebuild the finder test harness** (scratch is gitignored): OCR → corrector → extractor a
+problem-rich page range, `flatten_segments` to a node stream, neutralize any `problem`/
+`instruction` node types to `paragraph` (to simulate the pure-structural extractor), then
+`await problem_finder.find_problems(nodes)`, and print each entity's member node-ids + content
+heads. Bridge the key with `MISTRAL_API_KEY = MISTRAL_OCR_API` if needed (the code already falls
+back). Good test PDFs: Hefferon Linear Algebra (exercises), OpenStax University Physics (long
+worked examples) — both fetched via the proxy this session.
+
+**To continue the redesign (next session):**
+1. Commit the finder + the OCR header/footer change (both validated; held this session).
+2. Wire the Problem finder in: make the extractor pure-structural, route the finder into
+   `pipeline.py`, and fold `problem_refiner` (number → attribute) and `instruction_governor`
+   (→ instruction attribute) into the per-attribute attributor.
+3. Build the Definition and Theorem finders (same cursor-walk shape, per-type prompts); add
+   overlap arbitration when all three run.
+4. Rebuild the attributor as per-attribute prompts (roles, number, instruction, then
+   title/field/bodylist/refs), mirroring AutoMathKG Appendix C.
+
 ---
 
 ## Environment & how to run
@@ -177,8 +340,10 @@ Corollary/Proposition/Lemma → Theorem), roles 9/9.
 - `uv sync --extra mistral` — adds `pypdfium2` + `pillow`, used only to render page images for
   the correction pass.
 
-**Tests:** `PYTHONPATH=src uv run pytest -q` (27 tests). `tests/conftest.py` stubs
+**Tests:** `PYTHONPATH=src uv run pytest -q` (30 tests). `tests/conftest.py` stubs
 dspy/pydantic/langgraph *only if absent*, so the suite runs with or without the real deps.
+(The Problem finder has no unit tests yet — it is validated via the throwaway harness described
+in the redesign section.)
 
 **Run the pipeline:**
 ```bash
@@ -202,17 +367,38 @@ PYTHONPATH=src uv run python -c "import asyncio; from module.pipeline import run
 - **Figure noise-filtering is not applied.** The old `image_filter` stage was docling-only and
   was removed; Mistral ignores decorative junk (covers/icons → 0 figures in testing) but a
   front-matter page can still yield thumbnail images — spot-check if you process front matter.
-- **Validation corpus is single-column, 11 pages, two books.** No true multi-column coverage;
-  broaden before trusting on new layouts.
+- **Multi-node proof/solution members are one member per structural node.** A long proof that
+  spans several paragraphs/display-math blocks becomes several `proof` members on one entity (e.g.
+  the Hefferon matrix-mult associativity theorem: statement + 7 proof nodes). This is correct span
+  attribution, not duplication, but if a consumer wants a single proof blob it must join them.
+- **Validation corpus:** 13 pages OpenStax/Judson + 12 pages Hefferon (single-column, three math
+  books) **+ a 5-page true two-column IEEEtran paper (Oohama)**. Multi-column reading order is now
+  covered and clean; the two-column sample is still small (one paper) — widen it before trusting
+  heavily on multi-column, and note a *worked-example/exercise*-heavy two-column book is still
+  untested (the Oohama paper has theorems/proofs but no Problems).
 
 ---
 
 ## Next steps (suggested order)
 
-1. **Broaden extraction validation** — run more sections/books through the full pipeline and
-   inspect `document.md` *and* the node structure (not just `entities.json`). Confirm the
-   corrector's recall/precision holds beyond the 11-page adversarial sample; watch for figure
-   over-extraction on front matter and any correction-pass regressions.
+0. **Entity-layer redesign — the active work.** See "In progress: entity-layer redesign" above.
+   The Problem finder is built and validated but uncommitted and not wired in; the extractor is
+   still typing `problem`/`instruction`. First: commit the finder + OCR header/footer change, then
+   wire the finder in (pure-structural extractor), then the Definition/Theorem finders and the
+   per-attribute attributor. This supersedes the old `entity_grouper`/`entity_attributor`.
+
+1. **Broaden extraction validation** — *in progress.* First new-book run (Hefferon Linear
+   Algebra, this session) is done; it surfaced and **fixed** the extractor context-bleed defect
+   (see Validation). Keep broadening: more sections/books, inspecting `document.md` *and* node
+   structure (not just `entities.json`); watch for figure over-extraction on front matter and
+   correction-pass regressions. **True multi-column reading order is now validated** (Oohama
+   two-column paper, clean) — but on one small paper with no Problems; widen with a two-column
+   *worked-example/exercise* book. Now that the extractor parses each page in isolation, also
+   spot-check that classification quality at page boundaries did not regress (the removed context
+   was advisory for boundary disambiguation; the seam merger should still stitch splits correctly).
+   One follow-up remains from the two-column run: revisit **entity-grouping granularity** (long
+   proofs become one member per node; some `define X` runs still bundle). (Display-math delimiter
+   normalization — the other follow-up — is **done**, in the corrector.)
 2. **Graph tier** (the big next piece) — relationship/edge discovery between entities
    (AutoMathKG's 9 tactic labels), then MathVD (embeddings/vector DB) for fusion and the
    Math-LLM completion step. `neo4j` is already a dep.
@@ -224,6 +410,11 @@ PYTHONPATH=src uv run python -c "import asyncio; from module.pipeline import run
 - **Ephemeral container:** the scratchpad and any ad-hoc install do **not** survive a restart;
   only committed files do. New environment secrets are injected **at session start**, so a key
   added mid-session isn't visible until a fresh session.
+- **Mistral key env-var name:** the hosted environment injects the Mistral secret as
+  `MISTRAL_OCR_API`, but `.env.example` and the code's primary name is `MISTRAL_API_KEY`.
+  `mistral_ocr._require_key` now reads `MISTRAL_API_KEY` first and **falls back to
+  `MISTRAL_OCR_API`**, so it runs in either place; a local `.env` should still use
+  `MISTRAL_API_KEY`. (`OPENROUTER_API_KEY` and `DEEPSEEK_API_KEY` match in both.)
 - **Proxy port changes on restart:** outbound HTTPS goes through `$HTTPS_PROXY` (a
   `127.0.0.1:<port>` that changes when the worker restarts). httpx/litellm pick up the proxy +
   CA bundle from the environment (`SSL_CERT_FILE`), same for the Mistral, OpenRouter, and

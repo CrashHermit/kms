@@ -14,6 +14,10 @@ data/compiled/
 # Large test data
 test.pdf
 
+# Ad-hoc validation run artifacts (scratch)
+out/
+scratch_*
+
 # Secrets
 .env
 
