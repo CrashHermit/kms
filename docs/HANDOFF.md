@@ -5,7 +5,12 @@ Knowledge-management pipeline that turns a math textbook PDF into a structured
 AutoMathKG's model (arXiv:2505.13406). This doc is the pick-up point for the next
 session.
 
-**Working branch:** `claude/design-plan-review-7zs2ii` (all work below is pushed there).
+**Working branch:** `claude/handoff-extra-testing-9taw2m`. The shipped work (extractor
+context-bleed fix, multi-column validation, corrector delimiter normalization) is committed
+and pushed there. **An in-progress entity-layer redesign — the Problem finder
+(`src/module/problem_finder.py`) and an OCR header/footer change — is validated but NOT yet
+committed** (see "In progress: entity-layer redesign" below; the container is ephemeral, so it
+must be committed to reach the next session).
 
 ---
 
@@ -235,6 +240,92 @@ the page images:
 
 ---
 
+## In progress: entity-layer redesign (this session — NOT yet committed)
+
+The current `entity_grouper` (windowed span-extraction) + `entity_attributor` (one combined
+role prompt) over-merge and conflate concerns. Following AutoMathKG more closely (§4.3 in
+`docs/automathkg/markdown.md`: rule-based **structural** extraction + **per-attribute** LLM
+augmentation — 12 prompt templates in Appendix C), we are rebuilding the entity layer from the
+ground up. Design was worked out in detail this session; only the Problem finder is built.
+
+**Target architecture (decided; mostly not built):**
+- **Extractor → pure structural.** Drop the math-specific `problem`/`instruction` node types; the
+  extractor emits only general document structure (paragraph/math/list/header/table/image/caption).
+  Makes it domain-agnostic (reusable beyond math) and honours "typing lives at the entity layer."
+  NOT DONE.
+- **Grouper → three per-type finders** (Definition / Theorem / Problem), each a focused cursor-walk
+  over the structural stream. Only the **Problem finder is built**. When all three run they need
+  overlap arbitration (entities are a NON-overlapping overlay) — deferred while one finder exists.
+- **Problem = worked examples AND exercises, unified** (AutoMathKG's model: same type, different
+  place in the text). **Solution-agnostic** — a problem is a posed task whether or not a solution
+  is shown ("left to the reader" = a Problem with an empty solution).
+- **Attributor → per-attribute LLM prompts** (AutoMathKG Step-2 style): statement/solution/proof
+  roles, `number`, `instruction`, and later `title`/`field`/`bodylist`/`refs`, each its own prompt.
+  NOT BUILT.
+- **Instructions → a later attribute**, not a node type and not a finder job. A prompt over the
+  found Problems + preceding context picks the governing lead — carry over today's governor's
+  batched-pool insight (judge a whole run against a candidate lead in one call; not every problem
+  in the run is governed).
+- **LLM-only at this stage** — no deterministic shortcuts (regex numbers, marker splits); those are
+  future optimizations behind the same interface.
+
+**Built — `src/module/problem_finder.py` (validated standalone, NOT wired in):**
+- A cursor-walk over the flat structural node stream. Sparse **overlay**: emits Problem entities
+  referencing member node-ids; nodes are never mutated or renumbered.
+- From the cursor, take a token look-ahead window (`LOOKAHEAD_BUDGET=2000`); the LLM returns
+  problems as position spans.
+- **Advance rule — elastic grow, structural (no LLM self-report):** bank every problem a node is
+  seen to follow (bounded = ends before the window edge) and move the cursor just past the last
+  bounded one; if the *only* problem reaches the window edge it may continue, so **grow** the
+  window (double, capped at `MAX_LOOKAHEAD_BUDGET=8000`) and re-read — never rewind, no size guard.
+  Growth terminates at the document end, so a problem larger than the window is captured whole, not
+  truncated. (We iterated to this: fixed-window+rewind needed a size guard that truncated long
+  problems; elastic grow removed both.)
+- **Prompt commitments:** solution-agnostic; START the span at the problem's OWN label/heading node
+  ("Example 6.7", "6.3 Check Your Understanding") — a problem's own label ≠ a section heading;
+  subparts kept together (`12a/b/c` = one problem); distinct numbers = distinct problems; a worked
+  example's internal Strategy/Solution/Significance headers are interior (kept). No instructions,
+  no roles (deferred to the attributor).
+
+**Validation (standalone; `scratch_*` harnesses are gitignored — rebuild per below):**
+- Hefferon §III.2 (5 pages, exercises + terse examples): **24 problems** (2 examples + 22
+  exercises); multi-node example gathered whole; Definition/Lemma/Proof/prose/headers excluded; no
+  duplication; document order.
+- OpenStax University Physics ch.6 (5 pages, long worked examples): long multi-node examples
+  (17–24 nodes, incl. the cross-page Example 6.9) gathered whole. **Budget-invariance test** over
+  look-ahead budgets [250,600,1200,2500]: elastic-grow captures long examples whole (the earlier
+  size-guard version truncated them); **7/8 problems byte-identical across all budgets**, the only
+  wobble being one example's Significance-tail by ±2 nodes — **inherent LLM boundary judgment on a
+  fuzzy transition, not the algorithm** (it is not budget-monotonic). Don't chase byte-invariance.
+
+**Also built (uncommitted) — OCR page-chrome removal.** `mistral_ocr.ocr_pdf` now sends
+`extract_header: True` + `extract_footer: True`, so Mistral splits running heads / page numbers /
+footers into separate response fields (which we don't read) instead of leaving them inline in the
+page markdown. Validated on University Physics: "Chapter 6 | …" running heads vanished from the
+node stream with **no legitimate headings lost**, and it removed a running head that had been
+splitting an example mid-sentence. Requires OCR 2512+ (`mistral-ocr-latest` resolves to it). A
+general front-end win (cleaner `document.md` too), independent of the finder.
+
+**Rebuild the finder test harness** (scratch is gitignored): OCR → corrector → extractor a
+problem-rich page range, `flatten_segments` to a node stream, neutralize any `problem`/
+`instruction` node types to `paragraph` (to simulate the pure-structural extractor), then
+`await problem_finder.find_problems(nodes)`, and print each entity's member node-ids + content
+heads. Bridge the key with `MISTRAL_API_KEY = MISTRAL_OCR_API` if needed (the code already falls
+back). Good test PDFs: Hefferon Linear Algebra (exercises), OpenStax University Physics (long
+worked examples) — both fetched via the proxy this session.
+
+**To continue the redesign (next session):**
+1. Commit the finder + the OCR header/footer change (both validated; held this session).
+2. Wire the Problem finder in: make the extractor pure-structural, route the finder into
+   `pipeline.py`, and fold `problem_refiner` (number → attribute) and `instruction_governor`
+   (→ instruction attribute) into the per-attribute attributor.
+3. Build the Definition and Theorem finders (same cursor-walk shape, per-type prompts); add
+   overlap arbitration when all three run.
+4. Rebuild the attributor as per-attribute prompts (roles, number, instruction, then
+   title/field/bodylist/refs), mirroring AutoMathKG Appendix C.
+
+---
+
 ## Environment & how to run
 
 **Three API keys** (in `.env` — see `.env.example` — or environment secrets):
@@ -249,8 +340,10 @@ the page images:
 - `uv sync --extra mistral` — adds `pypdfium2` + `pillow`, used only to render page images for
   the correction pass.
 
-**Tests:** `PYTHONPATH=src uv run pytest -q` (27 tests). `tests/conftest.py` stubs
+**Tests:** `PYTHONPATH=src uv run pytest -q` (30 tests). `tests/conftest.py` stubs
 dspy/pydantic/langgraph *only if absent*, so the suite runs with or without the real deps.
+(The Problem finder has no unit tests yet — it is validated via the throwaway harness described
+in the redesign section.)
 
 **Run the pipeline:**
 ```bash
@@ -287,6 +380,12 @@ PYTHONPATH=src uv run python -c "import asyncio; from module.pipeline import run
 ---
 
 ## Next steps (suggested order)
+
+0. **Entity-layer redesign — the active work.** See "In progress: entity-layer redesign" above.
+   The Problem finder is built and validated but uncommitted and not wired in; the extractor is
+   still typing `problem`/`instruction`. First: commit the finder + OCR header/footer change, then
+   wire the finder in (pure-structural extractor), then the Definition/Theorem finders and the
+   per-attribute attributor. This supersedes the old `entity_grouper`/`entity_attributor`.
 
 1. **Broaden extraction validation** — *in progress.* First new-book run (Hefferon Linear
    Algebra, this session) is done; it surfaced and **fixed** the extractor context-bleed defect
