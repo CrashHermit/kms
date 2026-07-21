@@ -16,11 +16,12 @@ Mistral's markdown + figures) is the backbone, and the corrector proofreads each
 transcription against its image before the (purely structural) extractor parses it into
 nodes. The seam merger heals nodes split across page breaks and then flattens the healed
 backbone into the global ordered `nodes` list (stable ids + seg_index); the three per-type
-finders then each walk `nodes` in parallel, each writing its own entity channel. The three
-overlays stay separate (written under their own keys in `entities.json`); they may
-reference the same node without conflict since members are node-id pointers. Per-attribute
-passes (member roles, number, instruction, …) come later. Assembly walks `nodes` after the
-graph returns, consulting `segments` only for picture inventories.
+finders then each walk `nodes` in parallel, each writing its own entity channel. After the
+graph returns, `run()` concatenates the three overlays into one flat, document-ordered
+entity list (global ids) and writes both the entities and the node stream itself — the
+nodes are persisted for provenance so an entity's `members` resolve to real source chunks.
+Per-attribute passes (member roles, number, instruction, …) come later. Assembly walks
+`nodes` after the graph returns, consulting `segments` only for picture inventories.
 """
 
 from pathlib import Path
@@ -112,26 +113,60 @@ async def run(
     segments = mistral_ocr.extract(pdf_path, output_dir=output_dir, pages=pages)
     graph = build_graph()
     result = await graph.ainvoke({"segments": segments}, {"recursion_limit": 1000})
-    written = assemble(result["nodes"], result["segments"], output_dir=output_dir, filename=filename)
-    _write_entities(result, output_dir)
+    nodes = result["nodes"]
+    written = assemble(nodes, result["segments"], output_dir=output_dir, filename=filename)
+    _write_nodes(nodes, output_dir)
+    _write_entities(_flatten_entities(result, nodes), output_dir)
     return written
 
 
-def _write_entities(result: dict, output_dir: Path) -> Path:
-    """Persist the three per-type entity overlays as JSON beside the assembled document —
-    the artifact the later graph phase (edges, fusion, completion) consumes. The overlays
-    stay separate (keyed by type) and are not merged; each entity is just its member
-    node-ids, in document order."""
+def _flatten_entities(result: dict, nodes: list) -> list:
+    """Concatenate the three per-type finder overlays into one flat, document-ordered
+    entity list and assign each a global id. The overlays are independent and may
+    reference the same node more than once (members are node-id pointers) — they are
+    concatenated, not merged."""
+    entities = (
+        result.get("problem_entities", [])
+        + result.get("definition_entities", [])
+        + result.get("theorem_entities", [])
+    )
+    order = {node.id: i for i, node in enumerate(nodes)}
+    big = len(order)
+    entities.sort(key=lambda e: order.get(e.members[0], big) if e.members else big)
+    for i, entity in enumerate(entities):
+        entity.id = i
+    return entities
+
+
+def _write_nodes(nodes: list, output_dir: Path) -> Path:
+    """Persist the flat node stream as JSON for provenance — an entity's `members` are node
+    ids into this file, so the later graph phase can link an entity to its source chunks."""
     import json
 
-    def overlay(entities) -> list[dict]:
-        return [{"members": e.members} for e in entities]
+    payload = [
+        {
+            "id": node.id,
+            "type": node.type.value if node.type else None,
+            "content": node.content,
+            "seg_index": node.seg_index,
+        }
+        for node in nodes
+    ]
+    path = Path(output_dir) / "nodes.json"
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return path
 
-    payload = {
-        "problems": overlay(result.get("problem_entities", [])),
-        "definitions": overlay(result.get("definition_entities", [])),
-        "theorems": overlay(result.get("theorem_entities", [])),
-    }
+
+def _write_entities(entities: list, output_dir: Path) -> Path:
+    """Persist the flat entity overlay as JSON beside the assembled document — the artifact
+    the later graph phase (edges, fusion, completion) consumes. Each entity is `{id, type,
+    members}`; `members` are node ids into `nodes.json`."""
+    import json
+
+    payload = [
+        {"id": e.id, "type": e.type.value, "members": e.members}
+        for e in entities
+    ]
     path = Path(output_dir) / "entities.json"
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return path

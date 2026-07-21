@@ -55,14 +55,17 @@ class EntityType(StrEnum):
 class Entity:
     """A math-semantic entity: a typed grouping of member nodes — a sparse overlay on the
     flat node stream (most nodes belong to no entity). `members` are node ids in document
-    order. Each per-type finder produces its own overlay; the overlays are independent and
-    may reference the same node (members are pointers), so they are not merged.
+    order: pointers back to the source nodes (persisted for provenance), so the later graph
+    phase can draw edges from an entity to the chunks it came from. `id` is assigned when
+    the three per-type overlays are flattened into the single emitted entity list.
 
-    Per-attribute detail (member roles, number, instruction, …) is added by later
-    per-attribute passes that do not exist yet, so an entity is just `{type, members}`
-    for now."""
+    The overlays are independent and may reference the same node (members are pointers), so
+    they are concatenated, not merged. Per-attribute detail (member roles, number,
+    instruction, …) is added by later per-attribute passes that do not exist yet, so an
+    entity is just `{id, type, members}` for now."""
     type: EntityType
     members: list[int] = field(default_factory=list)  # member node ids, document order
+    id: int | None = None                             # assigned when overlays are flattened
 
 
 @dataclass
@@ -116,7 +119,8 @@ class State(TypedDict, total=False):
     The three `*_entities` channels are each written once, by their own finder (the
     finders run in parallel over `nodes`). They are independent sparse overlays and may
     reference the same node from more than one entity — that is fine, members are node-id
-    pointers. They stay separate through to the output (written under their own keys).
+    pointers. `run()` concatenates the three into one flat, document-ordered entity list
+    with global ids for the emitted `entities.json`.
 
     The `*_results` channels are map-reduce scratch space: parallel Send workers append
     entries and the stage's collect step drains them back into the active backbone. They

@@ -24,10 +24,12 @@ after that and is **not started**.
   `mistral_ocr → corrector → extractor → seam_merger → {problem,definition,theorem}_finder`,
   then `assembler` runs after the graph. Two phases split at `seam_merger`: per-page ingestion
   (backbone `segments`) → flat global node stream (backbone `nodes`, stable ids). The three
-  per-type finders each walk `nodes` in parallel and write their own entity channel (kept
-  separate through to `entities.json`; overlap is fine — members are node-id pointers). The
-  finders are self-contained copies of one cursor-walk shape. The extractor is
-  **purely structural**; math-semantic typing lives entirely in the per-type entity finders
+  per-type finders each walk `nodes` in parallel and write their own entity channel; `run()`
+  concatenates them into one flat, document-ordered `entities.json` (`[{id, type, members}]`,
+  overlap is fine — members are node-id pointers) and persists the node stream to `nodes.json`
+  for provenance (members resolve to it). The finders are self-contained copies of one
+  cursor-walk shape. The extractor is **purely structural**; math-semantic typing lives
+  entirely in the per-type entity finders
   (only `problem_finder` exists so far).
 - `docs/HANDOFF.md` — full context.
 
