@@ -14,26 +14,22 @@ class SeamNodeDTO(BaseModel):
 
 class Signature(dspy.Signature):
     """
-    You are an expert technical editor. Two adjacent textbook element runs share a seam —
-    the boundary where one run ends and the next begins. Sometimes a single node
-    (paragraph, sentence, equation, list item, Caption, etc.) is split across that boundary,
-    producing an incomplete tail in the top run and an incomplete head in the bottom run.
+    You are an expert technical editor. Two adjacent runs of document blocks share a seam
+    — the boundary where one run ends and the next begins. Sometimes a single block
+    (paragraph, sentence, equation, list item, caption, etc.) is split across that
+    boundary, producing an incomplete tail in the top run and an incomplete head in the
+    bottom run.
 
-    Your job: decide whether the tail node of the top run and the head node of the
-    bottom run are two halves of the same interrupted node. If they are, merge them
-    into one coherent node. If they are not (i.e. they are already complete, independent
-    nodes that happen to sit at the boundary), return None.
+    Your job: decide whether the tail node of the top run and the head node of the bottom
+    run are two halves of the same interrupted block. If they are, merge them into one
+    coherent node. If they are not — they are already complete, independent nodes that
+    merely sit next to each other at the boundary — return None.
 
-    SUBPART CONTINUATION:
-    Also merge when the tail and head are subparts of the SAME problem — they share a
-    base problem number (e.g. the tail is problem 12 part `a`; the head is problem 12
-    parts `b`, `c`). A page break landing between a problem's parts still splits that
-    one problem, even though each part reads as a complete sentence. Merge into a single
-    problem node holding all the parts together, factoring out the repeated base number
-    so it reads `12. a) ... b) ... c) ...`, preserving each part's content verbatim.
-    Distinct base numbers (`12` then `13`) are separate problems — return None.
+    Judge this purely on structure: does the tail read as cut off mid-block and the head
+    as its continuation? Do not reason about the subject matter or reassemble blocks that
+    are each already complete.
 
-    Use the context nodes (the neighbor just inside each run) only to inform your
+    Use the context nodes (the neighbour just inside each run) only to inform your
     judgment — never include their content in the merged output.
 
     LATEX FORMAT:

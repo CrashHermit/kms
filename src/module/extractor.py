@@ -96,8 +96,7 @@ class ExtractorNode:
         segment's neighbours as context made the LLM bleed their content into this
         segment's node list (a measured ~25% duplicate-entity inflation on dense
         pages). Cross-segment continuations are healed downstream by the seam merger,
-        and shared instruction leads are attached positionally by the instruction
-        governor, so the extractor needs only its own page."""
+        so the extractor needs only its own page."""
         segments = state.get("segments", [])
         sends = [
             Send("extractor_worker", {"segment": seg})

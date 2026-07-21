@@ -1,12 +1,9 @@
-"""Problem finder: the LangGraph node wrapper and the core cursor-walk banking rule."""
+"""Problem finder: the core cursor-walk banking rule and the graph-node wrapper."""
 
 import asyncio
 
 from module.state import ASTNode, NodeType, EntityType
 from module.problem_finder import ProblemFinderNode, ProblemSpan, find_problems
-
-# A sentinel keeps the node's pure dispatch/collect off the real LLM constructor.
-SENTINEL = object()
 
 
 def _nodes():
@@ -16,28 +13,6 @@ def _nodes():
         ASTNode(type=NodeType.PARAGRAPH, content="solve this", id=2, seg_index=0),
         ASTNode(type=NodeType.PARAGRAPH, content="more prose", id=3, seg_index=0),
     ]
-
-
-def test_dispatch_fans_out_one_send_with_the_whole_stream():
-    finder = ProblemFinderNode(module=SENTINEL)
-    nodes = _nodes()
-    sends = finder.dispatch({"nodes": nodes})
-    assert len(sends) == 1  # the walk is one sequential unit, not sharded
-    assert sends[0].arg["nodes"] is nodes
-
-
-def test_dispatch_short_circuits_on_empty_stream():
-    finder = ProblemFinderNode(module=SENTINEL)
-    assert finder.dispatch({"nodes": []}) == "problem_finder_collect"
-
-
-def test_collect_seeds_entities_from_finder_results():
-    finder = ProblemFinderNode(module=SENTINEL)
-    from module.state import Entity, Member
-    problems = [Entity(type=EntityType.PROBLEM, members=[Member(1)])]
-    out = finder.collect({"finder_results": [problems]})
-    assert out["entities"] is problems
-    assert finder.collect({})["entities"] == []  # no results -> empty overlay
 
 
 class _ScriptedFinder:
@@ -57,4 +32,22 @@ def test_find_problems_banks_a_bounded_problem_and_emits_member_ids():
     problems = asyncio.run(find_problems(_nodes(), module=module))
     assert len(problems) == 1
     assert problems[0].type == EntityType.PROBLEM
-    assert [m.node_id for m in problems[0].members] == [1, 2]  # stable global ids, not positions
+    assert problems[0].members == [1, 2]  # stable global ids, not window positions
+
+
+def test_find_problems_on_prose_only_stream_returns_nothing():
+    module = _ScriptedFinder([[]])
+    assert asyncio.run(find_problems(_nodes(), module=module)) == []
+
+
+def test_node_run_builds_overlay_with_document_order_ids():
+    node = ProblemFinderNode(module=_ScriptedFinder([[ProblemSpan(start=1, end=2)], []]))
+    out = asyncio.run(node.run({"nodes": _nodes()}))
+    entities = out["entities"]
+    assert [e.id for e in entities] == [0]
+    assert entities[0].members == [1, 2]
+
+
+def test_node_run_on_empty_stream_yields_empty_overlay():
+    node = ProblemFinderNode(module=_ScriptedFinder([]))
+    assert asyncio.run(node.run({"nodes": []}))["entities"] == []

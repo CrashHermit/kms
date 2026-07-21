@@ -32,7 +32,7 @@ class NodeType(StrEnum):
 
     The extractor is purely STRUCTURAL and domain-agnostic: it emits general document
     structure only. Math-semantic typing (Definition/Theorem/Problem) lives entirely at
-    the entity layer — the per-type finders and the grouper — not here."""
+    the entity layer — the per-type finders — not here."""
     PARAGRAPH = "paragraph"
     MATH = "math"                # standalone display math block
     CODE = "code"                # fenced code block
@@ -44,46 +44,25 @@ class NodeType(StrEnum):
 
 
 class EntityType(StrEnum):
-    """The three math-semantic entity categories the grouping layer produces
+    """The three math-semantic entity categories the entity finders produce
     (AutoMathKG's taxonomy). Distinct from NodeType, which is document structure."""
     DEFINITION = "definition"
     THEOREM = "theorem"      # subsumes proposition, corollary, lemma
-    PROBLEM = "problem"      # atomic exercises (wrapped 1:1) and gathered worked examples
-
-
-class EntityRole(StrEnum):
-    """The role a member node plays within its entity — the attribute the Stage 2
-    pass assigns (AutoMathKG's bodylist action labels)."""
-    STATEMENT = "statement"  # the definition/theorem/problem statement (all types)
-    PROOF = "proof"          # theorem only, repeatable
-    SOLUTION = "solution"    # problem only, repeatable
-
-
-@dataclass
-class Member:
-    """One member node of an entity, with the role it plays. `role` is None until the
-    Stage 2 attribute pass fills it."""
-    node_id: int
-    role: EntityRole | None = None
+    PROBLEM = "problem"      # worked examples and exercises
 
 
 @dataclass
 class Entity:
-    """A math-semantic entity: a typed grouping that references its member nodes by
-    id, a sparse overlay on the flat node stream (most nodes belong to no entity).
+    """A math-semantic entity: a typed grouping of member nodes — a sparse overlay on the
+    flat node stream (most nodes belong to no entity). `members` are node ids in document
+    order; `id` is assigned when the overlay is built.
 
-    `members` carry roles once the Stage 2 attribute pass runs. `number`/`instruction`
-    are per-attribute overlay fields (problems only), populated by later per-attribute
-    passes — they stay None for now. `tail_open`/`head_continuation` are transient
-    reconciliation flags set by the per-window worker for entities at a window edge; the
-    grouper's collect clears them once cross-window continuations have been stitched."""
+    Per-attribute detail (member roles, number, instruction, …) is added by later
+    per-attribute passes that do not exist yet, so the overlay is just `{id, type,
+    members}` for now."""
     type: EntityType
-    members: list[Member] = field(default_factory=list)  # member nodes in document order
-    id: int | None = None                                # assigned in collect, document order
-    number: str | None = None                            # problem number attribute (later per-attribute pass)
-    instruction: str | None = None                       # governing lead attribute (later per-attribute pass)
-    tail_open: bool = False                              # last run hit window end still gathering
-    head_continuation: bool = False                     # first run continues an entity from a prior window
+    members: list[int] = field(default_factory=list)  # member node ids, document order
+    id: int | None = None                             # assigned when the overlay is built
 
 
 @dataclass
@@ -146,7 +125,6 @@ class State(TypedDict, total=False):
     extract_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     seam_even_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     seam_odd_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
-    finder_results: Annotated[list[list[Entity]], operator.add]                 # Problem entities from the finder
 
 
 # --- Helpers ---

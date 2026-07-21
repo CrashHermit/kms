@@ -58,8 +58,7 @@ def build_graph():
     g.add_node("seam_even_collect", seam.even_collect)
     g.add_node("seam_odd_worker", seam.odd_worker)
     g.add_node("seam_odd_collect", seam.odd_collect)
-    g.add_node("problem_finder_worker", finder.worker)
-    g.add_node("problem_finder_collect", finder.collect)
+    g.add_node("problem_finder", finder.run)
 
     # A stage's dispatch is a conditional edge off the previous collect: it either fans
     # out Sends to the worker or short-circuits straight to its own collect.
@@ -76,14 +75,12 @@ def build_graph():
     g.add_conditional_edges("seam_even_collect", seam.dispatch_odd, ["seam_odd_worker", "seam_odd_collect"])
     g.add_edge("seam_odd_worker", "seam_odd_collect")
 
-    # Problem finder: cursor-walk the flat stream, building the sparse `entities` overlay
-    # with the Problem entities it finds (worked examples AND exercises). The Definition
-    # and Theorem finders are added alongside it later; per-attribute passes (roles,
-    # number, instruction) come after that.
-    g.add_conditional_edges("seam_odd_collect", finder.dispatch, ["problem_finder_worker", "problem_finder_collect"])
-    g.add_edge("problem_finder_worker", "problem_finder_collect")
-
-    g.add_edge("problem_finder_collect", END)
+    # Problem finder: a single sequential cursor-walk (not shardable), so a plain node —
+    # it builds the sparse `entities` overlay with the Problems it finds (worked examples
+    # AND exercises). The Definition and Theorem finders are added alongside it later;
+    # per-attribute passes (roles, number, instruction) come after that.
+    g.add_edge("seam_odd_collect", "problem_finder")
+    g.add_edge("problem_finder", END)
 
     return g.compile()
 
@@ -119,16 +116,7 @@ def _write_entities(entities, output_dir: Path) -> Path:
 
     path = Path(output_dir) / "entities.json"
     payload = [
-        {
-            "id": e.id,
-            "type": e.type.value,
-            "number": e.number,
-            "instruction": e.instruction,
-            "members": [
-                {"node_id": m.node_id, "role": m.role.value if m.role else None}
-                for m in e.members
-            ],
-        }
+        {"id": e.id, "type": e.type.value, "members": e.members}
         for e in entities
     ]
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")

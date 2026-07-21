@@ -43,4 +43,6 @@ after that and is **not started**.
   `MISTRAL_API_KEY` (page OCR), `OPENROUTER_API_KEY` (correction pass, Qwen3-VL),
   `DEEPSEEK_API_KEY` (text stages).
 - The package imports as `module.*` (pyproject `package = false`); set `PYTHONPATH=src`.
-- Match the surrounding code's style; keep the `dispatch/worker/collect` shape for new stages.
+- Match the surrounding code's style. Parallel (map-reduce) stages use the
+  `dispatch → worker → collect` shape; a genuinely sequential stage (e.g. `problem_finder`)
+  is a plain graph node instead of forcing a single-Send fan-out.

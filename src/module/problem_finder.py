@@ -2,9 +2,8 @@ r"""
 Problem finder — a cursor-walk over the flat structural node stream that lifts out
 Problem entities (worked examples AND exercises; AutoMathKG's Problem type).
 
-This is the first of the planned per-type finders (Problem / Definition / Theorem).
-It replaces the windowed span-extraction + reconciler for problems with a single
-forward walk:
+This is the first of the per-type finders (Problem / Definition / Theorem). It is a
+single forward walk:
 
   * A cursor moves along the node stream. From the cursor it takes a *look-ahead
     window* of whole nodes up to a soft token budget, and the LLM returns the
@@ -44,13 +43,12 @@ later, each owning its own type.
 
 import dspy
 from pydantic import BaseModel, Field
-from langgraph.types import Send
 
-from .state import State, ASTNode, Entity, EntityType, Member
+from .state import State, ASTNode, Entity, EntityType
 from .llm import text_lm
 
-# Soft look-ahead budget (~4 chars/token), matching the grouper's window scale. A
-# single node larger than the budget still forms a window (at least one node). When the
+# Soft look-ahead budget (~4 chars/token). A single node larger than the budget still
+# forms a window (at least one node). When the
 # only problem in a window reaches its edge, the window grows (doubling) until the
 # problem is bounded or the document ends — capped so a pathological problem can't grow
 # past the model's context (there it is banked as-is, the one place truncation remains).
@@ -220,40 +218,29 @@ async def find_problems(
             for s in to_bank:
                 ids = [window[k].id for k in range(s.start, s.end + 1) if window[k].id is not None]
                 if ids:
-                    problems.append(Entity(type=EntityType.PROBLEM, members=[Member(node_id=i) for i in ids]))
+                    problems.append(Entity(type=EntityType.PROBLEM, members=ids))
             cursor = advance
             break
 
     return problems
 
 
-# --- LangGraph node: seed the entity overlay with Problem entities ---
+# --- LangGraph node: build the entity overlay from the found Problems ---
 
 class ProblemFinderNode:
-    """Runs the cursor-walk over the flat node stream and builds the ``entities`` overlay
-    with the Problem entities it finds. Unlike the map-reduce stages, the walk is one
-    sequential unit (a growing look-ahead cursor cannot be sharded), so the stage still
-    uses the dispatch/worker/collect shape but fans out a single Send carrying the whole
-    stream."""
+    """Builds the ``entities`` overlay from the Problem entities the cursor-walk finds.
+
+    The walk is one sequential unit (a growing look-ahead cursor cannot be sharded), so
+    this is a plain graph node rather than the map-reduce dispatch/worker/collect shape
+    the parallel stages use."""
 
     def __init__(self, module: Module | None = None):
         self.module = module or Module()
 
-    def dispatch(self, state: State) -> list[Send] | str:
-        """One Send with the whole node stream (the walk is not shardable)."""
-        nodes = state.get("nodes", [])
-        return [Send("problem_finder_worker", {"nodes": nodes})] if nodes else "problem_finder_collect"
-
-    async def worker(self, state: dict) -> dict:
-        """Walk the stream and emit the Problem entities."""
-        problems = await find_problems(state["nodes"], module=self.module)
-        return {"finder_results": [problems]}
-
-    def collect(self, state: State) -> dict:
-        """Build the overlay from the found Problems, assigning each a document-order id
-        (the walk already emits them in document order)."""
-        results = state.get("finder_results", [])
-        problems = results[0] if results else []
+    async def run(self, state: State) -> dict:
+        """Walk the flat node stream and emit Problem entities, each given a
+        document-order id (the walk already emits them in document order)."""
+        problems = await find_problems(state.get("nodes", []), module=self.module)
         for i, entity in enumerate(problems):
             entity.id = i
         return {"entities": problems}
