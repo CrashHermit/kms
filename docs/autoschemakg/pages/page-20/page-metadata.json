@@ -1,0 +1,43 @@
+{
+  "index": 19,
+  "dimensions": {
+    "dpi": 87,
+    "height": 1018,
+    "width": 720
+  },
+  "confidenceScores": null,
+  "blocks": [
+    {
+      "topLeftX": 82,
+      "topLeftY": 171,
+      "bottomRightX": 347,
+      "bottomRightY": 187,
+      "content": "Algorithm 2 HippoRAG2 (Gutiérrez et al., 2025)",
+      "type": "caption"
+    },
+    {
+      "topLeftX": 82,
+      "topLeftY": 187,
+      "bottomRightX": 634,
+      "bottomRightY": 221,
+      "content": "General algorithm follows the original implementation, while we modify the initialization of graph and embeddings.",
+      "type": "caption"
+    },
+    {
+      "topLeftX": 84,
+      "topLeftY": 223,
+      "bottomRightX": 647,
+      "bottomRightY": 850,
+      "content": "1: function INIT(graph_type)\n2:    if graph_type is entity then\n3:    graph, embedding ← Graph(entity), Embeddings(entity)\n4:    else if graph_type is entity+event then\n5:    graph, embedding ← Graph(entity, event), Embeddings(entity, event)\n6:    else if graph_type is entity+event+concept then\n7:    graph, embedding ← Graph(entity, event, concept), Embeddings(entity, event, concept)\n8:    end if\n9: end function\n10: function QUERY2EDGE(query, topN)\n11:    \\( Q_{emb} \\leftarrow \\) Retriever(query)\n12:    \\( S = Q \\cdot W_e \\)   ▷ Calculate similarity scores with precomputed edge embeddings\n13:    \\( E = \\text{argsort}_i(S)[: N] \\)   ▷ Select topN edges based on scores\n14:    filtered_edges ← LLM_filter(E)   ▷ Filter edges using Large Language Model\n15:    mapped_edges ← Map_edges(filtered_edges)   ▷ Map filtered edges to original edges\n16:    return_node_scores ← Calculate_node_scores(mapped_edges)\n17:    return return_node_scores\n18: end function\n19: function QUERY2PASSAGE(query, weight_adjust)\n20:    \\( Q_{pass} \\leftarrow \\) Encode(query)   ▷ Encode query into passage representation\n21:    \\( S_{text} \\leftarrow \\) Similarity_Scores(\\( Q_{pass} \\), text_embeddings)\n22:    return Scores_Dictionary(\\( S_{text} \\))\n23: end function\n24: function RETRIEVE_PERSONALIZATION_DICT(query, topN)\n25:    node_dict ← query2edge(query, topN)\n26:    text_dict ← query2passage(query, weight_adjust)\n27:    return node_dict, text_dict\n28: end function\n29: function RETRIEVE_PASSAGES(query, topN)\n30:    node_dict, text_dict ← retrieve_personalization_dict(query, topN)\n31:    if node_dict is empty then\n32:    return TopN_Text_Passages(text_dict)\n33:    else\n34:    personalization_dict ← {node_dict, text_dict}\n35:    page_rank_scores ← PageRank(personalization_dict)\n36:    return TopN_Passages(page_rank_scores)\n37:    end if\n38: end function",
+      "type": "code"
+    },
+    {
+      "topLeftX": 351,
+      "topLeftY": 958,
+      "bottomRightX": 367,
+      "bottomRightY": 971,
+      "content": "20",
+      "type": "footer"
+    }
+  ]
+}

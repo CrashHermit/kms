@@ -1,0 +1,125 @@
+{
+  "index": 28,
+  "dimensions": {
+    "dpi": 87,
+    "height": 1018,
+    "width": 720
+  },
+  "confidenceScores": null,
+  "blocks": [
+    {
+      "topLeftX": 117,
+      "topLeftY": 90,
+      "bottomRightX": 475,
+      "bottomRightY": 105,
+      "content": "- Ethics approval and consent to participate Not applicable.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 105,
+      "bottomRightX": 360,
+      "bottomRightY": 119,
+      "content": "- Consent for publication Not applicable.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 119,
+      "bottomRightX": 569,
+      "bottomRightY": 163,
+      "content": "- Data availability The data collected to construct the knowledge graph can be accessed through the provided links or citations in this article. The constructed knowledge graph will be made available on request.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 183,
+      "bottomRightX": 489,
+      "bottomRightY": 205,
+      "content": "## Appendix A More information for corpus",
+      "type": "title"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 227,
+      "bottomRightX": 569,
+      "bottomRightY": 285,
+      "content": "Table A1 presents the title information of the eight textbooks analyzed in this study. The first six textbooks were found through an online search for open-source textbooks, while the last two were provided by the NaturalProofs dataset. Table A2 shows the subject information of the arXiv papers collected in this study.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 303,
+      "bottomRightX": 369,
+      "bottomRightY": 315,
+      "content": "Table A1 The title information of selected textbooks.",
+      "type": "caption"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 324,
+      "bottomRightX": 569,
+      "bottomRightY": 432,
+      "content": "|  Textbook titles  |\n| --- |\n|  Linear Transformations on Vector Spaces  |\n|  Elementary Differential  |\n|  Basic Analysis: Introduction to Real Analysis  |\n|  Ossifrage and Algebra  |\n|  Multivariable and Vector Calculus  |\n|  An Introduction to Group Theory  |\n|  Introduction to Real Analysis  |\n|  Elementary Number Theory: Primes, Congruences, and Secrets  |",
+      "type": "table",
+      "tableId": null
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 471,
+      "bottomRightX": 421,
+      "bottomRightY": 484,
+      "content": "Table A2 The subject information of selected papers from arXiv.",
+      "type": "caption"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 493,
+      "bottomRightX": 569,
+      "bottomRightY": 531,
+      "content": "|  Paper subjects  |\n| --- |\n|  math.AG, math.AT, math.AP, math.CT, math.CA, math.CO, math.AC, math.CV, math.DG, math.PR, math.ST  |",
+      "type": "table",
+      "tableId": null
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 567,
+      "bottomRightX": 556,
+      "bottomRightY": 587,
+      "content": "## Appendix B Instructions of entity storage format",
+      "type": "title"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 610,
+      "bottomRightX": 569,
+      "bottomRightY": 640,
+      "content": "Table B3 details the entity storage format, including the storage type and structure of all attributes as well as the applicable entity types.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 654,
+      "bottomRightX": 497,
+      "bottomRightY": 675,
+      "content": "## Appendix C In-context learning templates",
+      "type": "title"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 697,
+      "bottomRightX": 569,
+      "bottomRightY": 756,
+      "content": "Table C4 presents the prompt templates used by LLM during ICL for enhancing entity attributes, such as “title”, “field”, and “bodylist”, for different types of entities. Table C5 displays the prompt templates used in the automatic knowledge fusion process through ICL, including templates for Steps 4 and 5.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 337,
+      "topLeftY": 779,
+      "bottomRightX": 351,
+      "bottomRightY": 790,
+      "content": "29",
+      "type": "footer"
+    }
+  ]
+}

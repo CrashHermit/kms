@@ -1,0 +1,93 @@
+{
+  "index": 13,
+  "dimensions": {
+    "dpi": 87,
+    "height": 1018,
+    "width": 720
+  },
+  "confidenceScores": null,
+  "blocks": [
+    {
+      "topLeftX": 146,
+      "topLeftY": 90,
+      "bottomRightX": 600,
+      "bottomRightY": 193,
+      "content": "sentence of key information for each entity. For any entity node v, the same method as described in Section 5.1 is used to obtain key information, resulting in five sentences  \\( S_{1}(v), \\cdots, S_{5}(v) \\) , containing “title”, “field”, “contents”, “in_refs” and “out_refs” information, according to Equation 1. Subsequently, each sentence is embedded by SBERT, obtaining corresponding vectors  \\( e_{i}(v) \\in \\mathbb{R}^{384} \\)  for each sentence  \\( S_{i}(v), i = 1, \\cdots, 5 \\) . Finally, these vectors are weighted and summed based on the importance of the information. Specifically, let the weight vector W be defined as follows:",
+      "type": "text"
+    },
+    {
+      "topLeftX": 304,
+      "topLeftY": 206,
+      "bottomRightX": 441,
+      "bottomRightY": 221,
+      "content": "\\[\nW = (w _ {1}, w _ {2}, w _ {3}, w _ {4}, w _ {5}),\n\\]",
+      "type": "equation"
+    },
+    {
+      "topLeftX": 146,
+      "topLeftY": 235,
+      "bottomRightX": 600,
+      "bottomRightY": 266,
+      "content": "where \\( w_{j} \\) represents the weight assigned to the \\( j \\)-th information, satisfying \\( \\sum_{j=1}^{5} w_{j} = 1 \\). Then the weighted sum of all vectors is computed by",
+      "type": "text"
+    },
+    {
+      "topLeftX": 197,
+      "topLeftY": 280,
+      "bottomRightX": 599,
+      "bottomRightY": 297,
+      "content": "\\[\n\\tilde {e} (v) = w _ {1} \\cdot e _ {1} (v) + w _ {2} \\cdot e _ {2} (v) + w _ {3} \\cdot e _ {3} (v) + w _ {4} \\cdot e _ {4} (v) + w _ {5} \\cdot e _ {5} (v). \\tag {3}\n\\]",
+      "type": "equation"
+    },
+    {
+      "topLeftX": 146,
+      "topLeftY": 310,
+      "bottomRightX": 599,
+      "bottomRightY": 439,
+      "content": "MathVD2 considers  \\( \\tilde{e}(v) \\)  as the vector embedding of the entity v. Since “contents” can best differentiate between entities, followed by “title”, we set the weight vector as  \\( W = (0.5, 0.3, 0.1, 0.05, 0.05) \\)  in our work. Similarly, Table 4 illustrates a similarity retrieval instance for the same target entity in MathVD2, also indicating significant relevance to the target entity. Comparing Tables 3 and 4, we can see that both MathVD1 and MathVD2 are effective in retrieving similar entities, although there are slight differences in the retrieval results. Besides, some similar math Problem entities with the same mathematical essence exhibit high cosine similarity between each other in both MathVDs, shown as Table 5.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 148,
+      "topLeftY": 459,
+      "bottomRightX": 468,
+      "bottomRightY": 472,
+      "content": "Table 4 The result of a similar entity retrieval example in MathVD2.",
+      "type": "caption"
+    },
+    {
+      "topLeftX": 148,
+      "topLeftY": 481,
+      "bottomRightX": 599,
+      "bottomRightY": 555,
+      "content": "|  Target entity: Set union is associative: \\( A \\cup (B \\cup C) = (A \\cup B) \\cup C \\)  |   |   |\n| --- | --- | --- |\n|  Retrieval results in MathVD2  |   |   |\n|  Rank | Similar entity | Score  |\n|  1 | Theorem: Set union is commutative: \\( S \\cup T = T \\cup S \\) | 0.8034  |\n|  2 | Theorem: Set union is idempotent: \\( S \\cup S = S \\) | 0.7662  |\n|  3 | Theorem: Set intersection is associative: \\( A \\cap (B \\cap C) = (A \\cap B) \\cap C \\) | 0.7600  |",
+      "type": "table",
+      "tableId": null
+    },
+    {
+      "topLeftX": 148,
+      "topLeftY": 594,
+      "bottomRightX": 564,
+      "bottomRightY": 606,
+      "content": "Table 5 The similarity results of similar Problem entity pairs in MathVD1 and MathVD2.",
+      "type": "caption"
+    },
+    {
+      "topLeftX": 151,
+      "topLeftY": 612,
+      "bottomRightX": 596,
+      "bottomRightY": 674,
+      "content": "|  Similar Problem entity pair | Similarity score  |   |   |\n| --- | --- | --- | --- |\n|   |   |  MathVD1 | MathVD2  |\n|  Pair 1 | Entity 1: Consider the matrix of \\( A = [[1,4], [4,1]] \\), is this a positive definite matrix? | 0.9346 | 0.9518  |\n|   |  Entity 2: Consider the matrix of \\( A = [[1,-1], [-1,4]] \\), is this a positive definite matrix?  |   |   |\n|  Pair 2 | Entity 3: Are the vectors [1,2], [2,3], and [3,4] linearly independent? | 0.8291 | 0.8846  |\n|   |  Entity 4: Are the vectors \\( v_1 = [1,2,3], v_2 = [4,5,6], v_3 = [7,8,9] \\) linearly independent?  |   |   |",
+      "type": "table",
+      "tableId": null
+    },
+    {
+      "topLeftX": 367,
+      "topLeftY": 779,
+      "bottomRightX": 381,
+      "bottomRightY": 790,
+      "content": "14",
+      "type": "footer"
+    }
+  ]
+}

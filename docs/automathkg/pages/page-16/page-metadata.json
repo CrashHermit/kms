@@ -1,0 +1,59 @@
+{
+  "index": 15,
+  "dimensions": {
+    "dpi": 87,
+    "height": 1018,
+    "width": 720
+  },
+  "confidenceScores": null,
+  "blocks": [
+    {
+      "topLeftX": 146,
+      "topLeftY": 90,
+      "bottomRightX": 600,
+      "bottomRightY": 278,
+      "content": "parameters to remain unchanged. Given that, Math LLM employs three types of mathematical expert adapters to address three categories of problems: application, calculation, and proof, utilizing the LORA [55], PoT [29], and CoT [28] approaches, respectively. The application adapter, trained on an application problem dataset, enables the model to abstract real-world problems into mathematical formulations. The calculation adapter, trained on a programming dataset, equips the model with the capability to write Python programs to solve calculation problems, significantly reducing hallucination issues commonly encountered by LLMs in calculations. The proof adapter, trained on a mathematical theorem proof dataset, assists the model in developing a rigorous mathematical reasoning process, thereby strengthening its theoretical framework and logical structure. Finally, a CoT agent is integrated into Math LLM to coordinate these adapters, selecting the most appropriate one for problem-solving (see Appendix D for more training details).",
+      "type": "text"
+    },
+    {
+      "topLeftX": 148,
+      "topLeftY": 292,
+      "bottomRightX": 346,
+      "bottomRightY": 309,
+      "content": "### 6.1.2 Retrieval augmentation",
+      "type": "title"
+    },
+    {
+      "topLeftX": 146,
+      "topLeftY": 316,
+      "bottomRightX": 602,
+      "bottomRightY": 561,
+      "content": "Retrieving knowledge from external databases provides LLMs with verified information, enabling more grounded reasoning and mitigating hallucinations. Thus, Math LLM is designed to interact with AutoMathKG and MathVD for specialized knowledge retrieval. First, Math LLM analyzes the input problem and generates a set of relevant unverified knowledge points, including theorems and definitions. Next, Math LLM extracts relevant knowledge from both databases based on these knowledge points. Given that exact searches are resource-intensive and fuzzy searches may introduce less precise results, we designed a balanced retrieval augmentation strategy comprising two stages: exact search and fuzzy search. In the first stage, an exact search is performed in AutoMathKG to match Definition and Theorem entities directly to the knowledge points. In the second stage, a fuzzy search is conducted in MathVD to identify entities similar to the knowledge points and those found in the first stage within the vector space. After this, verified theorem and Definition entities are extracted. Similarly, the two-stage retrieval process is used to search for relevant Problem entities across both databases. Finally, all verified auxiliary knowledge entities are packaged and provided to Math LLM, which selects those contributing to the problem-solving process as the final specialized knowledge.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 148,
+      "topLeftY": 577,
+      "bottomRightX": 290,
+      "bottomRightY": 590,
+      "content": "### 6.1.3 Self-calibration",
+      "type": "title"
+    },
+    {
+      "topLeftX": 146,
+      "topLeftY": 599,
+      "bottomRightX": 600,
+      "bottomRightY": 744,
+      "content": "A self-calibration module can effectively reduce hallucinations [56], by providing a feedback mechanism for LLMs. Given that, this paper introduces a self-calibration module within Math LLM. Since engaging in trial and error is a common approach for solving unfamiliar and complex problems, our self-calibration module refines the answer incrementally based on CoT. We implement specific principles for calibration, with different types of problems adhering to distinct rules. The model verifies these rules step by step. If the model passes the self-calibration, it outputs the final answer. Otherwise, it identifies the violated principles and attempts to correct the errors. The corrected answer is then fed back into Math LLM for another round of self-calibration. If it still fails, Math LLM generates an error summary, which is combined with the",
+      "type": "text"
+    },
+    {
+      "topLeftX": 368,
+      "topLeftY": 779,
+      "bottomRightX": 381,
+      "bottomRightY": 790,
+      "content": "16",
+      "type": "footer"
+    }
+  ]
+}

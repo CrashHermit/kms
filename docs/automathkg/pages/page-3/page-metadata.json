@@ -1,0 +1,51 @@
+{
+  "index": 2,
+  "dimensions": {
+    "dpi": 87,
+    "height": 1018,
+    "width": 720
+  },
+  "confidenceScores": null,
+  "blocks": [
+    {
+      "topLeftX": 115,
+      "topLeftY": 90,
+      "bottomRightX": 572,
+      "bottomRightY": 264,
+      "content": "This paper proposes AutoMathKG, a high-quality, wide-coverage, and multi-dimensional KG for the field of mathematics, written in natural language and capable of automatic update. AutoMathKG covers multiple mathematical domains and levels through integrating diverse math sources, including web data from ProofWiki, book data from math textbooks, paper data from arXiv, and problem data from TheoremQA annotated by GPT-4 in MathInstruct [15]. Innovatively, AutoMathKG regards mathematics as a vast multi-dimensional network composed of definitions, theorems, and problems. LLM is used to enhance math knowledge and extract potential reference relationships through in-context learning (ICL) [16], organizing and storing all information in a structured manner. Furthermore, AutoMathKG updates automatically through two designed mechanisms based on vector database (VD) and LLM, facilitating the expansion for math knowledge.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 115,
+      "topLeftY": 265,
+      "bottomRightX": 572,
+      "bottomRightY": 437,
+      "content": "AutoMathKG is represented as a directed graph, where vertices denote math entities, categorized into Definition (Def), Theorem (Thm), and Problem (Prob), and directed edges denote the reference relationships between entities. Regarding entity vertices, three levels of information are stored in JSON format  \\( [17] \\)  for different knowledge requirements. First, basic information is extracted in preprocessing, identifying entities and their relationships via rule-based matching. Second, advanced information with step-by-step proofs and derivations is augmented by the Llama-2  \\( [18] \\)  model, inspired by the formal language Lean 4 while avoiding overly complex strategies and operations. Third, query information is collected for all entities connected to the current entity. Regarding directed edges, Llama-2 is used to discover associations among all entities and identify tactic labels when entities are referenced through ICL, similar to the use of tactics in Lean 4.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 115,
+      "topLeftY": 437,
+      "bottomRightX": 572,
+      "bottomRightY": 669,
+      "content": "Considering that similar entity searches through graph traversal are expensive, we design a VD for AutoMathKG, named MathVD. By vectorizing, entity similarity is transformed into vector similarity, making fuzzy search available for mathematical knowledge. We propose two strategies for embedding entity vectors with SBERT  \\( [19] \\) , which differ in how descriptive statements about entities are constructed, resulting in MathVD1 and MathVD2. AutoMathKG updates automatically through two proposed mechanisms. The first mechanism achieves automatic knowledge completion by building Math LLM, which is capable of solving various math problems to supplement incomplete proofs and solutions for new Theorem and Problem entities. The second mechanism enables automatic knowledge fusion from different sources, utilizing MathVD to search for similar candidate entities and Llama-2 to determine whether to merge with the candidate or add as a new entity. A wide range of experiments and case studies demonstrate superior reachability query results in MathVD compared to five baselines, as well as strong mathematical reasoning capabilities in Math LLM, highlighting the advanced performance of the AutoMathKG system. To sum up, our main contributions are as follows:",
+      "type": "text"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 676,
+      "bottomRightX": 569,
+      "bottomRightY": 735,
+      "content": "- We construct AutoMathKG, a high-quality, wide-coverage, and multi-dimensional math KG, which can be automatically updated based on VD and LLMs.\n- We propose two novel math entity embedding strategies for MathVD construction, enabling fuzzy search for math entities.",
+      "type": "list"
+    },
+    {
+      "topLeftX": 340,
+      "topLeftY": 779,
+      "bottomRightX": 348,
+      "bottomRightY": 790,
+      "content": "3",
+      "type": "footer"
+    }
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "index": 14,
+  "dimensions": {
+    "dpi": 87,
+    "height": 1018,
+    "width": 720
+  },
+  "confidenceScores": null,
+  "blocks": [
+    {
+      "topLeftX": 117,
+      "topLeftY": 87,
+      "bottomRightX": 396,
+      "bottomRightY": 106,
+      "content": "## 6 Method of automatic updates",
+      "type": "title"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 115,
+      "bottomRightX": 572,
+      "bottomRightY": 232,
+      "content": "In this section, we propose two mechanisms for automatically updating our math KG, in order to fully leverage existing mathematical knowledge and maintain synchronization with ongoing advancements in the field. In the first mechanism, a specialized mathematical LLM for solving various math problems is designed, named Math LLM, to achieve automatic knowledge completion by supplementing incomplete proofs or solutions. In the second mechanism, VDs and LLM are utilized to realize automatic knowledge fusion by merging and updating new entities and their relationships from different sources.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 247,
+      "bottomRightX": 388,
+      "bottomRightY": 264,
+      "content": "### 6.1 Automatic knowledge completion",
+      "type": "title"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 270,
+      "bottomRightX": 572,
+      "bottomRightY": 430,
+      "content": "Given that small-scale LLMs with fewer parameters tend to perform less effectively in mathematical reasoning, this paper proposes Math LLM, specifically designed to address various types of mathematical problems through the integration of task adapters, retrieval augmentation, and self-calibration. Figure 6 illustrates the structure of Math LLM. First, for each mathematical problem input, preliminary information on problem types and knowledge fields is generated. Next, a CoT adapter agent analyzes the information to determine the most appropriate adapter for problem-solving. Meanwhile, relevant knowledge is retrieved from AutoMathKG and MathVD through a two-stage retrieval augmentation. Subsequently, answers are generated using the relevant knowledge as prompts, with the adapter activated. Finally, the self-calibration module reviews and outputs calibrated answers.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 186,
+      "topLeftY": 461,
+      "bottomRightX": 500,
+      "bottomRightY": 617,
+      "content": "![img-5.jpeg](img-5.jpeg)",
+      "type": "image",
+      "imageId": "img-5.jpeg"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 630,
+      "bottomRightX": 311,
+      "bottomRightY": 643,
+      "content": "Fig. 6 Model architecture of Math LLM.",
+      "type": "caption"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 680,
+      "bottomRightX": 254,
+      "bottomRightY": 696,
+      "content": "#### 6.1.1 Task adapters",
+      "type": "title"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 702,
+      "bottomRightX": 570,
+      "bottomRightY": 747,
+      "content": "An adapter is a parameter-efficient fine-tuning strategy that provides plug-and-play functionality, stability, and generalization. It introduces lightweight layers into the model, which are activated only when necessary, allowing the majority of the model",
+      "type": "text"
+    },
+    {
+      "topLeftX": 337,
+      "topLeftY": 779,
+      "bottomRightX": 352,
+      "bottomRightY": 790,
+      "content": "15",
+      "type": "footer"
+    }
+  ]
+}

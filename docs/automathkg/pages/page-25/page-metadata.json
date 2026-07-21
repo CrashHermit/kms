@@ -1,0 +1,92 @@
+{
+  "index": 24,
+  "dimensions": {
+    "dpi": 87,
+    "height": 1018,
+    "width": 720
+  },
+  "confidenceScores": null,
+  "blocks": [
+    {
+      "topLeftX": 117,
+      "topLeftY": 87,
+      "bottomRightX": 231,
+      "bottomRightY": 103,
+      "content": "## 8 Discussion",
+      "type": "title"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 116,
+      "bottomRightX": 471,
+      "bottomRightY": 133,
+      "content": "### 8.1 Comparison with existing mathematical KGs",
+      "type": "title"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 140,
+      "bottomRightX": 569,
+      "bottomRightY": 197,
+      "content": "There are significant advantages in AutoMathKG in terms of corpus sources, entity coverage and update methods, compared to existing mathematical KGs written in natural language, including MathGraph [11], MathGloss [14], Math-KG [13], and NaturalProofs [12], as shown in Table 12.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 199,
+      "bottomRightX": 572,
+      "bottomRightY": 443,
+      "content": "For corpus sources, AutoMathKG not only includes commonly covered web data and multiple high-quality textbooks, but also incorporates synthetic data and mathematical paper data that other mathematical graphs lack. The synthetic data augmented by LLM provides more detailed mathematical knowledge, while mathematical papers offer deeper domain-specific knowledge, giving AutoMathKG an advantage in richness and depth of math knowledge. For entity coverage, AutoMathKG breaks the limitation of existing mathematical graphs focusing on only one aspect of mathematical concepts or problems. It views mathematics as a vast multidimensional network composed of definitions, theorems, and problems, fully exploring the relationships between them, and generating a directed graph that captures the interdependencies of mathematical knowledge. For update methods, similar to existing mathematical graphs, AutoMathKG can integrate knowledge from different sources. The difference lies in the ability of AutoMathKG to automatically supplement incomplete knowledge and add it to the existing graph. Considering the abundance of incomplete knowledge in existing mathematical text corpora, AutoMathKG effectively enhances the utilization of existing corpus data and reduces human resources through LLM automatic updates.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 119,
+      "topLeftY": 460,
+      "bottomRightX": 492,
+      "bottomRightY": 474,
+      "content": "Table 12 The comparison results between AutoMathKG and existing math KGs.",
+      "type": "caption"
+    },
+    {
+      "topLeftX": 121,
+      "topLeftY": 477,
+      "bottomRightX": 568,
+      "bottomRightY": 555,
+      "content": "|  KG | Corpus source |   |   |   |   | Entity coverage |   |   | Update method  |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n|   |  Online | Synthetic | Exercise | #Textbook | #Paper | Thm | Def | Prob | Automated  |\n|  MathGraph | - | - | √ | - | - | √ | √ | √ | -  |\n|  MathGloss | √ | - | - | - | - | - | √ | - | -  |\n|  Math-KG | √ | - | - | - | - | √ | √ | - | -  |\n|  NaturalProofs | √ | - | - | 2 | - | √ | √ | - | -  |\n|  AutoMathKG | √ | √ | √ | 8 | 20 | √ | √ | √ | √  |",
+      "type": "table",
+      "tableId": null
+    },
+    {
+      "topLeftX": 136,
+      "topLeftY": 555,
+      "bottomRightX": 435,
+      "bottomRightY": 567,
+      "content": "Note: √ and - denote the presence or absence of the item, respectively.",
+      "type": "footer"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 601,
+      "bottomRightX": 468,
+      "bottomRightY": 618,
+      "content": "### 8.2 Ablation study for knowledge representation",
+      "type": "title"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 624,
+      "bottomRightX": 569,
+      "bottomRightY": 755,
+      "content": "This paper proposes an innovative approach to knowledge representation for MathVD by leveraging the dependency relationships between entities within the AutoMathKG graph structure. To evaluate the contribution of reference information from incoming and outgoing entities in entity embeddings, we conducted an ablation study by removing this reference information to observe the resulting changes in performance for similar vector retrieval. Specifically, for each entity node, the descriptive sentences corresponding to the “in_refs” and “out_refs” attributes in Section 5 were removed, and only those corresponding to the “title”, “field” and “contents” attributes were used for vector representation, resulting in a VD variant, denoted as VD-no refs.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 337,
+      "topLeftY": 779,
+      "bottomRightX": 351,
+      "bottomRightY": 790,
+      "content": "25",
+      "type": "footer"
+    }
+  ]
+}

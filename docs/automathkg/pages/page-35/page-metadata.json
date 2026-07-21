@@ -1,0 +1,35 @@
+{
+  "index": 34,
+  "dimensions": {
+    "dpi": 87,
+    "height": 1018,
+    "width": 720
+  },
+  "confidenceScores": null,
+  "blocks": [
+    {
+      "topLeftX": 142,
+      "topLeftY": 87,
+      "bottomRightX": 273,
+      "bottomRightY": 102,
+      "content": "arXiv:2308.01825 (2023)",
+      "type": "header"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 113,
+      "bottomRightX": 570,
+      "bottomRightY": 728,
+      "content": "[26] Li, G., Hammoud, H.A.A.K., Itani, H., Khizbullin, D., Ghanem, B.: Camel: Communicative agents for \"mind\" exploration of large language model society. ArXiv abs/2303.17760 (2023)\n[27] Chen, W., Yin, M., Ku, M., Lu, P., Wan, Y., Ma, X., Xu, J., Wang, X., Xia, T.: Theoremqa: A theorem-driven question answering dataset. (2023). The 2023 Conference on Empirical Methods in Natural Language Processing\n[28] Wei, J., Wang, X., Schuurmans, D., Bosma, M., Xia, F., Chi, E., Le, Q.V., Zhou, D., et al.: Chain-of-thought prompting elicits reasoning in large language models. Advances in neural information processing systems 35, 24824–24837 (2022)\n[29] Chen, W., Ma, X., Wang, X., Cohen, W.W.: Program of thoughts prompting: Disentangling computation from reasoning for numerical reasoning tasks. arXiv preprint arXiv:2211.12588 (2022)\n[30] Frieder, S., Pinchetti, L., Griffiths, R.-R., Salvatori, T., Lukasiewicz, T., Petersen, P., Berner, J.: Mathematical capabilities of chatgpt. Advances in Neural Information Processing Systems 36 (2024)\n[31] Ji, S., Pan, S., Cambria, E., Marttinen, P., Philip, S.Y.: A survey on knowledge graphs: Representation, acquisition, and applications. IEEE transactions on neural networks and learning systems 33(2), 494–514 (2021)\n[32] Auer, S., Bizer, C., Kobilarov, G., Lehmann, J., Cyganiak, R., Ives, Z.: Dbpedia: A nucleus for a web of open data. In: International Semantic Web Conference, pp. 722–735 (2007). Springer\n[33] Suchanek, F.M., Kasneci, G., Weikum, G.: Yago: a core of semantic knowledge, pp. 697–706 (2007). Proceedings of the 16th international conference on World Wide Web\n[34] Hoffart, J., Suchanek, F.M., Berberich, K., Weikum, G.: Yago2: A spatially and temporally enhanced knowledge base from wikipedia. Artificial intelligence 194, 28–61 (2013)\n[35] Singhal, A.: Introducing the Knowledge Graph: things, not strings. Google Blog. 2020-11-13 (2012). https://www.blog.google/products/search/introducing-knowledge-graph-things-not/\n[36] Lewis, P., Perez, E., Piktus, A., Petroni, F., Karpukhin, V., Goyal, N., Küttler, H., Lewis, M., Yih, W.-t., Rocktäschel, T., et al.: Retrieval-augmented generation for knowledge-intensive nlp tasks. Advances in Neural Information Processing Systems 33, 9459–9474 (2020)",
+      "type": "references"
+    },
+    {
+      "topLeftX": 334,
+      "topLeftY": 775,
+      "bottomRightX": 351,
+      "bottomRightY": 789,
+      "content": "35",
+      "type": "footer"
+    }
+  ]
+}

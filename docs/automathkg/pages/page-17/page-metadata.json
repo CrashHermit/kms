@@ -1,0 +1,123 @@
+{
+  "index": 16,
+  "dimensions": {
+    "dpi": 87,
+    "height": 1018,
+    "width": 720
+  },
+  "confidenceScores": null,
+  "blocks": [
+    {
+      "topLeftX": 117,
+      "topLeftY": 87,
+      "bottomRightX": 569,
+      "bottomRightY": 117,
+      "content": "original problem and used as a prompt to initiate another cycle of answer revision until it passes the self-calibration module.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 129,
+      "bottomRightX": 352,
+      "bottomRightY": 147,
+      "content": "## 6.2 Automatic knowledge fusion",
+      "type": "title"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 151,
+      "bottomRightX": 569,
+      "bottomRightY": 239,
+      "content": "Considering that mathematical corpora from different sources may have different statements of the same knowledge, we design a mechanism to automatically achieve knowledge fusion. For each new math entity from other sources, we utilize VD to search for similar candidate entities of Existing KG and employ LLM to determine whether to merge with a candidate or add the new entity. Given new input text, the following steps are taken for automatic knowledge fusion.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 250,
+      "bottomRightX": 428,
+      "bottomRightY": 266,
+      "content": "### *Step 1: Construction of Input KG from new input*",
+      "type": "title"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 269,
+      "bottomRightX": 569,
+      "bottomRightY": 313,
+      "content": "Information extraction and augmentation are conducted on the new input text as described in Section 4.3, for entity recognition preprocessing and knowledge enhancement, generating Input KG from the current input.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 323,
+      "bottomRightX": 502,
+      "bottomRightY": 340,
+      "content": "### *Step 2: Construction of VDs from Input KG and Existing KG*",
+      "type": "title"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 341,
+      "bottomRightX": 569,
+      "bottomRightY": 373,
+      "content": "Entities of Input KG and Existing KG are embedded using SBERT as described in Section 5, constructing two VDs, named Input VD and Existing VD, respectively.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 383,
+      "bottomRightX": 471,
+      "bottomRightY": 399,
+      "content": "### *Step 3: Fuzzy search for similar candidate entities in VD*",
+      "type": "title"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 401,
+      "bottomRightX": 569,
+      "bottomRightY": 491,
+      "content": "For each input entity $v_{input}$, a fuzzy search for its similar entities is conducted by comparing the cosine similarity between their entity vectors. Specifically, let $e_{input}$ be the vector embedding of $v_{input}$ in Input VD. Then, for each entity vector in Existing VD, calculate the cosine similarity with $e_{input}$. Finally, sort them in descending order and select the top $n$ entity vectors as the similar candidate entities for the input entity $v_{input}$.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 500,
+      "bottomRightX": 441,
+      "bottomRightY": 517,
+      "content": "### *Step 4: Determination of entity consistency by LLM*",
+      "type": "title"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 519,
+      "bottomRightX": 569,
+      "bottomRightY": 593,
+      "content": "After obtaining $n$ similar candidate entities, LLM is used to determine whether $v_{input}$ is consistent with any of the candidates. Specifically, we employ LLM through ICL to determine the consistency (see Table C5 in Appendix C for more details). For each similar candidate entity $v_i, i = 1, \\dots, n$, LLM is asked to output “yes” if it is consistent to $v_{input}$; otherwise, LLM outputs “no”.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 603,
+      "bottomRightX": 396,
+      "bottomRightY": 620,
+      "content": "### *Step 5: Selection of update approach by LLM*",
+      "type": "title"
+    },
+    {
+      "topLeftX": 117,
+      "topLeftY": 621,
+      "bottomRightX": 569,
+      "bottomRightY": 753,
+      "content": "Finally, we analyze the consistency results and select the appropriate update approach for each input entity. If LLM outputs “no” for all similar candidate entities, $v_{input}$ will be considered as a new entity and added to the Existing KG. If LLM outputs “yes” for only one candidate, $v_{input}$ will be merged with it, with reference relationships between $v_{input}$ and other entities in Input KG being added. If LLM outputs “yes” for multiple candidates, LLM will perform a secondary judgment through ICL on all the candidates with “yes” output, selecting the most similar candidate entity (see Table C5 in Appendix C for more details). Then, $v_{input}$ will be merged with that candidate, with relationships being added.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 334,
+      "topLeftY": 775,
+      "bottomRightX": 351,
+      "bottomRightY": 790,
+      "content": "17",
+      "type": "footer"
+    }
+  ]
+}

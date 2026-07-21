@@ -1,0 +1,147 @@
+{
+  "index": 15,
+  "dimensions": {
+    "dpi": 87,
+    "height": 1018,
+    "width": 720
+  },
+  "confidenceScores": null,
+  "blocks": [
+    {
+      "topLeftX": 81,
+      "topLeftY": 87,
+      "bottomRightX": 352,
+      "bottomRightY": 168,
+      "content": "ual schema design. The induced schema aligns with the formal definition of a knowledge graph  \\( G = (V, E, C, \\phi, \\psi) \\) , where C denotes the set of concepts, and  \\( \\phi \\)  and  \\( \\psi \\)  map nodes and relations to subsets of C, respectively.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 81,
+      "topLeftY": 170,
+      "bottomRightX": 352,
+      "bottomRightY": 347,
+      "content": "Our schema induction pipeline processes the triples extracted from the Dolma corpus (Soldaini et al., 2024), organizing them into batches and employing a generative approach to derive abstract representations. The process targets three components—events  \\( (V_{E}) \\) , entities  \\( (V_{N}) \\) , and relations  \\( (R) \\) —producing a set of conceptual phrases for each, which collectively form the concept set C. This section outlines the abstraction methodology, the role of context in entity conceptualization, and key implementation details.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 101,
+      "topLeftY": 367,
+      "bottomRightX": 252,
+      "bottomRightY": 379,
+      "content": "#### Abstract Event Phrase Generation",
+      "type": "title"
+    },
+    {
+      "topLeftX": 101,
+      "topLeftY": 389,
+      "bottomRightX": 332,
+      "bottomRightY": 474,
+      "content": "I will give you an EVENT. You need to give several phrases containing 1-2 words for the ABSTRACT EVENT of this EVENT. You must return your answer in the following format: phrases1, phrases2, phrases3,... You can't return anything other than answers. These abstract event words should fulfill the following requirements:",
+      "type": "text"
+    },
+    {
+      "topLeftX": 101,
+      "topLeftY": 474,
+      "bottomRightX": 332,
+      "bottomRightY": 606,
+      "content": "1. The ABSTRACT EVENT phrases can well represent the EVENT, and it could be the type of the EVENT or the related concepts of the EVENT.\n2. Strictly follow the provided format, do not add extra characters or words.\n3. Write at least 3 or more phrases at different abstract level if possible.\n4. Do not repeat the same word and the input in the answer.\n5. Stop immediately if you can't think of any more phrases, and no explanation is needed.",
+      "type": "list"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 607,
+      "bottomRightX": 151,
+      "bottomRightY": 619,
+      "content": "Examples:",
+      "type": "text"
+    },
+    {
+      "topLeftX": 101,
+      "topLeftY": 619,
+      "bottomRightX": 332,
+      "bottomRightY": 654,
+      "content": "EVENT: A man retreats to mountains and forests\nYour answer: retreat, relaxation, escape, nature, solitude",
+      "type": "text"
+    },
+    {
+      "topLeftX": 101,
+      "topLeftY": 654,
+      "bottomRightX": 332,
+      "bottomRightY": 715,
+      "content": "EVENT: A cat chased a prey into its shelter Your answer: hunting, escape, predation, hiding, stalking\nEVENT: Sam playing with his dog Your answer: relaxing event, petting, playing, bonding, friendship\nEVENT: [EVENT] Your answer:",
+      "type": "text"
+    },
+    {
+      "topLeftX": 82,
+      "topLeftY": 743,
+      "bottomRightX": 352,
+      "bottomRightY": 772,
+      "content": "Figure 5: This figure shows the prompt used for generating the concepts for an event.",
+      "type": "caption"
+    },
+    {
+      "topLeftX": 82,
+      "topLeftY": 801,
+      "bottomRightX": 272,
+      "bottomRightY": 818,
+      "content": "#### B.2.1 Abstraction Methodology",
+      "type": "title"
+    },
+    {
+      "topLeftX": 81,
+      "topLeftY": 823,
+      "bottomRightX": 352,
+      "bottomRightY": 939,
+      "content": "The schema induction begins by categorizing the nodes and edges of the knowledge graph G into events, entities, and relations. For each category, we process the elements in batches of size  \\( B_{s} \\)  to optimize computational efficiency and scalability. The LLM is prompted with tailored instructions to generate a list of phrases, each containing one to",
+      "type": "text"
+    },
+    {
+      "topLeftX": 365,
+      "topLeftY": 87,
+      "bottomRightX": 636,
+      "bottomRightY": 216,
+      "content": "two words, that abstractly represent the input element. These phrases must satisfy several criteria: they should encapsulate the element's type or related concepts, vary in abstraction level, and avoid repetition or inclusion of the original input term. For each element, a minimum of three phrases is targeted, though more may be generated depending on the LLM's output.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 365,
+      "topLeftY": 218,
+      "bottomRightX": 636,
+      "bottomRightY": 478,
+      "content": "For events  \\( (v \\in V_{E}) \\) , the prompt directs the LLM to identify abstract event types or related notions. For example, an event such as \"Sam playing with his dog\" might yield phrases like \"playing,\" \"bonding,\" and \"relaxing event,\" reflecting different levels of generality. For entities  \\( (e \\in V_{N}) \\) , the prompt similarly elicits abstract entity types, augmented by contextual information derived from the graph structure, as detailed below. Relations  \\( (r \\in R) \\)  are abstracted into phrases that capture their semantic essence, such as transforming \"participated in\" into \"engage in,\" \"attend,\" and \"involve in.\" The LLM generates these outputs in a structured format, which we parse into lists of phrases, forming the mappings  \\( \\phi(v) \\) ,  \\( \\phi(e) \\) , and  \\( \\psi(r) \\)  to the concept set C.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 365,
+      "topLeftY": 481,
+      "bottomRightX": 636,
+      "bottomRightY": 628,
+      "content": "The abstraction process operates in batches, processing  \\( B_{s} \\)  elements simultaneously. The input prompts are tokenized to a maximum length  \\( L_{tok} \\) , and the LLM generates responses under controlled parameters (e.g., temperature  \\( \\tau \\)  and top-p sampling with probability p) to balance creativity and coherence. The resulting phrases are stored alongside their corresponding elements, ensuring traceability and enabling subsequent analysis.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 365,
+      "topLeftY": 639,
+      "bottomRightX": 623,
+      "bottomRightY": 653,
+      "content": "#### B.2.2 Contextual Enhancement for Entities",
+      "type": "title"
+    },
+    {
+      "topLeftX": 365,
+      "topLeftY": 659,
+      "bottomRightX": 636,
+      "bottomRightY": 939,
+      "content": "As shown in Figure 6, to enhance the accuracy of entity abstraction, we incorporate contextual information extracted from the knowledge graph. For each entity \\( e \\in V_N \\), we examine its neighboring nodes—predecessors and successors—along with their associated relations. A subset of these neighbors, limited to \\( N_{ctx} \\) (e.g., one predecessor and one successor), is randomly sampled to construct a context string. This string concatenates the neighbor's identity and relation (e.g., \"neighbor1 relation1, relation2 neighbor2\"), providing the LLM with additional semantic cues. For instance, an entity \"Black Mountain College\" with context \"started by John Andrew Rice\" might yield phrases like \"college,\" \"school,\" and \"liberal arts college.\" This contextual enrichment ensures that the abstracted types are grounded in the entity's role within the graph,",
+      "type": "text"
+    },
+    {
+      "topLeftX": 352,
+      "topLeftY": 959,
+      "bottomRightX": 368,
+      "bottomRightY": 971,
+      "content": "16",
+      "type": "footer"
+    }
+  ]
+}

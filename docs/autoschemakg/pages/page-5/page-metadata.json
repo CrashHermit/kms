@@ -1,0 +1,94 @@
+{
+  "index": 4,
+  "dimensions": {
+    "dpi": 87,
+    "height": 1018,
+    "width": 720
+  },
+  "confidenceScores": null,
+  "blocks": [
+    {
+      "topLeftX": 84,
+      "topLeftY": 75,
+      "bottomRightX": 348,
+      "bottomRightY": 233,
+      "content": "|  Knowledge Graph | Triple Type | Precision | Recall | F1  |\n| --- | --- | --- | --- | --- |\n|  ATLAS-Wiki | Entity-Entity | 99.13 | 90.10 | 94.09  |\n|   |  Event-Entity | 100.0 | 92.59 | 95.60  |\n|   |  Event-Event | 99.60 | 93.59 | 96.01  |\n|  ATLAS-Pes2o | Entity-Entity | 97.66 | 89.89 | 93.03  |\n|   |  Event-Entity | 100.0 | 94.29 | 96.83  |\n|   |  Event-Event | 99.54 | 91.31 | 94.94  |\n|  ATLAS-CC | Entity-Entity | 95.65 | 84.64 | 88.82  |\n|   |  Event-Entity | 99.93 | 87.92 | 92.72  |\n|   |  Event-Event | 99.86 | 93.20 | 96.16  |",
+      "type": "table",
+      "tableId": null
+    },
+    {
+      "topLeftX": 81,
+      "topLeftY": 235,
+      "bottomRightX": 350,
+      "bottomRightY": 280,
+      "content": "Table 2: Triple precision, recall and F1 score across datasets. Each row displays the performance of a type of extracted triples.",
+      "type": "caption"
+    },
+    {
+      "topLeftX": 81,
+      "topLeftY": 296,
+      "bottomRightX": 353,
+      "bottomRightY": 591,
+      "content": "original text and the triples extracted by Llama-3-8B-Instruct; (2) DeepSeek-V3 identifies triples that are incorrectly extracted (false positives); (3) DeepSeek-V3 lists facts present in the original text but missing from the extracted triples (false negatives); This methodology allows us to calculate precise metrics: (1) Precision: proportion of correctly extracted triples out of all extracted triples; (2) Recall: proportion of correctly extracted triples among all ground-truth triples in the text; (3) F1 score: the harmonic mean of precision and recall. As shown in Table 2, our approach demonstrates exceptional extraction quality across all datasets, with particularly strong performance on Wikipedia content. The precision, recall, and F1 scores of the triples in our KG exceed 90% in most cases, demonstrating the high quality and reliability of our extracted triples.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 84,
+      "topLeftY": 600,
+      "bottomRightX": 348,
+      "bottomRightY": 808,
+      "content": "|  Dataset | Context | Model  |   |\n| --- | --- | --- | --- |\n|   |   |  LLaMA-3-8B | LLaMA-3-70B  |\n|  ATLAS-Wiki | [Lower-Upper] | 46.29-99.29 | 65.69-99.70  |\n|   |  Entity | 65.08 | 70.96  |\n|   |  Event | 92.69 | 94.82  |\n|   |  Event + Entity | 93.30 | 95.13  |\n|  ATLAS-Pes2o | [Lower-Upper] | 62.32-98.99 | 75.05-99.49  |\n|   |  Entity | 80.00 | 83.33  |\n|   |  Event | 96.97 | 97.78  |\n|   |  Event + Entity | 97.37 | 97.98  |\n|  ATLAS-CC | [Lower-Upper] | 56.08-97.29 | 70.25-99.10  |\n|   |  Entity | 76.78 | 81.01  |\n|   |  Event | 94.87 | 96.78  |\n|   |  Event + Entity | 96.28 | 96.98  |",
+      "type": "table",
+      "tableId": null
+    },
+    {
+      "topLeftX": 81,
+      "topLeftY": 810,
+      "bottomRightX": 351,
+      "bottomRightY": 898,
+      "content": "Table 3: KG performance across datasets, showing bounds (no context to full passage) and results with different knowledge representations. Entity, Event, and combined representations preserve most information for MCQs, approaching full-passage performance across all datasets and models.",
+      "type": "caption"
+    },
+    {
+      "topLeftX": 81,
+      "topLeftY": 904,
+      "bottomRightX": 353,
+      "bottomRightY": 939,
+      "content": "Measuring Information Preservation in Knowledge Graphs We evaluate the effectiveness of",
+      "type": "text"
+    },
+    {
+      "topLeftX": 365,
+      "topLeftY": 87,
+      "bottomRightX": 637,
+      "bottomRightY": 662,
+      "content": "the entity-level triples and event-level triples of our constructed KG in preserving information from original passages. We test how well multiple-choice question (MCQ) performance is preserved when we convert the original passage into KG data. Following the evaluation protocol from the existing work (Schuhmann et al., 2025), we generate five MCQs with LLaMA-3-70B-Instruct for each original passage, and the prompts are shown in Figure 8. We sample 200 original passages and 1,000 MCQs are obtained for each dataset. We ask LLMs to answer them with no context (denoted as lower bound), then ask them again with the original passage (denoted as upper bound) for sanity check. Finally, we conduct tests using entity-level triples (denoted as Entity), event-level triples (denoted as Event), and a combination of both entity-level and event-level triples (denoted as Event + Entity). We evaluate on three pre-training datasets with our constructed KG in Table 1: En-Wiki, Pes2o-Abstract and Common Crawl. According to the results shown in Table 3, we have the following insights: (1) Information is well preserved in our constructed KG. MCQs performance with Entity, Event or Event + Entity remains far above the lower bound baseline and approaches the original-passage upper bound. It suggests that the information in the original passages is well preserved in our constructed KG; (2) Events are more effective than entities. The MCQs performance with Event or Event + Entity is much closer to the upper bound than that with Entity, which accuracy is more than \\(95\\%\\) in most of the cases. It demonstrates that the event-level triples can preserve richer and more precious information than entity-level triples.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 368,
+      "topLeftY": 679,
+      "bottomRightX": 632,
+      "bottomRightY": 894,
+      "content": "|   | Task | Dataset | BS-R | BS-C  |\n| --- | --- | --- | --- | --- |\n|  LLaMA-3-8B | Entity Typing | FB15kET | 88.57 | 86.54  |\n|   |   |  YAGO43kET | 80.67 | 58.86  |\n|   |  Event Typing | wikiHow | 99.18 | 99.26  |\n|   |  Relation Typing | FB15kET | 88.75 | 88.41  |\n|  LLaMA-3-13B | Entity Typing | FB15kET | 89.25 | 88.59  |\n|   |   |  YAGO43kET | 94.26 | 90.56  |\n|   |  Event Typing | wikiHow | 98.97 | 99.33  |\n|   |  Relation Typing | FB15kET | 88.58 | 88.66  |\n|  LLaMA-3-70B | Entity Typing | FB15kET | 89.49 | 87.30  |\n|   |   |  YAGO43kET | 94.61 | 92.64  |\n|   |  Event Typing | wikiHow | 99.41 | 99.15  |\n|   |  Relation Typing | FB15kET | 88.70 | 90.33  |",
+      "type": "table",
+      "tableId": null
+    },
+    {
+      "topLeftX": 365,
+      "topLeftY": 896,
+      "bottomRightX": 635,
+      "bottomRightY": 926,
+      "content": "Table 4: Results of schema induction with various LLaMA family LLMs across three kinds of typing tasks.",
+      "type": "caption"
+    },
+    {
+      "topLeftX": 355,
+      "topLeftY": 959,
+      "bottomRightX": 364,
+      "bottomRightY": 971,
+      "content": "5",
+      "type": "footer"
+    }
+  ]
+}

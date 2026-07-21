@@ -1,0 +1,27 @@
+{
+  "index": 35,
+  "dimensions": {
+    "dpi": 87,
+    "height": 1018,
+    "width": 720
+  },
+  "confidenceScores": null,
+  "blocks": [
+    {
+      "topLeftX": 147,
+      "topLeftY": 87,
+      "bottomRightX": 600,
+      "bottomRightY": 742,
+      "content": "[37] Zheng, W., Zou, L., Peng, W., Yan, X., Song, S., Zhao, D.: Semantic sparql similarity search over rdf knowledge graphs. *Proceedings of the VLDB Endowment* **9**(11), 840–851 (2016)[38] Mikolov, T., Chen, K., Corrado, G., Dean, J.: Efficient estimation of word representations in vector space. *arXiv preprint arXiv:1301.3781* (2013)[39] Pennington, J., Socher, R., Manning, C.D.: Glove: Global vectors for word representation, pp. 1532–1543 (2014). *Proceedings of the 2014 conference on empirical methods in natural language processing (EMNLP)*[40] Devlin, J., Chang, M.-W., Lee, K., Toutanova, K.: Bert: Pre-training of deep bidirectional transformers for language understanding. *arXiv preprint arXiv:1810.04805* (2018)[41] Bordes, A., Usunier, N., Garcia-Duran, A., Weston, J., Yakhnenko, O.: Translating embeddings for modeling multi-relational data. *Advances in neural information processing systems* **26** (2013)[42] He, S., Liu, K., Ji, G., Zhao, J.: Learning to represent knowledge graphs with gaussian embedding, pp. 623–632 (2015). *Proceedings of the 24th ACM international conference on information and knowledge management*[43] Nickel, M., Rosasco, L., Poggio, T.: Holographic embeddings of knowledge graphs. In: *Proceedings of the AAAI Conference on Artificial Intelligence*, vol. 30 (2016)[44] Schlichtkrull, M., Kipf, T.N., Bloem, P., Van Den Berg, R., Titov, I., Welling, M.: Modeling relational data with graph convolutional networks. In: *The Semantic Web: 15th International Conference, ESWC 2018, Heraklion, Crete, Greece, June 3–7, 2018, Proceedings 15*, pp. 593–607 (2018). Springer[45] Abboud, R., Ceylan, I., Lukasiewicz, T., Salvatori, T.: Boxe: A box embedding model for knowledge base completion. *Advances in Neural Information Processing Systems* **33**, 9649–9661 (2020)[46] Achiam, J., Adler, S., Agarwal, S., Ahmad, L., Akkaya, I., Aleman, F.L., Almeida, D., Altenschmidt, J., Altman, S., Anadkat, S., et al.: Gpt-4 technical report. *arXiv preprint arXiv:2303.08774* (2023)[47] Chowdhery, A., Narang, S., Devlin, J., Bosma, M., Mishra, G., Roberts, A., Barham, P., Chung, H.W., Sutton, C., Gehrmann, S., et al.: Palm: Scaling language modeling with pathways. *Journal of Machine Learning Research* **24**(240), 1–113 (2023)[48] Taylor, R., Kardas, M., Cucurull, G., Scialom, T., Hartshorn, A., Saravia, E., Poulton, A., Kerkez, V., Stojnic, R.: Galactica: A large language model for science. *arXiv preprint arXiv:2211.09085* (2022)",
+      "type": "list"
+    },
+    {
+      "topLeftX": 364,
+      "topLeftY": 775,
+      "bottomRightX": 381,
+      "bottomRightY": 789,
+      "content": "36",
+      "type": "footer"
+    }
+  ]
+}

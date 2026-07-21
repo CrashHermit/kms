@@ -1,0 +1,67 @@
+{
+  "index": 1,
+  "dimensions": {
+    "dpi": 87,
+    "height": 1018,
+    "width": 720
+  },
+  "confidenceScores": null,
+  "blocks": [
+    {
+      "topLeftX": 175,
+      "topLeftY": 91,
+      "bottomRightX": 572,
+      "bottomRightY": 199,
+      "content": "mechanisms are proposed. For knowledge completion mechanism, Math LLM is developed to interact with AutoMathKG, providing missing proofs or solutions. For knowledge fusion mechanism, MathVD is used to retrieve similar entities, and LLM is used to determine whether to merge with a candidate or add as a new entity. A wide range of experiments demonstrate the advanced performance and broad applicability of the AutoMathKG system, including superior reachability query results in MathVD compared to five baselines and robust mathematical reasoning capability in Math LLM.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 175,
+      "topLeftY": 208,
+      "bottomRightX": 564,
+      "bottomRightY": 232,
+      "content": "Keywords: knowledge graph, vector database, data augmentation, LLMs, in-context learning, mathematical reasoning capability",
+      "type": "text"
+    },
+    {
+      "topLeftX": 148,
+      "topLeftY": 277,
+      "bottomRightX": 280,
+      "bottomRightY": 293,
+      "content": "# 1 Introduction",
+      "type": "title"
+    },
+    {
+      "topLeftX": 146,
+      "topLeftY": 305,
+      "bottomRightX": 600,
+      "bottomRightY": 449,
+      "content": "A knowledge graph (KG) aims to construct a knowledge base by extracting a series of triples from unstructured or semi-structured texts [1]. With the advancement of artificial intelligence (AI) and big data technologies, large-scale KGs have found widespread application in natural language processing (NLP) [2]. The mathematical KG, as an important branch, organizes and structures knowledge within the field of mathematics, making it more accessible and usable [3]. Math KGs can provide a foundational data resource for training more advanced models in mathematical reasoning, promoting the development of AI for mathematics [4]. Since a substantial portion of mathematical knowledge exists in natural language text [5], it is of great significance to construct a high-quality and diverse math KG from extensive texts.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 146,
+      "topLeftY": 450,
+      "bottomRightX": 600,
+      "bottomRightY": 581,
+      "content": "Mathematical knowledge can be expressed in two linguistic forms: formal and informal [6]. Formal mathematics is written in verifiable formal languages similar to source code, such as Metamath [7] and Lean 4 [8]. Informal language, on the other hand, is a blend of symbolic and natural language used by humans. Despite the significant advancements in formal mathematics driven by NLP technologies [9], it does not directly address the informal aspects of mathematics [10], failing to promote human understanding of mathematics as effectively as natural mathematical language. Therefore, this paper aims to investigate the construction of a mathematical KG written in natural language.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 146,
+      "topLeftY": 581,
+      "bottomRightX": 602,
+      "bottomRightY": 726,
+      "content": "Existing mathematical KGs in natural language can be mainly categorized as problem-solving [11] and concept-integrating [12–14]. While popular, there are two major limitations. First, they are constrained by the completeness of the current corpus, often discarding or manually supplementing missing knowledge, without fully exploring the inherent logic of mathematical knowledge. Second, they are typically static in structure and fail to automatically integrate knowledge from different sources, requiring substantial time and human resources for updates. Addressing these drawbacks, we extend the research on math KGs written in natural language and propose a novel method to construct automatically updatable KG based on large language models (LLMs).",
+      "type": "text"
+    },
+    {
+      "topLeftX": 370,
+      "topLeftY": 779,
+      "bottomRightX": 378,
+      "bottomRightY": 790,
+      "content": "2",
+      "type": "footer"
+    }
+  ]
+}

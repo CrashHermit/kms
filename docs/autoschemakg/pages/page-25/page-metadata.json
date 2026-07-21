@@ -1,0 +1,203 @@
+{
+  "index": 24,
+  "dimensions": {
+    "dpi": 87,
+    "height": 1018,
+    "width": 720
+  },
+  "confidenceScores": null,
+  "blocks": [
+    {
+      "topLeftX": 102,
+      "topLeftY": 197,
+      "bottomRightX": 332,
+      "bottomRightY": 211,
+      "content": "### Multiple-Choice Question Generation and Answering",
+      "type": "title"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 221,
+      "bottomRightX": 228,
+      "bottomRightY": 234,
+      "content": "#### MCQ Generation Prompt:",
+      "type": "title"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 235,
+      "bottomRightX": 332,
+      "bottomRightY": 283,
+      "content": "You are an expert in generating multiple-choice questions (MCQs) from scientific texts. Your task is to generate 5 multiple-choice questions based on the following passage.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 283,
+      "bottomRightX": 200,
+      "bottomRightY": 293,
+      "content": "Each question should:",
+      "type": "text"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 293,
+      "bottomRightX": 332,
+      "bottomRightY": 319,
+      "content": "- Focus on factual claims, numerical data, definitions, or relational knowledge from the passage.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 319,
+      "bottomRightX": 332,
+      "bottomRightY": 341,
+      "content": "- Have 4 options (one correct answer and three plausible distractors).",
+      "type": "text"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 341,
+      "bottomRightX": 275,
+      "bottomRightY": 354,
+      "content": "- Clearly indicate the correct answer.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 354,
+      "bottomRightX": 332,
+      "bottomRightY": 379,
+      "content": "The output should be in JSON format, with each question as a dictionary containing:",
+      "type": "text"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 379,
+      "bottomRightX": 332,
+      "bottomRightY": 414,
+      "content": "- \"question\": The MCQ question.\n- \"options\": A list of 4 options (e.g., [\"A: ..\", \"B: ..\", \"C: ..\", \"D: ..\"]).",
+      "type": "text"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 414,
+      "bottomRightX": 301,
+      "bottomRightY": 427,
+      "content": "- \"answer\": The correct answer (e.g., \"A\").",
+      "type": "text"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 427,
+      "bottomRightX": 179,
+      "bottomRightY": 439,
+      "content": "Output Example:",
+      "type": "text"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 439,
+      "bottomRightX": 332,
+      "bottomRightY": 487,
+      "content": "[\n    {\n    \"question\": \"What is the primary role of a catalyst in a chemical reaction?\",\n    \"options\": [",
+      "type": "text"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 487,
+      "bottomRightX": 332,
+      "bottomRightY": 523,
+      "content": "\"options\": [\n    \"A: To make a thermodynamically unfavorable reaction proceed\",\n    \"B: To provide a lower energy pathway between reactants and products\",\n    \"C: To decrease the rate of a chemical reaction\",\n    \"D: To change the overall reaction itself\"\n    ],\n    \"answer\": \"B\"\n]",
+      "type": "text"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 523,
+      "bottomRightX": 332,
+      "bottomRightY": 547,
+      "content": "\"B: To provide a lower energy pathway between reactants and products\",",
+      "type": "text"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 547,
+      "bottomRightX": 332,
+      "bottomRightY": 571,
+      "content": "\"C: To decrease the rate of a chemical reaction\",",
+      "type": "text"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 571,
+      "bottomRightX": 314,
+      "bottomRightY": 645,
+      "content": "\"D: To change the overall reaction itself\"\n],\n\"answer\": \"B\"\n}\nPassage: {passage}",
+      "type": "code"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 655,
+      "bottomRightX": 226,
+      "bottomRightY": 667,
+      "content": "#### MCQ Answering Prompt:",
+      "type": "title"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 667,
+      "bottomRightX": 294,
+      "bottomRightY": 680,
+      "content": "Given the contexts or evidences: {contexts}",
+      "type": "text"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 680,
+      "bottomRightX": 256,
+      "bottomRightY": 692,
+      "content": "Here is a multiple-choice question:",
+      "type": "text"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 692,
+      "bottomRightX": 196,
+      "bottomRightY": 703,
+      "content": "Question: {question}",
+      "type": "text"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 703,
+      "bottomRightX": 332,
+      "bottomRightY": 728,
+      "content": "Options: A. {options_0} B. {options_1} C. {options_2} D. {options_3}",
+      "type": "text"
+    },
+    {
+      "topLeftX": 102,
+      "topLeftY": 728,
+      "bottomRightX": 332,
+      "bottomRightY": 753,
+      "content": "Please select the correct answer by choosing A, B, C, or D. Respond with only the letter of your choice.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 82,
+      "topLeftY": 781,
+      "bottomRightX": 350,
+      "bottomRightY": 825,
+      "content": "Figure 8: The prompts for generating and answering MCQ questions for evaluating knowledge retention in knowledge graph.",
+      "type": "caption"
+    },
+    {
+      "topLeftX": 352,
+      "topLeftY": 959,
+      "bottomRightX": 366,
+      "bottomRightY": 971,
+      "content": "25",
+      "type": "footer"
+    }
+  ]
+}

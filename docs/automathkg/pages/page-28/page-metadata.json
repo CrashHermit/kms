@@ -1,0 +1,99 @@
+{
+  "index": 27,
+  "dimensions": {
+    "dpi": 87,
+    "height": 1018,
+    "width": 720
+  },
+  "confidenceScores": null,
+  "blocks": [
+    {
+      "topLeftX": 147,
+      "topLeftY": 89,
+      "bottomRightX": 255,
+      "bottomRightY": 103,
+      "content": "## 8.4 Limitation",
+      "type": "title"
+    },
+    {
+      "topLeftX": 146,
+      "topLeftY": 111,
+      "bottomRightX": 600,
+      "bottomRightY": 213,
+      "content": "One limitation of our work is the choice of LLM during ICL. To save computational resources, we only used a small-scale model, Llama-2-7b, while larger language models may perform better. Another limitation is the trade-off between corpus richness and mathematical knowledge specialization. To obtain accurate mathematical knowledge, the corpus collected in this paper focuses on formal texts and does not include informal corpora, such as the discussion dialogues in mathematical forums, which may provide different types of mathematical knowledge.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 147,
+      "topLeftY": 227,
+      "bottomRightX": 264,
+      "bottomRightY": 245,
+      "content": "## 9 Conclusion",
+      "type": "title"
+    },
+    {
+      "topLeftX": 146,
+      "topLeftY": 256,
+      "bottomRightX": 600,
+      "bottomRightY": 487,
+      "content": "This paper proposes AutoMathKG, a novel high-quality, wide-coverage, and multi-dimensional knowledge graph in the field of mathematics that can be automatically updated. AutoMathKG integrates math knowledge from various domains and levels in natural language, establishing connections among the three major dimensions of mathematics: definitions, theorems, and problems, all augmented by LLMs. In order to retrieve similar entities, MathVD is created as a VD of AutoMathKG, with two strategies for entity embeddings using SBERT. In order to automatically update, two mechanisms are proposed. One is for knowledge completion through interacting with Math LLM, a specialized LLM designed to supplement missing proofs and solutions. Another is for knowledge fusion across different sources, through fuzzy search in MathVD and the determination of update approaches by LLM. Comprehensive experimental results demonstrate the advanced performance of AutoMathKG, MathVD, and Math LLM, as well as the effectiveness and applicability of the automatic update method. AutoMathKG system opens up new possibilities for applying AI techniques in the acquisition of mathematical knowledge and the enhancement of mathematical reasoning, making a significant contribution to the field of AI for mathematics.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 146,
+      "topLeftY": 488,
+      "bottomRightX": 600,
+      "bottomRightY": 532,
+      "content": "In future work, we plan to use more advanced models beyond Llama-2-7b for data augmentation. Moreover, we intend to explore a broader range of mathematical corpora, such as math forums, to increase the diversity of mathematical knowledge.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 147,
+      "topLeftY": 537,
+      "bottomRightX": 600,
+      "bottomRightY": 581,
+      "content": "Acknowledgements. This research was supported by Key Lab of Random Complex Structures and Data Science, Chinese Academy of Sciences (2008DP173182); National Key R&D Program of China (2021ZD0111204).",
+      "type": "text"
+    },
+    {
+      "topLeftX": 147,
+      "topLeftY": 596,
+      "bottomRightX": 257,
+      "bottomRightY": 612,
+      "content": "## Declarations",
+      "type": "title"
+    },
+    {
+      "topLeftX": 147,
+      "topLeftY": 624,
+      "bottomRightX": 600,
+      "bottomRightY": 696,
+      "content": "- **Author contribution** All authors contributed to this research. Data collection, model implementation, and experimental evaluation were conducted by R.B., Y.G., and Z.Y. B.C. formulated the research idea, coordinated the efforts, and supervised the overall process. R.B. drafted the manuscript, and all authors reviewed and commented on its previous versions.",
+      "type": "list"
+    },
+    {
+      "topLeftX": 147,
+      "topLeftY": 697,
+      "bottomRightX": 600,
+      "bottomRightY": 740,
+      "content": "- **Funding** This research was supported by Key Lab of Random Complex Structures and Data Science, Chinese Academy of Sciences (2008DP173182); National Key R&D Program of China (2021ZD0111204).",
+      "type": "list"
+    },
+    {
+      "topLeftX": 147,
+      "topLeftY": 741,
+      "bottomRightX": 586,
+      "bottomRightY": 754,
+      "content": "- **Conflict of interest** The authors declare that they have no conflict of interest.",
+      "type": "list"
+    },
+    {
+      "topLeftX": 367,
+      "topLeftY": 779,
+      "bottomRightX": 381,
+      "bottomRightY": 790,
+      "content": "28",
+      "type": "footer"
+    }
+  ]
+}

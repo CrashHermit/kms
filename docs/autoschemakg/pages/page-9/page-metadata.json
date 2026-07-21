@@ -1,0 +1,107 @@
+{
+  "index": 8,
+  "dimensions": {
+    "dpi": 87,
+    "height": 1018,
+    "width": 720
+  },
+  "confidenceScores": null,
+  "blocks": [
+    {
+      "topLeftX": 81,
+      "topLeftY": 87,
+      "bottomRightX": 352,
+      "bottomRightY": 281,
+      "content": "CC performed best in Law and History, leveraging its broader web-sourced content. All ATLAS variants consistently outperformed both the no-retrieval baseline and Freebase-ToG in these humanities and social science domains. For example, in Law, our approach achieved a 4-point improvement over the baseline, while some other retrieval methods actually decreased performance, as shown in Table 7. The retrieval method also matters for some specific tasks. For example, in Logic, ToG on our ATLAS knowledge graphs performs much better than all the other methods.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 81,
+      "topLeftY": 285,
+      "bottomRightX": 352,
+      "bottomRightY": 431,
+      "content": "The domain-specific performance pattern aligns with intuitive expectations: knowledge graphs excel in retrieving factual relationships critical for humanities and social sciences, while showing limited benefits in mathematical and technical domains where node-relation structures are less effective for capturing procedural knowledge. The complete subject analysis, including technical domains, is available in Appendix G.2.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 82,
+      "topLeftY": 448,
+      "bottomRightX": 248,
+      "bottomRightY": 464,
+      "content": "## 6 Further Related Work",
+      "type": "title"
+    },
+    {
+      "topLeftX": 81,
+      "topLeftY": 479,
+      "bottomRightX": 352,
+      "bottomRightY": 939,
+      "content": "Knowledge graph (KG) construction transforms unstructured data into machine-readable formats. Traditional approaches using predefined schemas limit cross-domain scalability, while LLMs now enable autonomous construction through improved extraction and schema induction. Recent advances include SAC-KG (Chen et al., 2024a), which uses LLMs as domain experts to generate specialized KGs with high precision on million-node graphs; Docs2KG (Sun et al., 2024c) for heterogeneous document processing; and KAG (Liang et al., 2024), which enhances multi-hop reasoning through KG-text mutual indexing. One of the earliest approaches to extracting schemas or concepts from entities, events, or textual descriptions leveraged lexico-syntactic patterns to automatically harvest novel lexico-semantic concepts from documents (Hearst, 1998), which enhanced WordNet (Miller, 1995). Agirre et al. (2000) further enhanced WordNet by extracting topically related concepts from web documents. Txt2onto (Hawkins et al., 2022) proposed a NLP-ML approach to create numerical representations of texts and use these features in a supervised learning classifier that predicts terms and concepts. Recently, due to the strong ability of LLMs to capture complex language patterns in different knowledge domains, LLMs4OL (Babaei Giglou et al., 2023) uses zero-",
+      "type": "text"
+    },
+    {
+      "topLeftX": 365,
+      "topLeftY": 87,
+      "bottomRightX": 637,
+      "bottomRightY": 232,
+      "content": "shot prompting method with LLMs for ontology learning tasks. Schema induction automatically derives KG structure without predefined ontologies. Hofer et al. (2024) survey construction pipelines emphasizing ontology learning, while Dash et al. (2021) address canonicalization using variational autoencoders and Dognin et al. (2021) employ reinforcement learning for bidirectional text-to-graph conversion.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 366,
+      "topLeftY": 249,
+      "bottomRightX": 462,
+      "bottomRightY": 265,
+      "content": "## 7 Conclusion",
+      "type": "title"
+    },
+    {
+      "topLeftX": 365,
+      "topLeftY": 277,
+      "bottomRightX": 637,
+      "bottomRightY": 507,
+      "content": "AutoSchemaKG transforms knowledge graph construction by eliminating predefined schemas through LLM-based triple extraction and schema induction. Our methodology constructs the ATLAS family of knowledge graphs (900+ million nodes, 5.9 billion edges) with high-quality triple extraction (>95% precision) and schema induction. This approach outperforms baselines on multi-hop QA tasks and enhances LLM factuality across diverse domains. Our work demonstrates that billion-scale knowledge graphs with dynamically induced schemas can be effectively constructed without expert intervention, providing valuable complements to parametric knowledge in large language models.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 366,
+      "topLeftY": 522,
+      "bottomRightX": 465,
+      "bottomRightY": 537,
+      "content": "## 8 Limitations",
+      "type": "title"
+    },
+    {
+      "topLeftX": 365,
+      "topLeftY": 550,
+      "bottomRightX": 636,
+      "bottomRightY": 831,
+      "content": "Despite promising results, our work has several important limitations. The construction of billion-scale knowledge graphs requires substantial computational resources (78,400+ GPU hours), limiting accessibility for researchers with resource constraints. Our approach inherits biases and limitations from the underlying LLMs used for triple extraction and schema induction, potentially affecting performance in specialized domains where these models lack expertise. While achieving high semantic alignment with human-crafted schemas, our induction method still struggles with extremely technical domains requiring expert-level conceptual organization. Despite extracting billions of facts, our knowledge graphs may contain inconsistencies, contradictions, or information gaps in sparse knowledge regions.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 366,
+      "topLeftY": 844,
+      "bottomRightX": 502,
+      "bottomRightY": 859,
+      "content": "## 9 Ethical Statement",
+      "type": "title"
+    },
+    {
+      "topLeftX": 365,
+      "topLeftY": 872,
+      "bottomRightX": 636,
+      "bottomRightY": 939,
+      "content": "Our research on AutoSchemaKG and ATLAS knowledge graphs adheres to rigorous ethical standards. We exclusively utilized publicly available corpora (Dolma 1.7) with proper attribution and",
+      "type": "text"
+    },
+    {
+      "topLeftX": 355,
+      "topLeftY": 959,
+      "bottomRightX": 364,
+      "bottomRightY": 971,
+      "content": "9",
+      "type": "footer"
+    }
+  ]
+}

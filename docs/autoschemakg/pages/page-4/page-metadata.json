@@ -1,0 +1,132 @@
+{
+  "index": 3,
+  "dimensions": {
+    "dpi": 87,
+    "height": 1018,
+    "width": 720
+  },
+  "confidenceScores": null,
+  "blocks": [
+    {
+      "topLeftX": 99,
+      "topLeftY": 84,
+      "bottomRightX": 618,
+      "bottomRightY": 259,
+      "content": "|   | Question Answering Corpora |   |   | Pre-training Corpora  |   |   |\n| --- | --- | --- | --- | --- | --- | --- |\n|   | MuSiQue | 2WikiQA | HotpotQA | ATLAS-Wiki | ATLAS-Pes2o | ATLAS-CC  |\n|  # Text Chunks | 11,656 | 6,119 | 9,221 | 9.599M | 7.918M | 35.040M  |\n|  # Entities | 108,582 | 48,782 | 95,686 | 70.104M | 75.857M | 241.061M  |\n|  # Events | 99,747 | 50,910 | 82,833 | 165.717M | 92.636M | 696.195M  |\n|  # Concepts | 37,414 | 19,830 | 32,410 | 8.091M | 5.895M | 31.070M  |\n|  # Nodes | 245,743 | 119,522 | 210,929 | 243.912M | 174.387M | 937.256M  |\n|  # Entity-Entity Edges | 91,186 | 40,748 | 78,467 | 0.114B | 0.076B | 0.414B  |\n|  # Event-Entity Edges | 143,254 | 63,680 | 123,527 | 0.265B | 0.208B | 1.063B  |\n|  # Event-Event Edges | 45,157 | 21,062 | 36,602 | 0.071B | 0.044B | 0.295B  |\n|  # Conceptulization Edges | 933,330 | 432,869 | 789,608 | 1.041B | 0.821B | 4.178B  |\n|  # Edges | 1,212,927 | 558,359 | 1,028,204 | 1.492B | 1.150B | 5.958B  |",
+      "type": "table",
+      "tableId": null
+    },
+    {
+      "topLeftX": 81,
+      "topLeftY": 260,
+      "bottomRightX": 636,
+      "bottomRightY": 317,
+      "content": "Table 1: Statistics of knowledge graph construction across QA datasets (MuSiQue, 2WikiQA, HotpotQA) and LLM pre-training corpora (En-Wiki, Pes2o-Abstract, Common Crawl) for ATLAS knowledge graphs, showing counts of text chunks, nodes (entities/events), concepts, edges (Entity-Entity, Event-Entity, Event-Event), and conceptualizations. M = million, B = billion.",
+      "type": "caption"
+    },
+    {
+      "topLeftX": 81,
+      "topLeftY": 333,
+      "bottomRightX": 352,
+      "bottomRightY": 379,
+      "content": "optimized precision settings and GPU acceleration. Extracted triples with their corresponding texts and metadata are serialized into JSON files.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 82,
+      "topLeftY": 401,
+      "bottomRightX": 218,
+      "bottomRightY": 416,
+      "content": "### 3.2 Schema Induction",
+      "type": "title"
+    },
+    {
+      "topLeftX": 81,
+      "topLeftY": 427,
+      "bottomRightX": 352,
+      "bottomRightY": 820,
+      "content": "Following triple extraction, we perform schema induction to abstract specific entities, events, and relations into generalized types. This process uses LLMs to generate conceptual phrases representing types of each graph element, aligning with our formal definition  \\( G = (V, E, C, \\phi, \\psi) \\) . For each category (events, entities, and relations), we process elements in batches. The LLM generates at least three phrases per element that encapsulate its type or related concepts at varying abstraction levels. For entities  \\( (e \\in V_{N}) \\) , we enhance abstraction by incorporating contextual information from neighboring nodes. We sample up to  \\( N_{ctx} \\)  neighbors to construct a context string that provides additional semantic cues. The schema induction pipeline processes the graph serialized from the triple extraction phase. Elements are partitioned into batches, with options for slicing for distributed computation. The generated phrases are recorded in a CSV file, mapping each node  \\( v \\in V \\)  and relation  \\( r \\in R \\)  to a subset of concepts in C via  \\( \\phi \\)  and  \\( \\psi \\) . This automated schema enhances the knowledge graph's adaptability across varied domains without requiring manual curation.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 82,
+      "topLeftY": 840,
+      "bottomRightX": 311,
+      "bottomRightY": 855,
+      "content": "## 4 Construction of ATLAS Families",
+      "type": "title"
+    },
+    {
+      "topLeftX": 81,
+      "topLeftY": 872,
+      "bottomRightX": 352,
+      "bottomRightY": 936,
+      "content": "Corpora As shown in Table 1, the ATLAS-Wiki, ATLAS-Pes2o, and ATLAS-CC are constructed from the subsets from Dolma's subset of Wikipedia & Wikibooks, Semantic Scholar, and Dolma's CC",
+      "type": "text"
+    },
+    {
+      "topLeftX": 365,
+      "topLeftY": 332,
+      "bottomRightX": 637,
+      "bottomRightY": 465,
+      "content": "respectively. \\( ^{2} \\)  We use the full Wikipedia & Wiki-books to construct the ATLAS-Wiki, and we use the abstract part of Semantic Scholar to construct ATLAS-Pes2o, and we use the each of 3% from cc-head, cc-middle, and cc-tail to construct ATLAS-CC. According to (Soldaini et al., 2024) the head, middle, tail of CC are used to measure the distribution similarity to Wikipedia text.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 365,
+      "topLeftY": 475,
+      "bottomRightX": 636,
+      "bottomRightY": 671,
+      "content": "Computational Cost We constructed our knowledge graphs using 80GB GPUs with 1,513 TFLOPS of FP16 compute, running Llama-3-8B-instruct with Flash Attention. The computational demands were substantial: 14,300 GPU hours for En-Wiki (243.9M nodes, 1.49B edges), 11,800 GPU hours for Pes2o-Abstract (174.4M nodes, 1.15B edges), and 52,300 GPU hours for Common Crawl (937.3M nodes, 5.96B edges). Processing 1024-token chunks in batches, we invested approximately 78,400 GPU hours total to extract billions of semantic relationships.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 366,
+      "topLeftY": 685,
+      "bottomRightX": 467,
+      "bottomRightY": 701,
+      "content": "## 5 Experiment",
+      "type": "title"
+    },
+    {
+      "topLeftX": 365,
+      "topLeftY": 712,
+      "bottomRightX": 636,
+      "bottomRightY": 778,
+      "content": "In the this section, we show that the AutoSchemaKG has accurate triplex extraction, can coherently induce schemas, and has very high information preservations in section 5.1.",
+      "type": "text"
+    },
+    {
+      "topLeftX": 365,
+      "topLeftY": 792,
+      "bottomRightX": 557,
+      "bottomRightY": 807,
+      "content": "### 5.1 Evaluating AutoSchemaKG",
+      "type": "title"
+    },
+    {
+      "topLeftX": 365,
+      "topLeftY": 813,
+      "bottomRightX": 636,
+      "bottomRightY": 912,
+      "content": "Evaluating Triple Extraction Accuracy We use a rigorous counting-based evaluation method. Rather than relying on subjective scoring, we employ DeepSeek-V3 (Liu et al., 2024) as a judge in a structured verification process. For each document: (1) We present DeepSeek-V3 with both the",
+      "type": "text"
+    },
+    {
+      "topLeftX": 381,
+      "topLeftY": 922,
+      "bottomRightX": 634,
+      "bottomRightY": 936,
+      "content": "\\( ^{2} \\) https://huggingface.co/datasets/allenai/dolma",
+      "type": "footer"
+    },
+    {
+      "topLeftX": 355,
+      "topLeftY": 959,
+      "bottomRightX": 363,
+      "bottomRightY": 971,
+      "content": "4",
+      "type": "footer"
+    }
+  ]
+}

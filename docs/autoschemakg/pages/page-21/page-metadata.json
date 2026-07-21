@@ -1,0 +1,43 @@
+{
+  "index": 20,
+  "dimensions": {
+    "dpi": 87,
+    "height": 1018,
+    "width": 720
+  },
+  "confidenceScores": null,
+  "blocks": [
+    {
+      "topLeftX": 82,
+      "topLeftY": 187,
+      "bottomRightX": 256,
+      "bottomRightY": 204,
+      "content": "Algorithm 3 LargeKGRetriever",
+      "type": "caption"
+    },
+    {
+      "topLeftX": 82,
+      "topLeftY": 205,
+      "bottomRightX": 635,
+      "bottomRightY": 237,
+      "content": "A variant of HippoRAG2 (Gutiérrez et al., 2025), optimized with dynamic graph sampling and common word filtering",
+      "type": "caption"
+    },
+    {
+      "topLeftX": 84,
+      "topLeftY": 240,
+      "bottomRightX": 637,
+      "bottomRightY": 833,
+      "content": "1: function INIT(graph_type)\n2:    keyword ← Default_graph_keyword ▷ Keyword can be cc, pes2o, wiki\n3:    Initialize_resources(keyword)\n4:    Load_node_and_edge_indexes()\n5: end function\n6: function RETRIEVE_TOPK_NODES(query, top_k_nodes)\n7:    entities ← LLM_NER(query)\n8:    KG_entities ← Encode_and_Search(entities, FAISS_index)\n9:    filtered_keywords ← LLM_filter(KG_entities)\n10:    return filtered_keywords\n11: end function\n12: function RETRIEVE_PERSONALIZATION_DICT(query, number_of_source_nodes)\n13:    topk_nodes ← retrieve_topk_nodes(query, number_of_source_nodes)\n14:    if topk_nodes == {} then\n15:    return {}\n16:    end if\n17:    Update personalization dictionary with topk_nodes\n18:    return Personalization dictionary\n19: end function\n20: function PAGERANK(personalization_dict, topN, sampling_area)\n21:    \\( G_{Sample} \\leftarrow \\) Random Walk with Restart Sampling\n22:    \\( Scores = \\text{PageRank}(G_{Sample}, \\text{personalization\\_dict}) \\)\n23:    topN_nodes = argsort\\( _i \\)(Scores)[: N]\n24:    for node in topN nodes do\n25:    Connected_Passage += node.score\n26:    end for\n27:    return TopN_Ranked_Passages\n28: end function\n29: function RETRIEVE_PASSAGES(query, topN, number_of_source_nodes, sampling_area)\n30:    personalization_dict ← retrieve_personalization_dict(query, number_of_source_nodes)\n31:    if personalization_dict is empty then\n32:    return {}, [0]\n33:    end if\n34:    topN_passages ← pagerank(personalization_dict, topN, sampling_area)\n35:    return topN_passages\n36: end function",
+      "type": "code"
+    },
+    {
+      "topLeftX": 351,
+      "topLeftY": 958,
+      "bottomRightX": 366,
+      "bottomRightY": 972,
+      "content": "21",
+      "type": "footer"
+    }
+  ]
+}
