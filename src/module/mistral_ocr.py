@@ -50,7 +50,10 @@ class MistralOCRError(RuntimeError):
 
 
 def _require_key() -> str:
-    key = os.environ.get(MISTRAL_ENV_KEY)
+    # Prefer MISTRAL_API_KEY (the documented name in .env.example); fall back to
+    # MISTRAL_OCR_API, the name this project's hosted environment injects the secret
+    # under, so the front-end runs out-of-the-box in either place.
+    key = os.environ.get(MISTRAL_ENV_KEY) or os.environ.get("MISTRAL_OCR_API")
     if not key:
         raise MistralOCRError(
             f"{MISTRAL_ENV_KEY} is not set. Export your Mistral API key "

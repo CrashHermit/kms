@@ -161,6 +161,32 @@ Prior entity-layer validation (still valid): OpenStax continuity § — 13 entit
 roles 13/13; Judson polynomials § — 9 entities, types 9/9 (theorem-subsumption confirmed:
 Corollary/Proposition/Lemma → Theorem), roles 9/9.
 
+### Broadening run — Hefferon *Linear Algebra*, Ch.3 §III.2–§IV.2 (this session)
+
+First **new-book** run since the front-end switch (Next-steps #1). Twelve pages (0-based
+228–239) covering definitions, theorems, a Lemma + Corollary, run-in proofs, worked Examples,
+and two dense Exercises sets — all three entity types and all three roles, matrix-heavy math.
+End-to-end in ~155s → `document.md` + 63 entities. Two takeaways:
+
+- **Good:** OCR reading order, matrix/LaTeX fidelity, and theorem-subsumption held; the corrector
+  left content clean (no false rewrites, guard never misfired). Types and role splits looked right
+  on the non-duplicated entities.
+- **Defect found — the extractor duplicates content (intermittent, ungated).** On the dense
+  exercise pages the extractor (DeepSeek, per segment) sometimes **emits a whole segment's nodes
+  twice** — an LLM repetition. It slipped straight through: the corrector was clean and the seam
+  merger only heals boundary splits (it never dedupes), so the duplicate flowed into the entity
+  layer. Impact on this run: **13 extra Problem entities (~25% of 53)** — duplicated numbers 1.8,
+  2.12–2.22 (2.16 tripled) — plus a malformed Theorem (`id=60`, two statements + four proofs = a
+  duplicated statement/proof pair). **Bisected stage-by-stage:** marker counts were `(1,1)` after
+  OCR and after the corrector, jumped to `(2,2)` after the extractor, and stayed `(2,2)` through
+  seam-merge and flatten. It is **intermittent** (DeepSeek's MoE isn't strictly deterministic even
+  at temp 0, so a re-extract of the same pages did not always repeat it) — which is exactly why a
+  guard is needed rather than relying on it not happening.
+  - **Note on the earlier "duplication ≈ 0" result:** that measured the *OCR front-end's*
+    reading-order/duplication (Mistral vs the old vision OCR) and still holds — Mistral's page
+    markdown here was clean. This new defect is at a *different stage* (the extractor LLM), which
+    the 11-page front-end study never exercised.
+
 ---
 
 ## Environment & how to run
@@ -202,17 +228,32 @@ PYTHONPATH=src uv run python -c "import asyncio; from module.pipeline import run
 - **Figure noise-filtering is not applied.** The old `image_filter` stage was docling-only and
   was removed; Mistral ignores decorative junk (covers/icons → 0 figures in testing) but a
   front-matter page can still yield thumbnail images — spot-check if you process front matter.
-- **Validation corpus is single-column, 11 pages, two books.** No true multi-column coverage;
-  broaden before trusting on new layouts.
+- **Extractor content duplication (intermittent, no guard).** The per-segment extractor can
+  emit a whole segment's nodes twice (LLM repetition), and nothing downstream removes it — the
+  corrector's divergence guard only protects the corrector's own output, and the seam merger only
+  merges/drops boundary splits. Seen on dense exercise pages in the Hefferon run (~25% duplicate
+  Problem entities; see Validation). The extractor has **no analogue of the corrector's
+  `_within_tolerance` guard** and no de-dup pass. **Fix not yet applied** — see Next-steps #1.
+- **Validation corpus is single-column, 13 pages OpenStax/Judson + 12 pages Hefferon, three
+  books.** No true multi-column coverage; broaden before trusting on new layouts.
 
 ---
 
 ## Next steps (suggested order)
 
-1. **Broaden extraction validation** — run more sections/books through the full pipeline and
-   inspect `document.md` *and* the node structure (not just `entities.json`). Confirm the
-   corrector's recall/precision holds beyond the 11-page adversarial sample; watch for figure
-   over-extraction on front matter and any correction-pass regressions.
+1. **Broaden extraction validation** — *in progress.* First new-book run (Hefferon Linear
+   Algebra, this session) is done and surfaced the **extractor-duplication defect** above. Two
+   follow-ups fall out of it:
+   - **Fix the extractor duplication first** (it corrupts entity counts ~25% when it fires). Design
+     choice — pick one: (a) a divergence/length guard on the extractor output analogous to the
+     corrector's `_within_tolerance` (tricky: the extractor legitimately expands input, so guard on
+     *repeated-run* detection, not raw length); (b) a cheap post-extract de-dup pass that collapses
+     an exactly-repeated contiguous node run; or (c) a bounded retry when a repeat is detected.
+     Re-run the Hefferon window to confirm the fix drops the 13 duplicate Problems and repairs
+     Theorem `id=60`.
+   - Then keep broadening: more sections/books, inspecting `document.md` *and* node structure (not
+     just `entities.json`); watch for figure over-extraction on front matter and correction-pass
+     regressions. A **true multi-column** book is still uncovered.
 2. **Graph tier** (the big next piece) — relationship/edge discovery between entities
    (AutoMathKG's 9 tactic labels), then MathVD (embeddings/vector DB) for fusion and the
    Math-LLM completion step. `neo4j` is already a dep.
@@ -224,6 +265,11 @@ PYTHONPATH=src uv run python -c "import asyncio; from module.pipeline import run
 - **Ephemeral container:** the scratchpad and any ad-hoc install do **not** survive a restart;
   only committed files do. New environment secrets are injected **at session start**, so a key
   added mid-session isn't visible until a fresh session.
+- **Mistral key env-var name:** the hosted environment injects the Mistral secret as
+  `MISTRAL_OCR_API`, but `.env.example` and the code's primary name is `MISTRAL_API_KEY`.
+  `mistral_ocr._require_key` now reads `MISTRAL_API_KEY` first and **falls back to
+  `MISTRAL_OCR_API`**, so it runs in either place; a local `.env` should still use
+  `MISTRAL_API_KEY`. (`OPENROUTER_API_KEY` and `DEEPSEEK_API_KEY` match in both.)
 - **Proxy port changes on restart:** outbound HTTPS goes through `$HTTPS_PROXY` (a
   `127.0.0.1:<port>` that changes when the worker restarts). httpx/litellm pick up the proxy +
   CA bundle from the environment (`SSL_CERT_FILE`), same for the Mistral, OpenRouter, and
