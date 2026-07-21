@@ -28,7 +28,11 @@ import dspy
 
 class NodeType(StrEnum):
     """The block-level node types the extractor may emit. Blocks only — inline
-    structure (bold, inline math, links) stays inside a node's markdown content."""
+    structure (bold, inline math, links) stays inside a node's markdown content.
+
+    The extractor is purely STRUCTURAL and domain-agnostic: it emits general document
+    structure only. Math-semantic typing (Definition/Theorem/Problem) lives entirely at
+    the entity layer — the per-type finders — not here."""
     PARAGRAPH = "paragraph"
     MATH = "math"                # standalone display math block
     CODE = "code"                # fenced code block
@@ -37,51 +41,31 @@ class NodeType(StrEnum):
     IMAGE = "image"
     CAPTION = "caption"
     HEADER = "header"
-    INSTRUCTION = "instruction"  # math-book specific: shared lead for a group of problems
-    PROBLEM = "problem"          # math-book specific: a single student problem to solve (exercise or worked example)
 
 
 class EntityType(StrEnum):
-    """The three math-semantic entity categories the grouping layer produces
+    """The three math-semantic entity categories the entity finders produce
     (AutoMathKG's taxonomy). Distinct from NodeType, which is document structure."""
     DEFINITION = "definition"
     THEOREM = "theorem"      # subsumes proposition, corollary, lemma
-    PROBLEM = "problem"      # atomic exercises (wrapped 1:1) and gathered worked examples
-
-
-class EntityRole(StrEnum):
-    """The role a member node plays within its entity — the attribute the Stage 2
-    pass assigns (AutoMathKG's bodylist action labels)."""
-    STATEMENT = "statement"  # the definition/theorem/problem statement (all types)
-    PROOF = "proof"          # theorem only, repeatable
-    SOLUTION = "solution"    # problem only, repeatable
-
-
-@dataclass
-class Member:
-    """One member node of an entity, with the role it plays. `role` is None until the
-    Stage 2 attribute pass fills it."""
-    node_id: int
-    role: EntityRole | None = None
+    PROBLEM = "problem"      # worked examples and exercises
 
 
 @dataclass
 class Entity:
-    """A math-semantic entity: a typed grouping that references its member nodes by
-    id, a sparse overlay on the flat node stream (most nodes belong to no entity).
+    """A math-semantic entity: a typed grouping of member nodes — a sparse overlay on the
+    flat node stream (most nodes belong to no entity). `members` are node ids in document
+    order: pointers back to the source nodes (persisted for provenance), so the later graph
+    phase can draw edges from an entity to the chunks it came from. `id` is assigned when
+    the three per-type overlays are flattened into the single emitted entity list.
 
-    `members` carry roles once the Stage 2 attribute pass runs; `number`/`instruction`
-    are lifted there from the member nodes (problems only). `tail_open`/
-    `head_continuation` are transient reconciliation flags set by the per-window worker
-    for entities at a window edge; the grouper's collect clears them once cross-window
-    continuations have been stitched."""
+    The overlays are independent and may reference the same node (members are pointers), so
+    they are concatenated, not merged. Per-attribute detail (member roles, number,
+    instruction, …) is added by later per-attribute passes that do not exist yet, so an
+    entity is just `{id, type, members}` for now."""
     type: EntityType
-    members: list[Member] = field(default_factory=list)  # member nodes in document order
-    id: int | None = None                                # assigned in collect, document order
-    number: str | None = None                            # lifted from the member node (problems)
-    instruction: str | None = None                       # lifted governing lead (problems)
-    tail_open: bool = False                              # last run hit window end still gathering
-    head_continuation: bool = False                     # first run continues an entity from a prior window
+    members: list[int] = field(default_factory=list)  # member node ids, document order
+    id: int | None = None                             # assigned when overlays are flattened
 
 
 @dataclass
@@ -106,8 +90,6 @@ class ASTNode:
     """
     type: NodeType | None = None
     content: str | None = None
-    number: str | None = None          # problem label, filled by the problem refiner (metadata only)
-    instruction: str | None = None     # governing lead text, filled by the instruction governor (problems only)
     id: int | None = None              # stable global id, assigned once when the flat list is born
     seg_index: int | None = None       # originating page, for picture resolution after flattening
 
@@ -129,33 +111,36 @@ class State(TypedDict, total=False):
 
     Two backbones, one after the other. During per-page ingestion (corrector, extractor,
     seam) `segments` is the ordered backbone. The seam merger then flattens the healed
-    per-page nodes into `nodes` — the global ordered node list that every refinement stage
-    after it (problem_refiner, governor, entity grouping) works on. `segments` is retained
-    past that point only for its pictures (picture resolution at assembly). Both backbones
-    use the default overwrite reducer because only the sequential collect steps write them.
+    per-page nodes into `nodes` — the global ordered node list that the per-type entity
+    finders each walk. `segments` is retained past that point only for its pictures
+    (picture resolution at assembly). Both backbones use the default overwrite reducer
+    because only the sequential collect steps write them.
+
+    The three `*_entities` channels are each written once, by their own finder (the
+    finders run in parallel over `nodes`). They are independent sparse overlays and may
+    reference the same node from more than one entity — that is fine, members are node-id
+    pointers. `run()` concatenates the three into one flat, document-ordered entity list
+    with global ids for the emitted `entities.json`.
 
     The `*_results` channels are map-reduce scratch space: parallel Send workers append
     entries and the stage's collect step drains them back into the active backbone. They
     carry an operator.add reducer so concurrent worker writes merge rather than clash.
-    Ingestion channels key by segment index; post-flatten channels key by node id.
     """
     segments: list[Segment]
     nodes: list[ASTNode]
-    entities: list[Entity]
+    problem_entities: list[Entity]      # written by the problem finder
+    definition_entities: list[Entity]   # written by the definition finder
+    theorem_entities: list[Entity]      # written by the theorem finder
     correction_results: Annotated[list[tuple[int, str]], operator.add]  # (segment index, corrected markdown)
     extract_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     seam_even_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
     seam_odd_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
-    problem_results: Annotated[list[tuple[int, str | None]], operator.add]      # (node id, number)
-    governance_results: Annotated[list[tuple[int, str]], operator.add]          # (node id, instruction)
-    entity_results: Annotated[list[tuple[int, list[Entity]]], operator.add]     # (window index, entities)
-    attribute_results: Annotated[list[tuple[int, list[str]]], operator.add]     # (entity id, role per member)
 
 
 # --- Helpers ---
 
 def load_dspy_image(path: str | None) -> dspy.Image | None:
-    """Load a PNG from disk into a dspy.Image (base64 data URL, mirroring Paideia)."""
+    """Load a PNG from disk into a dspy.Image (base64 data URL)."""
     if not path:
         return None
     encoded = base64.b64encode(Path(path).read_bytes()).decode("utf-8")

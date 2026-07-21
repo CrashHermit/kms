@@ -2,9 +2,8 @@ r"""
 Problem finder — a cursor-walk over the flat structural node stream that lifts out
 Problem entities (worked examples AND exercises; AutoMathKG's Problem type).
 
-This is the first of the planned per-type finders (Problem / Definition / Theorem).
-It replaces the windowed span-extraction + reconciler for problems with a single
-forward walk:
+This is the first of the per-type finders (Problem / Definition / Theorem). It is a
+single forward walk:
 
   * A cursor moves along the node stream. From the cursor it takes a *look-ahead
     window* of whole nodes up to a soft token budget, and the LLM returns the
@@ -25,7 +24,7 @@ forward walk:
     problem to the model's context (banked as-is at the cap); that is a resource limit
     at the edge of the system, not part of the core rule.
 
-Design commitments (from the redesign discussion):
+Design commitments:
   * A Problem is any posed mathematical task — worked example or exercise — regardless
     of whether a solution is shown. The finder is *solution-agnostic*: it captures the
     problem's whole extent (statement, subparts, and a solution if one happens to be
@@ -35,20 +34,24 @@ Design commitments (from the redesign discussion):
     the node ids that are its members. Nothing about the node list is mutated or
     renumbered, so the forward walk emits Problems already in document order.
 
-v1 is standalone (not wired into the pipeline) so it can be tested in isolation.
+The finder is wired into the pipeline by ``ProblemFinderNode`` (bottom of this file),
+which runs the walk over the flat node stream and writes its Problem entities to the
+``problem_entities`` channel. It runs in parallel with the Definition and Theorem finders
+(each a self-contained copy of this same cursor-walk, writing its own channel). The three
+overlays are independent and may reference the same node from more than one entity — that
+is fine, since members are node-id pointers, not copies.
 """
 
 import dspy
 from pydantic import BaseModel, Field
 
-from .state import ASTNode, Entity, EntityType, Member
+from .state import State, ASTNode, Entity, EntityType
 from .llm import text_lm
 
-# Soft look-ahead budget (~4 chars/token), matching the grouper's window scale. A
-# single node larger than the budget still forms a window (at least one node). When the
-# only problem in a window reaches its edge, the window grows (doubling) until the
-# problem is bounded or the document ends — capped so a pathological problem can't grow
-# past the model's context (there it is banked as-is, the one place truncation remains).
+# Soft look-ahead budget (~4 chars/token). A single node larger than the budget still
+# forms a window (at least one node). When the only problem in a window reaches its edge,
+# the window grows (doubling) until it is bounded or the document ends — capped so a
+# pathological problem can't grow past the model's context (banked as-is there).
 LOOKAHEAD_BUDGET = 2000
 MAX_LOOKAHEAD_BUDGET = 8000
 
@@ -86,8 +89,8 @@ class Signature(dspy.Signature):
     problem whose solution is left to the reader is still a Problem.
 
     Definitions, theorems, propositions, lemmas, corollaries, and their proofs are NOT
-    problems — ignore them (a later pass handles those). Ordinary narrative prose,
-    figures, and section headers are not problems either.
+    problems — ignore them. Ordinary narrative prose, figures, and section headers are
+    not problems either.
 
     EXTENT (what nodes a problem's span includes):
     - START at the problem's OWN label/heading. A problem usually opens with a short
@@ -114,8 +117,8 @@ class Signature(dspy.Signature):
     - Emit spans over the given nodes ONLY, using their `position` values; a span is the
       inclusive [start, end] range it occupies.
     - Return the problems in document order.
-    - Include a problem even if it is unfinished at the last node of the window — just
-      span it out to that last node; the caller decides how to continue it.
+    - Include a problem even if it is unfinished at the last given node — still emit it,
+      spanning it out to that last node.
     - If there are no problems in the window, return an empty list.
     """
 
@@ -215,8 +218,26 @@ async def find_problems(
             for s in to_bank:
                 ids = [window[k].id for k in range(s.start, s.end + 1) if window[k].id is not None]
                 if ids:
-                    problems.append(Entity(type=EntityType.PROBLEM, members=[Member(node_id=i) for i in ids]))
+                    problems.append(Entity(type=EntityType.PROBLEM, members=ids))
             cursor = advance
             break
 
     return problems
+
+
+# --- LangGraph node: emit the found Problems onto their channel ---
+
+class ProblemFinderNode:
+    """Walks the flat node stream and writes its Problem entities to the
+    ``problem_entities`` channel.
+
+    The walk is one sequential unit (a growing look-ahead cursor cannot be sharded), so
+    this is a plain graph node rather than the map-reduce dispatch/worker/collect shape
+    the parallel stages use."""
+
+    def __init__(self, module: Module | None = None):
+        self.module = module or Module()
+
+    async def run(self, state: State) -> dict:
+        problems = await find_problems(state.get("nodes", []), module=self.module)
+        return {"problem_entities": problems}

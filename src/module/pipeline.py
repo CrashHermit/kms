@@ -1,25 +1,29 @@
 """
 LangGraph wiring for the document-processing pipeline.
 
-Builds the ordered map-reduce graph that turns a PDF (via the Mistral OCR front-end)
-into a finished AST, then assembles it to a single markdown document plus the entity
-overlay. Every stage follows the same dispatch/worker/collect shape: a conditional edge
-fans out one Send per unit of work to the stage's worker, the workers append to a
+Builds the ordered graph that turns a PDF (via the Mistral OCR front-end) into a
+finished AST, then assembles it to a single markdown document plus the entity overlay.
+The ingestion stages (corrector, extractor, seam merger) are map-reduce: a conditional
+edge fans out one Send per unit of work to the stage's worker, the workers append to a
 per-stage reducer channel, and the collect step drains that channel back into the
-ordered backbone before the next stage's dispatch runs.
+ordered backbone before the next stage runs. The three per-type finders are plain
+sequential nodes (their cursor-walk cannot be sharded) that fan out in parallel off the
+seam-merge collect.
 
 Stage order:
-    corrector -> extractor -> seam_merger (even, odd)
-    -> problem_refiner -> instruction_governor -> entity_grouper -> entity_attributor
+    corrector -> extractor -> seam_merger (even, odd) -> {problem, definition, theorem}_finder
 
 Two phases split at the seam merger. Ingestion is per-page: `segments` (already carrying
 Mistral's markdown + figures) is the backbone, and the corrector proofreads each page's
-transcription against its image before the extractor parses it into nodes. The seam
-merger heals nodes split across page breaks and then flattens the healed backbone into
-the global ordered `nodes` list (stable ids + seg_index); every refinement stage after
-it (problem_refiner, instruction_governor, entity grouping/attribution) works on `nodes`,
-not on the per-segment nesting. Assembly walks `nodes` after the graph returns,
-consulting `segments` only for picture inventories.
+transcription against its image before the (purely structural) extractor parses it into
+nodes. The seam merger heals nodes split across page breaks and then flattens the healed
+backbone into the global ordered `nodes` list (stable ids + seg_index); the three per-type
+finders then each walk `nodes` in parallel, each writing its own entity channel. After the
+graph returns, `run()` concatenates the three overlays into one flat, document-ordered
+entity list (global ids) and writes both the entities and the node stream itself — the
+nodes are persisted for provenance so an entity's `members` resolve to real source chunks.
+Per-attribute passes (member roles, number, instruction, …) come later. Assembly walks
+`nodes` after the graph returns, consulting `segments` only for picture inventories.
 """
 
 from pathlib import Path
@@ -31,27 +35,25 @@ from .state import State
 from .corrector import CorrectorNode
 from .extractor import ExtractorNode
 from .seam_merger import SeamMergerNode
-from .problem_refiner import ProblemRefinerNode
-from .instruction_governor import InstructionGovernorNode
-from .entity_grouper import EntityGrouperNode
-from .entity_attributor import EntityAttributorNode
+from .problem_finder import ProblemFinderNode
+from .definition_finder import DefinitionFinderNode
+from .theorem_finder import TheoremFinderNode
 
 
 def build_graph():
     """Assemble and compile the LangGraph pipeline over the shared State.
 
     A single straight path: the correction pass proofreads each Mistral-transcribed
-    page against its image, the extractor parses the corrected markdown into nodes, the
-    seam merger heals page-split nodes and flattens to the global stream, and the
-    refinement + entity stages build the typed overlay.
+    page against its image, the extractor parses the corrected markdown into structural
+    nodes, the seam merger heals page-split nodes and flattens to the global stream, and
+    the three per-type finders (problem / definition / theorem) each build their overlay.
     """
     corrector = CorrectorNode()
     extractor = ExtractorNode()
     seam = SeamMergerNode()
-    problem = ProblemRefinerNode()
-    governor = InstructionGovernorNode()
-    entity = EntityGrouperNode()
-    attributor = EntityAttributorNode()
+    problem_finder = ProblemFinderNode()
+    definition_finder = DefinitionFinderNode()
+    theorem_finder = TheoremFinderNode()
 
     g = StateGraph(State)
 
@@ -64,14 +66,9 @@ def build_graph():
     g.add_node("seam_even_collect", seam.even_collect)
     g.add_node("seam_odd_worker", seam.odd_worker)
     g.add_node("seam_odd_collect", seam.odd_collect)
-    g.add_node("problem_refiner_worker", problem.worker)
-    g.add_node("problem_refiner_collect", problem.collect)
-    g.add_node("governor_worker", governor.worker)
-    g.add_node("governor_collect", governor.collect)
-    g.add_node("entity_grouper_worker", entity.worker)
-    g.add_node("entity_grouper_collect", entity.collect)
-    g.add_node("entity_attributor_worker", attributor.worker)
-    g.add_node("entity_attributor_collect", attributor.collect)
+    g.add_node("problem_finder", problem_finder.run)
+    g.add_node("definition_finder", definition_finder.run)
+    g.add_node("theorem_finder", theorem_finder.run)
 
     # A stage's dispatch is a conditional edge off the previous collect: it either fans
     # out Sends to the worker or short-circuits straight to its own collect.
@@ -88,24 +85,13 @@ def build_graph():
     g.add_conditional_edges("seam_even_collect", seam.dispatch_odd, ["seam_odd_worker", "seam_odd_collect"])
     g.add_edge("seam_odd_worker", "seam_odd_collect")
 
-    g.add_conditional_edges("seam_odd_collect", problem.dispatch, ["problem_refiner_worker", "problem_refiner_collect"])
-    g.add_edge("problem_refiner_worker", "problem_refiner_collect")
-
-    # Instruction governance: annotate each governed problem with its lead (no rewrite).
-    g.add_conditional_edges("problem_refiner_collect", governor.dispatch, ["governor_worker", "governor_collect"])
-    g.add_edge("governor_worker", "governor_collect")
-
-    # Entity grouping: gather def/thm/example spans across dumb-greedy windows, wrap
-    # atomic problems 1:1, reconcile cross-window spans into the sparse `entities` overlay.
-    g.add_conditional_edges("governor_collect", entity.dispatch, ["entity_grouper_worker", "entity_grouper_collect"])
-    g.add_edge("entity_grouper_worker", "entity_grouper_collect")
-
-    # Entity attribution (Stage 2): label member roles (statement/proof/solution) and
-    # lift number/instruction onto the entities.
-    g.add_conditional_edges("entity_grouper_collect", attributor.dispatch, ["entity_attributor_worker", "entity_attributor_collect"])
-    g.add_edge("entity_attributor_worker", "entity_attributor_collect")
-
-    g.add_edge("entity_attributor_collect", END)
+    # The three per-type finders each run a sequential cursor-walk (not shardable), so
+    # each is a plain node. They fan out from the seam collect and run in parallel, each
+    # writing its own entity channel; overlap between overlays is fine (members are
+    # node-id pointers). `run()` concatenates the three channels after the graph returns.
+    for name in ("problem_finder", "definition_finder", "theorem_finder"):
+        g.add_edge("seam_odd_collect", name)
+        g.add_edge(name, END)
 
     return g.compile()
 
@@ -129,30 +115,61 @@ async def run(
     segments = mistral_ocr.extract(pdf_path, output_dir=output_dir, pages=pages)
     graph = build_graph()
     result = await graph.ainvoke({"segments": segments}, {"recursion_limit": 1000})
-    written = assemble(result["nodes"], result["segments"], output_dir=output_dir, filename=filename)
-    _write_entities(result.get("entities", []), output_dir)
+    nodes = result["nodes"]
+    written = assemble(nodes, result["segments"], output_dir=output_dir, filename=filename)
+    _write_nodes(nodes, output_dir)
+    _write_entities(_flatten_entities(result, nodes), output_dir)
     return written
 
 
-def _write_entities(entities, output_dir: Path) -> Path:
-    """Persist the sparse entity overlay as JSON beside the assembled document — the
-    artifact the later graph phase (edges, fusion, completion) consumes."""
+def _flatten_entities(result: dict, nodes: list) -> list:
+    """Concatenate the three per-type finder overlays into one flat, document-ordered
+    entity list and assign each a global id. The overlays are independent and may
+    reference the same node more than once (members are node-id pointers) — they are
+    concatenated, not merged."""
+    entities = (
+        result.get("problem_entities", [])
+        + result.get("definition_entities", [])
+        + result.get("theorem_entities", [])
+    )
+    order = {node.id: i for i, node in enumerate(nodes)}
+    big = len(order)
+    entities.sort(key=lambda e: order.get(e.members[0], big) if e.members else big)
+    for i, entity in enumerate(entities):
+        entity.id = i
+    return entities
+
+
+def _write_nodes(nodes: list, output_dir: Path) -> Path:
+    """Persist the flat node stream as JSON for provenance — an entity's `members` are node
+    ids into this file, so the later graph phase can link an entity to its source chunks."""
     import json
 
-    path = Path(output_dir) / "entities.json"
     payload = [
         {
-            "id": e.id,
-            "type": e.type.value,
-            "number": e.number,
-            "instruction": e.instruction,
-            "members": [
-                {"node_id": m.node_id, "role": m.role.value if m.role else None}
-                for m in e.members
-            ],
+            "id": node.id,
+            "type": node.type.value if node.type else None,
+            "content": node.content,
+            "seg_index": node.seg_index,
         }
+        for node in nodes
+    ]
+    path = Path(output_dir) / "nodes.json"
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def _write_entities(entities: list, output_dir: Path) -> Path:
+    """Persist the flat entity overlay as JSON beside the assembled document — the artifact
+    the later graph phase (edges, fusion, completion) consumes. Each entity is `{id, type,
+    members}`; `members` are node ids into `nodes.json`."""
+    import json
+
+    payload = [
+        {"id": e.id, "type": e.type.value, "members": e.members}
         for e in entities
     ]
+    path = Path(output_dir) / "entities.json"
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return path
 

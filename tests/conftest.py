@@ -1,9 +1,9 @@
 """Test setup: make `module.*` importable and stub the heavy third-party deps.
 
-The unit suite exercises pure pipeline logic (flattening, windowing, reconciling,
-role assignment) and must run without installing torch/docling/dspy. Each stub is
-installed ONLY if the real package is missing, so the same tests also run unchanged
-in a full environment where the real deps are present.
+The unit suite exercises pure pipeline logic (flattening, windowing, the finder
+cursor-walk, entity output) and must run without installing dspy/pydantic/langgraph.
+Each stub is installed ONLY if the real package is missing, so the same tests also run
+unchanged in a full environment where the real deps are present.
 """
 
 import pathlib

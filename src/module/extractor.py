@@ -18,29 +18,36 @@ class DSPyModel(BaseModel):
 
 class Signature(dspy.Signature):
     r"""
-    Parse raw markdown from a single textbook segment into a flat list of top-level Node objects.
-    A dedicated seam-healing step handles cross-segment continuations after extraction.
+    Parse the markdown of one textbook page into a flat list of top-level structural
+    nodes, in document order.
 
     LATEX FORMAT:
     All mathematical notation must use LaTeX format. Use single dollar signs `$ $` for inline math and double dollar signs `$$ $$` for block/display math.
 
+    This extractor is purely STRUCTURAL and domain-agnostic: emit only general document
+    structure. Do NOT try to identify math-semantic units (definitions, theorems,
+    problems, exercises) or attach any subject-specific meaning. Your job is faithful
+    block segmentation of the markdown, nothing more.
+
     EXTRACTION RULES:
-    - Extract nodes from the segment markdown, in document order.
-    - A top-level node is the outermost structural unit; do not break sub-parts into separate nodes.
-    - If content starts or ends abruptly at a segment boundary, extract it as-is.
-    - A run-in proof or worked solution starts a NEW node: when a block opens with (or a
-      paragraph runs into) a `Proof.` / `Solution.` marker that begins the justification
-      of a preceding statement, split there. Never merge a theorem/proposition/lemma
-      statement with its proof, or a worked example's statement with its solution, into a
-      single node — the statement is one node, the proof/solution begins another.
+    - Extract nodes from the given markdown, in document order.
+    - One node per top-level markdown block, as the block appears. A node is the
+      outermost structural unit (a paragraph, a display-math block, a list, a table, a
+      heading, …); do not break a block's sub-parts into separate nodes, and do not
+      merge distinct blocks into one. Segment on structure (block boundaries) only —
+      never on meaning: do NOT split a block because of what it says (e.g. a paragraph
+      that runs into "Proof." or "Solution." stays one node).
+    - If content starts or ends abruptly at the boundary of the given markdown, extract
+      it as-is — do not try to complete or trim it.
 
     NODE TYPES (emit `type` as exactly one of these values):
     - paragraph: Standard prose text. Inline math remains in the paragraph. Callout/sidebar
-      prose (Notes, Tips, Warnings, worked Examples, Theorems) with no better fit goes here.
+      prose (Notes, Tips, Warnings, worked Examples, Theorems, exercises) with no better fit
+      goes here. When in doubt, a block of text is a paragraph.
     - math: Standalone display math block (e.g. `$$ ... $$`).
     - code: Fenced code block.
-    - list: Bullet/numbered informational list (steps, features, recall items) that is NOT
-      student exercises/problems. Emit one list node per list; item-level splitting happens later.
+    - list: Bullet/numbered list (steps, features, recall items, or a run of exercises).
+      Emit the whole list as a single list node — do not split it into per-item nodes.
     - table: Markdown table body only (grid rows). Do not put standalone caption or title
       lines inside table — those belong in caption when they appear as separate blocks.
     - image: Indexed placeholder only: `![N]()` where `N` matches the OCR picture index for that
@@ -49,37 +56,9 @@ class Signature(dspy.Signature):
     - caption: Figure captions, table titles, notes, or labels when shown as separate prose
       blocks from the picture placeholder or table grid. Include identifiers (e.g. "Figure 3.2",
       "Table 4.") and all descriptive text for that asset. Emit one caption per distinct block.
-      Pairing to figures/tables is by document order (nearest preceding image or table); consumers
-      handle caption-above-figure ordering when needed.
     - header: A heading/title for a section/chapter/exercise set/etc. Emit exactly one header node
-      per heading; do not split a heading into multiple nodes.
-    - instruction: Shared lead instruction that governs a group of problems (e.g. `1-20 Find ...`).
-      Emit exactly one instruction node immediately before the governed problem nodes.
-      Include only the lead text (no individual problem content). [math-book specific]
-    - problem: A single student problem to solve — an exercise, question, or practice
-      item. Typically appears near end-of-section/chapter under headings like
-      Exercises/Problems/Practice/Review. If supporting material (table/image/graph/
-      scenario) is attached to a problem, keep it inside that problem node. (Worked
-      examples with a solution are stitched into problems by a later grouping stage,
-      not here.) [math-book specific]
-
-    PROBLEM GROUPING:
-    - Emit one problem node per distinct problem. Subparts of the same problem are
-      never split into separate nodes; distinct problems are never bundled together.
-    - Subparts come in two forms, both kept together in a single problem node:
-      1) A stem followed by unnumbered parts `(a)(b)(c)` or `(i)(ii)(iii)`: keep the
-         stem and all its parts as one problem node.
-      2) A repeated base number with letter suffixes — `12a`, `12b`, `12c` — is ONE
-         problem, not three. Emit a single problem node for base number `12` whose
-         body holds every part together, each kept as a labelled subpart (a, b, c);
-         factor out the repeated base number so the node reads `12. a) ... b) ... c) ...`.
-         Preserve each part's own content verbatim — only the redundant base number is
-         factored out. Distinct base numbers (`12`, `13`, `14`) stay separate problems.
-    - Shared lead instruction + list of problems:
-         Emit one instruction node followed by one problem node per item.
-         Each problem node contains only its own item content.
-         Do not repeat the lead instruction inside problem nodes.
-    - Do not classify problem lists as list nodes.
+      per heading; do not split a heading into multiple nodes. A short label that opens a
+      labelled block (e.g. "Example 6.7", "Theorem 2.1", "Exercise 12") is a header.
     """
 
     segment_markdown: str = dspy.InputField(
@@ -117,8 +96,7 @@ class ExtractorNode:
         segment's neighbours as context made the LLM bleed their content into this
         segment's node list (a measured ~25% duplicate-entity inflation on dense
         pages). Cross-segment continuations are healed downstream by the seam merger,
-        and shared instruction leads are attached positionally by the instruction
-        governor, so the extractor needs only its own page."""
+        so the extractor needs only its own page."""
         segments = state.get("segments", [])
         sends = [
             Send("extractor_worker", {"segment": seg})

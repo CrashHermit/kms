@@ -10,19 +10,27 @@ is just the quick reference.
 ## Current focus
 
 The extraction front-end is **Mistral OCR + a vision correction pass** (no GPU), validated
-on adversarial pages; the entity layer (grouping + role attribution) is built and validated
-on two books. The **graph tier** — relationship/edge discovery between entities, MathVD
-fusion, and the Math-LLM completion step — is the next big piece and is **not started**
-(see HANDOFF "Next steps").
+on adversarial pages. The entity layer is mid-**redesign** into per-type finders over a
+purely structural node stream: the **Problem finder is built and wired in**; the Definition
+and Theorem finders, and the per-attribute passes (member roles, number, instruction, …),
+are **not started** (see HANDOFF "entity-layer redesign"). The **graph tier** —
+relationship/edge discovery, MathVD fusion, Math-LLM completion — is the next big piece
+after that and is **not started**.
 
 ## Layout
 
 - `src/module/` — the pipeline, wired by `pipeline.py` (LangGraph map-reduce; every stage is
   `dispatch → worker → collect`):
-  `mistral_ocr → corrector → extractor → seam_merger → problem_refiner →
-  instruction_governor → entity_grouper → entity_attributor → assembler`.
-  Two phases split at `seam_merger`: per-page ingestion (backbone `segments`) → flat global
-  node stream (backbone `nodes`, stable ids).
+  `mistral_ocr → corrector → extractor → seam_merger → {problem,definition,theorem}_finder`,
+  then `assembler` runs after the graph. Two phases split at `seam_merger`: per-page ingestion
+  (backbone `segments`) → flat global node stream (backbone `nodes`, stable ids). The three
+  per-type finders each walk `nodes` in parallel and write their own entity channel; `run()`
+  concatenates them into one flat, document-ordered `entities.json` (`[{id, type, members}]`,
+  overlap is fine — members are node-id pointers) and persists the node stream to `nodes.json`
+  for provenance (members resolve to it). The finders are self-contained copies of one
+  cursor-walk shape. The extractor is **purely structural**; math-semantic typing lives
+  entirely in the per-type entity finders
+  (only `problem_finder` exists so far).
 - `docs/HANDOFF.md` — full context.
 
 ## Commands
@@ -40,4 +48,6 @@ fusion, and the Math-LLM completion step — is the next big piece and is **not 
   `MISTRAL_API_KEY` (page OCR), `OPENROUTER_API_KEY` (correction pass, Qwen3-VL),
   `DEEPSEEK_API_KEY` (text stages).
 - The package imports as `module.*` (pyproject `package = false`); set `PYTHONPATH=src`.
-- Match the surrounding code's style; keep the `dispatch/worker/collect` shape for new stages.
+- Match the surrounding code's style. Parallel (map-reduce) stages use the
+  `dispatch → worker → collect` shape; a genuinely sequential stage (e.g. `problem_finder`)
+  is a plain graph node instead of forcing a single-Send fan-out.
