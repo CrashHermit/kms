@@ -25,8 +25,7 @@ class Signature(dspy.Signature):
     All mathematical notation must use LaTeX format. Use single dollar signs `$ $` for inline math and double dollar signs `$$ $$` for block/display math.
 
     EXTRACTION RULES:
-    - Extract nodes from `current_node` only, in document order.
-    - `previous_node_context` and `next_node_context` are read-only and only for resolving classification ambiguity.
+    - Extract nodes from the segment markdown, in document order.
     - A top-level node is the outermost structural unit; do not break sub-parts into separate nodes.
     - If content starts or ends abruptly at a segment boundary, extract it as-is.
     - A run-in proof or worked solution starts a NEW node: when a block opens with (or a
@@ -80,31 +79,16 @@ class Signature(dspy.Signature):
          Emit one instruction node followed by one problem node per item.
          Each problem node contains only its own item content.
          Do not repeat the lead instruction inside problem nodes.
-         If lead text appears only in `previous_node_context`, still emit an instruction node with that lead text.
     - Do not classify problem lists as list nodes.
     """
 
-    previous_node_context: str | None = dspy.InputField(
-        description=(
-            "The segment immediately before the current one. Read-only — use only to resolve "
-            "classification ambiguity. Do not emit nodes for this content."
-        )
-    )
-
-    current_node: str = dspy.InputField(
-        description="The raw markdown content of the current textbook segment. Emit nodes for this content only."
-    )
-
-    next_node_context: str | None = dspy.InputField(
-        description=(
-            "The segment immediately after the current one. Read-only — use only to resolve "
-            "classification ambiguity. Do not emit nodes for this content."
-        )
+    segment_markdown: str = dspy.InputField(
+        description="The raw markdown content of one textbook segment. Emit nodes for this content only."
     )
 
     nodes: list[DSPyModel] = dspy.OutputField(
         description=(
-            "Flat list of top-level nodes extracted from current_node. Follow the class docstring for taxonomy and extraction rules."
+            "Flat list of top-level nodes extracted from segment_markdown. Follow the class docstring for taxonomy and extraction rules."
         )
     )
 
@@ -115,17 +99,8 @@ class Module(dspy.Module):
         self.extractor = dspy.ChainOfThought(Signature)
         self.set_lm(lm or text_lm())
 
-    async def aforward(
-        self,
-        current_node: str,
-        previous_node_context: str | None = None,
-        next_node_context: str | None = None,
-    ):
-        result = await self.extractor.acall(
-            previous_node_context=previous_node_context,
-            current_node=current_node,
-            next_node_context=next_node_context,
-        )
+    async def aforward(self, segment_markdown: str):
+        result = await self.extractor.acall(segment_markdown=segment_markdown)
         return dspy.Prediction(nodes=result.nodes)
 
 
@@ -136,15 +111,18 @@ class ExtractorNode:
         self.module = module or Module()
 
     def dispatch(self, state: State) -> list[Send] | str:
-        """Fan out one worker per segment that has OCR'd content, with neighbour text as context."""
+        """Fan out one worker per segment that has OCR'd content.
+
+        Each segment is parsed in isolation — no neighbour context. Passing a
+        segment's neighbours as context made the LLM bleed their content into this
+        segment's node list (a measured ~25% duplicate-entity inflation on dense
+        pages). Cross-segment continuations are healed downstream by the seam merger,
+        and shared instruction leads are attached positionally by the instruction
+        governor, so the extractor needs only its own page."""
         segments = state.get("segments", [])
         sends = [
-            Send("extractor_worker", {
-                "segment": seg,
-                "previous_content": segments[i - 1].content if i > 0 else None,
-                "next_content": segments[i + 1].content if i < len(segments) - 1 else None,
-            })
-            for i, seg in enumerate(segments)
+            Send("extractor_worker", {"segment": seg})
+            for seg in segments
             if seg.content
         ]
         return sends or "extractor_collect"
@@ -152,11 +130,7 @@ class ExtractorNode:
     async def worker(self, state: dict) -> dict:
         """Parse one segment's markdown into a flat list of AST nodes."""
         segment: Segment = state["segment"]
-        prediction = await self.module.aforward(
-            current_node=segment.content,
-            previous_node_context=state.get("previous_content"),
-            next_node_context=state.get("next_content"),
-        )
+        prediction = await self.module.aforward(segment_markdown=segment.content)
         nodes = [ASTNode(type=node.type, content=node.content) for node in prediction.nodes]
         return {"extract_results": [(segment.index, nodes)]}
 

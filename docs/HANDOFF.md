@@ -124,7 +124,11 @@ Phase 2 — flat node stream (backbone = `nodes`, global ordered list)
 6. **Typing lives only at the entity layer.** The extractor stays structural. Grouping-cohesion
    happens where it's reliable: **atomic exercises stay cohesive at the extractor** (one node →
    wrapped 1:1); **worked Examples and Def/Thm are unbounded spans gathered at the entity
-   layer**. Split by *structure*, not by type.
+   layer**. Split by *structure*, not by type. **The extractor parses each page in isolation — no
+   neighbour context.** Feeding neighbour pages as context made the LLM bleed their content into
+   the current page's node list (measured ~25% duplicate entities; see Validation). Cross-page
+   continuations are healed by the seam merger and shared instruction leads are attached
+   positionally by the instruction governor, so the extractor needs only its own page.
 7. **Dumb-greedy windows** over the flat stream; the LLM emits window-local positions and code
    resolves them to stable ids. **Reconciler = single-threaded post-pass** over the ordered
    entity list, merging `tail_open` ↔ `head_continuation` spans across windows.
@@ -169,23 +173,28 @@ and two dense Exercises sets — all three entity types and all three roles, mat
 End-to-end in ~155s → `document.md` + 63 entities. Two takeaways:
 
 - **Good:** OCR reading order, matrix/LaTeX fidelity, and theorem-subsumption held; the corrector
-  left content clean (no false rewrites, guard never misfired). Types and role splits looked right
-  on the non-duplicated entities.
-- **Defect found — the extractor duplicates content (intermittent, ungated).** On the dense
-  exercise pages the extractor (DeepSeek, per segment) sometimes **emits a whole segment's nodes
-  twice** — an LLM repetition. It slipped straight through: the corrector was clean and the seam
-  merger only heals boundary splits (it never dedupes), so the duplicate flowed into the entity
-  layer. Impact on this run: **13 extra Problem entities (~25% of 53)** — duplicated numbers 1.8,
-  2.12–2.22 (2.16 tripled) — plus a malformed Theorem (`id=60`, two statements + four proofs = a
-  duplicated statement/proof pair). **Bisected stage-by-stage:** marker counts were `(1,1)` after
-  OCR and after the corrector, jumped to `(2,2)` after the extractor, and stayed `(2,2)` through
-  seam-merge and flatten. It is **intermittent** (DeepSeek's MoE isn't strictly deterministic even
-  at temp 0, so a re-extract of the same pages did not always repeat it) — which is exactly why a
-  guard is needed rather than relying on it not happening.
+  left content clean (no false rewrites, guard never misfired). Types and role splits looked right.
+- **Defect found and fixed — extractor context bleed.** The first run produced ~25% duplicate
+  entities: **13 extra Problem entities** (duplicated numbers 1.8, 2.12–2.22, 2.16 tripled) plus a
+  malformed Theorem (`id=60`, two statements + four proofs = a duplicated statement/proof pair).
+  Root cause, isolated by measurement:
+  - **Bisected stage-by-stage:** page-local marker counts were `(1,1)` after OCR and after the
+    corrector, jumped to `(2,2)` after the **extractor**, and persisted through seam-merge/flatten.
+  - **Mechanism = context bleed, not self-repeat.** The extractor was fed each segment's neighbours
+    as `previous_node_context` / `next_node_context`. Across 44 extractions **with** context there
+    were **0 self-repeat** events but frequent neighbour bleed (a segment emitting a neighbour's
+    content as its own nodes); the seam merger only heals boundary splits and never dedupes, so the
+    bleed flowed into the entity layer. Since self-repeat never happens, a segment can only emit a
+    neighbour's *content* via those context inputs.
+  - **Fix:** the extractor now parses each segment **in isolation — no neighbour context** (see
+    Key design decisions #6). Cross-page continuations are already healed by the seam merger and
+    shared instruction leads are attached positionally by the instruction governor, so the context
+    was only advisory. Re-run on the same 12 pages: **63→53 entities, duplicate problem numbers
+    12→0**, the malformed Theorem gone, content markers `2→1`, and ~3× faster (155s→45s).
   - **Note on the earlier "duplication ≈ 0" result:** that measured the *OCR front-end's*
     reading-order/duplication (Mistral vs the old vision OCR) and still holds — Mistral's page
-    markdown here was clean. This new defect is at a *different stage* (the extractor LLM), which
-    the 11-page front-end study never exercised.
+    markdown was clean. This defect was at a *different stage* (the extractor LLM's context inputs),
+    which the 11-page front-end study never exercised.
 
 ---
 
@@ -228,12 +237,10 @@ PYTHONPATH=src uv run python -c "import asyncio; from module.pipeline import run
 - **Figure noise-filtering is not applied.** The old `image_filter` stage was docling-only and
   was removed; Mistral ignores decorative junk (covers/icons → 0 figures in testing) but a
   front-matter page can still yield thumbnail images — spot-check if you process front matter.
-- **Extractor content duplication (intermittent, no guard).** The per-segment extractor can
-  emit a whole segment's nodes twice (LLM repetition), and nothing downstream removes it — the
-  corrector's divergence guard only protects the corrector's own output, and the seam merger only
-  merges/drops boundary splits. Seen on dense exercise pages in the Hefferon run (~25% duplicate
-  Problem entities; see Validation). The extractor has **no analogue of the corrector's
-  `_within_tolerance` guard** and no de-dup pass. **Fix not yet applied** — see Next-steps #1.
+- **Multi-node proof/solution members are one member per structural node.** A long proof that
+  spans several paragraphs/display-math blocks becomes several `proof` members on one entity (e.g.
+  the Hefferon matrix-mult associativity theorem: statement + 7 proof nodes). This is correct span
+  attribution, not duplication, but if a consumer wants a single proof blob it must join them.
 - **Validation corpus is single-column, 13 pages OpenStax/Judson + 12 pages Hefferon, three
   books.** No true multi-column coverage; broaden before trusting on new layouts.
 
@@ -242,18 +249,13 @@ PYTHONPATH=src uv run python -c "import asyncio; from module.pipeline import run
 ## Next steps (suggested order)
 
 1. **Broaden extraction validation** — *in progress.* First new-book run (Hefferon Linear
-   Algebra, this session) is done and surfaced the **extractor-duplication defect** above. Two
-   follow-ups fall out of it:
-   - **Fix the extractor duplication first** (it corrupts entity counts ~25% when it fires). Design
-     choice — pick one: (a) a divergence/length guard on the extractor output analogous to the
-     corrector's `_within_tolerance` (tricky: the extractor legitimately expands input, so guard on
-     *repeated-run* detection, not raw length); (b) a cheap post-extract de-dup pass that collapses
-     an exactly-repeated contiguous node run; or (c) a bounded retry when a repeat is detected.
-     Re-run the Hefferon window to confirm the fix drops the 13 duplicate Problems and repairs
-     Theorem `id=60`.
-   - Then keep broadening: more sections/books, inspecting `document.md` *and* node structure (not
-     just `entities.json`); watch for figure over-extraction on front matter and correction-pass
-     regressions. A **true multi-column** book is still uncovered.
+   Algebra, this session) is done; it surfaced and **fixed** the extractor context-bleed defect
+   (see Validation). Keep broadening: more sections/books, inspecting `document.md` *and* node
+   structure (not just `entities.json`); watch for figure over-extraction on front matter and
+   correction-pass regressions. A **true multi-column** book is still uncovered — that is the most
+   important gap. Now that the extractor parses each page in isolation, also spot-check that
+   classification quality at page boundaries did not regress (the removed context was advisory for
+   boundary disambiguation; the seam merger should still stitch splits correctly).
 2. **Graph tier** (the big next piece) — relationship/edge discovery between entities
    (AutoMathKG's 9 tactic labels), then MathVD (embeddings/vector DB) for fusion and the
    Math-LLM completion step. `neo4j` is already a dep.
