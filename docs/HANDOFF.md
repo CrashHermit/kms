@@ -196,6 +196,33 @@ End-to-end in ~155s → `document.md` + 63 entities. Two takeaways:
     markdown was clean. This defect was at a *different stage* (the extractor LLM's context inputs),
     which the 11-page front-end study never exercised.
 
+### Multi-column run — Oohama, *On Two Strong Converse Theorems for DMCs* (this session)
+
+Closes the long-standing **true multi-column** gap. A genuinely two-column IEEEtran
+information-theory paper (arXiv:1008.1140, 5 pages) — dense Theorem/Lemma/Property/Proof
+structure and heavy min/max display math, with strict column-major reading order (whole
+left column, then whole right). End-to-end → `document.md` + 15 entities. Verified against
+the page images:
+
+- **Reading order: perfect.** On every page Mistral read the entire left column then the
+  entire right column with **no cross-column interleaving** — e.g. page 3: Property 2 →
+  Theorem 1 → Property 3 → Proof (all left), then eqs (3)/(4) → Theorem 2 → Theorem 3 → §4
+  (all right), in exactly that order. This is the artifact the docling-geometry re-architecture
+  feared; Mistral handles it server-side.
+- **No duplication** (the extractor context-bleed fix holds on dense two-column pages).
+- **Entity typing correct.** 13 theorem-type entities (Property 1–3 + Theorem 1–4 + Lemma 1–6,
+  all subsumed to Theorem) + 2 definition clusters, **0 spurious Problems** (correct — a paper
+  has no exercises). Statement/proof role split worked (4 entities carry proof members).
+- **Two minor issues (not blockers):**
+  1. *Coarse grouping* — the entity grouper bundles a run of adjacent `define X` display-math
+     blocks into one multi-member Definition (6 statement members), and a Property + its long
+     proof becomes one entity with ~10 members (one member per structural node). Defensible but
+     coarse; revisit grouping granularity if downstream needs finer entities.
+  2. *Inconsistent math delimiters* — complex multi-line display equations arrive as raw
+     `\[ … \]` / `\begin{array}` from OCR and pass through un-normalized, while simpler blocks
+     use `$$`. Content is faithful; only the delimiter is inconsistent. A normalization pass
+     (or a corrector/extractor instruction) would fix it — see Next-steps.
+
 ---
 
 ## Environment & how to run
@@ -241,8 +268,16 @@ PYTHONPATH=src uv run python -c "import asyncio; from module.pipeline import run
   spans several paragraphs/display-math blocks becomes several `proof` members on one entity (e.g.
   the Hefferon matrix-mult associativity theorem: statement + 7 proof nodes). This is correct span
   attribution, not duplication, but if a consumer wants a single proof blob it must join them.
-- **Validation corpus is single-column, 13 pages OpenStax/Judson + 12 pages Hefferon, three
-  books.** No true multi-column coverage; broaden before trusting on new layouts.
+- **Inconsistent display-math delimiters on complex equations.** Simple display blocks come
+  through as `$$ … $$`, but multi-line/aligned equations (arrays, cases) can pass through as raw
+  `\[ … \]` or `\begin{array}` from OCR. Content is faithful; only the delimiter is inconsistent,
+  so a downstream `$$`-only renderer will miss them. Seen on the Oohama two-column paper. A cheap
+  normalization pass would fix it (see Next-steps).
+- **Validation corpus:** 13 pages OpenStax/Judson + 12 pages Hefferon (single-column, three math
+  books) **+ a 5-page true two-column IEEEtran paper (Oohama)**. Multi-column reading order is now
+  covered and clean; the two-column sample is still small (one paper) — widen it before trusting
+  heavily on multi-column, and note a *worked-example/exercise*-heavy two-column book is still
+  untested (the Oohama paper has theorems/proofs but no Problems).
 
 ---
 
@@ -252,10 +287,15 @@ PYTHONPATH=src uv run python -c "import asyncio; from module.pipeline import run
    Algebra, this session) is done; it surfaced and **fixed** the extractor context-bleed defect
    (see Validation). Keep broadening: more sections/books, inspecting `document.md` *and* node
    structure (not just `entities.json`); watch for figure over-extraction on front matter and
-   correction-pass regressions. A **true multi-column** book is still uncovered — that is the most
-   important gap. Now that the extractor parses each page in isolation, also spot-check that
-   classification quality at page boundaries did not regress (the removed context was advisory for
-   boundary disambiguation; the seam merger should still stitch splits correctly).
+   correction-pass regressions. **True multi-column reading order is now validated** (Oohama
+   two-column paper, clean) — but on one small paper with no Problems; widen with a two-column
+   *worked-example/exercise* book. Now that the extractor parses each page in isolation, also
+   spot-check that classification quality at page boundaries did not regress (the removed context
+   was advisory for boundary disambiguation; the seam merger should still stitch splits correctly).
+   Two smaller follow-ups surfaced by the two-column run: (a) a **display-math delimiter
+   normalization** pass so complex `\[…\]`/`\begin{array}` equations become `$$` like the rest;
+   (b) revisit **entity-grouping granularity** (runs of `define X` blocks collapse into one
+   multi-member Definition; long proofs become one member per node).
 2. **Graph tier** (the big next piece) — relationship/edge discovery between entities
    (AutoMathKG's 9 tactic labels), then MathVD (embeddings/vector DB) for fusion and the
    Math-LLM completion step. `neo4j` is already a dep.
