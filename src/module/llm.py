@@ -7,11 +7,10 @@ being duplicated across nodes.
 
 Two backends, each on its native/best gateway:
 
-- Text reasoning nodes (extractor, seam merger, problem refiner, instruction
-  governor, entity grouping/attribution) run on DeepSeek V4 Flash via DeepSeek's
-  own API (litellm ``deepseek/`` provider, base https://api.deepseek.com). DeepSeek
-  does automatic server-side context caching, so no provider pinning is needed. The
-  key is read from DEEPSEEK_API_KEY.
+- Text reasoning nodes (extractor, seam merger, and the per-type entity finders) run
+  on DeepSeek V4 Flash via DeepSeek's own API (litellm ``deepseek/`` provider, base
+  https://api.deepseek.com). DeepSeek does automatic server-side context caching, so no
+  provider pinning is needed. The key is read from DEEPSEEK_API_KEY.
 - The correction pass sends a page image, so it runs on Qwen3-VL-235B via OpenRouter.
   The key is read from OPENROUTER_API_KEY. (Page OCR itself is the Mistral API — see
   ``mistral_ocr`` — which uses its own key and is not a DSPy backend.)

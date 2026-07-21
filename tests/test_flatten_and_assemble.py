@@ -15,7 +15,7 @@ def _segments():
         ]),
         Segment(index=1, image_path="p1.png", pictures=[], nodes=[
             ASTNode(type=NodeType.PARAGRAPH, content="body ![1]() fig"),
-            ASTNode(type=NodeType.PROBLEM, content="1. solve x"),
+            ASTNode(type=NodeType.PARAGRAPH, content="1. solve x"),
         ]),
     ]
 

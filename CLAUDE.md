@@ -10,19 +10,22 @@ is just the quick reference.
 ## Current focus
 
 The extraction front-end is **Mistral OCR + a vision correction pass** (no GPU), validated
-on adversarial pages; the entity layer (grouping + role attribution) is built and validated
-on two books. The **graph tier** — relationship/edge discovery between entities, MathVD
-fusion, and the Math-LLM completion step — is the next big piece and is **not started**
-(see HANDOFF "Next steps").
+on adversarial pages. The entity layer is mid-**redesign** into per-type finders over a
+purely structural node stream: the **Problem finder is built and wired in**; the Definition
+and Theorem finders, and the per-attribute passes (member roles, number, instruction, …),
+are **not started** (see HANDOFF "entity-layer redesign"). The **graph tier** —
+relationship/edge discovery, MathVD fusion, Math-LLM completion — is the next big piece
+after that and is **not started**.
 
 ## Layout
 
 - `src/module/` — the pipeline, wired by `pipeline.py` (LangGraph map-reduce; every stage is
   `dispatch → worker → collect`):
-  `mistral_ocr → corrector → extractor → seam_merger → problem_refiner →
-  instruction_governor → entity_grouper → entity_attributor → assembler`.
-  Two phases split at `seam_merger`: per-page ingestion (backbone `segments`) → flat global
-  node stream (backbone `nodes`, stable ids).
+  `mistral_ocr → corrector → extractor → seam_merger → problem_finder`, then `assembler`
+  runs after the graph. Two phases split at `seam_merger`: per-page ingestion (backbone
+  `segments`) → flat global node stream (backbone `nodes`, stable ids). The extractor is
+  **purely structural**; math-semantic typing lives entirely in the per-type entity finders
+  (only `problem_finder` exists so far).
 - `docs/HANDOFF.md` — full context.
 
 ## Commands

@@ -9,17 +9,17 @@ per-stage reducer channel, and the collect step drains that channel back into th
 ordered backbone before the next stage's dispatch runs.
 
 Stage order:
-    corrector -> extractor -> seam_merger (even, odd)
-    -> problem_refiner -> instruction_governor -> entity_grouper -> entity_attributor
+    corrector -> extractor -> seam_merger (even, odd) -> problem_finder
 
 Two phases split at the seam merger. Ingestion is per-page: `segments` (already carrying
 Mistral's markdown + figures) is the backbone, and the corrector proofreads each page's
-transcription against its image before the extractor parses it into nodes. The seam
-merger heals nodes split across page breaks and then flattens the healed backbone into
-the global ordered `nodes` list (stable ids + seg_index); every refinement stage after
-it (problem_refiner, instruction_governor, entity grouping/attribution) works on `nodes`,
-not on the per-segment nesting. Assembly walks `nodes` after the graph returns,
-consulting `segments` only for picture inventories.
+transcription against its image before the (purely structural) extractor parses it into
+nodes. The seam merger heals nodes split across page breaks and then flattens the healed
+backbone into the global ordered `nodes` list (stable ids + seg_index); the problem
+finder then walks `nodes` to build the sparse `{id, type, members}` overlay. Sibling
+Definition and Theorem finders, and the per-attribute passes (member roles, number,
+instruction, …), come later. Assembly walks `nodes` after the graph returns, consulting
+`segments` only for picture inventories.
 """
 
 from pathlib import Path
@@ -31,27 +31,21 @@ from .state import State
 from .corrector import CorrectorNode
 from .extractor import ExtractorNode
 from .seam_merger import SeamMergerNode
-from .problem_refiner import ProblemRefinerNode
-from .instruction_governor import InstructionGovernorNode
-from .entity_grouper import EntityGrouperNode
-from .entity_attributor import EntityAttributorNode
+from .problem_finder import ProblemFinderNode
 
 
 def build_graph():
     """Assemble and compile the LangGraph pipeline over the shared State.
 
     A single straight path: the correction pass proofreads each Mistral-transcribed
-    page against its image, the extractor parses the corrected markdown into nodes, the
-    seam merger heals page-split nodes and flattens to the global stream, and the
-    refinement + entity stages build the typed overlay.
+    page against its image, the extractor parses the corrected markdown into structural
+    nodes, the seam merger heals page-split nodes and flattens to the global stream, and
+    the problem finder builds the Problem overlay.
     """
     corrector = CorrectorNode()
     extractor = ExtractorNode()
     seam = SeamMergerNode()
-    problem = ProblemRefinerNode()
-    governor = InstructionGovernorNode()
-    entity = EntityGrouperNode()
-    attributor = EntityAttributorNode()
+    finder = ProblemFinderNode()
 
     g = StateGraph(State)
 
@@ -64,14 +58,8 @@ def build_graph():
     g.add_node("seam_even_collect", seam.even_collect)
     g.add_node("seam_odd_worker", seam.odd_worker)
     g.add_node("seam_odd_collect", seam.odd_collect)
-    g.add_node("problem_refiner_worker", problem.worker)
-    g.add_node("problem_refiner_collect", problem.collect)
-    g.add_node("governor_worker", governor.worker)
-    g.add_node("governor_collect", governor.collect)
-    g.add_node("entity_grouper_worker", entity.worker)
-    g.add_node("entity_grouper_collect", entity.collect)
-    g.add_node("entity_attributor_worker", attributor.worker)
-    g.add_node("entity_attributor_collect", attributor.collect)
+    g.add_node("problem_finder_worker", finder.worker)
+    g.add_node("problem_finder_collect", finder.collect)
 
     # A stage's dispatch is a conditional edge off the previous collect: it either fans
     # out Sends to the worker or short-circuits straight to its own collect.
@@ -88,24 +76,14 @@ def build_graph():
     g.add_conditional_edges("seam_even_collect", seam.dispatch_odd, ["seam_odd_worker", "seam_odd_collect"])
     g.add_edge("seam_odd_worker", "seam_odd_collect")
 
-    g.add_conditional_edges("seam_odd_collect", problem.dispatch, ["problem_refiner_worker", "problem_refiner_collect"])
-    g.add_edge("problem_refiner_worker", "problem_refiner_collect")
+    # Problem finder: cursor-walk the flat stream, building the sparse `entities` overlay
+    # with the Problem entities it finds (worked examples AND exercises). The Definition
+    # and Theorem finders are added alongside it later; per-attribute passes (roles,
+    # number, instruction) come after that.
+    g.add_conditional_edges("seam_odd_collect", finder.dispatch, ["problem_finder_worker", "problem_finder_collect"])
+    g.add_edge("problem_finder_worker", "problem_finder_collect")
 
-    # Instruction governance: annotate each governed problem with its lead (no rewrite).
-    g.add_conditional_edges("problem_refiner_collect", governor.dispatch, ["governor_worker", "governor_collect"])
-    g.add_edge("governor_worker", "governor_collect")
-
-    # Entity grouping: gather def/thm/example spans across dumb-greedy windows, wrap
-    # atomic problems 1:1, reconcile cross-window spans into the sparse `entities` overlay.
-    g.add_conditional_edges("governor_collect", entity.dispatch, ["entity_grouper_worker", "entity_grouper_collect"])
-    g.add_edge("entity_grouper_worker", "entity_grouper_collect")
-
-    # Entity attribution (Stage 2): label member roles (statement/proof/solution) and
-    # lift number/instruction onto the entities.
-    g.add_conditional_edges("entity_grouper_collect", attributor.dispatch, ["entity_attributor_worker", "entity_attributor_collect"])
-    g.add_edge("entity_attributor_worker", "entity_attributor_collect")
-
-    g.add_edge("entity_attributor_collect", END)
+    g.add_edge("problem_finder_collect", END)
 
     return g.compile()
 

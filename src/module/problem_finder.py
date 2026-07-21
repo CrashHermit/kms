@@ -35,13 +35,18 @@ Design commitments (from the redesign discussion):
     the node ids that are its members. Nothing about the node list is mutated or
     renumbered, so the forward walk emits Problems already in document order.
 
-v1 is standalone (not wired into the pipeline) so it can be tested in isolation.
+The finder is wired into the pipeline by ``ProblemFinderNode`` (bottom of this file),
+which runs the walk over the flat node stream and builds the ``entities`` overlay with
+the Problem entities it finds, in document order. It is the first of the per-type finders;
+sibling Definition and Theorem finders (same cursor-walk shape) are added alongside it
+later, each owning its own type.
 """
 
 import dspy
 from pydantic import BaseModel, Field
+from langgraph.types import Send
 
-from .state import ASTNode, Entity, EntityType, Member
+from .state import State, ASTNode, Entity, EntityType, Member
 from .llm import text_lm
 
 # Soft look-ahead budget (~4 chars/token), matching the grouper's window scale. A
@@ -86,8 +91,8 @@ class Signature(dspy.Signature):
     problem whose solution is left to the reader is still a Problem.
 
     Definitions, theorems, propositions, lemmas, corollaries, and their proofs are NOT
-    problems — ignore them (a later pass handles those). Ordinary narrative prose,
-    figures, and section headers are not problems either.
+    problems — ignore them. Ordinary narrative prose, figures, and section headers are
+    not problems either.
 
     EXTENT (what nodes a problem's span includes):
     - START at the problem's OWN label/heading. A problem usually opens with a short
@@ -114,8 +119,8 @@ class Signature(dspy.Signature):
     - Emit spans over the given nodes ONLY, using their `position` values; a span is the
       inclusive [start, end] range it occupies.
     - Return the problems in document order.
-    - Include a problem even if it is unfinished at the last node of the window — just
-      span it out to that last node; the caller decides how to continue it.
+    - Include a problem even if it is unfinished at the last given node — still emit it,
+      spanning it out to that last node.
     - If there are no problems in the window, return an empty list.
     """
 
@@ -220,3 +225,35 @@ async def find_problems(
             break
 
     return problems
+
+
+# --- LangGraph node: seed the entity overlay with Problem entities ---
+
+class ProblemFinderNode:
+    """Runs the cursor-walk over the flat node stream and builds the ``entities`` overlay
+    with the Problem entities it finds. Unlike the map-reduce stages, the walk is one
+    sequential unit (a growing look-ahead cursor cannot be sharded), so the stage still
+    uses the dispatch/worker/collect shape but fans out a single Send carrying the whole
+    stream."""
+
+    def __init__(self, module: Module | None = None):
+        self.module = module or Module()
+
+    def dispatch(self, state: State) -> list[Send] | str:
+        """One Send with the whole node stream (the walk is not shardable)."""
+        nodes = state.get("nodes", [])
+        return [Send("problem_finder_worker", {"nodes": nodes})] if nodes else "problem_finder_collect"
+
+    async def worker(self, state: dict) -> dict:
+        """Walk the stream and emit the Problem entities."""
+        problems = await find_problems(state["nodes"], module=self.module)
+        return {"finder_results": [problems]}
+
+    def collect(self, state: State) -> dict:
+        """Build the overlay from the found Problems, assigning each a document-order id
+        (the walk already emits them in document order)."""
+        results = state.get("finder_results", [])
+        problems = results[0] if results else []
+        for i, entity in enumerate(problems):
+            entity.id = i
+        return {"entities": problems}
