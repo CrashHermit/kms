@@ -35,10 +35,11 @@ Design commitments (from the redesign discussion):
     renumbered, so the forward walk emits Problems already in document order.
 
 The finder is wired into the pipeline by ``ProblemFinderNode`` (bottom of this file),
-which runs the walk over the flat node stream and builds the ``entities`` overlay with
-the Problem entities it finds, in document order. It is the first of the per-type finders;
-sibling Definition and Theorem finders (same cursor-walk shape) are added alongside it
-later, each owning its own type.
+which runs the walk over the flat node stream and writes its Problem entities to the
+``problem_entities`` channel. It runs in parallel with the Definition and Theorem finders
+(each a self-contained copy of this same cursor-walk, writing its own channel). The three
+overlays are independent and may reference the same node from more than one entity — that
+is fine, since members are node-id pointers, not copies.
 """
 
 import dspy
@@ -225,10 +226,11 @@ async def find_problems(
     return problems
 
 
-# --- LangGraph node: build the entity overlay from the found Problems ---
+# --- LangGraph node: emit the found Problems onto their channel ---
 
 class ProblemFinderNode:
-    """Builds the ``entities`` overlay from the Problem entities the cursor-walk finds.
+    """Walks the flat node stream and writes its Problem entities to the
+    ``problem_entities`` channel.
 
     The walk is one sequential unit (a growing look-ahead cursor cannot be sharded), so
     this is a plain graph node rather than the map-reduce dispatch/worker/collect shape
@@ -238,9 +240,5 @@ class ProblemFinderNode:
         self.module = module or Module()
 
     async def run(self, state: State) -> dict:
-        """Walk the flat node stream and emit Problem entities, each given a
-        document-order id (the walk already emits them in document order)."""
         problems = await find_problems(state.get("nodes", []), module=self.module)
-        for i, entity in enumerate(problems):
-            entity.id = i
-        return {"entities": problems}
+        return {"problem_entities": problems}

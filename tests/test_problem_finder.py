@@ -40,14 +40,13 @@ def test_find_problems_on_prose_only_stream_returns_nothing():
     assert asyncio.run(find_problems(_nodes(), module=module)) == []
 
 
-def test_node_run_builds_overlay_with_document_order_ids():
+def test_node_run_writes_the_problem_channel():
     node = ProblemFinderNode(module=_ScriptedFinder([[ProblemSpan(start=1, end=2)], []]))
     out = asyncio.run(node.run({"nodes": _nodes()}))
-    entities = out["entities"]
-    assert [e.id for e in entities] == [0]
-    assert entities[0].members == [1, 2]
+    assert list(out.keys()) == ["problem_entities"]
+    assert [e.members for e in out["problem_entities"]] == [[1, 2]]
 
 
-def test_node_run_on_empty_stream_yields_empty_overlay():
+def test_node_run_on_empty_stream_yields_empty_channel():
     node = ProblemFinderNode(module=_ScriptedFinder([]))
-    assert asyncio.run(node.run({"nodes": []}))["entities"] == []
+    assert asyncio.run(node.run({"nodes": []})) == {"problem_entities": []}

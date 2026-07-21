@@ -9,17 +9,18 @@ per-stage reducer channel, and the collect step drains that channel back into th
 ordered backbone before the next stage's dispatch runs.
 
 Stage order:
-    corrector -> extractor -> seam_merger (even, odd) -> problem_finder
+    corrector -> extractor -> seam_merger (even, odd) -> {problem, definition, theorem}_finder
 
 Two phases split at the seam merger. Ingestion is per-page: `segments` (already carrying
 Mistral's markdown + figures) is the backbone, and the corrector proofreads each page's
 transcription against its image before the (purely structural) extractor parses it into
 nodes. The seam merger heals nodes split across page breaks and then flattens the healed
-backbone into the global ordered `nodes` list (stable ids + seg_index); the problem
-finder then walks `nodes` to build the sparse `{id, type, members}` overlay. Sibling
-Definition and Theorem finders, and the per-attribute passes (member roles, number,
-instruction, …), come later. Assembly walks `nodes` after the graph returns, consulting
-`segments` only for picture inventories.
+backbone into the global ordered `nodes` list (stable ids + seg_index); the three per-type
+finders then each walk `nodes` in parallel, each writing its own entity channel. The three
+overlays stay separate (written under their own keys in `entities.json`); they may
+reference the same node without conflict since members are node-id pointers. Per-attribute
+passes (member roles, number, instruction, …) come later. Assembly walks `nodes` after the
+graph returns, consulting `segments` only for picture inventories.
 """
 
 from pathlib import Path
@@ -32,6 +33,8 @@ from .corrector import CorrectorNode
 from .extractor import ExtractorNode
 from .seam_merger import SeamMergerNode
 from .problem_finder import ProblemFinderNode
+from .definition_finder import DefinitionFinderNode
+from .theorem_finder import TheoremFinderNode
 
 
 def build_graph():
@@ -40,12 +43,14 @@ def build_graph():
     A single straight path: the correction pass proofreads each Mistral-transcribed
     page against its image, the extractor parses the corrected markdown into structural
     nodes, the seam merger heals page-split nodes and flattens to the global stream, and
-    the problem finder builds the Problem overlay.
+    the three per-type finders (problem / definition / theorem) each build their overlay.
     """
     corrector = CorrectorNode()
     extractor = ExtractorNode()
     seam = SeamMergerNode()
-    finder = ProblemFinderNode()
+    problem_finder = ProblemFinderNode()
+    definition_finder = DefinitionFinderNode()
+    theorem_finder = TheoremFinderNode()
 
     g = StateGraph(State)
 
@@ -58,7 +63,9 @@ def build_graph():
     g.add_node("seam_even_collect", seam.even_collect)
     g.add_node("seam_odd_worker", seam.odd_worker)
     g.add_node("seam_odd_collect", seam.odd_collect)
-    g.add_node("problem_finder", finder.run)
+    g.add_node("problem_finder", problem_finder.run)
+    g.add_node("definition_finder", definition_finder.run)
+    g.add_node("theorem_finder", theorem_finder.run)
 
     # A stage's dispatch is a conditional edge off the previous collect: it either fans
     # out Sends to the worker or short-circuits straight to its own collect.
@@ -75,12 +82,13 @@ def build_graph():
     g.add_conditional_edges("seam_even_collect", seam.dispatch_odd, ["seam_odd_worker", "seam_odd_collect"])
     g.add_edge("seam_odd_worker", "seam_odd_collect")
 
-    # Problem finder: a single sequential cursor-walk (not shardable), so a plain node —
-    # it builds the sparse `entities` overlay with the Problems it finds (worked examples
-    # AND exercises). The Definition and Theorem finders are added alongside it later;
-    # per-attribute passes (roles, number, instruction) come after that.
-    g.add_edge("seam_odd_collect", "problem_finder")
-    g.add_edge("problem_finder", END)
+    # The three per-type finders each run a sequential cursor-walk (not shardable), so
+    # each is a plain node. They fan out from the seam collect and run in parallel, each
+    # writing its own entity channel; overlap between overlays is fine (members are
+    # node-id pointers). `run()` concatenates the three channels after the graph returns.
+    for name in ("problem_finder", "definition_finder", "theorem_finder"):
+        g.add_edge("seam_odd_collect", name)
+        g.add_edge(name, END)
 
     return g.compile()
 
@@ -105,20 +113,26 @@ async def run(
     graph = build_graph()
     result = await graph.ainvoke({"segments": segments}, {"recursion_limit": 1000})
     written = assemble(result["nodes"], result["segments"], output_dir=output_dir, filename=filename)
-    _write_entities(result.get("entities", []), output_dir)
+    _write_entities(result, output_dir)
     return written
 
 
-def _write_entities(entities, output_dir: Path) -> Path:
-    """Persist the sparse entity overlay as JSON beside the assembled document — the
-    artifact the later graph phase (edges, fusion, completion) consumes."""
+def _write_entities(result: dict, output_dir: Path) -> Path:
+    """Persist the three per-type entity overlays as JSON beside the assembled document —
+    the artifact the later graph phase (edges, fusion, completion) consumes. The overlays
+    stay separate (keyed by type) and are not merged; each entity is just its member
+    node-ids, in document order."""
     import json
 
+    def overlay(entities) -> list[dict]:
+        return [{"members": e.members} for e in entities]
+
+    payload = {
+        "problems": overlay(result.get("problem_entities", [])),
+        "definitions": overlay(result.get("definition_entities", [])),
+        "theorems": overlay(result.get("theorem_entities", [])),
+    }
     path = Path(output_dir) / "entities.json"
-    payload = [
-        {"id": e.id, "type": e.type.value, "members": e.members}
-        for e in entities
-    ]
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return path
 
