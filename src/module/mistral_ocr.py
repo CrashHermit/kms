@@ -73,6 +73,13 @@ def ocr_pdf(pdf_bytes: bytes, pages: list[int] | None = None) -> dict:
         "model": MISTRAL_OCR_MODEL,
         "document": {"type": "document_url", "document_url": data_url},
         "include_image_base64": True,
+        # Split running heads / footers (page numbers, chapter running titles) into the
+        # response's separate `header`/`footer` fields instead of leaving them inline in
+        # the page markdown. We only read `markdown`, so this drops page chrome from the
+        # node stream — otherwise a running head can land mid-entity and split it. Needs
+        # OCR 2512+ (mistral-ocr-latest resolves to that).
+        "extract_header": True,
+        "extract_footer": True,
     }
     if pages is not None:
         payload["pages"] = pages
