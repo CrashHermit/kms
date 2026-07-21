@@ -1,12 +1,14 @@
 """
 LangGraph wiring for the document-processing pipeline.
 
-Builds the ordered map-reduce graph that turns a PDF (via the Mistral OCR front-end)
-into a finished AST, then assembles it to a single markdown document plus the entity
-overlay. Every stage follows the same dispatch/worker/collect shape: a conditional edge
-fans out one Send per unit of work to the stage's worker, the workers append to a
+Builds the ordered graph that turns a PDF (via the Mistral OCR front-end) into a
+finished AST, then assembles it to a single markdown document plus the entity overlay.
+The ingestion stages (corrector, extractor, seam merger) are map-reduce: a conditional
+edge fans out one Send per unit of work to the stage's worker, the workers append to a
 per-stage reducer channel, and the collect step drains that channel back into the
-ordered backbone before the next stage's dispatch runs.
+ordered backbone before the next stage runs. The three per-type finders are plain
+sequential nodes (their cursor-walk cannot be sharded) that fan out in parallel off the
+seam-merge collect.
 
 Stage order:
     corrector -> extractor -> seam_merger (even, odd) -> {problem, definition, theorem}_finder

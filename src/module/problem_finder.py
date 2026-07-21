@@ -24,7 +24,7 @@ single forward walk:
     problem to the model's context (banked as-is at the cap); that is a resource limit
     at the edge of the system, not part of the core rule.
 
-Design commitments (from the redesign discussion):
+Design commitments:
   * A Problem is any posed mathematical task — worked example or exercise — regardless
     of whether a solution is shown. The finder is *solution-agnostic*: it captures the
     problem's whole extent (statement, subparts, and a solution if one happens to be
@@ -49,10 +49,9 @@ from .state import State, ASTNode, Entity, EntityType
 from .llm import text_lm
 
 # Soft look-ahead budget (~4 chars/token). A single node larger than the budget still
-# forms a window (at least one node). When the
-# only problem in a window reaches its edge, the window grows (doubling) until the
-# problem is bounded or the document ends — capped so a pathological problem can't grow
-# past the model's context (there it is banked as-is, the one place truncation remains).
+# forms a window (at least one node). When the only problem in a window reaches its edge,
+# the window grows (doubling) until it is bounded or the document ends — capped so a
+# pathological problem can't grow past the model's context (banked as-is there).
 LOOKAHEAD_BUDGET = 2000
 MAX_LOOKAHEAD_BUDGET = 8000
 
