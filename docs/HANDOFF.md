@@ -110,6 +110,12 @@ Phase 2 — flat node stream (backbone = `nodes`, global ordered list)
    a math-only gate or a conditional-output router for simplicity and robustness; the divergence
    guard is the safety net. A cheaper conditional-output ("emit a sentinel when clean") variant
    is a drop-in future optimization behind the same interface. `CORRECTOR_MODEL` swaps the model.
+   The corrector also **normalizes math delimiters** to the pipeline's `$`/`$$` convention so all
+   downstream stages see uniform math: a deterministic token swap (`\[\]`→`$$`, `\(\)`→`$`, in
+   `_normalize_math_delimiters`) runs on every page regardless of whether the vision correction was
+   accepted, and the prompt asks the model to wrap any display equation the OCR left undelimited
+   (bare `\begin{array}`/aligned/cases). Validated on the Oohama two-column paper (174 raw
+   delimiters → 0, all array blocks fenced).
 4. **The docling-geometry re-architecture was considered and rejected.** The original plan was
    to use docling's layout geometry to drive segmentation and kill the "duplication on complex
    layouts" artifact. A measurement (below) showed that artifact is **not systemic** — 0
@@ -218,10 +224,14 @@ the page images:
      blocks into one multi-member Definition (6 statement members), and a Property + its long
      proof becomes one entity with ~10 members (one member per structural node). Defensible but
      coarse; revisit grouping granularity if downstream needs finer entities.
-  2. *Inconsistent math delimiters* — complex multi-line display equations arrive as raw
-     `\[ … \]` / `\begin{array}` from OCR and pass through un-normalized, while simpler blocks
-     use `$$`. Content is faithful; only the delimiter is inconsistent. A normalization pass
-     (or a corrector/extractor instruction) would fix it — see Next-steps.
+  2. *Inconsistent math delimiters* — **found and fixed.** Complex multi-line display equations
+     arrived as raw `\[ … \]` / `\( … \)` / bare `\begin{array}` from OCR while simpler blocks used
+     `$$`. The **corrector now normalizes delimiters** (see Key design decisions #3): a
+     deterministic swap (`\[\]`→`$$`, `\(\)`→`$`) runs on every page, and the vision prompt wraps
+     any display equation the OCR left undelimited. Re-run on the same paper: **174 raw delimiters
+     → 0**, all `\begin{array}` blocks wrapped in `$$`, fences balanced. Side benefit: cleaner
+     display blocks let the grouper separate the `define X` cluster (definitions 2→8), softening
+     issue #1 above.
 
 ---
 
@@ -268,11 +278,6 @@ PYTHONPATH=src uv run python -c "import asyncio; from module.pipeline import run
   spans several paragraphs/display-math blocks becomes several `proof` members on one entity (e.g.
   the Hefferon matrix-mult associativity theorem: statement + 7 proof nodes). This is correct span
   attribution, not duplication, but if a consumer wants a single proof blob it must join them.
-- **Inconsistent display-math delimiters on complex equations.** Simple display blocks come
-  through as `$$ … $$`, but multi-line/aligned equations (arrays, cases) can pass through as raw
-  `\[ … \]` or `\begin{array}` from OCR. Content is faithful; only the delimiter is inconsistent,
-  so a downstream `$$`-only renderer will miss them. Seen on the Oohama two-column paper. A cheap
-  normalization pass would fix it (see Next-steps).
 - **Validation corpus:** 13 pages OpenStax/Judson + 12 pages Hefferon (single-column, three math
   books) **+ a 5-page true two-column IEEEtran paper (Oohama)**. Multi-column reading order is now
   covered and clean; the two-column sample is still small (one paper) — widen it before trusting
@@ -292,10 +297,9 @@ PYTHONPATH=src uv run python -c "import asyncio; from module.pipeline import run
    *worked-example/exercise* book. Now that the extractor parses each page in isolation, also
    spot-check that classification quality at page boundaries did not regress (the removed context
    was advisory for boundary disambiguation; the seam merger should still stitch splits correctly).
-   Two smaller follow-ups surfaced by the two-column run: (a) a **display-math delimiter
-   normalization** pass so complex `\[…\]`/`\begin{array}` equations become `$$` like the rest;
-   (b) revisit **entity-grouping granularity** (runs of `define X` blocks collapse into one
-   multi-member Definition; long proofs become one member per node).
+   One follow-up remains from the two-column run: revisit **entity-grouping granularity** (long
+   proofs become one member per node; some `define X` runs still bundle). (Display-math delimiter
+   normalization — the other follow-up — is **done**, in the corrector.)
 2. **Graph tier** (the big next piece) — relationship/edge discovery between entities
    (AutoMathKG's 9 tactic labels), then MathVD (embeddings/vector DB) for fusion and the
    Math-LLM completion step. `neo4j` is already a dep.

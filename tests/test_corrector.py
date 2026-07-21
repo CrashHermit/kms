@@ -1,7 +1,7 @@
 """Correction pass — pure dispatch/collect + the divergence guard. No network/LLM."""
 
 from module.state import Segment
-from module.corrector import CorrectorNode, _within_tolerance
+from module.corrector import CorrectorNode, _within_tolerance, _normalize_math_delimiters
 
 # Keeps the node's pure dispatch/collect off the real (vision) LLM constructor.
 SENTINEL = object()
@@ -20,6 +20,36 @@ def test_within_tolerance_accepts_light_edits_rejects_runaways():
     assert not _within_tolerance(orig, "x" * 200)  # runaway rewrite
     assert not _within_tolerance(orig, "")         # empty
     assert not _within_tolerance(orig, "   ")      # whitespace only
+
+
+def test_normalize_math_delimiters_swaps_display_and_inline():
+    # \[ … \] -> $$ … $$ (display), \( … \) -> $ … $ (inline), whitespace preserved.
+    assert _normalize_math_delimiters(r"\[ a^2 + b^2 \]") == "$$ a^2 + b^2 $$"
+    assert _normalize_math_delimiters(r"see \(x_1\) here") == "see $x_1$ here"
+    # multi-line display block (e.g. a wrapped array) keeps its interior verbatim.
+    src = "\\[\n\\begin{array}{l} x \\end{array}\n\\]"
+    assert _normalize_math_delimiters(src) == "$$\n\\begin{array}{l} x \\end{array}\n$$"
+
+
+def test_normalize_math_delimiters_leaves_dollars_and_prose_untouched():
+    # Already-correct `$$`/`$` and plain prose (incl. plain brackets/parens) are unchanged.
+    already = "inline $x$ and display $$y$$ with a list item [a] and (b)"
+    assert _normalize_math_delimiters(already) == already
+
+
+def test_worker_output_is_delimiter_normalized_when_correction_rejected():
+    # A runaway correction is rejected (kept original), but the kept text is still normalized.
+    # image_path="" -> load_dspy_image returns None, so the worker needs no image file on disk.
+    seg = _seg(0, r"kept \(x\) original", image_path="")
+
+    class _RunawayModule:
+        async def aforward(self, page_image, transcription):
+            import dspy
+            return dspy.Prediction(corrected="x" * 10_000)  # rejected by the guard
+
+    import asyncio
+    out = asyncio.run(CorrectorNode(module=_RunawayModule()).worker({"segment": seg}))
+    assert out["correction_results"] == [(0, "kept $x$ original")]
 
 
 def test_dispatch_proofreads_every_page_with_content_and_image():
