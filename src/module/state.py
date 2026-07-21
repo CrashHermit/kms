@@ -140,7 +140,7 @@ class State(TypedDict, total=False):
 # --- Helpers ---
 
 def load_dspy_image(path: str | None) -> dspy.Image | None:
-    """Load a PNG from disk into a dspy.Image (base64 data URL, mirroring Paideia)."""
+    """Load a PNG from disk into a dspy.Image (base64 data URL)."""
     if not path:
         return None
     encoded = base64.b64encode(Path(path).read_bytes()).decode("utf-8")
