@@ -41,39 +41,15 @@ tomorrow.
 import dspy
 from pydantic import BaseModel
 
-from .state import ASTNode, Entity, BodySegment
+from .state import ASTNode, Entity, BodySegment, FIELDS
 from .llm import text_lm
 
 
-# AutoMathKG's fixed field taxonomy (Table C4, "field" template).
-FIELDS = [
-    "algebra",
-    "geometry",
-    "analysis",
-    "logic",
-    "probability and statistics",
-    "applied mathematics",
-    "foundations of mathematics",
-]
-
-# AutoMathKG's nine role/tactic labels (Table C4, "bodylist" template), the full taxonomy
-# shared across all entity types.
-ACTIONS_ALL = [
-    "premise",
-    "assumption",
-    "lemma",
-    "corollary",
-    "definition",
-    "conclusion",
-    "deduction",
-    "calculation",
-    "enumeration",
-]
-
-# The subset a DEFINITION actually exercises. The proof-oriented roles (lemma, corollary,
-# deduction, calculation, conclusion) never legitimately apply to a definition, so we offer
-# the model only these four. Fewer choices, fewer misfires: with the full nine an early run
-# mislabelled a notation remark `assumption` and inverted premise/definition.
+# The subset of ACTIONS_ALL a DEFINITION actually exercises. The proof-oriented roles
+# (lemma, corollary, deduction, calculation, conclusion) never legitimately apply to a
+# definition, so we offer the model only these four. Fewer choices, fewer misfires: with
+# the full nine an early run mislabelled a notation remark `assumption` and inverted
+# premise/definition.
 DEFINITION_ACTIONS = ["premise", "definition", "assumption", "enumeration"]
 
 

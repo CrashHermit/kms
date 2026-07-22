@@ -52,6 +52,37 @@ class EntityType(StrEnum):
     PROBLEM = "problem"      # worked examples and exercises
 
 
+# --- Shared AutoMathKG vocabularies (Table C4) ---
+# Kept here, not in a single attributor, so every per-type attributor draws the field and
+# role taxonomies from one source of truth instead of copying the lists.
+
+# The fixed mathematical-field taxonomy ("field" template).
+FIELDS = [
+    "algebra",
+    "geometry",
+    "analysis",
+    "logic",
+    "probability and statistics",
+    "applied mathematics",
+    "foundations of mathematics",
+]
+
+# The nine role/tactic labels ("bodylist" template), the full taxonomy across all types.
+# Each attributor offers the model only the subset a given context actually exercises
+# (e.g. a definition never uses proof-only roles; a theorem statement never `deduction`s).
+ACTIONS_ALL = [
+    "premise",
+    "assumption",
+    "lemma",
+    "corollary",
+    "definition",
+    "conclusion",
+    "deduction",
+    "calculation",
+    "enumeration",
+]
+
+
 class BodySegment(BaseModel):
     """One `bodylist` piece: a contiguous slice of an entity's content and the role it
     plays (AutoMathKG's action label — see the per-type attributor for the allowed set).
@@ -59,6 +90,15 @@ class BodySegment(BaseModel):
     boundary; stored as-is on the entity."""
     description: str
     action: str
+
+
+class Proof(BaseModel):
+    """One proof of a Theorem: its own content and role-labelled decomposition (AutoMathKG's
+    Thm-only `proofs`, each element `{contents, bodylist, ...}`). refs/references_tactics are
+    deferred to the graph tier, so a proof reduces to contents + bodylist here. A pydantic
+    model like BodySegment — it doubles as a DSPy structured type and is stored on the entity."""
+    contents: list[str] = []
+    bodylist: list[BodySegment] = []
 
 
 @dataclass
@@ -87,6 +127,7 @@ class Entity:
     title: str | None = None                          # short descriptive name of the concept
     contents: list[str] = field(default_factory=list) # member markdown, a list of strings
     bodylist: list[BodySegment] = field(default_factory=list)  # role-labelled segmentation
+    proofs: list[Proof] = field(default_factory=list) # Theorem-only: its proof(s)
     field: str | None = None                          # mathematical field (fixed taxonomy)
 
 
