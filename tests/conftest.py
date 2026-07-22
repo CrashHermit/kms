@@ -67,6 +67,7 @@ def _dspy():
     m.InputField = lambda *a, **k: None
     m.OutputField = lambda *a, **k: None
     m.ChainOfThought = lambda *a, **k: None
+    m.Predict = lambda *a, **k: None
     return {"dspy": m}
 
 

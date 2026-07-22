@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Annotated, TypedDict
 
 import dspy
+from pydantic import BaseModel
 
 
 # --- AST data structures ---
@@ -51,6 +52,63 @@ class EntityType(StrEnum):
     PROBLEM = "problem"      # worked examples and exercises
 
 
+# --- Shared AutoMathKG vocabularies (Table C4) ---
+# Kept here, not in a single attributor, so every per-type attributor draws the field and
+# role taxonomies from one source of truth instead of copying the lists.
+
+# The fixed mathematical-field taxonomy ("field" template).
+FIELDS = [
+    "algebra",
+    "geometry",
+    "analysis",
+    "logic",
+    "probability and statistics",
+    "applied mathematics",
+    "foundations of mathematics",
+]
+
+# The nine role/tactic labels ("bodylist" template), the full taxonomy across all types.
+# Each attributor offers the model only the subset a given context actually exercises
+# (e.g. a definition never uses proof-only roles; a theorem statement never `deduction`s).
+ACTIONS_ALL = [
+    "premise",
+    "assumption",
+    "lemma",
+    "corollary",
+    "definition",
+    "conclusion",
+    "deduction",
+    "calculation",
+    "enumeration",
+]
+
+
+class BodySegment(BaseModel):
+    """One `bodylist` piece: a contiguous slice of an entity's content and the role it
+    plays (AutoMathKG's action label — see the per-type attributor for the allowed set).
+    A pydantic model because it doubles as a DSPy structured-output type at the LLM
+    boundary; stored as-is on the entity."""
+    description: str
+    action: str
+
+
+class Proof(BaseModel):
+    """One proof of a Theorem: its own content and role-labelled decomposition (AutoMathKG's
+    Thm-only `proofs`, each element `{contents, bodylist, ...}`). refs/references_tactics are
+    deferred to the graph tier, so a proof reduces to contents + bodylist here. A pydantic
+    model like BodySegment — it doubles as a DSPy structured type and is stored on the entity."""
+    contents: list[str] = []
+    bodylist: list[BodySegment] = []
+
+
+class Solution(BaseModel):
+    """One solution of a Problem (AutoMathKG's Prob-only `solutions`, each element
+    `{contents, ...}`). A Problem carries no bodylist — even in the paper a solution's
+    bodylist is empty — and refs/references_tactics are deferred to the graph tier, so a
+    solution reduces to just its contents here."""
+    contents: list[str] = []
+
+
 @dataclass
 class Entity:
     """A math-semantic entity: a typed grouping of member nodes — a sparse overlay on the
@@ -60,12 +118,27 @@ class Entity:
     the three per-type overlays are flattened into the single emitted entity list.
 
     The overlays are independent and may reference the same node (members are pointers), so
-    they are concatenated, not merged. Per-attribute detail (member roles, number,
-    instruction, …) is added by later per-attribute passes that do not exist yet, so an
-    entity is just `{id, type, members}` for now."""
+    they are concatenated, not merged.
+
+    The self-contained AutoMathKG attributes below are filled in by the per-type attributor
+    passes (only the Definition attributor exists so far); they stay unset (None / empty)
+    until then. Cross-entity attributes (refs / references_tactics) and the type-specific
+    proofs/solutions are not here yet — they belong to the later graph tier."""
     type: EntityType
     members: list[int] = field(default_factory=list)  # member node ids, document order
     id: int | None = None                             # assigned when overlays are flattened
+    # Self-contained attributes (per-type attributor output). NOTE: the `field` attribute
+    # (AutoMathKG's mathematical-field name) shadows `dataclasses.field` inside this class
+    # body, so any attribute using `field(default_factory=...)` must be declared ABOVE it.
+    label: str | None = None                          # the entity's own label, as written
+    number: str | None = None                         # the reference number in that label
+    title: str | None = None                          # short descriptive name of the concept
+    contents: list[str] = field(default_factory=list) # member markdown, a list of strings
+    bodylist: list[BodySegment] = field(default_factory=list)  # role-labelled segmentation
+    proofs: list[Proof] = field(default_factory=list) # Theorem-only: its proof(s)
+    solutions: list[Solution] = field(default_factory=list)  # Problem-only: its solution(s)
+    field: str | None = None                          # mathematical field (fixed taxonomy)
+    instruction: str | None = None                    # Problem-only: shared exercise-group directive
 
 
 @dataclass
