@@ -13,6 +13,7 @@ seam-merge collect.
 Stage order:
     corrector -> extractor -> seam_merger (even, odd) -> splitter
               -> {problem, definition, theorem}_finder -> {…}_attributor
+              -> (problem chain only) instruction_distributor
 
 Two phases split at the seam merger. Ingestion is per-page: `segments` (already carrying
 Mistral's markdown + figures) is the backbone, and the corrector proofreads each page's
@@ -27,10 +28,11 @@ enriches those entities with the self-contained AutoMathKG attributes (label, nu
 field, contents, bodylist; plus proofs for theorems and solutions for problems). After the
 graph returns, `run()` concatenates the three overlays into one flat, document-ordered entity
 list (global ids) and writes both the entities and the node stream itself — the nodes are
-persisted for provenance so an entity's `members` resolve to real source chunks. Cross-entity
-attributes (refs/references_tactics) and the instruction distributor (which stamps
-`Problem.instruction` from the tagged lead-ins) are later work. Assembly walks `nodes` after
-the graph returns, consulting `segments` only
+persisted for provenance so an entity's `members` resolve to real source chunks. On the
+problem chain one further stage, the instruction distributor, then stamps `Problem.instruction`
+from the splitter's tagged lead-in nodes (the shared directive of a grouped-exercise run).
+Cross-entity attributes (refs/references_tactics) are later graph-tier work. Assembly walks
+`nodes` after the graph returns, consulting `segments` only
 for picture inventories.
 """
 
@@ -50,6 +52,7 @@ from .problem_attributor import ProblemAttributorNode
 from .definition_attributor import DefinitionAttributorNode
 from .theorem_attributor import TheoremAttributorNode
 from .exercise_splitter import SplitterNode
+from .instruction_distributor import InstructionDistributorNode
 
 
 def build_graph():
@@ -70,6 +73,7 @@ def build_graph():
     definition_attributor = DefinitionAttributorNode()
     theorem_attributor = TheoremAttributorNode()
     splitter = SplitterNode()
+    instruction_distributor = InstructionDistributorNode()
 
     g = StateGraph(State)
 
@@ -89,6 +93,7 @@ def build_graph():
     g.add_node("definition_attributor", definition_attributor.run)
     g.add_node("theorem_attributor", theorem_attributor.run)
     g.add_node("splitter", splitter.run)
+    g.add_node("instruction_distributor", instruction_distributor.run)
 
     # A stage's dispatch is a conditional edge off the previous collect: it either fans
     # out Sends to the worker or short-circuits straight to its own collect.
@@ -122,7 +127,15 @@ def build_graph():
     for finder, attributor in chains:
         g.add_edge("splitter", finder)
         g.add_edge(finder, attributor)
-        g.add_edge(attributor, END)
+
+    # The definition and theorem chains end at their attributor. The problem chain has one
+    # more step: the instruction distributor stamps `Problem.instruction` from the splitter's
+    # tagged lead-in nodes, and must run after the attributor because it matches on each
+    # problem's `number` (which the attributor fills).
+    g.add_edge("definition_attributor", END)
+    g.add_edge("theorem_attributor", END)
+    g.add_edge("problem_attributor", "instruction_distributor")
+    g.add_edge("instruction_distributor", END)
 
     return g.compile()
 
