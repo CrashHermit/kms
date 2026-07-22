@@ -31,17 +31,18 @@ Two LLM calls plus a deterministic assembly step:
     ``description`` in directly (a plain copy); we will see how faithfully it reproduces
     the math before reaching for anything cleverer.
 
-The entry point is ``attribute_definition(entity, nodes_by_id)`` (async); the
-``DefinitionAttributorNode`` wrapper at the bottom will wire it into the pipeline once
-we are happy with the attributes it produces. Kept persistence-agnostic: it returns a
-``DefinitionAttributes`` and says nothing about whether that lands in ``entities.json``
-today or a graph vertex tomorrow.
+The entry point is ``attribute_definition(entity, nodes_by_id)`` (async): it writes the
+attributes onto the passed Definition entity (extending what the finder produced) and
+returns it. Wiring it into the pipeline as a per-entity pass is the next step, once we
+are happy with the attributes it produces. Kept persistence-agnostic — it says nothing
+about whether the enriched entity lands in ``entities.json`` today or a graph vertex
+tomorrow.
 """
 
 import dspy
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from .state import ASTNode, Entity
+from .state import ASTNode, Entity, BodySegment
 from .llm import text_lm
 
 
@@ -81,22 +82,6 @@ class MemberNode(BaseModel):
     position: int
     type: str
     content: str | None = None
-
-
-class BodySegment(BaseModel):
-    """One bodylist piece: a slice of the definition's content and its role label."""
-    description: str
-    action: str
-
-
-class DefinitionAttributes(BaseModel):
-    """The self-contained AutoMathKG Definition attributes this pass fills in."""
-    label: str | None = None
-    number: str | None = None
-    title: str | None = None
-    field: str | None = None
-    contents: list[str] = Field(default_factory=list)
-    bodylist: list[BodySegment] = Field(default_factory=list)
 
 
 class Identify(dspy.Signature):
@@ -228,13 +213,14 @@ async def attribute_definition(
     entity: Entity,
     nodes_by_id: dict[int, ASTNode],
     module: Module | None = None,
-) -> DefinitionAttributes:
-    """Fill in the self-contained attributes for one Definition entity.
+) -> Entity:
+    """Fill in the self-contained attributes on one Definition entity, in place.
 
     One LLM call identifies label/number/title/field (and points at the label node); the
     content members are assembled deterministically minus that label node; a second LLM
-    call builds the bodylist. Persistence-agnostic: returns the attributes; the caller
-    decides where they land.
+    call builds the bodylist. The attributes are written onto the passed entity (the same
+    entity the finder produced) and it is returned. Persistence-agnostic: whether the
+    enriched entity is dumped to JSON or loaded into the graph is the caller's concern.
     """
     module = module or Module()
     members = _members(entity, nodes_by_id)
@@ -243,11 +229,10 @@ async def attribute_definition(
     blob = "\n\n".join(contents)
     bodylist = await module.body(blob) if blob else []
 
-    return DefinitionAttributes(
-        label=ident.label,
-        number=ident.number,
-        title=ident.title,
-        field=ident.field,
-        contents=contents,
-        bodylist=bodylist,
-    )
+    entity.label = ident.label
+    entity.number = ident.number
+    entity.title = ident.title
+    entity.field = ident.field
+    entity.contents = contents
+    entity.bodylist = bodylist
+    return entity

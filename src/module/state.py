@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Annotated, TypedDict
 
 import dspy
+from pydantic import BaseModel
 
 
 # --- AST data structures ---
@@ -51,6 +52,15 @@ class EntityType(StrEnum):
     PROBLEM = "problem"      # worked examples and exercises
 
 
+class BodySegment(BaseModel):
+    """One `bodylist` piece: a contiguous slice of an entity's content and the role it
+    plays (AutoMathKG's action label — see the per-type attributor for the allowed set).
+    A pydantic model because it doubles as a DSPy structured-output type at the LLM
+    boundary; stored as-is on the entity."""
+    description: str
+    action: str
+
+
 @dataclass
 class Entity:
     """A math-semantic entity: a typed grouping of member nodes — a sparse overlay on the
@@ -60,12 +70,24 @@ class Entity:
     the three per-type overlays are flattened into the single emitted entity list.
 
     The overlays are independent and may reference the same node (members are pointers), so
-    they are concatenated, not merged. Per-attribute detail (member roles, number,
-    instruction, …) is added by later per-attribute passes that do not exist yet, so an
-    entity is just `{id, type, members}` for now."""
+    they are concatenated, not merged.
+
+    The self-contained AutoMathKG attributes below are filled in by the per-type attributor
+    passes (only the Definition attributor exists so far); they stay unset (None / empty)
+    until then. Cross-entity attributes (refs / references_tactics) and the type-specific
+    proofs/solutions are not here yet — they belong to the later graph tier."""
     type: EntityType
     members: list[int] = field(default_factory=list)  # member node ids, document order
     id: int | None = None                             # assigned when overlays are flattened
+    # Self-contained attributes (per-type attributor output). NOTE: the `field` attribute
+    # (AutoMathKG's mathematical-field name) shadows `dataclasses.field` inside this class
+    # body, so any attribute using `field(default_factory=...)` must be declared ABOVE it.
+    label: str | None = None                          # the entity's own label, as written
+    number: str | None = None                         # the reference number in that label
+    title: str | None = None                          # short descriptive name of the concept
+    contents: list[str] = field(default_factory=list) # member markdown, a list of strings
+    bodylist: list[BodySegment] = field(default_factory=list)  # role-labelled segmentation
+    field: str | None = None                          # mathematical field (fixed taxonomy)
 
 
 @dataclass

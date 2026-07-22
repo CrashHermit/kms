@@ -6,12 +6,8 @@ the flagged label node from `contents` — without dspy or network."""
 
 import asyncio
 
-from module.state import ASTNode, NodeType, Entity, EntityType
-from module.definition_attributor import (
-    attribute_definition,
-    BodySegment,
-    Identity,
-)
+from module.state import ASTNode, NodeType, Entity, EntityType, BodySegment
+from module.definition_attributor import attribute_definition, Identity
 
 
 def _nodes():
