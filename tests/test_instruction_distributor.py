@@ -1,5 +1,5 @@
-"""Instruction distributor: stamp a lead-in's shared directive onto the Problems it governs,
-by numeric range. The LLM is injected via a scripted module."""
+"""Instruction distributor: a growing-window walk that stamps a lead-in's shared directive
+onto the Problems it governs. The LLM (which judges the governed extent) is injected scripted."""
 
 import asyncio
 
@@ -7,25 +7,21 @@ from module.state import ASTNode, NodeType, EntityType, Entity
 from module.instruction_distributor import (
     distribute_instructions,
     InstructionDistributorNode,
-    _parse_number,
 )
 
 
-class _ScriptedRanger:
-    """Replays one (start, end, instruction) per lead-in, keyed by a substring of its text."""
+class _ScriptedGovernor:
+    """Replays one (instruction, governed_positions) per govern() call."""
 
-    def __init__(self, by_substring):
-        self._by = dict(by_substring)
+    def __init__(self, scripted):
+        self._scripted = list(scripted)
 
-    async def range_of(self, lead_in: str):
-        for key, triple in self._by.items():
-            if key in lead_in:
-                return triple
-        return "", "", ""
+    async def govern(self, lead_in, following):
+        return self._scripted.pop(0) if self._scripted else ("", [])
 
 
 def _nodes():
-    # 0: lead-in (tagged) | 1-3: the three governed exercises | 4: a later ungoverned exercise
+    # 0: lead-in (tagged) | 1-3: three governed exercises | 4: a later ungoverned exercise
     return [
         ASTNode(type=NodeType.PARAGRAPH, content="In Exercises 1.23-1.25, find the eigenvalues.", id=0, seg_index=0, role="instruction"),
         ASTNode(type=NodeType.LIST, content="1.23 A", id=1, seg_index=0),
@@ -37,64 +33,83 @@ def _nodes():
 
 def _problems():
     return [
-        Entity(type=EntityType.PROBLEM, members=[1], number="1.23"),
-        Entity(type=EntityType.PROBLEM, members=[2], number="1.24"),
-        Entity(type=EntityType.PROBLEM, members=[3], number="1.25"),
-        Entity(type=EntityType.PROBLEM, members=[4], number="1.26"),
+        Entity(type=EntityType.PROBLEM, members=[1], number="1.23", contents=["A"]),
+        Entity(type=EntityType.PROBLEM, members=[2], number="1.24", contents=["B"]),
+        Entity(type=EntityType.PROBLEM, members=[3], number="1.25", contents=["C"]),
+        Entity(type=EntityType.PROBLEM, members=[4], number="1.26", contents=["D"]),
     ]
 
 
-def test_stamps_only_the_in_range_problems():
-    ranger = _ScriptedRanger({"1.23-1.25": ("1.23", "1.25", "find the eigenvalues")})
+def test_stamps_the_governed_run_the_llm_returns():
+    # LLM governs the first three following problems (positions 0,1,2), a 4th is visible (bounded).
+    gov = _ScriptedGovernor([("find the eigenvalues", [0, 1, 2])])
     problems = _problems()
-    asyncio.run(distribute_instructions(_nodes(), problems, module=ranger))
+    asyncio.run(distribute_instructions(_nodes(), problems, module=gov))
     assert [p.instruction for p in problems] == [
         "find the eigenvalues", "find the eigenvalues", "find the eigenvalues", None,
     ]
 
 
-def test_no_range_stamps_nothing():
-    # Range-only MVP: a lead-in the ranger returns no range for governs nobody.
-    ranger = _ScriptedRanger({"1.23-1.25": ("", "", "")})
+def test_numberless_lead_in_is_governed_by_meaning_not_numbers():
+    # "Answer the following." has no range at all; the walk still governs the run the LLM marks.
+    nodes = [
+        ASTNode(type=NodeType.PARAGRAPH, content="Answer the following.", id=0, seg_index=0, role="instruction"),
+        ASTNode(type=NodeType.LIST, content="prove X", id=1, seg_index=0),
+        ASTNode(type=NodeType.LIST, content="prove Y", id=2, seg_index=0),
+    ]
+    problems = [
+        Entity(type=EntityType.PROBLEM, members=[1], number=None, contents=["prove X"]),
+        Entity(type=EntityType.PROBLEM, members=[2], number=None, contents=["prove Y"]),
+    ]
+    gov = _ScriptedGovernor([("answer the following", [0, 1])])
+    asyncio.run(distribute_instructions(nodes, problems, module=gov))
+    assert [p.instruction for p in problems] == ["answer the following", "answer the following"]
+
+
+def test_governs_nothing_when_the_llm_returns_no_positions():
+    gov = _ScriptedGovernor([("", [])])
     problems = _problems()
-    asyncio.run(distribute_instructions(_nodes(), problems, module=ranger))
+    asyncio.run(distribute_instructions(_nodes(), problems, module=gov))
     assert all(p.instruction is None for p in problems)
 
 
-def test_only_problems_after_the_lead_in_are_governed():
-    # A same-numbered problem BEFORE the lead-in must not be stamped.
+def test_window_grows_when_the_run_reaches_the_edge():
+    # Each problem is larger than one budget, so only one fits per window. The run reaches the
+    # window edge on each read, forcing the walk to grow (2000 -> 4000 -> 8000) until all three
+    # are visible together and it banks. Three govern() calls prove the two growth steps.
+    big = "x" * 9000  # ~2251 tokens, larger than LOOKAHEAD_BUDGET
+    nodes = [ASTNode(type=NodeType.PARAGRAPH, content="Do each.", id=0, seg_index=0, role="instruction")]
+    problems = []
+    for k in range(3):
+        nodes.append(ASTNode(type=NodeType.LIST, content=big, id=k + 1, seg_index=0))
+        problems.append(Entity(type=EntityType.PROBLEM, members=[k + 1], number=str(k + 1), contents=[big]))
+    gov = _ScriptedGovernor([("do each", [0]), ("do each", [0]), ("do each", [0, 1, 2])])
+    asyncio.run(distribute_instructions(nodes, problems, module=gov))
+    assert [p.instruction for p in problems] == ["do each", "do each", "do each"]
+
+
+def test_a_new_lead_in_bounds_the_previous_one():
+    # Two lead-ins: the first governs only up to (not into) the second's problems.
     nodes = [
-        ASTNode(type=NodeType.LIST, content="1.24 earlier", id=0, seg_index=0),
-        ASTNode(type=NodeType.PARAGRAPH, content="In Exercises 1.23-1.25, do X.", id=1, seg_index=0, role="instruction"),
-        ASTNode(type=NodeType.LIST, content="1.24 later", id=2, seg_index=0),
+        ASTNode(type=NodeType.PARAGRAPH, content="Group one: do A.", id=0, seg_index=0, role="instruction"),
+        ASTNode(type=NodeType.LIST, content="1 first", id=1, seg_index=0),
+        ASTNode(type=NodeType.PARAGRAPH, content="Group two: do B.", id=2, seg_index=0, role="instruction"),
+        ASTNode(type=NodeType.LIST, content="2 second", id=3, seg_index=0),
     ]
     problems = [
-        Entity(type=EntityType.PROBLEM, members=[0], number="1.24"),  # before the lead-in
-        Entity(type=EntityType.PROBLEM, members=[2], number="1.24"),  # after the lead-in
+        Entity(type=EntityType.PROBLEM, members=[1], number="1", contents=["first"]),
+        Entity(type=EntityType.PROBLEM, members=[3], number="2", contents=["second"]),
     ]
-    ranger = _ScriptedRanger({"1.23-1.25": ("1.23", "1.25", "do X")})
-    asyncio.run(distribute_instructions(nodes, problems, module=ranger))
-    assert [p.instruction for p in problems] == [None, "do X"]
+    # First lead-in's candidates are only problem 0 (before the 2nd lead-in); second governs its own.
+    gov = _ScriptedGovernor([("do A", [0]), ("do B", [0])])
+    asyncio.run(distribute_instructions(nodes, problems, module=gov))
+    assert [p.instruction for p in problems] == ["do A", "do B"]
 
 
-def test_dotted_numbers_compare_component_wise():
-    # 1.3 is NOT in 1.23-1.25 (float 1.3 would wrongly land between them).
-    assert _parse_number("1.3") < _parse_number("1.23")
-    nodes = [
-        ASTNode(type=NodeType.PARAGRAPH, content="In Exercises 1.23-1.25, do X.", id=0, seg_index=0, role="instruction"),
-        ASTNode(type=NodeType.LIST, content="1.3 outside", id=1, seg_index=0),
-    ]
-    problems = [Entity(type=EntityType.PROBLEM, members=[1], number="1.3")]
-    ranger = _ScriptedRanger({"1.23-1.25": ("1.23", "1.25", "do X")})
-    asyncio.run(distribute_instructions(nodes, problems, module=ranger))
-    assert problems[0].instruction is None
-
-
-def test_node_writes_problem_entities_channel_and_is_a_noop_without_lead_ins():
-    # No tagged lead-in -> nothing to do, channel returned unchanged.
+def test_node_writes_channel_and_is_a_noop_without_lead_ins():
     nodes = [ASTNode(type=NodeType.LIST, content="1.23 A", id=0, seg_index=0)]
-    problems = [Entity(type=EntityType.PROBLEM, members=[0], number="1.23")]
-    node = InstructionDistributorNode(module=_ScriptedRanger({}))
+    problems = [Entity(type=EntityType.PROBLEM, members=[0], number="1.23", contents=["A"])]
+    node = InstructionDistributorNode(module=_ScriptedGovernor([]))
     out = asyncio.run(node.run({"nodes": nodes, "problem_entities": problems}))
     assert set(out) == {"problem_entities"}
     assert out["problem_entities"][0].instruction is None

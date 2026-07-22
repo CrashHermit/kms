@@ -1,79 +1,140 @@
 r"""
 Instruction distributor — copies a grouped-exercise lead-in's shared directive onto the
-Problem entities it governs.
+Problem entities it governs, by a growing-window walk (no number/range parsing).
 
-A run of exercises often states its imperative ONCE, in a lead-in that governs the whole run
-("In Exercises 1.23-1.25, find the eigenvalues of each matrix."). That lead-in is not a member
-of any individual problem, so the per-entity Problem attributor can't see it — AutoMathKG's
-`instruction` is inherently a cross-entity, positional attribute. The splitter has already
-TAGGED each lead-in node `role="instruction"`; this pass reads those tags and distributes the
-directive.
+A run of exercises often states its imperative ONCE, in a lead-in that governs the whole run.
+That lead-in is not a member of any individual problem, so the per-entity Problem attributor
+can't see it — AutoMathKG's `instruction` is inherently a cross-entity, positional attribute.
+The splitter has already TAGGED each lead-in node `role="instruction"`; this pass reads those
+tags and distributes the directive.
 
-It is deliberately MINIMAL (MVP, range-only — no structural fallback):
+The extent is judged by the LLM, not by numbers. A lead-in may name a range ("In Exercises
+1.23-1.25, …") or may not ("Answer the following.", "Prove each of the following."), so a range
+parser can't decide who is governed — the model reads the following problems and decides where
+the governed run ends. It is the SAME growing look-ahead used by the finders and the splitter:
 
-  * For each tagged lead-in node, an LLM reads its text and returns the RANGE it governs
-    (`start_number`..`end_number`, e.g. 1.23..1.25) and the shared `instruction` imperative.
-  * If no explicit range is stated, the lead-in is SKIPPED — nothing is stamped. (A structural
-    "govern until the next boundary" fallback is intentionally left out for now.)
-  * The match is then deterministic: every Problem whose own `number` falls inside the range
-    (dotted numbers compared component-wise, so 1.3 < 1.23) and which appears AFTER the lead-in
-    in document order gets `entity.instruction` set to the directive.
+  * Anchor on a tagged lead-in node. Its candidate problems are the ones that follow it, up to
+    the next lead-in (a new lead-in starts a new governance).
+  * Take a look-ahead window of those following problems (whole problems up to a token budget)
+    and ask the LLM which of them the lead-in governs, plus the shared instruction to apply.
+  * If the governed run reaches the window's edge it may continue, so GROW the window (double
+    the budget) and re-read; if a non-governed problem is seen to follow the run (bounded), or
+    the candidates are exhausted, BANK — stamp `entity.instruction` on the governed problems.
 
-It runs AFTER the Problem attributor, because it matches on each Problem's `number` — which the
-attributor fills. Entry point ``distribute_instructions(nodes, problems, module)`` mutates the
+It runs AFTER the Problem attributor (it reads each problem's `contents`/`number` to judge
+governance). Entry point ``distribute_instructions(nodes, problems, module)`` mutates the
 problems in place; ``InstructionDistributorNode`` wires it onto the ``problem_entities`` channel.
 """
 
 import dspy
+from pydantic import BaseModel, Field
 
 from .state import State, ASTNode, Entity
 from .llm import text_lm
 
+# Same growing look-ahead shape as the finders/splitter (~4 chars/token).
+LOOKAHEAD_BUDGET = 2000
+MAX_LOOKAHEAD_BUDGET = 8000
 
-class ExtractRange(dspy.Signature):
+
+class WindowProblem(BaseModel):
+    """One following problem as the LLM sees it: a local position, its number, its statement."""
+    position: int
+    number: str | None = None
+    text: str | None = None
+
+
+class GovernExtent(dspy.Signature):
     r"""
-    Read an exercise LEAD-IN (a directive that introduces a run of exercises) and extract the
-    RANGE of exercise numbers it governs and the shared instruction.
+    Given an exercise LEAD-IN and the problems that FOLLOW it in document order, decide which of
+    those problems the lead-in's shared instruction governs, and give the instruction to apply.
 
-    A lead-in names a span of exercises and states one imperative for all of them, e.g.
-    "In Exercises 1.23-1.25, find the eigenvalues of each matrix." or "For Exercises 5 through
-    8, determine whether the set is a subspace."
+    A lead-in states one imperative for a run of exercises. Some name a range ("In Exercises
+    1.23-1.25, find the eigenvalues of each matrix."), some do not ("Answer the following.",
+    "Prove each of the following statements."). Judge governance by MEANING, not by numbers: the
+    governed problems are a run that STARTS at the first following problem and continues while
+    the lead-in's instruction still sensibly applies to them, and STOPS when it no longer does —
+    a problem that is clearly a different task, or the start of a different group.
 
     Return:
-      * start_number — the first exercise number in the range, as written ("1.23", "5"). EMPTY
-        string if the lead-in does not state an explicit range.
-      * end_number — the last exercise number in the range ("1.25", "8"). EMPTY if no range.
-      * instruction — the shared imperative itself, copied as written but WITHOUT the "In
-        Exercises X-Y," framing ("find the eigenvalues of each matrix"). EMPTY if there is none.
+      * instruction — the shared imperative to apply to the governed problems, copied as written
+        but WITHOUT any "In Exercises X-Y," framing ("find the eigenvalues of each matrix",
+        "answer the following"). EMPTY string if the lead-in actually governs nothing here.
+      * governed_positions — the `position` values of the governed problems (a run from the
+        first). EMPTY list if none are governed.
     """
 
     lead_in: str = dspy.InputField(description="The lead-in node's text.")
-    start_number: str = dspy.OutputField(description="First exercise number in the governed range, or empty string.")
-    end_number: str = dspy.OutputField(description="Last exercise number in the governed range, or empty string.")
-    instruction: str = dspy.OutputField(description="The shared imperative, without the range framing, or empty string.")
+    following_problems: list[WindowProblem] = dspy.InputField(
+        description="The problems that follow the lead-in, in order, each with a local position."
+    )
+    instruction: str = dspy.OutputField(description="The shared imperative to apply, without range framing, or empty string.")
+    governed_positions: list[int] = dspy.OutputField(description="Positions of the governed problems, a run from the first; empty if none.")
 
 
 class Module(dspy.Module):
     def __init__(self, lm: dspy.LM | None = None):
         super().__init__()
-        self.extract = dspy.Predict(ExtractRange)
+        self.judge = dspy.ChainOfThought(GovernExtent)
         self.set_lm(lm or text_lm())
 
-    async def range_of(self, lead_in: str) -> tuple[str, str, str]:
-        r = await self.extract.acall(lead_in=lead_in)
-        return (r.start_number or "").strip(), (r.end_number or "").strip(), (r.instruction or "").strip()
+    async def govern(self, lead_in: str, following: list[WindowProblem]) -> tuple[str, list[int]]:
+        r = await self.judge.acall(lead_in=lead_in, following_problems=following)
+        return (r.instruction or "").strip(), list(r.governed_positions or [])
 
 
-def _parse_number(text: str | None) -> tuple[int, ...] | None:
-    """A dotted reference number as a tuple of ints for order-correct comparison ("1.23" ->
-    (1, 23), so 1.3 < 1.23). None if it isn't a plain dotted-integer number."""
-    parts = (text or "").strip().split(".")
-    if not parts or parts == [""]:
-        return None
-    try:
-        return tuple(int(p) for p in parts)
-    except ValueError:
-        return None
+def _est_tokens(problem: Entity) -> int:
+    return len(_problem_text(problem)) // 4 + 1
+
+
+def _problem_text(problem: Entity) -> str:
+    """The problem's statement as the LLM should see it — its attributed contents, or its
+    number as a last resort."""
+    body = " ".join(c for c in (problem.contents or []) if c)
+    return body or (problem.number or "")
+
+
+def _window(candidates: list[Entity], budget: int) -> list[Entity]:
+    """Whole following problems up to the soft token budget, always at least one."""
+    window, tokens = [], 0
+    for problem in candidates:
+        t = _est_tokens(problem)
+        if window and tokens + t > budget:
+            break
+        window.append(problem)
+        tokens += t
+    return window
+
+
+async def _govern_one(node: ASTNode, candidates: list[Entity], module: Module) -> None:
+    """Growing-window walk for one lead-in: find the governed run among its following problems
+    and stamp the instruction on them. Grows the window while the run reaches its edge."""
+    if not candidates:
+        return
+    size = LOOKAHEAD_BUDGET
+    while True:
+        window = _window(candidates, size)
+        last_local = len(window) - 1
+        exhausted = len(window) == len(candidates)
+
+        instruction, positions = await module.govern(
+            node.content or "",
+            [WindowProblem(position=k, number=window[k].number, text=_problem_text(window[k]))
+             for k in range(len(window))],
+        )
+        governed = sorted({min(max(p, 0), last_local) for p in positions})
+
+        if not governed:
+            return  # this lead-in governs nothing here
+        run_end = governed[-1]
+
+        if exhausted or size >= MAX_LOOKAHEAD_BUDGET or run_end < last_local:
+            # Bounded (a non-governed problem follows the run), or nothing left to gather: bank.
+            if instruction:
+                for k in governed:
+                    window[k].instruction = instruction
+            return
+        size *= 2  # the run reaches the window edge and may continue — grow and re-read
 
 
 async def distribute_instructions(
@@ -81,10 +142,8 @@ async def distribute_instructions(
     problems: list[Entity],
     module: Module | None = None,
 ) -> list[Entity]:
-    """Stamp each governed Problem's `instruction` from the tagged lead-in nodes (in place).
-
-    Range-only: a lead-in with no explicit numeric range is skipped. A Problem is governed when
-    its `number` is inside the range AND it appears after the lead-in in document order."""
+    """Stamp each governed Problem's `instruction` from the tagged lead-in nodes (in place),
+    judging the governed run per lead-in with a growing-window LLM walk (no number matching)."""
     lead_ins = [n for n in nodes if n.role == "instruction"]
     if not lead_ins or not problems:
         return problems
@@ -92,17 +151,18 @@ async def distribute_instructions(
     order = {n.id: i for i, n in enumerate(nodes)}
     far = len(order)
 
+    def pos(entity: Entity) -> int:
+        return order.get(entity.members[0], far) if entity.members else far
+
+    ordered = sorted(problems, key=pos)
+    lead_positions = sorted(order.get(n.id, -1) for n in lead_ins)
+
     for node in lead_ins:
-        start_s, end_s, instruction = await module.range_of(node.content or "")
-        start, end = _parse_number(start_s), _parse_number(end_s)
-        if not (start and end and instruction):  # no explicit range -> skip (no fallback)
-            continue
-        lead_pos = order.get(node.id, -1)
-        for problem in problems:
-            num = _parse_number(problem.number)
-            pos = order.get(problem.members[0], far) if problem.members else far
-            if num is not None and start <= num <= end and pos > lead_pos:
-                problem.instruction = instruction
+        here = order.get(node.id, -1)
+        # A new lead-in starts a new governance, so a lead-in's candidates end at the next one.
+        nxt = min((p for p in lead_positions if p > here), default=far)
+        candidates = [p for p in ordered if here < pos(p) < nxt]
+        await _govern_one(node, candidates, module)
     return problems
 
 
@@ -110,7 +170,7 @@ async def distribute_instructions(
 
 class InstructionDistributorNode:
     """Stamps `instruction` onto the governed Problems, reading the splitter's `role="instruction"`
-    lead-in tags. Runs after the Problem attributor (it matches on each Problem's `number`) and
+    lead-in tags. Runs after the Problem attributor (it reads each problem's contents/number) and
     writes the enriched entities back to the ``problem_entities`` channel."""
 
     def __init__(self, module: Module | None = None):
