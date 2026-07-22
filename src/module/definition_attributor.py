@@ -56,10 +56,9 @@ FIELDS = [
     "foundations of mathematics",
 ]
 
-# AutoMathKG's nine role/tactic labels (Table C4, "bodylist" template). Offered in full
-# for the first cut; if the model over-reaches for proof-only roles on definitions
-# (lemma/corollary/deduction/calculation/conclusion) we can restrict the set later.
-ACTIONS = [
+# AutoMathKG's nine role/tactic labels (Table C4, "bodylist" template), the full taxonomy
+# shared across all entity types.
+ACTIONS_ALL = [
     "premise",
     "assumption",
     "lemma",
@@ -70,6 +69,12 @@ ACTIONS = [
     "calculation",
     "enumeration",
 ]
+
+# The subset a DEFINITION actually exercises. The proof-oriented roles (lemma, corollary,
+# deduction, calculation, conclusion) never legitimately apply to a definition, so we offer
+# the model only these four. Fewer choices, fewer misfires: with the full nine an early run
+# mislabelled a notation remark `assumption` and inverted premise/definition.
+DEFINITION_ACTIONS = ["premise", "definition", "assumption", "enumeration"]
 
 class MemberNode(BaseModel):
     """One member node as the identity pass sees it: a local position and its content."""
@@ -127,25 +132,41 @@ class Identify(dspy.Signature):
 
 class Bodylist(dspy.Signature):
     r"""
-    Segment a single mathematical DEFINITION into its logical pieces and label each with
+    Segment one mathematical DEFINITION into its logical pieces and label each piece with
     the role it plays. Return an ordered list of {description, action}.
 
-    SEGMENTS: cut the content where its role changes. A short setup clause ("Let S be a
-    set.") is one piece; the clause that actually fixes the meaning is another. A display
-    formula or a condition list is its own piece. Keep each piece contiguous and in the
-    original order; concatenating the descriptions in order must reproduce the content.
+    THE FOUR ROLES (choose exactly one per piece):
+      * premise — a setup clause that introduces the objects the definition is built from,
+        BEFORE the concept itself is fixed. Usually a "Let ..." sentence ("Let $S$ be a
+        set."). Scaffolding, not the definition itself.
+      * definition — the clause that actually FIXES the meaning of the concept: it names
+        the thing being defined or says what it consists of / is called ("Then
+        $(\Gamma,\circ)$ is called the symmetric group.", "A vector space consists of a set
+        $V$ along with two operations ..."). A sentence that only introduces notation or an
+        abbreviation for the newly defined object is `definition`, even when phrased as a
+        condition ("If $S$ has $n$ elements, then $(\Gamma,\circ)$ is often denoted $S_n$").
+      * assumption — a condition or constraint that RESTRICTS the objects the definition
+        applies to, stated inline rather than as a list ("subject to the conditions that
+        ...", "where $n \ge 3$"). A notation/abbreviation remark is NOT an assumption, even
+        when it opens with "if".
+      * enumeration — an itemized or numbered list of conditions, axioms, or cases (e.g. a
+        numbered list of vector-space axioms). The whole list is ONE enumeration piece.
 
-    DESCRIPTIONS: copy the text of each piece VERBATIM — reproduce all mathematics and
-    LaTeX exactly as given, changing nothing.
+    TYPICAL SHAPE: zero or more `premise` setup clauses, then a single `definition` clause
+    that fixes the concept, optionally followed by `assumption`/`enumeration` pieces for its
+    conditions. A definition has almost always EXACTLY ONE `definition` piece — the clause
+    that says what the concept is or is called. Do not label the core defining clause
+    `premise`, and do not split it across pieces.
 
-    ACTIONS: label each piece with exactly one role from the given list. For a definition
-    the common roles are "premise" (a setup/"let" clause), "definition" (the clause that
-    fixes the concept's meaning), "assumption" (a condition imposed), and "enumeration"
-    (an itemized list); choose the single most fitting role for each piece.
+    SEGMENTS: cut the content where its role changes; keep each piece contiguous and in the
+    original order. Concatenating the descriptions in order must reproduce the content.
+
+    DESCRIPTIONS: copy each piece's text VERBATIM — reproduce all mathematics and LaTeX
+    exactly as given, changing nothing.
     """
 
     contents: str = dspy.InputField(description="The definition's full content (text + LaTeX).")
-    actions: list[str] = dspy.InputField(description="The allowed action labels; choose one per piece.")
+    actions: list[str] = dspy.InputField(description="The allowed action labels for a definition; choose one per piece.")
     bodylist: list[BodySegment] = dspy.OutputField(
         description="Ordered {description, action} pieces; descriptions concatenate back to the content."
     )
@@ -184,8 +205,8 @@ class Module(dspy.Module):
         )
 
     async def body(self, contents: str) -> list[BodySegment]:
-        result = await self.bodylist.acall(contents=contents, actions=ACTIONS)
-        return [s for s in (result.bodylist or []) if s.action in ACTIONS]
+        result = await self.bodylist.acall(contents=contents, actions=DEFINITION_ACTIONS)
+        return [s for s in (result.bodylist or []) if s.action in DEFINITION_ACTIONS]
 
 
 def _members(entity: Entity, nodes_by_id: dict[int, ASTNode]) -> list[ASTNode]:
