@@ -38,6 +38,73 @@ Hefferon pages.
   and the whole **graph tier** (relationships/edges, MathVD fusion, LLM completion) — the big
   next piece, not started.
 - **46 unit tests pass**; `conftest` stubs the heavy deps so they run anywhere.
+- **This session (see Session update):** splitter + distributor stress-tested across 6
+  committed fixtures (elementary→graduate) — both strong; base-instruction fixes to the splitter
+  lead-in test and the attributor `number`; a **DSPy training harness** (`training/`, teacher
+  `deepseek-v4-pro`, LLM-judge) built and proven but with no headroom to ship yet; and **ruff**
+  adopted for format + lint (line-length 100).
+
+---
+
+## Session update — stress test + DSPy harness + code conventions (2026-07-22)
+
+**Stress-test fixtures (`tests/fixtures/books/`, committed).** Six small PDF page-slices of
+openly-licensed books (CC BY / BY-SA family), so splitter/distributor stress tests reuse them
+without re-downloading full books. See that dir's `README.md` for provenance/licences/levels.
+Coverage spans the exercise-governance spectrum: OpenStax *Elementary Algebra 2e*
+(`ea2e_ch1_review` = dense short "In the following exercises" lead-ins + interleaved headers;
+`ea2e_sec1_3_exercises` = a section set + an "Everyday Math" block with per-exercise embedded
+directives); OpenStax *Calculus Vol 3* (`calc3_gradients_exercises` = "For the following
+exercises" phrasing, advanced, `[T]` tech exercises); Lebl *Basic Analysis* I & II
+(`lebl_realanalysis_sec2_1`, `lebl2_metricspaces_sec8_1` = graduate, self-contained
+"Exercise N.N.N:" proof exercises, ~no shared lead-ins); Hefferon *Linear Algebra*
+(`hefferon_linsys_exercises` = per-exercise imperatives + "✓/X" recommended glyph — the
+own-numbered-exercise-is-not-a-lead-in case).
+
+**Findings — splitter + distributor are both strong across all styles.**
+- Splitter: exact splits (112/112 and 74/74 exercises on the EA2e slices; 23/23 on Lebl I),
+  precise lead-in tagging with **zero false positives** — range-less "In/For the following
+  exercises", Hefferon per-exercise imperatives (0 tagged), Lebl proof exercises all handled.
+- Distributor: governed runs bounded correctly; word-problems with embedded directives left
+  ungoverned; no over-extension across intervening lead-ins/headers.
+- **Real defects found (reported; mostly NOT splitter/distributor):**
+  - *Problem attributor number* is format-sensitive — misses bare multi-column numbers
+    ("925.") and once grabbed an in-text cross-reference ("2.1.12 Prove Proposition 2.1.13" →
+    number 2.1.13). **Base-instruction fix applied** (anchor on the leading own-number, never an
+    in-text reference).
+  - *Front-end OCR* drops short interstitial lead-in lines on dense 3-column pages (calc3: ~4 of
+    ~6 "For the following exercises" lead-ins never became nodes), so the distributor can't stamp
+    them — a Mistral-OCR fidelity issue, not the governor.
+  - *Distributor* soft over-extension: a "find the limit" lead-in stamped onto a following
+    "finish the proof" exercise (Lebl 2.1.11).
+- **Splitter base-instruction fix applied:** its lead-in TAG "decisive test" no longer hinges on
+  naming an explicit range (range-less lead-ins are the common real case).
+
+**DSPy training harness (`training/`) — data-driven stage tuning instead of prompt-chasing.**
+Teacher `deepseek-v4-pro` bootstraps traces; a reference-free **LLM-as-judge** (also on the
+teacher) filters them into few-shot demos for the flash student — DSPy *compilation*, not weight
+fine-tuning (DeepSeek's API doesn't expose that). Pieces: `module/tracing.py` (opt-in
+`KMS_TRACE_DIR` capture) and per-stage `training/<stage>/{metric,dataset,compile}.py`; the
+splitter and distributor nodes auto-load `training/<stage>/compiled.json` if present (override
+with `KMS_SPLITTER_PROGRAM` / `KMS_DISTRIBUTOR_PROGRAM`).
+- **Cheap-data trick:** distributor examples are reconstructed straight from finished run
+  artifacts (`out/<fixture>/nodes.json` + `entities.json`) via the positional bracketing — 41
+  examples from 5 runs, **zero new pipeline calls** (`training/distributor/dataset.py::load_runs`).
+- **Pilot results:** both stages already judged near-perfect, so naïve `BootstrapFewShot` had no
+  headroom — splitter dev pass-rate 1.00→1.00 (and its demos are ~2.7k-token page-sized windows,
+  a bad fit); distributor 0.90→0.80 (within noise; demos small but non-targeted). **Neither
+  compiled program was shipped** — the bare students are already strong. The harness is the
+  deliverable; the next lever is *targeted* hard-case demos (seed the over-extension cases)
+  and/or MIPROv2 instruction-opt, measured on a larger reconstructed eval set.
+
+**Code conventions — ruff adopted (was: no tooling at all).** `ruff` = the one style tool
+(format + light lint), configured in `pyproject.toml`: line-length **100**, src-layout aware,
+lint set `F/E/I/B/UP` (E501 off — the formatter owns wrapping and long DSPy `description=`
+strings are intentional). The whole repo was reformatted in one isolated commit. It codifies the
+existing de-facto house style: double quotes, modern typing (`X | None`, `list[...]` — no
+`Optional`/`List`), stdlib→third-party→local import groups, rich module-level rationale
+docstrings (`r"""` for DSPy signatures with LaTeX), no `from __future__` (runtime is 3.14).
+**Before committing Python: `uv run ruff format . && uv run ruff check .`** (both must be clean).
 
 ---
 
@@ -313,9 +380,15 @@ the whole run.
 - **Splitter is near-lossless, not lossless.** ~0.8% residual mass on the test page is cosmetic
   whitespace from the content copy; the orphan-fragment loss is fixed. A truly lossless split
   would need offsets, which the model can't produce over LaTeX (see decision 11).
-- **Instruction distributor validation is thin.** Correct on constructed lead-ins; the Hefferon
-  section under test has no real lead-ins, so it hasn't been exercised end-to-end on a section
-  that *does* use them. Find such a section for the extensive tests.
+- **Instruction distributor — now validated on real lead-in-heavy sections** (see the Session
+  update). Correct extent + bounding across OpenStax algebra/calc and Lebl analysis; the one
+  soft failure is a task-kind over-extension (Lebl 2.1.11). The `training/` harness targets
+  exactly this decision if we want to push it further.
+- **Problem attributor `number` is format-sensitive** — see Session update (bare multi-column
+  numbers, in-text cross-references). Base-instruction fix applied; verify on the next runs.
+- **Front-end drops short interstitial lead-in lines** on dense multi-column exercise pages
+  (calc3) — an OCR/corrector fidelity gap upstream of the governor, not a splitter/distributor
+  bug. Worth a targeted look at the corrector prompt or Mistral options for such layouts.
 - **Mistral's subtle math errors are real**; the corrector is the mitigation, tested clean but
   on an adversarial sample, not exhaustive.
 - **Validation corpus is still small** — Hefferon §III.1 plus the front-end's earlier multi-book
@@ -331,7 +404,9 @@ the whole run.
   `MISTRAL_API_KEY` first and **falls back to `MISTRAL_OCR_API`**).
 - `OPENROUTER_API_KEY` — the correction pass (Qwen3-VL-235B; `CORRECTOR_MODEL` /
   `CORRECTOR_PROVIDER` override).
-- `DEEPSEEK_API_KEY` — all text stages (extractor, seam, the three finders; `deepseek-v4-flash`).
+- `DEEPSEEK_API_KEY` — all text stages: extractor, seam, splitter, the three finders +
+  attributors, and the distributor (`deepseek-v4-flash`). Also powers the DSPy **teacher**
+  (`deepseek-v4-pro`, compile-time only; `TEACHER_MODEL` overrides) — same key.
 
 **Deps** (uv) — **no GPU anywhere**:
 - `uv sync` — light CPU core.
@@ -339,6 +414,16 @@ the whole run.
 
 **Tests:** `PYTHONPATH=src uv run pytest -q` (46 tests). `tests/conftest.py` stubs
 dspy/pydantic/langgraph *only if absent*, so the suite runs with or without the real deps.
+
+**Style (ruff):** `uv run ruff format . && uv run ruff check .` — both must be clean before
+committing Python. Config in `pyproject.toml` (line-length 100, lint set `F/E/I/B/UP`). See the
+Session update for the codified conventions.
+
+**Stress-test the governor:** run the pipeline on a fixture and inspect, e.g.
+`PYTHONPATH=src uv run --extra mistral python -m module.pipeline
+tests/fixtures/books/ea2e_ch1_review.pdf out/ea2e_ch1_review`. To capture DSPy training traces,
+prefix with `KMS_TRACE_DIR=out/traces`. Compile a stage:
+`PYTHONPATH=src uv run python -m training.distributor.compile out/<run_dir> ...`.
 
 **Run the pipeline:**
 ```bash
@@ -355,10 +440,12 @@ Good test PDF: Hefferon Linear Algebra — `https://jheffero.w3.uvm.edu/linearal
 
 ## Next steps (suggested order)
 
-1. **Extensive validation of the splitter + distributor** (the immediate plan) — run more
-   sections/books, especially ones that *do* use exercise lead-ins (to exercise the distributor
-   end-to-end), and watch splitter decision consistency. Inspect `document.md` + `nodes.json` +
-   `entities.json` together. Consider a DSPy-optimised splitter prompt once there's a labelled set.
+1. **Extensive splitter + distributor validation — DONE this session** (see Session update): 6
+   fixtures across elementary→graduate styles, both stages strong. Remaining follow-ups from it:
+   the front-end lead-in-loss on dense multi-column pages (calc3), and — if we want to push
+   quality past "already strong" — *targeted* hard-case demos or MIPROv2 via the `training/`
+   harness, measured on a larger reconstructed eval set. The optimizer infra is built and proven;
+   it just has little headroom on the current, already-good stages.
 2. **Cross-entity attributes** — `refs` / `references_tactics` (AutoMathKG's 9 tactic labels
    between entities). These are inherently graph-tier (they relate entities), so they fold into
    the next item rather than being per-entity passes.
@@ -383,6 +470,12 @@ Good test PDF: Hefferon Linear Algebra — `https://jheffero.w3.uvm.edu/linearal
 - **DeepSeek prompt caching** makes re-runs with unchanged prompts fast; changing a stage's
   prompt invalidates that stage's cache (slower first re-run).
 - **The three finders (and three attributors) are copies on purpose** — fix walk bugs in all.
+- **Run ruff before committing** (`uv run ruff format . && uv run ruff check .`); no `from
+  __future__` (runtime is 3.14). The whole repo was reformatted once — that commit is isolated
+  for `git blame`.
+- **Reuse the committed fixtures** in `tests/fixtures/books/` for stress tests; don't re-download
+  full books. Distributor training data reconstructs from finished `out/<run>/` artifacts —
+  keep a run's `nodes.json`+`entities.json` if you want to grow the trainset cheaply.
 - **`uv run` re-syncs and drops the `mistral` extra.** A plain `uv run …` (e.g. `pytest`) after
   `uv sync --extra mistral` uninstalls `pypdfium2`/`pillow`, so the next pipeline run dies with
   "No module named 'pypdfium2'". For a full run use `uv run --extra mistral python …` (or re-sync

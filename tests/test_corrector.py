@@ -1,7 +1,7 @@
 """Correction pass — pure dispatch/collect + the divergence guard. No network/LLM."""
 
+from module.corrector import CorrectorNode, _normalize_math_delimiters, _within_tolerance
 from module.state import Segment
-from module.corrector import CorrectorNode, _within_tolerance, _normalize_math_delimiters
 
 # Keeps the node's pure dispatch/collect off the real (vision) LLM constructor.
 SENTINEL = object()
@@ -13,13 +13,13 @@ def _seg(index, content, image_path="/pages/Segment.png"):
 
 def test_within_tolerance_accepts_light_edits_rejects_runaways():
     orig = "x" * 100
-    assert _within_tolerance(orig, "x" * 100)      # identical
-    assert _within_tolerance(orig, "x" * 80)       # −20%, a real fix
-    assert _within_tolerance(orig, "x" * 130)      # +30% boundary
-    assert not _within_tolerance(orig, "x" * 50)   # truncation
+    assert _within_tolerance(orig, "x" * 100)  # identical
+    assert _within_tolerance(orig, "x" * 80)  # −20%, a real fix
+    assert _within_tolerance(orig, "x" * 130)  # +30% boundary
+    assert not _within_tolerance(orig, "x" * 50)  # truncation
     assert not _within_tolerance(orig, "x" * 200)  # runaway rewrite
-    assert not _within_tolerance(orig, "")         # empty
-    assert not _within_tolerance(orig, "   ")      # whitespace only
+    assert not _within_tolerance(orig, "")  # empty
+    assert not _within_tolerance(orig, "   ")  # whitespace only
 
 
 def test_normalize_math_delimiters_swaps_display_and_inline():
@@ -45,9 +45,11 @@ def test_worker_output_is_delimiter_normalized_when_correction_rejected():
     class _RunawayModule:
         async def aforward(self, page_image, transcription):
             import dspy
+
             return dspy.Prediction(corrected="x" * 10_000)  # rejected by the guard
 
     import asyncio
+
     out = asyncio.run(CorrectorNode(module=_RunawayModule()).worker({"segment": seg}))
     assert out["correction_results"] == [(0, "kept $x$ original")]
 
@@ -57,7 +59,7 @@ def test_dispatch_proofreads_every_page_with_content_and_image():
     segs = [
         _seg(0, "definition with $x^2$"),
         _seg(1, "plain prose, no math at all"),
-        _seg(2, None),                       # no content -> skip
+        _seg(2, None),  # no content -> skip
         _seg(3, "content but", image_path=""),  # no page image to check against -> skip
     ]
     sends = CorrectorNode(module=SENTINEL).dispatch({"segments": segs})

@@ -14,8 +14,12 @@ def test_every_send_target_and_dispatch_fallback_is_a_registered_node():
         text = f.read_text()
         send_targets |= set(re.findall(r'Send\("([a-z_]+)"', text))
         fallbacks |= set(re.findall(r'return sends or "([a-z_]+)"', text))
-    assert not (send_targets - registered), f"Send targets with no node: {send_targets - registered}"
-    assert not (fallbacks - registered), f"dispatch fallbacks with no node: {fallbacks - registered}"
+    assert not (send_targets - registered), (
+        f"Send targets with no node: {send_targets - registered}"
+    )
+    assert not (fallbacks - registered), (
+        f"dispatch fallbacks with no node: {fallbacks - registered}"
+    )
 
 
 def test_all_modules_parse():

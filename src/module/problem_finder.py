@@ -45,8 +45,8 @@ is fine, since members are node-id pointers, not copies.
 import dspy
 from pydantic import BaseModel, Field
 
-from .state import State, ASTNode, Entity, EntityType
 from .llm import text_lm
+from .state import ASTNode, Entity, EntityType, State
 
 # Soft look-ahead budget (~4 chars/token). A single node larger than the budget still
 # forms a window (at least one node). When the only problem in a window reaches its edge,
@@ -63,6 +63,7 @@ def _est_tokens(node: ASTNode) -> int:
 class WindowNode(BaseModel):
     """One look-ahead node as the LLM sees it: a local position, its content, and its role
     annotation (the splitter marks an exercise lead-in with role "instruction")."""
+
     position: int
     type: str
     content: str | None = None
@@ -71,6 +72,7 @@ class WindowNode(BaseModel):
 
 class ProblemSpan(BaseModel):
     """A Problem the LLM found, as an inclusive span of local positions in the window."""
+
     start: int = Field(description="First local position of the problem (inclusive).")
     end: int = Field(description="Last local position of the problem (inclusive).")
 
@@ -136,7 +138,7 @@ class Signature(dspy.Signature):
 
     current_nodes: list[WindowNode] = dspy.InputField(
         description="The look-ahead window's nodes, in order, each with a local position and a role "
-        "(role \"instruction\" marks an exercise lead-in — a boundary, never part of a span). "
+        '(role "instruction" marks an exercise lead-in — a boundary, never part of a span). '
         "Emit spans over these only."
     )
     problems: list[ProblemSpan] = dspy.OutputField(
@@ -197,11 +199,17 @@ async def find_problems(
             last_local = len(window) - 1
             reached_doc_end = end == n
 
-            spans = await module.aforward([
-                WindowNode(position=k, type=(node.type.value if node.type else ""),
-                           content=node.content, role=(node.role or ""))
-                for k, node in enumerate(window)
-            ])
+            spans = await module.aforward(
+                [
+                    WindowNode(
+                        position=k,
+                        type=(node.type.value if node.type else ""),
+                        content=node.content,
+                        role=(node.role or ""),
+                    )
+                    for k, node in enumerate(window)
+                ]
+            )
             # Clamp to range, drop empties, keep document order.
             clean: list[ProblemSpan] = []
             for s in spans:
@@ -241,6 +249,7 @@ async def find_problems(
 
 
 # --- LangGraph node: emit the found Problems onto their channel ---
+
 
 class ProblemFinderNode:
     """Walks the flat node stream and writes its Problem entities to the

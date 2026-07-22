@@ -2,8 +2,8 @@
 
 import asyncio
 
-from module.state import ASTNode, NodeType, EntityType
 from module.definition_finder import DefinitionFinderNode, DefinitionSpan, find_definitions
+from module.state import ASTNode, EntityType, NodeType
 
 
 def _nodes():

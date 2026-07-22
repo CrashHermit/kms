@@ -38,21 +38,21 @@ for picture inventories.
 
 from pathlib import Path
 
-from langgraph.graph import StateGraph, START, END
+from langgraph.graph import END, START, StateGraph
 
 from .assembler import assemble
-from .state import State
 from .corrector import CorrectorNode
-from .extractor import ExtractorNode
-from .seam_merger import SeamMergerNode
-from .problem_finder import ProblemFinderNode
-from .definition_finder import DefinitionFinderNode
-from .theorem_finder import TheoremFinderNode
-from .problem_attributor import ProblemAttributorNode
 from .definition_attributor import DefinitionAttributorNode
-from .theorem_attributor import TheoremAttributorNode
+from .definition_finder import DefinitionFinderNode
 from .exercise_splitter import SplitterNode
+from .extractor import ExtractorNode
 from .instruction_distributor import InstructionDistributorNode
+from .problem_attributor import ProblemAttributorNode
+from .problem_finder import ProblemFinderNode
+from .seam_merger import SeamMergerNode
+from .state import State
+from .theorem_attributor import TheoremAttributorNode
+from .theorem_finder import TheoremFinderNode
 
 
 def build_graph():
@@ -100,14 +100,20 @@ def build_graph():
     g.add_conditional_edges(START, corrector.dispatch, ["corrector_worker", "corrector_collect"])
     g.add_edge("corrector_worker", "corrector_collect")
 
-    g.add_conditional_edges("corrector_collect", extractor.dispatch, ["extractor_worker", "extractor_collect"])
+    g.add_conditional_edges(
+        "corrector_collect", extractor.dispatch, ["extractor_worker", "extractor_collect"]
+    )
     g.add_edge("extractor_worker", "extractor_collect")
 
     # Seam healing: even pass then odd pass, so no two concurrent workers touch the
     # same segment (see seam_merger's parity note).
-    g.add_conditional_edges("extractor_collect", seam.dispatch_even, ["seam_even_worker", "seam_even_collect"])
+    g.add_conditional_edges(
+        "extractor_collect", seam.dispatch_even, ["seam_even_worker", "seam_even_collect"]
+    )
     g.add_edge("seam_even_worker", "seam_even_collect")
-    g.add_conditional_edges("seam_even_collect", seam.dispatch_odd, ["seam_odd_worker", "seam_odd_collect"])
+    g.add_conditional_edges(
+        "seam_even_collect", seam.dispatch_odd, ["seam_odd_worker", "seam_odd_collect"]
+    )
     g.add_edge("seam_odd_worker", "seam_odd_collect")
 
     # The splitter runs once after the seam collect, normalising the node stream so each
@@ -235,7 +241,9 @@ def _entity_payload(e) -> dict:
     if e.bodylist:
         d["bodylist"] = [_seg(s) for s in e.bodylist]
     if e.proofs:
-        d["proofs"] = [{"contents": p.contents, "bodylist": [_seg(s) for s in p.bodylist]} for p in e.proofs]
+        d["proofs"] = [
+            {"contents": p.contents, "bodylist": [_seg(s) for s in p.bodylist]} for p in e.proofs
+        ]
     if e.solutions:
         d["solutions"] = [{"contents": s.contents} for s in e.solutions]
     return d

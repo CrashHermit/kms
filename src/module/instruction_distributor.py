@@ -26,11 +26,20 @@ governance). Entry point ``distribute_instructions(nodes, problems, module)`` mu
 problems in place; ``InstructionDistributorNode`` wires it onto the ``problem_entities`` channel.
 """
 
-import dspy
-from pydantic import BaseModel, Field
+import os
+from pathlib import Path
 
-from .state import State, ASTNode, Entity
+import dspy
+from pydantic import BaseModel
+
+from . import tracing
 from .llm import text_lm
+from .state import ASTNode, Entity, State
+
+# Compiled few-shot program from `training/distributor/compile.py`, loaded at serve time
+# if present so the data-optimized governance demos ship with the pipeline; override with
+# KMS_DISTRIBUTOR_PROGRAM, or delete the file to fall back to the bare student.
+_COMPILED_PATH = os.environ.get("KMS_DISTRIBUTOR_PROGRAM", "training/distributor/compiled.json")
 
 # Same growing look-ahead shape as the finders/splitter (~4 chars/token).
 LOOKAHEAD_BUDGET = 2000
@@ -39,6 +48,7 @@ MAX_LOOKAHEAD_BUDGET = 8000
 
 class WindowProblem(BaseModel):
     """One following problem as the LLM sees it: a local position, its number, its statement."""
+
     position: int
     number: str | None = None
     text: str | None = None
@@ -68,19 +78,37 @@ class GovernExtent(dspy.Signature):
     following_problems: list[WindowProblem] = dspy.InputField(
         description="The problems that follow the lead-in, in order, each with a local position."
     )
-    instruction: str = dspy.OutputField(description="The shared imperative to apply, without range framing, or empty string.")
-    governed_positions: list[int] = dspy.OutputField(description="Positions of the governed problems, a run from the first; empty if none.")
+    instruction: str = dspy.OutputField(
+        description="The shared imperative to apply, without range framing, or empty string."
+    )
+    governed_positions: list[int] = dspy.OutputField(
+        description="Positions of the governed problems, a run from the first; empty if none."
+    )
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None):
+    def __init__(self, lm: dspy.LM | None = None, compiled: bool = True):
         super().__init__()
         self.judge = dspy.ChainOfThought(GovernExtent)
         self.set_lm(lm or text_lm())
+        if compiled and Path(_COMPILED_PATH).exists():
+            self.load(_COMPILED_PATH)
+
+    def forward(self, lead_in: str, following_problems: list[WindowProblem]) -> dspy.Prediction:
+        """Synchronous governance pass — used at DSPy compile/eval time (optimizers and the
+        judge run modules synchronously). Serving uses ``govern``; both share the one
+        ``self.judge`` predictor, so demonstrations compiled here transfer to serving."""
+        return self.judge(lead_in=lead_in, following_problems=following_problems)
 
     async def govern(self, lead_in: str, following: list[WindowProblem]) -> tuple[str, list[int]]:
         r = await self.judge.acall(lead_in=lead_in, following_problems=following)
-        return (r.instruction or "").strip(), list(r.governed_positions or [])
+        instruction, positions = (r.instruction or "").strip(), list(r.governed_positions or [])
+        tracing.record(
+            "distributor",
+            inputs={"lead_in": lead_in, "following_problems": [p.model_dump() for p in following]},
+            outputs={"instruction": instruction, "governed_positions": positions},
+        )
+        return instruction, positions
 
 
 def _est_tokens(problem: Entity) -> int:
@@ -119,8 +147,10 @@ async def _govern_one(node: ASTNode, candidates: list[Entity], module: Module) -
 
         instruction, positions = await module.govern(
             node.content or "",
-            [WindowProblem(position=k, number=window[k].number, text=_problem_text(window[k]))
-             for k in range(len(window))],
+            [
+                WindowProblem(position=k, number=window[k].number, text=_problem_text(window[k]))
+                for k in range(len(window))
+            ],
         )
         governed = sorted({min(max(p, 0), last_local) for p in positions})
 
@@ -167,6 +197,7 @@ async def distribute_instructions(
 
 
 # --- LangGraph node: distribute instructions over the attributed Problem entities ---
+
 
 class InstructionDistributorNode:
     """Stamps `instruction` onto the governed Problems, reading the splitter's `role="instruction"`

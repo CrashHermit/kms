@@ -5,14 +5,19 @@ module, so these tests exercise the real split/assembly logic without dspy."""
 
 import asyncio
 
-from module.state import ASTNode, NodeType, Entity, EntityType
-from module.problem_attributor import attribute_problem, Identity
+from module.problem_attributor import Identity, attribute_problem
+from module.state import ASTNode, Entity, EntityType, NodeType
 
 
 def _nodes():
     return [
         ASTNode(type=NodeType.HEADER, content="Example 4.1", id=0, seg_index=0),
-        ASTNode(type=NodeType.PARAGRAPH, content="Find the derivative of $f(x) = x^2$.", id=1, seg_index=0),
+        ASTNode(
+            type=NodeType.PARAGRAPH,
+            content="Find the derivative of $f(x) = x^2$.",
+            id=1,
+            seg_index=0,
+        ),
         ASTNode(type=NodeType.PARAGRAPH, content="Solution. $f'(x) = 2x$.", id=2, seg_index=0),
     ]
 
@@ -32,8 +37,13 @@ def _run(entity, nodes, module):
 def test_split_holds_out_solution_and_peels_label():
     nodes = _nodes()
     entity = Entity(type=EntityType.PROBLEM, members=[0, 1, 2])
-    ident = Identity(label="Example 4.1", number="4.1", title="Derivative of a monomial",
-                     field="analysis", solution_start=2)
+    ident = Identity(
+        label="Example 4.1",
+        number="4.1",
+        title="Derivative of a monomial",
+        field="analysis",
+        solution_start=2,
+    )
     e = _run(entity, nodes, _ScriptedModule(ident))
 
     assert e.label == "Example 4.1"
@@ -49,7 +59,9 @@ def test_split_holds_out_solution_and_peels_label():
 def test_exercise_with_no_solution_leaves_solutions_empty():
     nodes = _nodes()[:2]  # label + statement, no solution
     entity = Entity(type=EntityType.PROBLEM, members=[0, 1])
-    ident = Identity(label="Example 4.1", number="4.1", title="X", field="algebra", solution_start=-1)
+    ident = Identity(
+        label="Example 4.1", number="4.1", title="X", field="algebra", solution_start=-1
+    )
     e = _run(entity, nodes, _ScriptedModule(ident))
 
     assert e.solutions == []
@@ -59,7 +71,9 @@ def test_exercise_with_no_solution_leaves_solutions_empty():
 def test_out_of_range_solution_start_is_treated_as_no_solution():
     nodes = _nodes()
     entity = Entity(type=EntityType.PROBLEM, members=[0, 1, 2])
-    ident = Identity(label="Example 4.1", number="4.1", title="X", field="analysis", solution_start=9)
+    ident = Identity(
+        label="Example 4.1", number="4.1", title="X", field="analysis", solution_start=9
+    )
     e = _run(entity, nodes, _ScriptedModule(ident))
 
     assert e.solutions == []

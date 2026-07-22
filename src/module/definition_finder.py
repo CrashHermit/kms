@@ -34,8 +34,8 @@ channel, in parallel with the Problem and Theorem finders.
 import dspy
 from pydantic import BaseModel, Field
 
-from .state import State, ASTNode, Entity, EntityType
 from .llm import text_lm
+from .state import ASTNode, Entity, EntityType, State
 
 # Soft look-ahead budget (~4 chars/token). A single node larger than the budget still
 # forms a window (at least one node). When the only definition in a window reaches its
@@ -51,6 +51,7 @@ def _est_tokens(node: ASTNode) -> int:
 
 class WindowNode(BaseModel):
     """One look-ahead node as the LLM sees it: a local position and its content."""
+
     position: int
     type: str
     content: str | None = None
@@ -58,6 +59,7 @@ class WindowNode(BaseModel):
 
 class DefinitionSpan(BaseModel):
     """A Definition the LLM found, as an inclusive span of local positions in the window."""
+
     start: int = Field(description="First local position of the definition (inclusive).")
     end: int = Field(description="Last local position of the definition (inclusive).")
 
@@ -163,10 +165,16 @@ async def find_definitions(
             last_local = len(window) - 1
             reached_doc_end = end == n
 
-            spans = await module.aforward([
-                WindowNode(position=k, type=(node.type.value if node.type else ""), content=node.content)
-                for k, node in enumerate(window)
-            ])
+            spans = await module.aforward(
+                [
+                    WindowNode(
+                        position=k,
+                        type=(node.type.value if node.type else ""),
+                        content=node.content,
+                    )
+                    for k, node in enumerate(window)
+                ]
+            )
             # Clamp to range, drop empties, keep document order.
             clean: list[DefinitionSpan] = []
             for s in spans:
@@ -206,6 +214,7 @@ async def find_definitions(
 
 
 # --- LangGraph node: emit the found Definitions onto their channel ---
+
 
 class DefinitionFinderNode:
     """Walks the flat node stream and writes its Definition entities to the

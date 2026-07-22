@@ -1,13 +1,14 @@
 import dspy
-from pydantic import BaseModel
 from langgraph.types import Send
+from pydantic import BaseModel
 
-from .state import State, Segment, ASTNode, flatten_segments
 from .llm import text_lm
+from .state import ASTNode, Segment, State, flatten_segments
 
 
 class SeamNodeDTO(BaseModel):
     """Lightweight DSPy boundary model representing a node's content and type."""
+
     content: str | None = None
     types: list[str] = []
 
@@ -87,6 +88,7 @@ class Module(dspy.Module):
 # they fan out safely; the passes run sequentially (even -> collect -> odd -> collect),
 # and each pass writes its own reducer channel to avoid cross-pass contamination.
 
+
 def _to_dto(node: ASTNode | None) -> SeamNodeDTO:
     if node is None:
         return SeamNodeDTO(content=None, types=[])
@@ -101,7 +103,9 @@ def _pairs(segments: list[Segment], parity: int) -> list[tuple[Segment, Segment]
     ]
 
 
-async def _merge_pair(module: Module, top: Segment, bottom: Segment) -> list[tuple[int, list[ASTNode]]]:
+async def _merge_pair(
+    module: Module, top: Segment, bottom: Segment
+) -> list[tuple[int, list[ASTNode]]]:
     """Decide whether the top's tail and the bottom's head are one split node; if so,
     fold the merged content into the tail and drop the head."""
     top_nodes = list(top.nodes)

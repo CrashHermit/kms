@@ -2,8 +2,8 @@
 
 import asyncio
 
-from module.state import ASTNode, NodeType, EntityType
 from module.problem_finder import ProblemFinderNode, ProblemSpan, find_problems
+from module.state import ASTNode, EntityType, NodeType
 
 
 def _nodes():

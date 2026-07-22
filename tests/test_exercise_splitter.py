@@ -3,8 +3,8 @@ The LLM is injected via a scripted module returning (splits, instruction_positio
 
 import asyncio
 
+from module.exercise_splitter import NodeSplit, SplitExercise, SplitterNode, split_exercises
 from module.state import ASTNode, NodeType
-from module.exercise_splitter import split_exercises, SplitterNode, NodeSplit, SplitExercise
 
 
 class _ScriptedSplitter:
@@ -19,7 +19,12 @@ class _ScriptedSplitter:
 
 def _nodes():
     return [
-        ASTNode(type=NodeType.PARAGRAPH, content="In Exercises 3-4, compute the determinant.", id=0, seg_index=0),
+        ASTNode(
+            type=NodeType.PARAGRAPH,
+            content="In Exercises 3-4, compute the determinant.",
+            id=0,
+            seg_index=0,
+        ),
         ASTNode(type=NodeType.LIST, content="3 matrix A\n4 matrix B", id=1, seg_index=0),
         ASTNode(type=NodeType.PARAGRAPH, content="ordinary prose", id=2, seg_index=0),
     ]
@@ -27,10 +32,13 @@ def _nodes():
 
 def test_splits_a_packed_node_and_tags_the_lead_in():
     # One window: node 1 splits into two exercises; node 0 is the lead-in.
-    split = NodeSplit(position=1, exercises=[
-        SplitExercise(number="3", content="matrix A"),
-        SplitExercise(number="4", content="matrix B"),
-    ])
+    split = NodeSplit(
+        position=1,
+        exercises=[
+            SplitExercise(number="3", content="matrix A"),
+            SplitExercise(number="4", content="matrix B"),
+        ],
+    )
     out = asyncio.run(split_exercises(_nodes(), module=_ScriptedSplitter([([split], [0])])))
 
     # 3 nodes -> 4 (the packed node became two), ids re-assigned 0..3, seg_index inherited.
@@ -67,10 +75,13 @@ def test_no_verdict_passes_the_stream_through_unchanged():
 
 
 def test_splitter_node_writes_the_nodes_channel():
-    split = NodeSplit(position=1, exercises=[
-        SplitExercise(number="3", content="matrix A"),
-        SplitExercise(number="4", content="matrix B"),
-    ])
+    split = NodeSplit(
+        position=1,
+        exercises=[
+            SplitExercise(number="3", content="matrix A"),
+            SplitExercise(number="4", content="matrix B"),
+        ],
+    )
     node = SplitterNode(module=_ScriptedSplitter([([split], [0])]))
     out = asyncio.run(node.run({"nodes": _nodes()}))
     assert set(out) == {"nodes"}

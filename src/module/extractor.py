@@ -1,19 +1,16 @@
 import dspy
-from pydantic import BaseModel, Field
 from langgraph.types import Send
+from pydantic import BaseModel, Field
 
-from .state import State, Segment, ASTNode, NodeType
 from .llm import text_lm
+from .state import ASTNode, NodeType, Segment, State
 
 
 class DSPyModel(BaseModel):
     type: NodeType = Field(
         description="The block type of the node — must be one of the NodeType values."
     )
-    content: str | None = Field(
-        default=None,
-        description="The content of the node"
-    )
+    content: str | None = Field(default=None, description="The content of the node")
 
 
 class Signature(dspy.Signature):
@@ -85,6 +82,7 @@ class Module(dspy.Module):
 
 # --- LangGraph node: parse each segment's markdown into AST nodes ---
 
+
 class ExtractorNode:
     def __init__(self, module: Module | None = None):
         self.module = module or Module()
@@ -98,11 +96,7 @@ class ExtractorNode:
         pages). Cross-segment continuations are healed downstream by the seam merger,
         so the extractor needs only its own page."""
         segments = state.get("segments", [])
-        sends = [
-            Send("extractor_worker", {"segment": seg})
-            for seg in segments
-            if seg.content
-        ]
+        sends = [Send("extractor_worker", {"segment": seg}) for seg in segments if seg.content]
         return sends or "extractor_collect"
 
     async def worker(self, state: dict) -> dict:
