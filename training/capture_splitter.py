@@ -13,8 +13,6 @@ Run:
 (no PDF args => every committed fixture under tests/fixtures/books/)
 """
 
-from __future__ import annotations
-
 import asyncio
 import sys
 import tempfile

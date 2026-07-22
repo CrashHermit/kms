@@ -9,10 +9,8 @@ reference-free — so the trainset needs inputs only, no gold labels.
 This is where the stress test found the soft failure (the Lebl 2.1.11 over-extension:
 a "find the limit" lead-in stamped onto a "finish the proof" exercise). The judge is
 written to catch exactly that — over-extension onto a differently-tasked problem, an
-early stop, or a wrong/undstripped instruction string.
+early stop, or a wrong/unstripped instruction string.
 """
-
-from __future__ import annotations
 
 import dspy
 

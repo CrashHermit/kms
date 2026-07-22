@@ -13,8 +13,6 @@ few-shot demonstrations. The judge runs on the teacher model (deepseek-v4-pro) s
 grader is stronger than the student it grades.
 """
 
-from __future__ import annotations
-
 import dspy
 
 from module.llm import teacher_lm

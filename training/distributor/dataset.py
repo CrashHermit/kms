@@ -14,8 +14,6 @@ metric is a reference-free judge, so no gold is needed):
 Both feed the same compile step.
 """
 
-from __future__ import annotations
-
 import json
 from pathlib import Path
 

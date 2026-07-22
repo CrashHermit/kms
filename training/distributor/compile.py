@@ -18,8 +18,6 @@ Run:  PYTHONPATH=src uv run python -m training.distributor.compile out/ea2e_ch1_
 (args are run dirs; pass a single *.jsonl to use live traces instead.)
 """
 
-from __future__ import annotations
-
 import random
 import sys
 from pathlib import Path

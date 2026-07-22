@@ -16,8 +16,6 @@ Run:  PYTHONPATH=src uv run python -m training.splitter.compile out/traces/split
 (A second arg overrides the output path.)
 """
 
-from __future__ import annotations
-
 import random
 import sys
 from pathlib import Path

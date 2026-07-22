@@ -9,8 +9,6 @@ objects, de-duplicate identical windows, and wrap them as ``dspy.Example``s with
 and keeps the outputs the judge approves.
 """
 
-from __future__ import annotations
-
 import json
 from pathlib import Path
 
