@@ -4,7 +4,12 @@ Problem entities with a shared instruction. The LLM is injected via a scripted m
 import asyncio
 
 from module.state import ASTNode, NodeType, EntityType
-from module.exercise_governor import govern_exercises, ExerciseBlock, ExerciseItem
+from module.exercise_governor import (
+    govern_exercises,
+    ExerciseBlock,
+    ExerciseItem,
+    ExerciseGovernorNode,
+)
 
 
 def _nodes():
@@ -61,3 +66,17 @@ def test_no_lead_in_leaves_instruction_none_but_still_splits():
 def test_no_blocks_emits_nothing():
     entities = asyncio.run(govern_exercises(_nodes(), module=_ScriptedFinder([[], []])))
     assert entities == []
+
+
+def test_governor_node_writes_the_exercise_entities_channel():
+    block = ExerciseBlock(
+        start=0, end=1, instruction="find the eigenvalues",
+        exercises=[
+            ExerciseItem(number="1.23", content="$A=[[1,4],[4,1]]$"),
+            ExerciseItem(number="1.24", content="$B=[[2,0],[0,3]]$"),
+        ],
+    )
+    node = ExerciseGovernorNode(module=_ScriptedFinder([[block], []]))
+    out = asyncio.run(node.run({"nodes": _nodes()}))
+    assert set(out) == {"exercise_entities"}
+    assert [e.number for e in out["exercise_entities"]] == ["1.23", "1.24"]

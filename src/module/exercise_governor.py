@@ -27,14 +27,21 @@ Banking is the finders' structural rule: a block is banked only once a node is s
 follow it (so a block can't be split by a window cut); if the sole block reaches the
 window's edge the window grows and re-reads. Only GROUPS are this pass's concern (a run of
 several exercises, typically one list node); isolated single problems remain the ordinary
-Problem finder's job. Reconciling these fine-grained exercise entities with the finder's
-coarse ones is a wiring step, done later — this pass just produces the split.
+Problem finder's job.
+
+The governor is wired in as a fourth parallel chain (``ExerciseGovernorNode``, bottom of
+this file) off the seam collect, writing its fine-grained exercises to the
+``exercise_entities`` channel. It is pre-attributed (contents/number/instruction are filled
+here), so it does NOT run through the Problem attributor — whose identity pass reads the
+coarse list-node members and would misread an individual exercise. Reconciliation happens
+at flatten (``pipeline._flatten_entities``): a coarse Problem entity whose members fall
+entirely inside a governed block is dropped in favour of the governor's split.
 """
 
 import dspy
 from pydantic import BaseModel, Field
 
-from .state import ASTNode, Entity, EntityType
+from .state import State, ASTNode, Entity, EntityType
 from .llm import text_lm
 
 # Same look-ahead budget shape as the finders (~4 chars/token). A lead-in plus a long
@@ -206,3 +213,23 @@ async def govern_exercises(
             break
 
     return exercises
+
+
+# --- LangGraph node: emit the split exercises onto their channel ---
+
+class ExerciseGovernorNode:
+    """Walks the flat node stream and writes its fine-grained exercise Problem entities to
+    the ``exercise_entities`` channel.
+
+    Like the finders, the walk is one sequential unit (a growing look-ahead cursor cannot be
+    sharded), so this is a plain graph node. It runs in parallel with the three finders off
+    the seam collect. Its entities are pre-attributed (contents/number/instruction), so —
+    unlike the finders — it has no downstream attributor; the coarse-vs-fine reconciliation
+    against the problem finder happens at flatten."""
+
+    def __init__(self, module: Module | None = None):
+        self.module = module or Module()
+
+    async def run(self, state: State) -> dict:
+        exercises = await govern_exercises(state.get("nodes", []), module=self.module)
+        return {"exercise_entities": exercises}
