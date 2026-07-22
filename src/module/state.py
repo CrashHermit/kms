@@ -101,6 +101,14 @@ class Proof(BaseModel):
     bodylist: list[BodySegment] = []
 
 
+class Solution(BaseModel):
+    """One solution of a Problem (AutoMathKG's Prob-only `solutions`, each element
+    `{contents, ...}`). A Problem carries no bodylist — even in the paper a solution's
+    bodylist is empty — and refs/references_tactics are deferred to the graph tier, so a
+    solution reduces to just its contents here."""
+    contents: list[str] = []
+
+
 @dataclass
 class Entity:
     """A math-semantic entity: a typed grouping of member nodes — a sparse overlay on the
@@ -128,6 +136,7 @@ class Entity:
     contents: list[str] = field(default_factory=list) # member markdown, a list of strings
     bodylist: list[BodySegment] = field(default_factory=list)  # role-labelled segmentation
     proofs: list[Proof] = field(default_factory=list) # Theorem-only: its proof(s)
+    solutions: list[Solution] = field(default_factory=list)  # Problem-only: its solution(s)
     field: str | None = None                          # mathematical field (fixed taxonomy)
 
 
