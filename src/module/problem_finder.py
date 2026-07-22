@@ -61,10 +61,12 @@ def _est_tokens(node: ASTNode) -> int:
 
 
 class WindowNode(BaseModel):
-    """One look-ahead node as the LLM sees it: a local position and its content."""
+    """One look-ahead node as the LLM sees it: a local position, its content, and its role
+    annotation (the splitter marks an exercise lead-in with role "instruction")."""
     position: int
     type: str
     content: str | None = None
+    role: str = ""
 
 
 class ProblemSpan(BaseModel):
@@ -92,6 +94,16 @@ class Signature(dspy.Signature):
     problems — ignore them. Ordinary narrative prose, figures, and section headers are
     not problems either.
 
+    EXERCISE LEAD-INS ARE BOUNDARIES, NEVER MEMBERS. A grouped-exercise LEAD-IN — a directive
+    that introduces a run of exercises and states a shared instruction ("For the following
+    exercises, find the domain and range.", "In Exercises 3-8, graph the given relation.") — is
+    NOT a problem and is NEVER part of any problem's span. Such a node has NO exercise number of
+    its own and is marked with role "instruction"; treat it exactly like a section header — a
+    boundary. The exercises it governs are SEPARATE problems that FOLLOW it: begin the first one
+    at the first exercise node AFTER the lead-in, never at the lead-in itself, and never extend a
+    preceding problem forward to absorb it. (A later pass attaches the lead-in's shared
+    instruction to those problems; the finder's only job here is to not swallow the lead-in.)
+
     EXTENT (what nodes a problem's span includes):
     - START at the problem's OWN label/heading. A problem usually opens with a short
       label that is a SEPARATE node from its question text — e.g. a node that is just
@@ -106,8 +118,8 @@ class Signature(dspy.Signature):
       (12a, 12b, 12c) is ONE problem. Do NOT split subparts into separate problems.
     - Its solution/answer nodes IF shown (prose, display math, steps) — include them in
       the same span. Do not include them if none is shown.
-    - Stop at the boundary: the next problem's label, a section header, a
-      definition/theorem, or a clear return to ordinary narrative.
+    - Stop at the boundary: the next problem's label, a section header, an exercise lead-in
+      (role "instruction"), a definition/theorem, or a clear return to ordinary narrative.
 
     SEPARATE PROBLEMS: distinct base numbers are distinct problems (exercise 12 and
     exercise 13 are two spans, never merged). A worked example and a following exercise
@@ -123,7 +135,9 @@ class Signature(dspy.Signature):
     """
 
     current_nodes: list[WindowNode] = dspy.InputField(
-        description="The look-ahead window's nodes, in order, each with a local position. Emit spans over these only."
+        description="The look-ahead window's nodes, in order, each with a local position and a role "
+        "(role \"instruction\" marks an exercise lead-in — a boundary, never part of a span). "
+        "Emit spans over these only."
     )
     problems: list[ProblemSpan] = dspy.OutputField(
         description="The problems found in current_nodes, as position spans, in document order. Empty list if none."
@@ -184,7 +198,8 @@ async def find_problems(
             reached_doc_end = end == n
 
             spans = await module.aforward([
-                WindowNode(position=k, type=(node.type.value if node.type else ""), content=node.content)
+                WindowNode(position=k, type=(node.type.value if node.type else ""),
+                           content=node.content, role=(node.role or ""))
                 for k, node in enumerate(window)
             ])
             # Clamp to range, drop empties, keep document order.
