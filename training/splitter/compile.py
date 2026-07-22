@@ -43,8 +43,8 @@ def _passrate(program, devset) -> float:
 def main(traces_path: str, out_path: str | Path = OUT_DEFAULT) -> None:
     dspy.configure(lm=text_lm())  # student is the flash model
     examples = load_windows(traces_path)
-    if len(examples) < 4:
-        raise SystemExit(f"need at least ~4 windows to compile; got {len(examples)} from {traces_path}")
+    if len(examples) < 2:
+        raise SystemExit(f"need at least 2 windows to compile; got {len(examples)} from {traces_path}")
 
     random.Random(0).shuffle(examples)
     cut = max(1, len(examples) // 5)
