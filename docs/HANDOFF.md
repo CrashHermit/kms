@@ -5,32 +5,39 @@ Knowledge-management pipeline that turns a math textbook PDF into a structured
 AutoMathKG's model (arXiv:2505.13406). This doc is the pick-up point for the next
 session.
 
-**Working branch:** `claude/problem-finder-extractor-structure-neffix`. The entity-layer
-redesign described below (pure-structural extractor + three per-type finders + flat entity
-overlay with node provenance) is committed and pushed there, and validated end-to-end on
-real Hefferon pages this session.
+**Working branch:** `claude/exercise-governor-graph-pb3nur`. Everything below (pure-structural
+extractor + three per-type finders + per-type attributors + the exercise **splitter** and the
+**instruction distributor**) is committed and pushed there, validated end-to-end on real
+Hefferon pages.
 
 ---
 
 ## TL;DR status
 
 - The pipeline runs **end-to-end, no GPU**: PDF → `document.md` + `entities.json` +
-  `nodes.json`. Validated this session on real pages (see Validation).
+  `nodes.json`. Validated on real pages (see Validation).
 - The **extraction front-end is Mistral OCR + a vision correction pass** (Qwen3-VL). Mistral
   does layout/reading-order/figure-extraction server-side; the corrector proofreads each page
   against its image to catch Mistral's occasional subtle math errors and normalizes math
-  delimiters. Unchanged this session; still solid.
-- The **extractor is now purely structural** — it emits only general document structure
+  delimiters. Solid.
+- The **extractor is purely structural** — it emits only general document structure
   (paragraph/math/list/table/image/caption/header/code) and knows nothing math-specific.
+- **The exercise splitter** (`exercise_splitter.py`) runs between the seam merger and the
+  finders. It rewrites the canonical node stream so each exercise is its OWN node (fixing the
+  granularity mismatch below) and tags exercise lead-ins `role="instruction"`.
 - The **entity layer is three independent per-type finders** (`problem_finder`,
-  `definition_finder`, `theorem_finder`). Each is a self-contained copy of the same
-  cursor-walk; they run in parallel and each emits a sparse overlay of its type. Validated:
-  all three fire and produce coherent, non-overlapping entities.
-- **Per-attribute passes** (member roles statement/proof/solution, `number`, `instruction`,
-  title/field/refs) are **not built** — an entity is just `{id, type, members}` for now.
-- The **graph tier** (relationships/edges, MathVD fusion, LLM completion) is **not started** —
-  the big next piece.
-- 26 unit tests pass; `conftest` stubs the heavy deps so they run anywhere.
+  `definition_finder`, `theorem_finder`), each a self-contained copy of the same cursor-walk,
+  running in parallel and emitting a sparse overlay of its type.
+- **Per-type attributors are built and wired** (`{problem,definition,theorem}_attributor.py`).
+  Each enriches its finder's entities with the self-contained AutoMathKG attributes: label,
+  number, title, field, contents, bodylist (Def/Thm), proofs (Thm), solutions (Prob).
+- **The instruction distributor** (`instruction_distributor.py`) runs at the end of the problem
+  chain: a growing-window walk that copies a grouped-exercise lead-in's shared directive onto
+  the `Problem.instruction` of the problems it governs (LLM-judged extent, no number matching).
+- **Still deferred to the graph tier:** cross-entity attributes (`refs`/`references_tactics`),
+  and the whole **graph tier** (relationships/edges, MathVD fusion, LLM completion) — the big
+  next piece, not started.
+- **46 unit tests pass**; `conftest` stubs the heavy deps so they run anywhere.
 
 ---
 
@@ -45,7 +52,10 @@ Phase 1 — per-page ingestion (backbone = `segments`, one per page)
   mistral_ocr → corrector → extractor
 
 Phase 2 — flat node stream (backbone = `nodes`, global ordered list)
-  seam_merger → { problem_finder, definition_finder, theorem_finder }  (parallel)
+  seam_merger → splitter
+    → { problem_finder    → problem_attributor    → instruction_distributor }   (parallel
+      { definition_finder → definition_attributor }                              chains,
+      { theorem_finder    → theorem_attributor }                                 one per type)
   then, after the graph: assemble + write nodes.json / entities.json
 ```
 
@@ -68,8 +78,20 @@ Phase 2 — flat node stream (backbone = `nodes`, global ordered list)
   cut mid-way, judged on structure, not subject matter), then **flattens** `segments[].nodes`
   into one global `nodes` list, stamping each `ASTNode` with a stable `id` (document-order
   int) and its `seg_index`. Everything after works on `nodes` keyed by id.
+- **`splitter`** (`exercise_splitter.py`) normalises the flat stream once, before the finders.
+  Any node that packs two-or-more numbered exercises (the extractor emits a run of exercises as
+  ONE `list` node) is **replaced in place by one node per exercise**; exercise lead-ins are
+  tagged `role="instruction"`. It re-ids the stream; split pieces inherit their parent's
+  `seg_index`. This makes exercises atomic so the finders emit one clean entity each (see the
+  granularity note in Key design decisions). See "The splitter" below.
 - **The three finders** each cursor-walk `nodes` and emit a sparse overlay of one entity type
   (see Entity layer below). They run in parallel and each writes its own state channel.
+- **The three attributors** (`{problem,definition,theorem}_attributor.py`) each run after their
+  finder, enriching that overlay's entities with the self-contained AutoMathKG attributes in
+  place. See "The attributors" below.
+- **`instruction_distributor`** runs after the problem attributor (the problem chain's terminal
+  stage): a growing-window walk that stamps `Problem.instruction` from the splitter's tagged
+  lead-in nodes. See "The instruction distributor" below.
 - **After the graph:** `run()` concatenates the three overlays into one flat, document-ordered
   `entities.json` (assigning global ids), and writes `nodes.json` (the node stream, for
   provenance — an entity's `members` are node ids into it). `assemble` walks `nodes` →
@@ -84,9 +106,14 @@ Phase 2 — flat node stream (backbone = `nodes`, global ordered list)
 | `corrector.py` | **correction pass**: vision model proofreads each page vs its image; divergence-guarded; delimiter normalization |
 | `extractor.py` | markdown → flat **structural** nodes (no math typing) |
 | `seam_merger.py` | heal page-split nodes (structural); **birth the flat `nodes` list** |
+| `exercise_splitter.py` | **splitter**: split packed exercise nodes → one node per exercise; tag lead-ins `role="instruction"` |
 | `problem_finder.py` | **finder**: cursor-walk → Problem entities (worked examples AND exercises) |
 | `definition_finder.py` | **finder**: cursor-walk → Definition entities |
 | `theorem_finder.py` | **finder**: cursor-walk → Theorem entities (subsumes prop/cor/lemma; includes proof) |
+| `problem_attributor.py` | **attributor**: label/number/title/field/contents + solution split |
+| `definition_attributor.py` | **attributor**: label/number/title/field/contents + bodylist (4 roles) |
+| `theorem_attributor.py` | **attributor**: label/number/title/field/contents + bodylist + proofs |
+| `instruction_distributor.py` | **distributor**: growing-window; stamp `Problem.instruction` from tagged lead-ins |
 | `assembler.py` | walk `nodes` → `document.md`, resolving `![N]()` via `seg_index` |
 | `pipeline.py` | graph wiring + `run()`; flattens the 3 overlays and writes `entities.json` + `nodes.json` |
 | `llm.py` | `text_lm` (DeepSeek, text stages), `corrector_lm` (Qwen3-VL via OpenRouter) |
@@ -96,12 +123,21 @@ Phase 2 — flat node stream (backbone = `nodes`, global ordered list)
 - **3 types** (`EntityType`): `Definition`, `Theorem` (**subsumes** proposition/corollary/
   lemma), `Problem` (worked examples **and** exercises — AutoMathKG's model: same type,
   different place in the text).
-- `Entity = {id, type, members}` where `members` is a `list[int]` of node ids (pointers back
-  to the source nodes). No roles/number/instruction yet — those are future per-attribute passes.
+- `Entity = {id, type, members, …attributes}`. `members` is a `list[int]` of node ids (pointers
+  back to the source nodes); a finder emits just `{type, members}` and the type's attributor
+  fills the rest: `label`, `number`, `title`, `field`, `contents`, `bodylist` (Def/Thm),
+  `proofs` (Thm), `solutions` (Prob), plus `instruction` (Prob, filled by the distributor, not
+  the attributor). Unset attributes are omitted from `entities.json`, so a bare entity still
+  serialises to `{id, type, members}`. Cross-entity `refs`/`references_tactics` are **not** here
+  — graph tier.
+- `ASTNode` now carries a `role` field — a non-structural annotation kept **off** the structural
+  `NodeType`. The splitter sets `role="instruction"` on exercise lead-ins; the distributor reads
+  it. It is serialised into `nodes.json` only when set.
 - The overlay is **sparse**: most nodes (prose, figures, headers) belong to no entity.
 - Overlays from the three finders are **independent** — they may reference the same node from
   more than one entity. That is fine because members are pointers, not copies; no merging or
-  overlap arbitration is done.
+  overlap arbitration is done. (Because the splitter makes exercises atomic upstream, the
+  problem finder no longer produces duplicate-membered exercise entities — see Key decisions.)
 
 ### The finder shape (all three identical)
 
@@ -117,6 +153,56 @@ at its boundary; theorem spans include the proof, problem spans include a shown 
 
 The three finders are **deliberate copies**, not a shared abstraction (decided this session —
 keep them dumb and explicit). If you change the walk, change it in three places.
+
+### The splitter (`exercise_splitter.py`)
+
+One LLM walk over the flat stream doing two local, per-node jobs, then a single deterministic
+rebuild:
+
+- **SPLIT** — for a node that packs ≥2 numbered exercises, the LLM returns each exercise's
+  `number` + verbatim `content` (subparts kept nested, markers like `✓` kept). The rebuild
+  replaces that node with one node per exercise (number as literal leading text). A leading
+  **orphan fragment** (a previous exercise's continuation the OCR left at the head of the list
+  node, e.g. trailing `(d)…(e)…`) is returned as an empty-number item and emitted as its own
+  node, so nothing is dropped. **Content-based, not offset/anchor-based** — the LLM cannot
+  reproduce LaTeX verbatim, so anchor-into-original slicing fails (tried, reverted); the fix for
+  the orphan loss was a prompt change, not a mechanism change.
+- **TAG** — a node that is an exercise LEAD-IN (no number of its own, governs a run of *other*
+  exercises) is tagged `role="instruction"`. The decisive test in the prompt: a node beginning
+  with its **own** number is an exercise, never a lead-in (this killed 8 false positives on
+  Hefferon, where the section has *zero* true lead-ins).
+
+Decisions are per-node (a node either is or isn't a packed list / a lead-in) and a node's
+content is wholly inside one window, so there is **no cross-window banking** — the walk gathers
+decisions keyed by node id, then rebuilds once and re-ids. Re-iding is safe because it runs
+before any entity overlay exists (nothing references the old ids yet).
+
+### The attributors (`{problem,definition,theorem}_attributor.py`)
+
+Each runs after its finder and fills the **self-contained** AutoMathKG attributes on that type's
+entities, in place, reading only the entity's own member nodes (drawing `FIELDS`/`ACTIONS`
+taxonomies from `state.py`):
+
+- **Problem** — one identity pass (label/number/title/field + a `solution_start` boundary);
+  members split into statement vs shown solution, both halves always kept. No bodylist (Table B3
+  restricts it to Def/Thm). Deliberately does **not** fill `instruction` (that's the distributor).
+- **Definition** — identity pass + a contents pass (label peeled off) + a bodylist pass over
+  only the four roles a definition uses (premise/assumption/definition/enumeration).
+- **Theorem** — identity + statement bodylist + a per-proof pass (each proof gets contents +
+  bodylist); statement vs proof split on a boundary, like the problem's solution split.
+
+### The instruction distributor (`instruction_distributor.py`)
+
+`instruction` is a cross-entity, positional attribute (a lead-in governs a *run* of problems and
+is a member of none of them), so it is **not** a per-entity attributor pass — it is one more
+stage on the problem chain, after the attributor. It is a **growing-window walk** (same shape as
+the finders): anchor on a `role="instruction"` node, take a look-ahead window of the problems
+that follow it (up to the next lead-in), and the **LLM judges which it governs — by meaning, not
+numbers** — returning the governed run + the shared imperative. Grow the window while the run
+reaches the edge; bank when a non-governed problem bounds it or the candidates are exhausted;
+stamp `instruction` on the governed problems. There is **no range/number parsing** — that was an
+earlier design and was replaced, because a lead-in like "Prove each of the following." has no
+numbers and governance is semantic (the walk correctly stops at a following *compute* problem).
 
 ---
 
@@ -155,6 +241,25 @@ keep them dumb and explicit). If you change the walk, change it in three places.
 8. **Deliberate triplication over a shared finder core** (decided this session). The walk is
    ~90 lines; three copies with per-type prompts are easier to read and tune independently than
    one parameterized abstraction. Revisit only if they start drifting for no reason.
+9. **Fix exercise granularity at the NODE level (splitter), not the entity level.** The problem
+   was that the extractor packs a run of exercises into one `list` node, so the finder can only
+   point duplicate entities at it. We first tried an **exercise governor** — a post-finder pass
+   that split the list into fine entities and reconciled them against the finder's coarse ones —
+   and **removed it**: it was unstable run-to-run (it oscillated between splitting one list node
+   and enumerating the whole page, sometimes swallowing a worked example and letting
+   reconciliation delete the finder's correct capture). The splitter attacks the root cause
+   instead: once nodes are atomic, the finder/attributor "just work," no reconciliation, precise
+   provenance. It sits at the structural→semantic boundary (allowed to know exercise
+   conventions) so the **extractor stays purely structural**, and it runs **after** the seam
+   merger because a cross-page exercise list is only whole there.
+10. **Instruction distribution is a growing-window walk, LLM-judged — no range parser.** A
+    lead-in's governed run is a semantic question (many lead-ins state no numeric range), so the
+    LLM decides the extent by reading the following problems, in the same growing-window shape as
+    the finders. A number/range-matching version was built first and replaced.
+11. **Split content-based, harden by prompt.** The splitter's LLM returns each exercise's content
+    (not offsets/anchors into the original) — the model can't reproduce LaTeX verbatim, so anchor
+    slicing fails. Residual content loss (an orphaned continuation fragment) was fixed by a prompt
+    instruction to emit the orphan as its own node, not by changing the mechanism.
 
 ### Deferred decisions (recorded for the graph tier)
 
@@ -176,30 +281,46 @@ End-to-end, live (Mistral + Qwen3-VL + DeepSeek), no GPU. Both runs produced val
   8 entities: **2 definitions** (1.2, 1.6), **1 theorem** (1.5, statement + proof span), **5
   problems** (worked Examples 1.4, 1.8–1.11, each a coherent multi-node span). Every entity
   starts at its own label node; **no cross-type overlaps**; connective prose correctly excluded.
-- **Exercises pages 228–230 (3 pp, ~188s) — problem finder found all 19 exercises** but
-  surfaced a real limitation: **node granularity is coarser than entity granularity for
-  exercise lists.** The purely-structural extractor packs a run of exercises (e.g. 1.23, 1.24,
-  1.25) into ONE `list` node, so the finder correctly identifies several problems inside it but
-  they all collapse to the same `members=[node]` — indistinguishable pointers, and duplicate
-  entities. This is NOT a finder bug (the finder behaves correctly given the node stream); it is
-  a structural-vs-semantic granularity mismatch. See Known issues.
+- **Exercises pages 228–230 — the granularity mismatch, now SOLVED by the splitter.** The
+  extractor packs a run of exercises (1.23…1.30) into ONE `list` node; the finder used to
+  collapse them to duplicate `members=[node]` pointers. With the splitter in front, the full
+  end-to-end run now yields **19 distinct Problem entities (numbers 1.12–1.30), zero
+  duplicate-member groups** — each exercise atomic with precise provenance.
+
+**Splitter (this session), live on the real exercises page, 3/3 runs consistent:** the
+3518-char list packing 1.23–1.30 splits into 8 atomic nodes; node 9 (1.13/1.14) splits;
+every number 1.13–1.30 heads exactly one node; **zero false lead-in tags** (this section has no
+true lead-ins); content mass preserved **0.992** (residual is cosmetic whitespace). Note a
+run-to-run *decision* sensitivity remains (see Known issues) — much smaller blast radius than
+the retired governor, since a miss just leaves a coarse node rather than corrupting entities.
+
+**Instruction distributor (this session), live on constructed lead-ins:** "In Exercises
+1.23-1.25, …" governs 1.23–1.25 and correctly excludes a following *Prove* problem; **"Prove
+each of the following." (no numbers) governs the two prove problems and excludes a following
+*compute* problem** (the case a range parser can't do); "For each of the following …" governs
+the whole run.
 
 ---
 
 ## Known issues / limitations
 
-- **Exercise-list granularity (found this session).** When the extractor emits multiple
-  exercises as one `list` node, per-problem entities can't be separated by node-id pointers.
-  Options for later: (a) a splitting pass that subdivides multi-problem nodes; (b) sub-node
-  span pointers (char ranges); (c) accept "one exercise list = one Problem entity"; (d) let the
-  extractor split list items into per-item nodes (mildly less "pure structural"). Worked
-  examples (exposition) don't have this problem — they're already multi-node spans.
-- **No per-attribute detail yet.** Entities carry no roles, numbers, or instructions.
+- **Splitter decision variance.** Whether the LLM splits a given packed list node still varies
+  a little run-to-run (temp 0). Consistent on the Hefferon page across 3 runs, but not
+  guaranteed elsewhere. A miss is *safe* (the node stays coarse — one entity for the list —
+  rather than corrupting anything), but it under-splits. Candidate for a DSPy-optimised prompt
+  (the splitter has a narrow, checkable contract, so it is the most trainable stage — this is
+  where the "train itself" idea lands).
+- **Splitter is near-lossless, not lossless.** ~0.8% residual mass on the test page is cosmetic
+  whitespace from the content copy; the orphan-fragment loss is fixed. A truly lossless split
+  would need offsets, which the model can't produce over LaTeX (see decision 11).
+- **Instruction distributor validation is thin.** Correct on constructed lead-ins; the Hefferon
+  section under test has no real lead-ins, so it hasn't been exercised end-to-end on a section
+  that *does* use them. Find such a section for the extensive tests.
 - **Mistral's subtle math errors are real**; the corrector is the mitigation, tested clean but
   on an adversarial sample, not exhaustive.
-- **Validation corpus is still small for the finders** — Hefferon §III.1 (this session) plus
-  the front-end's earlier multi-book corpus. Widen to more books/sections and inspect
-  `document.md` + `nodes.json` + `entities.json` together.
+- **Validation corpus is still small** — Hefferon §III.1 plus the front-end's earlier multi-book
+  corpus. Widen to more books/sections and inspect `document.md` + `nodes.json` + `entities.json`
+  together. Cross-entity attributes (`refs`/`references_tactics`) are still unbuilt (graph tier).
 
 ---
 
@@ -216,7 +337,7 @@ End-to-end, live (Mistral + Qwen3-VL + DeepSeek), no GPU. Both runs produced val
 - `uv sync` — light CPU core.
 - `uv sync --extra mistral` — adds `pypdfium2` + `pillow` (render page images for the corrector).
 
-**Tests:** `PYTHONPATH=src uv run pytest -q` (26 tests). `tests/conftest.py` stubs
+**Tests:** `PYTHONPATH=src uv run pytest -q` (46 tests). `tests/conftest.py` stubs
 dspy/pydantic/langgraph *only if absent*, so the suite runs with or without the real deps.
 
 **Run the pipeline:**
@@ -234,18 +355,18 @@ Good test PDF: Hefferon Linear Algebra — `https://jheffero.w3.uvm.edu/linearal
 
 ## Next steps (suggested order)
 
-1. **Decide the exercise-list granularity** (Known issues #1) — it blocks clean per-exercise
-   entities. Pick an option and implement; re-run 228–230 to confirm distinct problems.
-2. **Per-attribute passes** — mirror AutoMathKG Step-2 / Appendix C: member roles
-   (statement/proof/solution), `number`, `instruction`, then title/field/bodylist/refs. Each is
-   its own LLM prompt over an entity's members (+ context for `instruction`). This is where the
-   retired `problem_refiner`/`instruction_governor`/`entity_attributor` logic comes back, per
-   attribute rather than bundled.
-3. **Graph tier** (the big piece) — relationship/edge discovery between entities (AutoMathKG's
-   9 tactic labels), then MathVD (embeddings/vector DB) for fusion and the Math-LLM completion
-   step. Mint UUIDs here (see Deferred decisions). `neo4j` is already a dep.
-4. **Broaden finder validation** — more books/sections, watching finder boundaries, figure
-   over-extraction on front matter, and correction-pass regressions.
+1. **Extensive validation of the splitter + distributor** (the immediate plan) — run more
+   sections/books, especially ones that *do* use exercise lead-ins (to exercise the distributor
+   end-to-end), and watch splitter decision consistency. Inspect `document.md` + `nodes.json` +
+   `entities.json` together. Consider a DSPy-optimised splitter prompt once there's a labelled set.
+2. **Cross-entity attributes** — `refs` / `references_tactics` (AutoMathKG's 9 tactic labels
+   between entities). These are inherently graph-tier (they relate entities), so they fold into
+   the next item rather than being per-entity passes.
+3. **Graph tier** (the big piece) — relationship/edge discovery between entities, then MathVD
+   (embeddings/vector DB) for fusion and the Math-LLM completion step. Mint UUIDs here (see
+   Deferred decisions). `neo4j` is already a dep.
+4. **Broaden front-end/finder validation** — more books/sections, watching finder boundaries,
+   figure over-extraction on front matter, and correction-pass regressions.
 
 ---
 
@@ -261,4 +382,8 @@ Good test PDF: Hefferon Linear Algebra — `https://jheffero.w3.uvm.edu/linearal
 - **No GPU is needed anywhere** — the whole front-end is API-based.
 - **DeepSeek prompt caching** makes re-runs with unchanged prompts fast; changing a stage's
   prompt invalidates that stage's cache (slower first re-run).
-- **The three finders are copies on purpose** — fix walk bugs in all three.
+- **The three finders (and three attributors) are copies on purpose** — fix walk bugs in all.
+- **`uv run` re-syncs and drops the `mistral` extra.** A plain `uv run …` (e.g. `pytest`) after
+  `uv sync --extra mistral` uninstalls `pypdfium2`/`pillow`, so the next pipeline run dies with
+  "No module named 'pypdfium2'". For a full run use `uv run --extra mistral python …` (or re-sync
+  the extra first). The test suite does not need it.
