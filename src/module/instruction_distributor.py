@@ -26,11 +26,20 @@ governance). Entry point ``distribute_instructions(nodes, problems, module)`` mu
 problems in place; ``InstructionDistributorNode`` wires it onto the ``problem_entities`` channel.
 """
 
+import os
+from pathlib import Path
+
 import dspy
 from pydantic import BaseModel, Field
 
 from .state import State, ASTNode, Entity
 from .llm import text_lm
+from . import tracing
+
+# Compiled few-shot program from `training/distributor/compile.py`, loaded at serve time
+# if present so the data-optimized governance demos ship with the pipeline; override with
+# KMS_DISTRIBUTOR_PROGRAM, or delete the file to fall back to the bare student.
+_COMPILED_PATH = os.environ.get("KMS_DISTRIBUTOR_PROGRAM", "training/distributor/compiled.json")
 
 # Same growing look-ahead shape as the finders/splitter (~4 chars/token).
 LOOKAHEAD_BUDGET = 2000
@@ -73,14 +82,28 @@ class GovernExtent(dspy.Signature):
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None):
+    def __init__(self, lm: dspy.LM | None = None, compiled: bool = True):
         super().__init__()
         self.judge = dspy.ChainOfThought(GovernExtent)
         self.set_lm(lm or text_lm())
+        if compiled and Path(_COMPILED_PATH).exists():
+            self.load(_COMPILED_PATH)
+
+    def forward(self, lead_in: str, following_problems: list[WindowProblem]) -> dspy.Prediction:
+        """Synchronous governance pass — used at DSPy compile/eval time (optimizers and the
+        judge run modules synchronously). Serving uses ``govern``; both share the one
+        ``self.judge`` predictor, so demonstrations compiled here transfer to serving."""
+        return self.judge(lead_in=lead_in, following_problems=following_problems)
 
     async def govern(self, lead_in: str, following: list[WindowProblem]) -> tuple[str, list[int]]:
         r = await self.judge.acall(lead_in=lead_in, following_problems=following)
-        return (r.instruction or "").strip(), list(r.governed_positions or [])
+        instruction, positions = (r.instruction or "").strip(), list(r.governed_positions or [])
+        tracing.record(
+            "distributor",
+            inputs={"lead_in": lead_in, "following_problems": [p.model_dump() for p in following]},
+            outputs={"instruction": instruction, "governed_positions": positions},
+        )
+        return instruction, positions
 
 
 def _est_tokens(problem: Entity) -> int:
