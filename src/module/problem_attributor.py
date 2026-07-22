@@ -34,12 +34,13 @@ import asyncio
 import dspy
 from pydantic import BaseModel
 
-from .state import State, ASTNode, Entity, Solution, FIELDS
 from .llm import text_lm
+from .state import FIELDS, ASTNode, Entity, Solution, State
 
 
 class MemberNode(BaseModel):
     """One member node as the identity pass sees it: a local position and its content."""
+
     position: int
     type: str
     content: str | None = None
@@ -70,16 +71,23 @@ class Identify(dspy.Signature):
     """
 
     nodes: list[MemberNode] = dspy.InputField(description="The problem's member nodes, in order.")
-    field_choices: list[str] = dspy.InputField(description="The allowed fields; choose exactly one.")
+    field_choices: list[str] = dspy.InputField(
+        description="The allowed fields; choose exactly one."
+    )
     label: str = dspy.OutputField(description="The problem's label as written, or empty string.")
-    number: str = dspy.OutputField(description="The problem's own LEADING reference number (never an in-text cross-reference), or empty string.")
+    number: str = dspy.OutputField(
+        description="The problem's own LEADING reference number (never an in-text cross-reference), or empty string."
+    )
     title: str = dspy.OutputField(description="Short noun phrase naming what the problem is about.")
     field: str = dspy.OutputField(description="Exactly one field from the given list.")
-    solution_start: int = dspy.OutputField(description="Member position where the solution begins, or -1 if none shown.")
+    solution_start: int = dspy.OutputField(
+        description="Member position where the solution begins, or -1 if none shown."
+    )
 
 
 class Identity(BaseModel):
     """The identity pass's result for one problem."""
+
     label: str | None = None
     number: str | None = None
     title: str | None = None
@@ -137,7 +145,7 @@ def _strip_label_prefix(text: str, label: str | None) -> str:
     body = text.lstrip()
     lab = label.strip().rstrip(".")
     if lab and body[: len(lab)].lower() == lab.lower():
-        return body[len(lab):].lstrip(" .:\t\n")
+        return body[len(lab) :].lstrip(" .:\t\n")
     return text
 
 
@@ -178,6 +186,7 @@ async def attribute_problem(
 
 # --- LangGraph node: enrich the found Problems with their attributes ---
 
+
 class ProblemAttributorNode:
     """Fills in each found Problem's self-contained attributes (incl. its solution), in place.
 
@@ -192,5 +201,7 @@ class ProblemAttributorNode:
         nodes_by_id = {n.id: n for n in state.get("nodes", []) if n.id is not None}
         entities = state.get("problem_entities", [])
         if entities:
-            await asyncio.gather(*(attribute_problem(e, nodes_by_id, self.module) for e in entities))
+            await asyncio.gather(
+                *(attribute_problem(e, nodes_by_id, self.module) for e in entities)
+            )
         return {"problem_entities": entities}

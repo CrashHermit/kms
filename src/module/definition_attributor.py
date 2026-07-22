@@ -43,9 +43,8 @@ import asyncio
 import dspy
 from pydantic import BaseModel
 
-from .state import State, ASTNode, Entity, BodySegment, FIELDS
 from .llm import text_lm
-
+from .state import FIELDS, ASTNode, BodySegment, Entity, State
 
 # The subset of ACTIONS_ALL a DEFINITION actually exercises. The proof-oriented roles
 # (lemma, corollary, deduction, calculation, conclusion) never legitimately apply to a
@@ -57,6 +56,7 @@ DEFINITION_ACTIONS = ["premise", "definition", "assumption", "enumeration"]
 
 class MemberNode(BaseModel):
     """One member node as the identity pass sees it: a local position and its content."""
+
     position: int
     type: str
     content: str | None = None
@@ -79,10 +79,16 @@ class Identify(dspy.Signature):
         list. Pick exactly one.
     """
 
-    nodes: list[MemberNode] = dspy.InputField(description="The definition's member nodes, in order.")
-    field_choices: list[str] = dspy.InputField(description="The allowed fields; choose exactly one.")
+    nodes: list[MemberNode] = dspy.InputField(
+        description="The definition's member nodes, in order."
+    )
+    field_choices: list[str] = dspy.InputField(
+        description="The allowed fields; choose exactly one."
+    )
     label: str = dspy.OutputField(description="The definition's label as written, or empty string.")
-    number: str = dspy.OutputField(description="The reference number in the label, or empty string.")
+    number: str = dspy.OutputField(
+        description="The reference number in the label, or empty string."
+    )
     title: str = dspy.OutputField(description="Short noun phrase naming the defined concept.")
     field: str = dspy.OutputField(description="Exactly one field from the given list.")
 
@@ -134,7 +140,9 @@ class Bodylist(dspy.Signature):
     """
 
     contents: str = dspy.InputField(description="The definition's full content (text + LaTeX).")
-    actions: list[str] = dspy.InputField(description="The allowed action labels for a definition; choose one per piece.")
+    actions: list[str] = dspy.InputField(
+        description="The allowed action labels for a definition; choose one per piece."
+    )
     bodylist: list[BodySegment] = dspy.OutputField(
         description="Ordered {description, action} pieces; descriptions concatenate back to the content."
     )
@@ -142,6 +150,7 @@ class Bodylist(dspy.Signature):
 
 class Identity(BaseModel):
     """The identity pass's result for one definition."""
+
     label: str | None = None
     number: str | None = None
     title: str | None = None
@@ -208,7 +217,7 @@ def _strip_label_prefix(text: str, label: str | None) -> str:
     body = text.lstrip()
     lab = label.strip().rstrip(".")
     if lab and body[: len(lab)].lower() == lab.lower():
-        return body[len(lab):].lstrip(" .:\t\n")
+        return body[len(lab) :].lstrip(" .:\t\n")
     return text
 
 
@@ -243,6 +252,7 @@ async def attribute_definition(
 
 # --- LangGraph node: enrich the found Definitions with their attributes ---
 
+
 class DefinitionAttributorNode:
     """Fills in each found Definition's self-contained attributes, in place.
 
@@ -257,5 +267,7 @@ class DefinitionAttributorNode:
         nodes_by_id = {n.id: n for n in state.get("nodes", []) if n.id is not None}
         entities = state.get("definition_entities", [])
         if entities:
-            await asyncio.gather(*(attribute_definition(e, nodes_by_id, self.module) for e in entities))
+            await asyncio.gather(
+                *(attribute_definition(e, nodes_by_id, self.module) for e in entities)
+            )
         return {"definition_entities": entities}

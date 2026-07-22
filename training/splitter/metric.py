@@ -37,11 +37,19 @@ class JudgeSplit(dspy.Signature):
     this window (nothing missed, nothing spurious). Otherwise correct=False and say why.
     """
 
-    current_nodes: list = dspy.InputField(description="The window's nodes, each {position, type, content}.")
-    splits: list = dspy.InputField(description="Predicted splits: each {position, exercises:[{number, content}]}.")
+    current_nodes: list = dspy.InputField(
+        description="The window's nodes, each {position, type, content}."
+    )
+    splits: list = dspy.InputField(
+        description="Predicted splits: each {position, exercises:[{number, content}]}."
+    )
     instruction_positions: list = dspy.InputField(description="Predicted lead-in node positions.")
-    reason: str = dspy.OutputField(description="Brief justification; name any missed/spurious split or tag.")
-    correct: bool = dspy.OutputField(description="True iff both the splits and the tags are correct for this window.")
+    reason: str = dspy.OutputField(
+        description="Brief justification; name any missed/spurious split or tag."
+    )
+    correct: bool = dspy.OutputField(
+        description="True iff both the splits and the tags are correct for this window."
+    )
 
 
 def _judge() -> dspy.Module:

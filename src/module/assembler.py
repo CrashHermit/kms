@@ -49,6 +49,7 @@ def _resolve_content(
     """Rewrite every `![N]()` placeholder in one IMAGE node's content into a
     relative link, copying the matched picture as a side effect. Unmatched
     placeholders pass through unchanged."""
+
     def _replace(match: re.Match) -> str:
         picture = pictures_by_index.get(int(match.group(1)))
         if picture is None:
@@ -77,9 +78,7 @@ def assemble(
     images_dir = output_dir / IMAGES_DIRNAME
     images_dir.mkdir(parents=True, exist_ok=True)
 
-    pictures_by_seg = {
-        seg.index: {p.index: p for p in seg.pictures} for seg in segments
-    }
+    pictures_by_seg = {seg.index: {p.index: p for p in seg.pictures} for seg in segments}
 
     parts: list[str] = []
     for node in nodes:

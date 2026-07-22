@@ -176,16 +176,20 @@ def build_segments(response: dict, output_dir: str | Path) -> list[Segment]:
         markdown, pictures = _rewrite_page(
             page.get("markdown", "") or "", page.get("images", []) or [], seg_dir
         )
-        segments.append(Segment(
-            index=order_index,
-            image_path=str(seg_dir / "Segment.png"),
-            pictures=pictures,
-            content=markdown,
-        ))
+        segments.append(
+            Segment(
+                index=order_index,
+                image_path=str(seg_dir / "Segment.png"),
+                pictures=pictures,
+                content=markdown,
+            )
+        )
     return segments
 
 
-def _render_page_images(pdf_path: str | Path, segments: list[Segment], pages: list[int] | None) -> None:
+def _render_page_images(
+    pdf_path: str | Path, segments: list[Segment], pages: list[int] | None
+) -> None:
     """Rasterize each segment's source page to its ``Segment.png`` with pypdfium2.
 
     Mistral does not return a full-page render (only figure crops), but the downstream

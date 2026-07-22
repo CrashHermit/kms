@@ -18,21 +18,26 @@ import sys
 import tempfile
 from pathlib import Path
 
-from langgraph.graph import StateGraph, START, END
+from langgraph.graph import END, START, StateGraph
 
 from module import mistral_ocr
-from module.state import State
 from module.corrector import CorrectorNode
+from module.exercise_splitter import SplitterNode
 from module.extractor import ExtractorNode
 from module.seam_merger import SeamMergerNode
-from module.exercise_splitter import SplitterNode
+from module.state import State
 
 FIXTURES = Path("tests/fixtures/books")
 
 
 def _truncated_graph():
     """corrector -> extractor -> seam(even, odd) -> splitter -> END."""
-    corrector, extractor, seam, splitter = CorrectorNode(), ExtractorNode(), SeamMergerNode(), SplitterNode()
+    corrector, extractor, seam, splitter = (
+        CorrectorNode(),
+        ExtractorNode(),
+        SeamMergerNode(),
+        SplitterNode(),
+    )
     g = StateGraph(State)
     g.add_node("corrector_worker", corrector.worker)
     g.add_node("corrector_collect", corrector.collect)
@@ -45,11 +50,17 @@ def _truncated_graph():
     g.add_node("splitter", splitter.run)
     g.add_conditional_edges(START, corrector.dispatch, ["corrector_worker", "corrector_collect"])
     g.add_edge("corrector_worker", "corrector_collect")
-    g.add_conditional_edges("corrector_collect", extractor.dispatch, ["extractor_worker", "extractor_collect"])
+    g.add_conditional_edges(
+        "corrector_collect", extractor.dispatch, ["extractor_worker", "extractor_collect"]
+    )
     g.add_edge("extractor_worker", "extractor_collect")
-    g.add_conditional_edges("extractor_collect", seam.dispatch_even, ["seam_even_worker", "seam_even_collect"])
+    g.add_conditional_edges(
+        "extractor_collect", seam.dispatch_even, ["seam_even_worker", "seam_even_collect"]
+    )
     g.add_edge("seam_even_worker", "seam_even_collect")
-    g.add_conditional_edges("seam_even_collect", seam.dispatch_odd, ["seam_odd_worker", "seam_odd_collect"])
+    g.add_conditional_edges(
+        "seam_even_collect", seam.dispatch_odd, ["seam_odd_worker", "seam_odd_collect"]
+    )
     g.add_edge("seam_odd_worker", "seam_odd_collect")
     g.add_edge("seam_odd_collect", "splitter")
     g.add_edge("splitter", END)

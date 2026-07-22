@@ -6,15 +6,25 @@ statement vs proof at proof_start, label peeling, proofs population — without 
 
 import asyncio
 
-from module.state import ASTNode, NodeType, Entity, EntityType, BodySegment
-from module.theorem_attributor import attribute_theorem, Identity
+from module.state import ASTNode, BodySegment, Entity, EntityType, NodeType
+from module.theorem_attributor import Identity, attribute_theorem
 
 
 def _nodes():
     return [
         ASTNode(type=NodeType.HEADER, content="Theorem 3.2", id=0, seg_index=0),
-        ASTNode(type=NodeType.PARAGRAPH, content="Let $n \\ge 3$. Then $Z(S_n)$ is trivial.", id=1, seg_index=0),
-        ASTNode(type=NodeType.PARAGRAPH, content="Proof. Suppose $\\sigma \\in Z(S_n)$ ... hence trivial.", id=2, seg_index=0),
+        ASTNode(
+            type=NodeType.PARAGRAPH,
+            content="Let $n \\ge 3$. Then $Z(S_n)$ is trivial.",
+            id=1,
+            seg_index=0,
+        ),
+        ASTNode(
+            type=NodeType.PARAGRAPH,
+            content="Proof. Suppose $\\sigma \\in Z(S_n)$ ... hence trivial.",
+            id=2,
+            seg_index=0,
+        ),
     ]
 
 
@@ -41,8 +51,9 @@ def _run(entity, nodes, module):
 def test_split_holds_out_proof_and_peels_label():
     nodes = _nodes()
     entity = Entity(type=EntityType.THEOREM, members=[0, 1, 2])
-    ident = Identity(label="Theorem 3.2", number="3.2", title="Center is Trivial",
-                     field="algebra", proof_start=2)
+    ident = Identity(
+        label="Theorem 3.2", number="3.2", title="Center is Trivial", field="algebra", proof_start=2
+    )
     module = _ScriptedModule(
         ident,
         statement_bl=[BodySegment(description="Let $n \\ge 3$.", action="assumption")],

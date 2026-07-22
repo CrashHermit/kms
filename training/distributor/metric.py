@@ -38,11 +38,19 @@ class JudgeGovern(dspy.Signature):
     """
 
     lead_in: str = dspy.InputField(description="The lead-in node's text.")
-    following_problems: list = dspy.InputField(description="Following problems, each {position, number, text}.")
+    following_problems: list = dspy.InputField(
+        description="Following problems, each {position, number, text}."
+    )
     instruction: str = dspy.InputField(description="Predicted shared instruction (may be empty).")
-    governed_positions: list = dspy.InputField(description="Predicted governed positions (a run from 0).")
-    reason: str = dspy.OutputField(description="Brief justification; name any over-extension, early stop, or bad instruction.")
-    correct: bool = dspy.OutputField(description="True iff governed_positions and instruction are both correct here.")
+    governed_positions: list = dspy.InputField(
+        description="Predicted governed positions (a run from 0)."
+    )
+    reason: str = dspy.OutputField(
+        description="Brief justification; name any over-extension, early stop, or bad instruction."
+    )
+    correct: bool = dspy.OutputField(
+        description="True iff governed_positions and instruction are both correct here."
+    )
 
 
 def _judge() -> dspy.Module:

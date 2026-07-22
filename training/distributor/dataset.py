@@ -29,10 +29,16 @@ def _problem_text(contents, number) -> str:
 
 def _example(lead_in: str, candidates: list[dict]) -> dspy.Example:
     following = [
-        WindowProblem(position=k, number=c.get("number"), text=_problem_text(c.get("contents"), c.get("number")))
+        WindowProblem(
+            position=k,
+            number=c.get("number"),
+            text=_problem_text(c.get("contents"), c.get("number")),
+        )
         for k, c in enumerate(candidates)
     ]
-    return dspy.Example(lead_in=lead_in, following_problems=following).with_inputs("lead_in", "following_problems")
+    return dspy.Example(lead_in=lead_in, following_problems=following).with_inputs(
+        "lead_in", "following_problems"
+    )
 
 
 def reconstruct_from_run(run_dir: str | Path) -> list[dspy.Example]:
@@ -65,7 +71,8 @@ def load_runs(run_dirs: list[str | Path]) -> list[dspy.Example]:
         for ex in reconstruct_from_run(d):
             key = json.dumps(
                 {"lead_in": ex.lead_in, "fp": [p.model_dump() for p in ex.following_problems]},
-                sort_keys=True, ensure_ascii=False,
+                sort_keys=True,
+                ensure_ascii=False,
             )
             if key in seen:
                 continue
@@ -92,5 +99,9 @@ def load_traces(traces_path: str | Path) -> list[dspy.Example]:
             continue
         seen.add(key)
         following = [WindowProblem(**p) for p in fp]
-        out.append(dspy.Example(lead_in=lead_in, following_problems=following).with_inputs("lead_in", "following_problems"))
+        out.append(
+            dspy.Example(lead_in=lead_in, following_problems=following).with_inputs(
+                "lead_in", "following_problems"
+            )
+        )
     return out

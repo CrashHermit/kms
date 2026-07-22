@@ -2,7 +2,7 @@
 
 import asyncio
 
-from module.state import ASTNode, NodeType, EntityType
+from module.state import ASTNode, EntityType, NodeType
 from module.theorem_finder import TheoremFinderNode, TheoremSpan, find_theorems
 
 

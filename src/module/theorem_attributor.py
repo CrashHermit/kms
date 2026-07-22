@@ -43,19 +43,28 @@ import asyncio
 import dspy
 from pydantic import BaseModel
 
-from .state import State, ASTNode, Entity, BodySegment, Proof, FIELDS
 from .llm import text_lm
-
+from .state import FIELDS, ASTNode, BodySegment, Entity, Proof, State
 
 # Subsets of ACTIONS_ALL for the two contexts a theorem's bodylist runs in. A STATEMENT is a
 # hypothesis→conclusion assertion (no reasoning steps, no defining); a PROOF is a reasoning
 # chain (every role except `definition`). Fewer choices per context, fewer misfires.
 STATEMENT_ACTIONS = ["premise", "assumption", "conclusion", "enumeration"]
-PROOF_ACTIONS = ["premise", "assumption", "lemma", "corollary", "deduction", "calculation", "conclusion", "enumeration"]
+PROOF_ACTIONS = [
+    "premise",
+    "assumption",
+    "lemma",
+    "corollary",
+    "deduction",
+    "calculation",
+    "conclusion",
+    "enumeration",
+]
 
 
 class MemberNode(BaseModel):
     """One member node as the identity pass sees it: a local position and its content."""
+
     position: int
     type: str
     content: str | None = None
@@ -81,12 +90,18 @@ class Identify(dspy.Signature):
     """
 
     nodes: list[MemberNode] = dspy.InputField(description="The theorem's member nodes, in order.")
-    field_choices: list[str] = dspy.InputField(description="The allowed fields; choose exactly one.")
+    field_choices: list[str] = dspy.InputField(
+        description="The allowed fields; choose exactly one."
+    )
     label: str = dspy.OutputField(description="The theorem's label as written, or empty string.")
-    number: str = dspy.OutputField(description="The reference number in the label, or empty string.")
+    number: str = dspy.OutputField(
+        description="The reference number in the label, or empty string."
+    )
     title: str = dspy.OutputField(description="Short noun phrase naming the result.")
     field: str = dspy.OutputField(description="Exactly one field from the given list.")
-    proof_start: int = dspy.OutputField(description="Member position where the proof begins, or -1 if no proof is shown.")
+    proof_start: int = dspy.OutputField(
+        description="Member position where the proof begins, or -1 if no proof is shown."
+    )
 
 
 class StatementBodylist(dspy.Signature):
@@ -117,7 +132,9 @@ class StatementBodylist(dspy.Signature):
     """
 
     contents: str = dspy.InputField(description="The theorem statement's content (text + LaTeX).")
-    actions: list[str] = dspy.InputField(description="The allowed action labels for a statement; choose one per piece.")
+    actions: list[str] = dspy.InputField(
+        description="The allowed action labels for a statement; choose one per piece."
+    )
     bodylist: list[BodySegment] = dspy.OutputField(
         description="Ordered {description, action} pieces; descriptions concatenate back to the content."
     )
@@ -154,7 +171,9 @@ class ProofBodylist(dspy.Signature):
     """
 
     contents: str = dspy.InputField(description="The proof's content (text + LaTeX).")
-    actions: list[str] = dspy.InputField(description="The allowed action labels for a proof; choose one per piece.")
+    actions: list[str] = dspy.InputField(
+        description="The allowed action labels for a proof; choose one per piece."
+    )
     bodylist: list[BodySegment] = dspy.OutputField(
         description="Ordered {description, action} pieces; descriptions concatenate back to the content."
     )
@@ -162,6 +181,7 @@ class ProofBodylist(dspy.Signature):
 
 class Identity(BaseModel):
     """The identity pass's result for one theorem."""
+
     label: str | None = None
     number: str | None = None
     title: str | None = None
@@ -229,7 +249,7 @@ def _strip_label_prefix(text: str, label: str | None) -> str:
     body = text.lstrip()
     lab = label.strip().rstrip(".")
     if lab and body[: len(lab)].lower() == lab.lower():
-        return body[len(lab):].lstrip(" .:\t\n")
+        return body[len(lab) :].lstrip(" .:\t\n")
     return text
 
 
@@ -283,6 +303,7 @@ async def attribute_theorem(
 
 # --- LangGraph node: enrich the found Theorems with their attributes ---
 
+
 class TheoremAttributorNode:
     """Fills in each found Theorem's self-contained attributes (incl. its proof), in place.
 
@@ -297,5 +318,7 @@ class TheoremAttributorNode:
         nodes_by_id = {n.id: n for n in state.get("nodes", []) if n.id is not None}
         entities = state.get("theorem_entities", [])
         if entities:
-            await asyncio.gather(*(attribute_theorem(e, nodes_by_id, self.module) for e in entities))
+            await asyncio.gather(
+                *(attribute_theorem(e, nodes_by_id, self.module) for e in entities)
+            )
         return {"theorem_entities": entities}

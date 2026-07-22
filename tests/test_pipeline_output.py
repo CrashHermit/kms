@@ -2,8 +2,8 @@
 
 import json
 
-from module.state import ASTNode, NodeType, EntityType, Entity
-from module.pipeline import _flatten_entities, _write_nodes, _write_entities
+from module.pipeline import _flatten_entities, _write_entities, _write_nodes
+from module.state import ASTNode, Entity, EntityType, NodeType
 
 
 def _nodes():
@@ -48,12 +48,24 @@ def test_write_entities_is_a_flat_list_with_members_into_nodes(tmp_path):
 
 def test_write_entities_serializes_the_instruction_attribute(tmp_path):
     entities = [
-        Entity(type=EntityType.PROBLEM, members=[3], id=0, number="1.23",
-               contents=["A"], instruction="find the eigenvalues"),
+        Entity(
+            type=EntityType.PROBLEM,
+            members=[3],
+            id=0,
+            number="1.23",
+            contents=["A"],
+            instruction="find the eigenvalues",
+        ),
     ]
     _write_entities(entities, tmp_path)
     payload = json.loads((tmp_path / "entities.json").read_text())
-    assert payload == [{
-        "id": 0, "type": "problem", "members": [3],
-        "number": "1.23", "instruction": "find the eigenvalues", "contents": ["A"],
-    }]
+    assert payload == [
+        {
+            "id": 0,
+            "type": "problem",
+            "members": [3],
+            "number": "1.23",
+            "instruction": "find the eigenvalues",
+            "contents": ["A"],
+        }
+    ]

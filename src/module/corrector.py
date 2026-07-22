@@ -37,8 +37,8 @@ rewrite output) is a drop-in future optimization behind the same interface.
 import dspy
 from langgraph.types import Send
 
-from .state import State, Segment, load_dspy_image
 from .llm import corrector_lm
+from .state import Segment, State, load_dspy_image
 
 # A correction should be a light edit; reject anything outside this band of the
 # original length as a runaway rewrite or a truncation.
@@ -125,6 +125,7 @@ class Module(dspy.Module):
 
 
 # --- LangGraph node: proofread each Mistral-transcribed page against its image ---
+
 
 class CorrectorNode:
     def __init__(self, module: Module | None = None):

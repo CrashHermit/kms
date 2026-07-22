@@ -6,14 +6,16 @@ the content (dropping a pure-label node, keeping a fused one) — without dspy o
 
 import asyncio
 
-from module.state import ASTNode, NodeType, Entity, EntityType, BodySegment
-from module.definition_attributor import attribute_definition, Identity
+from module.definition_attributor import Identity, attribute_definition
+from module.state import ASTNode, BodySegment, Entity, EntityType, NodeType
 
 
 def _nodes():
     return [
         ASTNode(type=NodeType.HEADER, content="1.2 Definition", id=0, seg_index=0),
-        ASTNode(type=NodeType.PARAGRAPH, content="A vector space is a set $V$ ...", id=1, seg_index=0),
+        ASTNode(
+            type=NodeType.PARAGRAPH, content="A vector space is a set $V$ ...", id=1, seg_index=0
+        ),
         ASTNode(type=NodeType.MATH, content="$$V \\times V \\to V$$", id=2, seg_index=0),
     ]
 
@@ -38,7 +40,9 @@ def test_flagged_label_node_is_dropped_from_contents():
     nodes = _nodes()
     entity = Entity(type=EntityType.DEFINITION, members=[0, 1, 2])
     ident = Identity(label="1.2 Definition", number="1.2", title="Vector Space", field="algebra")
-    module = _ScriptedModule(ident, [BodySegment(description="A vector space is a set $V$ ...", action="definition")])
+    module = _ScriptedModule(
+        ident, [BodySegment(description="A vector space is a set $V$ ...", action="definition")]
+    )
     attrs = _run(entity, nodes, module)
 
     assert attrs.label == "1.2 Definition"
@@ -51,7 +55,12 @@ def test_flagged_label_node_is_dropped_from_contents():
 
 
 def test_fused_label_is_stripped_from_contents():
-    node = ASTNode(type=NodeType.PARAGRAPH, content="Definition 1.2 A group is a set with ...", id=5, seg_index=0)
+    node = ASTNode(
+        type=NodeType.PARAGRAPH,
+        content="Definition 1.2 A group is a set with ...",
+        id=5,
+        seg_index=0,
+    )
     entity = Entity(type=EntityType.DEFINITION, members=[5])
     # Fused label: the prefix is peeled off the first content string, the node is kept.
     ident = Identity(label="Definition 1.2", number="1.2", title="Group", field="algebra")
@@ -62,7 +71,12 @@ def test_fused_label_is_stripped_from_contents():
 
 
 def test_no_label_leaves_number_none_and_keeps_members():
-    node = ASTNode(type=NodeType.PARAGRAPH, content="A ring is a set with two operations ...", id=7, seg_index=0)
+    node = ASTNode(
+        type=NodeType.PARAGRAPH,
+        content="A ring is a set with two operations ...",
+        id=7,
+        seg_index=0,
+    )
     entity = Entity(type=EntityType.DEFINITION, members=[7])
     ident = Identity(label=None, number=None, title="Ring", field="algebra")
     attrs = _run(entity, [node], _ScriptedModule(ident, []))

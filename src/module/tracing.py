@@ -39,7 +39,9 @@ def record(stage: str, inputs: dict[str, Any], outputs: dict[str, Any], **meta: 
         return
     try:
         d.mkdir(parents=True, exist_ok=True)
-        line = json.dumps({"stage": stage, **meta, "inputs": inputs, "outputs": outputs}, ensure_ascii=False)
+        line = json.dumps(
+            {"stage": stage, **meta, "inputs": inputs, "outputs": outputs}, ensure_ascii=False
+        )
         with _lock, (d / f"{stage}.jsonl").open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
     except Exception:

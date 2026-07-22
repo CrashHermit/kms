@@ -3,20 +3,30 @@
 import pathlib
 import tempfile
 
-from module.state import ASTNode, NodeType, Segment, flatten_segments
 from module.assembler import assemble
+from module.state import ASTNode, NodeType, Segment, flatten_segments
 
 
 def _segments():
     return [
-        Segment(index=0, image_path="p0.png", pictures=[], nodes=[
-            ASTNode(type=NodeType.HEADER, content="# Ch 1"),
-            ASTNode(type=NodeType.PARAGRAPH, content="intro"),
-        ]),
-        Segment(index=1, image_path="p1.png", pictures=[], nodes=[
-            ASTNode(type=NodeType.PARAGRAPH, content="body ![1]() fig"),
-            ASTNode(type=NodeType.PARAGRAPH, content="1. solve x"),
-        ]),
+        Segment(
+            index=0,
+            image_path="p0.png",
+            pictures=[],
+            nodes=[
+                ASTNode(type=NodeType.HEADER, content="# Ch 1"),
+                ASTNode(type=NodeType.PARAGRAPH, content="intro"),
+            ],
+        ),
+        Segment(
+            index=1,
+            image_path="p1.png",
+            pictures=[],
+            nodes=[
+                ASTNode(type=NodeType.PARAGRAPH, content="body ![1]() fig"),
+                ASTNode(type=NodeType.PARAGRAPH, content="1. solve x"),
+            ],
+        ),
     ]
 
 

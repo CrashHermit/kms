@@ -37,9 +37,9 @@ from pathlib import Path
 import dspy
 from pydantic import BaseModel, Field
 
-from .state import State, ASTNode
-from .llm import text_lm
 from . import tracing
+from .llm import text_lm
+from .state import ASTNode, State
 
 # Same look-ahead budget shape as the finders (~4 chars/token). The splitter only needs
 # enough context to recognise a lead-in and the exercise run it introduces; a packed
@@ -53,6 +53,7 @@ def _est_tokens(node: ASTNode) -> int:
 
 class WindowNode(BaseModel):
     """One look-ahead node as the LLM sees it: a local position and its content."""
+
     position: int
     type: str
     content: str | None = None
@@ -60,14 +61,22 @@ class WindowNode(BaseModel):
 
 class SplitExercise(BaseModel):
     """One exercise carved out of a packed list node: its own number and its own text."""
-    number: str = Field(description="The exercise's own reference number as written, e.g. '1.23'. EMPTY for a leading continuation fragment that belongs to a previous exercise.")
-    content: str = Field(description="The exercise's own statement text, copied verbatim, with its subparts, WITHOUT the leading number.")
+
+    number: str = Field(
+        description="The exercise's own reference number as written, e.g. '1.23'. EMPTY for a leading continuation fragment that belongs to a previous exercise."
+    )
+    content: str = Field(
+        description="The exercise's own statement text, copied verbatim, with its subparts, WITHOUT the leading number."
+    )
 
 
 class NodeSplit(BaseModel):
     """A single node that packs two or more numbered exercises, and its split pieces."""
+
     position: int = Field(description="The window position of the node that packs the exercises.")
-    exercises: list[SplitExercise] = Field(description="The individual exercises it holds, in order (two or more).")
+    exercises: list[SplitExercise] = Field(
+        description="The individual exercises it holds, in order (two or more)."
+    )
 
 
 class Signature(dspy.Signature):
@@ -123,8 +132,9 @@ class Signature(dspy.Signature):
 
 class Decision(BaseModel):
     """The splitter's per-window verdict, positions already resolved to real node ids."""
-    splits: dict[int, list[SplitExercise]] = {}   # node id -> its exercise pieces
-    instructions: set[int] = set()                # node ids that are lead-ins
+
+    splits: dict[int, list[SplitExercise]] = {}  # node id -> its exercise pieces
+    instructions: set[int] = set()  # node ids that are lead-ins
 
 
 # Compiled few-shot program produced by `training/splitter/compile.py`. Loaded at serve
@@ -149,7 +159,10 @@ class Module(dspy.Module):
 
     async def aforward(self, current_nodes: list[WindowNode]) -> tuple[list[NodeSplit], list[int]]:
         result = await self.splitter.acall(current_nodes=current_nodes)
-        splits, instruction_positions = list(result.splits or []), list(result.instruction_positions or [])
+        splits, instruction_positions = (
+            list(result.splits or []),
+            list(result.instruction_positions or []),
+        )
         tracing.record(
             "splitter",
             inputs={"current_nodes": [n.model_dump() for n in current_nodes]},
@@ -175,9 +188,7 @@ def _window_from(nodes: list[ASTNode], cursor: int, budget: int) -> int:
     return i
 
 
-async def _gather_decisions(
-    nodes: list[ASTNode], module: Module, budget: int
-) -> Decision:
+async def _gather_decisions(nodes: list[ASTNode], module: Module, budget: int) -> Decision:
     """Walk the stream in windows and collect every per-node decision, keyed by node id.
 
     Per-node decisions can't be split across a window (a node's content is wholly inside one
@@ -188,14 +199,20 @@ async def _gather_decisions(
         end = _window_from(nodes, cursor, budget)
         window = nodes[cursor:end]
         last_local = len(window) - 1
-        splits, instruction_positions = await module.aforward([
-            WindowNode(position=k, type=(node.type.value if node.type else ""), content=node.content)
-            for k, node in enumerate(window)
-        ])
+        splits, instruction_positions = await module.aforward(
+            [
+                WindowNode(
+                    position=k, type=(node.type.value if node.type else ""), content=node.content
+                )
+                for k, node in enumerate(window)
+            ]
+        )
         for s in splits:
             p = min(max(s.position, 0), last_local)
             nid = window[p].id
-            items = [e for e in s.exercises if (e.content or "").strip() or (e.number or "").strip()]
+            items = [
+                e for e in s.exercises if (e.content or "").strip() or (e.number or "").strip()
+            ]
             if nid is not None and len(items) >= 2:  # only a genuine group is a split
                 decision.splits[nid] = items
         for pos in instruction_positions:
@@ -247,6 +264,7 @@ async def split_exercises(
 
 
 # --- LangGraph node: normalise the node stream between the seam merger and the finders ---
+
 
 class SplitterNode:
     """Rewrites the `nodes` channel so each exercise is its own node and lead-ins are tagged.

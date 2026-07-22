@@ -3,7 +3,7 @@ pure transform that turns an OCR JSON response into the pipeline's Segment backb
 
 from pathlib import Path
 
-from module.mistral_ocr import build_segments, _rewrite_page
+from module.mistral_ocr import _rewrite_page, build_segments
 
 # A 1x1 PNG, base64 — stands in for a returned figure crop.
 _PNG_B64 = (
@@ -17,17 +17,23 @@ def _img(image_id: str, data_url: bool = False) -> dict:
     return {
         "id": image_id,
         "image_base64": b64,
-        "top_left_x": 0, "top_left_y": 0,
-        "bottom_right_x": 1, "bottom_right_y": 1,
+        "top_left_x": 0,
+        "top_left_y": 0,
+        "bottom_right_x": 1,
+        "bottom_right_y": 1,
     }
 
 
 def test_build_segments_rewrites_refs_and_saves_pictures(tmp_path):
-    resp = {"pages": [{
-        "index": 0,
-        "markdown": "# Title\n\n![alt](img-0.jpeg)\n\nprose $x^2$\n\n![alt2](img-1.jpeg)\n",
-        "images": [_img("img-0.jpeg"), _img("img-1.jpeg", data_url=True)],
-    }]}
+    resp = {
+        "pages": [
+            {
+                "index": 0,
+                "markdown": "# Title\n\n![alt](img-0.jpeg)\n\nprose $x^2$\n\n![alt2](img-1.jpeg)\n",
+                "images": [_img("img-0.jpeg"), _img("img-1.jpeg", data_url=True)],
+            }
+        ]
+    }
     segs = build_segments(resp, tmp_path)
     assert len(segs) == 1
     seg = segs[0]
@@ -42,7 +48,9 @@ def test_build_segments_rewrites_refs_and_saves_pictures(tmp_path):
 
 def test_unreferenced_figure_is_still_saved(tmp_path):
     # A figure that never appears inline in the markdown must not be silently dropped.
-    resp = {"pages": [{"index": 0, "markdown": "prose only, no refs", "images": [_img("img-0.jpeg")]}]}
+    resp = {
+        "pages": [{"index": 0, "markdown": "prose only, no refs", "images": [_img("img-0.jpeg")]}]
+    }
     segs = build_segments(resp, tmp_path)
     assert len(segs[0].pictures) == 1
     assert Path(segs[0].pictures[0].image_path).exists()
@@ -59,10 +67,12 @@ def test_non_figure_link_left_untouched(tmp_path):
 def test_pages_are_indexed_densely(tmp_path):
     # Even if the source pages are non-contiguous, segments are dense 0..N so the seam
     # merger sees a proper adjacency.
-    resp = {"pages": [
-        {"index": 5, "markdown": "![a](img-0.jpeg)", "images": [_img("img-0.jpeg")]},
-        {"index": 9, "markdown": "![b](img-0.jpeg)", "images": [_img("img-0.jpeg")]},
-    ]}
+    resp = {
+        "pages": [
+            {"index": 5, "markdown": "![a](img-0.jpeg)", "images": [_img("img-0.jpeg")]},
+            {"index": 9, "markdown": "![b](img-0.jpeg)", "images": [_img("img-0.jpeg")]},
+        ]
+    }
     segs = build_segments(resp, tmp_path)
     assert [s.index for s in segs] == [0, 1]
     assert all(len(s.pictures) == 1 for s in segs)

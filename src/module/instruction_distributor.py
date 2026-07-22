@@ -30,11 +30,11 @@ import os
 from pathlib import Path
 
 import dspy
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
-from .state import State, ASTNode, Entity
-from .llm import text_lm
 from . import tracing
+from .llm import text_lm
+from .state import ASTNode, Entity, State
 
 # Compiled few-shot program from `training/distributor/compile.py`, loaded at serve time
 # if present so the data-optimized governance demos ship with the pipeline; override with
@@ -48,6 +48,7 @@ MAX_LOOKAHEAD_BUDGET = 8000
 
 class WindowProblem(BaseModel):
     """One following problem as the LLM sees it: a local position, its number, its statement."""
+
     position: int
     number: str | None = None
     text: str | None = None
@@ -77,8 +78,12 @@ class GovernExtent(dspy.Signature):
     following_problems: list[WindowProblem] = dspy.InputField(
         description="The problems that follow the lead-in, in order, each with a local position."
     )
-    instruction: str = dspy.OutputField(description="The shared imperative to apply, without range framing, or empty string.")
-    governed_positions: list[int] = dspy.OutputField(description="Positions of the governed problems, a run from the first; empty if none.")
+    instruction: str = dspy.OutputField(
+        description="The shared imperative to apply, without range framing, or empty string."
+    )
+    governed_positions: list[int] = dspy.OutputField(
+        description="Positions of the governed problems, a run from the first; empty if none."
+    )
 
 
 class Module(dspy.Module):
@@ -142,8 +147,10 @@ async def _govern_one(node: ASTNode, candidates: list[Entity], module: Module) -
 
         instruction, positions = await module.govern(
             node.content or "",
-            [WindowProblem(position=k, number=window[k].number, text=_problem_text(window[k]))
-             for k in range(len(window))],
+            [
+                WindowProblem(position=k, number=window[k].number, text=_problem_text(window[k]))
+                for k in range(len(window))
+            ],
         )
         governed = sorted({min(max(p, 0), last_local) for p in positions})
 
@@ -190,6 +197,7 @@ async def distribute_instructions(
 
 
 # --- LangGraph node: distribute instructions over the attributed Problem entities ---
+
 
 class InstructionDistributorNode:
     """Stamps `instruction` onto the governed Problems, reading the splitter's `role="instruction"`

@@ -23,7 +23,7 @@ from pathlib import Path
 import dspy
 
 from module.exercise_splitter import Module as SplitterModule
-from module.llm import text_lm, teacher_lm
+from module.llm import teacher_lm, text_lm
 from training.splitter.dataset import load_windows
 from training.splitter.metric import splitter_score
 
@@ -42,7 +42,9 @@ def main(traces_path: str, out_path: str | Path = OUT_DEFAULT) -> None:
     dspy.configure(lm=text_lm())  # student is the flash model
     examples = load_windows(traces_path)
     if len(examples) < 2:
-        raise SystemExit(f"need at least 2 windows to compile; got {len(examples)} from {traces_path}")
+        raise SystemExit(
+            f"need at least 2 windows to compile; got {len(examples)} from {traces_path}"
+        )
 
     random.Random(0).shuffle(examples)
     cut = max(1, len(examples) // 5)
