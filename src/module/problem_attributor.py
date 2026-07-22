@@ -29,10 +29,12 @@ Entry point ``attribute_problem(entity, nodes_by_id)`` (async): writes the attri
 the passed Problem entity and returns it. Persistence-agnostic, like the other attributors.
 """
 
+import asyncio
+
 import dspy
 from pydantic import BaseModel
 
-from .state import ASTNode, Entity, Solution, FIELDS
+from .state import State, ASTNode, Entity, Solution, FIELDS
 from .llm import text_lm
 
 
@@ -167,3 +169,23 @@ async def attribute_problem(
     entity.contents = contents
     entity.solutions = solutions
     return entity
+
+
+# --- LangGraph node: enrich the found Problems with their attributes ---
+
+class ProblemAttributorNode:
+    """Fills in each found Problem's self-contained attributes (incl. its solution), in place.
+
+    Runs after the Problem finder, over the ``problem_entities`` channel it produced. The
+    per-entity attributions are independent, so they run concurrently; the enriched entities
+    (mutated in place) are written back to the same channel."""
+
+    def __init__(self, module: Module | None = None):
+        self.module = module or Module()
+
+    async def run(self, state: State) -> dict:
+        nodes_by_id = {n.id: n for n in state.get("nodes", []) if n.id is not None}
+        entities = state.get("problem_entities", [])
+        if entities:
+            await asyncio.gather(*(attribute_problem(e, nodes_by_id, self.module) for e in entities))
+        return {"problem_entities": entities}

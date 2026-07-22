@@ -11,19 +11,23 @@ sequential nodes (their cursor-walk cannot be sharded) that fan out in parallel 
 seam-merge collect.
 
 Stage order:
-    corrector -> extractor -> seam_merger (even, odd) -> {problem, definition, theorem}_finder
+    corrector -> extractor -> seam_merger (even, odd)
+              -> {problem, definition, theorem}_finder -> {…}_attributor
 
 Two phases split at the seam merger. Ingestion is per-page: `segments` (already carrying
 Mistral's markdown + figures) is the backbone, and the corrector proofreads each page's
 transcription against its image before the (purely structural) extractor parses it into
 nodes. The seam merger heals nodes split across page breaks and then flattens the healed
-backbone into the global ordered `nodes` list (stable ids + seg_index); the three per-type
-finders then each walk `nodes` in parallel, each writing its own entity channel. After the
-graph returns, `run()` concatenates the three overlays into one flat, document-ordered
-entity list (global ids) and writes both the entities and the node stream itself — the
-nodes are persisted for provenance so an entity's `members` resolve to real source chunks.
-Per-attribute passes (member roles, number, instruction, …) come later. Assembly walks
-`nodes` after the graph returns, consulting `segments` only for picture inventories.
+backbone into the global ordered `nodes` list (stable ids + seg_index). Three per-type
+chains then run in parallel: each finder walks `nodes` to build its entity overlay, and its
+attributor enriches those entities with the self-contained AutoMathKG attributes (label,
+number, title, field, contents, bodylist; plus proofs for theorems and solutions for
+problems). After the graph returns, `run()` concatenates the three overlays into one flat,
+document-ordered entity list (global ids) and writes both the entities and the node stream
+itself — the nodes are persisted for provenance so an entity's `members` resolve to real
+source chunks. Cross-entity attributes (refs/references_tactics) and the instruction
+governor are later graph-tier work. Assembly walks `nodes` after the graph returns,
+consulting `segments` only for picture inventories.
 """
 
 from pathlib import Path
@@ -38,6 +42,9 @@ from .seam_merger import SeamMergerNode
 from .problem_finder import ProblemFinderNode
 from .definition_finder import DefinitionFinderNode
 from .theorem_finder import TheoremFinderNode
+from .problem_attributor import ProblemAttributorNode
+from .definition_attributor import DefinitionAttributorNode
+from .theorem_attributor import TheoremAttributorNode
 
 
 def build_graph():
@@ -54,6 +61,9 @@ def build_graph():
     problem_finder = ProblemFinderNode()
     definition_finder = DefinitionFinderNode()
     theorem_finder = TheoremFinderNode()
+    problem_attributor = ProblemAttributorNode()
+    definition_attributor = DefinitionAttributorNode()
+    theorem_attributor = TheoremAttributorNode()
 
     g = StateGraph(State)
 
@@ -69,6 +79,9 @@ def build_graph():
     g.add_node("problem_finder", problem_finder.run)
     g.add_node("definition_finder", definition_finder.run)
     g.add_node("theorem_finder", theorem_finder.run)
+    g.add_node("problem_attributor", problem_attributor.run)
+    g.add_node("definition_attributor", definition_attributor.run)
+    g.add_node("theorem_attributor", theorem_attributor.run)
 
     # A stage's dispatch is a conditional edge off the previous collect: it either fans
     # out Sends to the worker or short-circuits straight to its own collect.
@@ -85,13 +98,20 @@ def build_graph():
     g.add_conditional_edges("seam_even_collect", seam.dispatch_odd, ["seam_odd_worker", "seam_odd_collect"])
     g.add_edge("seam_odd_worker", "seam_odd_collect")
 
-    # The three per-type finders each run a sequential cursor-walk (not shardable), so
-    # each is a plain node. They fan out from the seam collect and run in parallel, each
-    # writing its own entity channel; overlap between overlays is fine (members are
+    # Three per-type chains run in parallel off the seam collect: each finder does a
+    # sequential cursor-walk (not shardable) to build its overlay, then its attributor
+    # enriches those entities with the self-contained AutoMathKG attributes. Each chain
+    # writes only its own entity channel; overlap between overlays is fine (members are
     # node-id pointers). `run()` concatenates the three channels after the graph returns.
-    for name in ("problem_finder", "definition_finder", "theorem_finder"):
-        g.add_edge("seam_odd_collect", name)
-        g.add_edge(name, END)
+    chains = [
+        ("problem_finder", "problem_attributor"),
+        ("definition_finder", "definition_attributor"),
+        ("theorem_finder", "theorem_attributor"),
+    ]
+    for finder, attributor in chains:
+        g.add_edge("seam_odd_collect", finder)
+        g.add_edge(finder, attributor)
+        g.add_edge(attributor, END)
 
     return g.compile()
 
@@ -161,17 +181,42 @@ def _write_nodes(nodes: list, output_dir: Path) -> Path:
 
 def _write_entities(entities: list, output_dir: Path) -> Path:
     """Persist the flat entity overlay as JSON beside the assembled document — the artifact
-    the later graph phase (edges, fusion, completion) consumes. Each entity is `{id, type,
-    members}`; `members` are node ids into `nodes.json`."""
+    the later graph phase (edges, fusion, completion) consumes. Each entity carries `{id,
+    type, members}` (members are node ids into `nodes.json`) plus whatever self-contained
+    attributes its attributor filled in; unset attributes are omitted, so a bare (un-attributed)
+    entity serializes to just `{id, type, members}`. This is a debug/inspection dump of what
+    the entity holds, not a designed schema — the graph tier will own persistence."""
     import json
 
-    payload = [
-        {"id": e.id, "type": e.type.value, "members": e.members}
-        for e in entities
-    ]
+    payload = [_entity_payload(e) for e in entities]
     path = Path(output_dir) / "entities.json"
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return path
+
+
+def _entity_payload(e) -> dict:
+    """One entity as a JSON-ready dict: id/type/members always, then any attribute that is
+    set. Structured attributes (bodylist/proofs/solutions) are unpacked by hand rather than
+    via pydantic `.model_dump()` so this stays importable under the test stubs."""
+    d = {"id": e.id, "type": e.type.value, "members": e.members}
+    for key in ("label", "number", "title", "field"):
+        value = getattr(e, key)
+        if value is not None:
+            d[key] = value
+    if e.contents:
+        d["contents"] = e.contents
+    if e.bodylist:
+        d["bodylist"] = [_seg(s) for s in e.bodylist]
+    if e.proofs:
+        d["proofs"] = [{"contents": p.contents, "bodylist": [_seg(s) for s in p.bodylist]} for p in e.proofs]
+    if e.solutions:
+        d["solutions"] = [{"contents": s.contents} for s in e.solutions]
+    return d
+
+
+def _seg(segment) -> dict:
+    """A bodylist segment as a plain dict (no pydantic dependency)."""
+    return {"description": segment.description, "action": segment.action}
 
 
 if __name__ == "__main__":

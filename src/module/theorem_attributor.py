@@ -43,7 +43,7 @@ import asyncio
 import dspy
 from pydantic import BaseModel
 
-from .state import ASTNode, Entity, BodySegment, Proof, FIELDS
+from .state import State, ASTNode, Entity, BodySegment, Proof, FIELDS
 from .llm import text_lm
 
 
@@ -279,3 +279,23 @@ async def attribute_theorem(
     entity.bodylist = statement_bodylist
     entity.proofs = [proof] if proof else []
     return entity
+
+
+# --- LangGraph node: enrich the found Theorems with their attributes ---
+
+class TheoremAttributorNode:
+    """Fills in each found Theorem's self-contained attributes (incl. its proof), in place.
+
+    Runs after the Theorem finder, over the ``theorem_entities`` channel it produced. The
+    per-entity attributions are independent, so they run concurrently; the enriched entities
+    (mutated in place) are written back to the same channel."""
+
+    def __init__(self, module: Module | None = None):
+        self.module = module or Module()
+
+    async def run(self, state: State) -> dict:
+        nodes_by_id = {n.id: n for n in state.get("nodes", []) if n.id is not None}
+        entities = state.get("theorem_entities", [])
+        if entities:
+            await asyncio.gather(*(attribute_theorem(e, nodes_by_id, self.module) for e in entities))
+        return {"theorem_entities": entities}

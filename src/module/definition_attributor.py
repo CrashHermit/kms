@@ -38,10 +38,12 @@ about whether the enriched entity lands in ``entities.json`` today or a graph ve
 tomorrow.
 """
 
+import asyncio
+
 import dspy
 from pydantic import BaseModel
 
-from .state import ASTNode, Entity, BodySegment, FIELDS
+from .state import State, ASTNode, Entity, BodySegment, FIELDS
 from .llm import text_lm
 
 
@@ -237,3 +239,23 @@ async def attribute_definition(
     entity.contents = contents
     entity.bodylist = bodylist
     return entity
+
+
+# --- LangGraph node: enrich the found Definitions with their attributes ---
+
+class DefinitionAttributorNode:
+    """Fills in each found Definition's self-contained attributes, in place.
+
+    Runs after the Definition finder, over the ``definition_entities`` channel it produced.
+    The per-entity attributions are independent, so they run concurrently; the enriched
+    entities (mutated in place) are written back to the same channel."""
+
+    def __init__(self, module: Module | None = None):
+        self.module = module or Module()
+
+    async def run(self, state: State) -> dict:
+        nodes_by_id = {n.id: n for n in state.get("nodes", []) if n.id is not None}
+        entities = state.get("definition_entities", [])
+        if entities:
+            await asyncio.gather(*(attribute_definition(e, nodes_by_id, self.module) for e in entities))
+        return {"definition_entities": entities}
