@@ -31,11 +31,15 @@ Wired in by ``SplitterNode`` (bottom of file): it runs right after the seam merg
 the three finders, overwriting the `nodes` channel with the normalized stream.
 """
 
+import os
+from pathlib import Path
+
 import dspy
 from pydantic import BaseModel, Field
 
 from .state import State, ASTNode
 from .llm import text_lm
+from . import tracing
 
 # Same look-ahead budget shape as the finders (~4 chars/token). The splitter only needs
 # enough context to recognise a lead-in and the exercise run it introduces; a packed
@@ -88,9 +92,13 @@ class Signature(dspy.Signature):
 
     2. INSTRUCTION_POSITIONS — find any node that is an exercise LEAD-IN: a short directive
        that introduces a run of OTHER exercises and states a shared instruction. The decisive
-       test: a lead-in has NO reference number of its own and instead names a RANGE of
-       exercises it governs ("In Exercises 1.23-1.25, find the eigenvalues of each matrix.";
-       "For Exercises 5-6, determine whether the set is a subspace."). Return its position.
+       test: a lead-in has NO reference number of its own, yet gives an imperative meant for a
+       run of separately-numbered exercises that follow it. It may name an explicit RANGE
+       ("In Exercises 1.23-1.25, find the eigenvalues of each matrix."; "For Exercises 5-6,
+       determine whether the set is a subspace.") OR name no range at all — and the range-less
+       form is the COMMON one, so do NOT require a range: "In the following exercises, simplify
+       each expression.", "For the following exercises, find the gradient.", "Prove each of the
+       following." are all lead-ins. Tag either form. Return its position.
 
        CRITICAL: a node that BEGINS WITH ITS OWN EXERCISE NUMBER ("1.15 Perform each
        multiplication.", "✓ 1.17 For a homomorphism …", "1.22 Represent each linear map …") is
@@ -119,15 +127,38 @@ class Decision(BaseModel):
     instructions: set[int] = set()                # node ids that are lead-ins
 
 
+# Compiled few-shot program produced by `training/splitter/compile.py`. Loaded at serve
+# time if present so the data-optimized demonstrations ship with the pipeline; override the
+# path with KMS_SPLITTER_PROGRAM, or delete the file to fall back to the bare student.
+_COMPILED_PATH = os.environ.get("KMS_SPLITTER_PROGRAM", "training/splitter/compiled.json")
+
+
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None):
+    def __init__(self, lm: dspy.LM | None = None, compiled: bool = True):
         super().__init__()
         self.splitter = dspy.ChainOfThought(Signature)
         self.set_lm(lm or text_lm())
+        if compiled and Path(_COMPILED_PATH).exists():
+            self.load(_COMPILED_PATH)
+
+    def forward(self, current_nodes: list[WindowNode]) -> dspy.Prediction:
+        """Synchronous predictor pass — used at DSPy compile/eval time (optimizers and the
+        judge run modules synchronously). Serving uses ``aforward``; both share the one
+        ``self.splitter`` predictor, so demonstrations compiled here transfer to serving."""
+        return self.splitter(current_nodes=current_nodes)
 
     async def aforward(self, current_nodes: list[WindowNode]) -> tuple[list[NodeSplit], list[int]]:
         result = await self.splitter.acall(current_nodes=current_nodes)
-        return list(result.splits or []), list(result.instruction_positions or [])
+        splits, instruction_positions = list(result.splits or []), list(result.instruction_positions or [])
+        tracing.record(
+            "splitter",
+            inputs={"current_nodes": [n.model_dump() for n in current_nodes]},
+            outputs={
+                "splits": [s.model_dump() for s in splits],
+                "instruction_positions": instruction_positions,
+            },
+        )
+        return splits, instruction_positions
 
 
 def _window_from(nodes: list[ASTNode], cursor: int, budget: int) -> int:

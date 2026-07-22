@@ -51,10 +51,15 @@ class Identify(dspy.Signature):
     ordered list of its member nodes, and identify its header information plus where its
     solution begins:
 
-      * label — the problem's own label as written ("Example 4.1", "Exercise 12", "4.1
-        Example", "Problem 3"). Empty string if it carries no label.
-      * number — just the reference number inside that label ("4.1", "12", "3"). Empty if
-        there is none.
+      * label — the problem's own label as it appears at the very START of the problem
+        ("Example 4.1", "Exercise 12", "4.1 Example", "Problem 3"), INCLUDING a bare leading
+        reference number carrying no word ("925.", "3.14", "2.1.12"). Read only what LEADS the
+        first member node; empty string if it carries no label.
+      * number — just the reference number in that LEADING label ("4.1", "12", "3", "925",
+        "2.1.12"). This is the problem's OWN number at its start — NEVER a number that appears
+        later inside the statement as a cross-reference to another result. In "2.1.12 Prove
+        Proposition 2.1.13." the number is 2.1.12, not 2.1.13; in "3.15 ... use Theorem 3.7"
+        it is 3.15, not 3.7. Empty if there is none.
       * title — a short noun phrase naming what the problem is about ("Positive Definiteness
         of a Matrix", "Derivative of a Polynomial"). Not the word "Example" or "Exercise".
       * field — the single most relevant mathematical field, chosen ONLY from the given list.
@@ -67,7 +72,7 @@ class Identify(dspy.Signature):
     nodes: list[MemberNode] = dspy.InputField(description="The problem's member nodes, in order.")
     field_choices: list[str] = dspy.InputField(description="The allowed fields; choose exactly one.")
     label: str = dspy.OutputField(description="The problem's label as written, or empty string.")
-    number: str = dspy.OutputField(description="The reference number in the label, or empty string.")
+    number: str = dspy.OutputField(description="The problem's own LEADING reference number (never an in-text cross-reference), or empty string.")
     title: str = dspy.OutputField(description="Short noun phrase naming what the problem is about.")
     field: str = dspy.OutputField(description="Exactly one field from the given list.")
     solution_start: int = dspy.OutputField(description="Member position where the solution begins, or -1 if none shown.")

@@ -103,6 +103,28 @@ def text_lm() -> dspy.LM:
 
 
 @lru_cache(maxsize=1)
+def teacher_lm() -> dspy.LM:
+    """DeepSeek V4 (full, non-flash) — the TEACHER for DSPy optimization.
+
+    Used only at *compile* time, never at inference: a stronger model bootstraps
+    high-quality reasoning traces that, once filtered by a stage's metric, become
+    the few-shot demonstrations the flash ``text_lm`` student runs with. This lets
+    us drive stage quality from data + a metric instead of hand-tuning prompts.
+
+    Same DeepSeek API/key as the student; override TEACHER_MODEL to swap it. ``deepseek-v4-pro``
+    is a reasoning model (returns a ``reasoning_content`` channel) — we leave that thinking on,
+    since richer teacher traces are worth it and the parse-fragility trade-off that made us
+    disable thinking on the flash student doesn't matter for a compile-time-only model.
+    """
+    return dspy.LM(
+        os.environ.get("TEACHER_MODEL", "deepseek/deepseek-v4-pro"),
+        api_key=_require_key(DEEPSEEK_ENV_KEY, "sk-..."),
+        temperature=0.0,
+        max_tokens=8000,
+    )
+
+
+@lru_cache(maxsize=1)
 def corrector_lm() -> dspy.LM:
     """Qwen3-VL-235B (via OpenRouter) for the correction pass on the Mistral front-end.
 
