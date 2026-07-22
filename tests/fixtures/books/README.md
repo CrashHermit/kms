@@ -1,21 +1,38 @@
 # Book fixtures (PDF slices)
 
 Small page-slices of real math textbooks, committed so splitter/distributor
-stress tests reuse them without re-downloading the full (50–100 MB) books.
+stress tests reuse them without re-downloading the full (1–100 MB) books.
 
 Each slice was cut from the openly-licensed source PDF with `pypdfium2`
 (`PdfDocument.import_pages`); pages are **0-based** as in the source file.
+Coverage spans elementary drill (dense shared lead-ins) through
+advanced-undergraduate / graduate proof exercises (mostly self-contained,
+no lead-ins) — the two ends of the exercise-governance spectrum.
 
-| Fixture | Source | Pages (0-based) | Why it's here |
-|---|---|---|---|
-| `ea2e_ch1_review.pdf` | OpenStax *Elementary Algebra 2e* | 186–188 | Chapter-1 **Review Exercises**: many short "In the following exercises, …" lead-ins, each governing only 2–6 numbered exercises before the next lead-in, with sub-section headers ("Identify Multiples and Factors", …) interleaved. Hardest case for the **distributor** — over-extension across the next lead-in/header is the failure mode. |
-| `ea2e_sec1_3_exercises.pdf` | OpenStax *Elementary Algebra 2e* | 69–70 | A full **section exercise set** (§1.3): a `SECTION 1.3 EXERCISES` / "Practice Makes Perfect" header, dense lead-in runs, then an **"Everyday Math"** block whose word problems (255–257) carry their **own embedded directive** ("Use integers to write …"). Distributor must NOT treat those embedded directives as run-governing lead-ins. |
+| Fixture | Source | Level | Pages (0-based) | Exercise style / why it's here |
+|---|---|---|---|---|
+| `ea2e_ch1_review.pdf` | OpenStax *Elementary Algebra 2e* | elementary | 186–188 | Chapter-1 **Review**: many short "**In** the following exercises, …" lead-ins, each governing 2–6 numbered exercises before the next lead-in, with sub-section headers interleaved. Over-extension adversarial case for the **distributor**. |
+| `ea2e_sec1_3_exercises.pdf` | OpenStax *Elementary Algebra 2e* | elementary | 69–70 | A full **section exercise set** (§1.3) plus an **"Everyday Math"** block whose word problems carry their **own embedded directive** ("Use integers to write …"). Distributor must NOT treat those as run-governing lead-ins. |
+| `calc3_gradients_exercises.pdf` | OpenStax *Calculus Volume 3* | adv. undergrad | 392–393 | Multivariable/vector calc (gradients, directional derivatives). Uses the **"For** the following exercises, …" lead-in phrasing (a different wording from the algebra books) with `[T]` technology exercises interleaved between governed runs. |
+| `lebl_realanalysis_sec2_1_exercises.pdf` | Lebl *Basic Analysis I* | adv. undergrad / grad | 58–59 | Real analysis (sequences/limits). Every item is a **self-contained** "Exercise 2.1.8: Show that …" — **no shared lead-ins**. False-positive test: splitter must not tag proof exercises as lead-ins; distributor should stamp **nothing**. |
+| `lebl2_metricspaces_sec8_1_exercises.pdf` | Lebl *Basic Analysis II* | graduate | 17–18 | Metric spaces / vector spaces of functions (linear operators, dimension). Self-contained "Exercise 8.1.6: Show that L is a linear operator." — graduate proof style, same no-lead-in stress as Lebl I on harder content. |
 
-## Source & licence
+## Sources & licences
 
-OpenStax *Elementary Algebra 2e* — © Rice University, CC BY 4.0.
-Book page: https://openstax.org/details/books/elementary-algebra-2e
-Full PDF: `https://assets.openstax.org/oscms-prodcms/media/documents/elementary-algebra-2e_-_WEB.pdf`
+All slices are from works whose licences permit redistribution of excerpts
+(attribution / share-alike families). None are NoDerivs.
+
+- **OpenStax** *Elementary Algebra 2e*, *Calculus Volume 3* — © Rice University,
+  **CC BY 4.0**.
+  - https://openstax.org/details/books/elementary-algebra-2e
+  - https://openstax.org/details/books/calculus-volume-3
+  - PDFs under `https://assets.openstax.org/oscms-prodcms/media/documents/`
+- **Jiří Lebl**, *Basic Analysis: Introduction to Real Analysis*, Vol. I & II —
+  dual **CC BY-SA 4.0** / CC BY-NC-SA 4.0. https://www.jirka.org/ra/
+  (Vol I `realanal.pdf`, Vol II `realanal2.pdf`).
+
+> Note: Treil, *Linear Algebra Done Wrong* was evaluated but **excluded** — it is
+> CC BY-NC-**ND**, whose NoDerivs term makes redistributing excerpts unsafe.
 
 ## Re-slicing / adding fixtures
 
@@ -27,5 +44,7 @@ out.import_pages(src, [186, 187, 188])                    # 0-based page indices
 out.save("tests/fixtures/books/ea2e_ch1_review.pdf")
 ```
 
-To find lead-in-dense pages in a fresh book, scan page text for
-`in the following exercises` (case-insensitive) and rank by count.
+To find good pages in a fresh book, scan page text for the lead-in phrase
+(`in the following exercises` / `for the following exercises`, case-insensitive)
+and rank by count; for proof-style books, count `Exercise \d+\.\d+\.\d+`
+occurrences per page to find dense section-end exercise blocks.
