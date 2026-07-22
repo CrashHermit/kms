@@ -56,7 +56,7 @@ class WindowNode(BaseModel):
 
 class SplitExercise(BaseModel):
     """One exercise carved out of a packed list node: its own number and its own text."""
-    number: str = Field(description="The exercise's own reference number as written, e.g. '1.23'.")
+    number: str = Field(description="The exercise's own reference number as written, e.g. '1.23'. EMPTY for a leading continuation fragment that belongs to a previous exercise.")
     content: str = Field(description="The exercise's own statement text, copied verbatim, with its subparts, WITHOUT the leading number.")
 
 
@@ -73,8 +73,16 @@ class Signature(dspy.Signature):
     1. SPLITS — find any single node that packs TWO OR MORE numbered exercises into one block
        (usually a `list` node like "1.23 … 1.24 … 1.25 …"). Return that node's position and
        its exercises IN ORDER, each with its own `number` ("1.23") and its own `content` (that
-       exercise's statement text, copied verbatim, keeping its subparts (a)(b)(c) together and
+       exercise's statement text, copied VERBATIM — same wording, same LaTeX, same math, do not
+       paraphrase, reflow, or drop any subpart — keeping its subparts (a)(b)(c) together and
        keeping any incidental markers like a leading "✓", but WITHOUT the reference number).
+
+       PRESERVE A LEADING FRAGMENT: if the node BEGINS with text that belongs to a PREVIOUS
+       exercise (a continuation the layout left at the top of this node — e.g. trailing
+       subparts "(d) … (e) …" before the first numbered exercise here), return it as the FIRST
+       item with an EMPTY `number` and that fragment as its verbatim `content`, so nothing is
+       lost. Every character of the node must land in exactly one item, in order.
+
        A node holding only ONE exercise is NOT a split — leave it out. Worked examples,
        definitions, theorems, prose, headers are never splits.
 
