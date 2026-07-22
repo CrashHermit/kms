@@ -26,10 +26,28 @@ mistral = [
 ]
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "ruff>=0.9"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+# One tool for format + lint + import order. src-layout aware so `module`/`training`
+# resolve as first-party. Target the minimum supported interpreter.
+line-length = 100
+target-version = "py312"
+src = ["src", "."]
+
+[tool.ruff.lint]
+# Light, low-noise set: pyflakes (unused imports/vars, undefined names), import order,
+# pycodestyle errors, bugbear (likely bugs), pyupgrade (keeps the modern-typing house
+# style). Line length is owned by the formatter, and long DSPy `description=` / prompt
+# strings are intentional, so E501 is off.
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["module", "training"]
 
 [tool.pyright]
 venvPath = "."
