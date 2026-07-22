@@ -1,8 +1,8 @@
 """Definition attributor: deterministic content assembly around the two LLM passes.
 
-The identity pass (label/number/title/field + label_position) and the bodylist pass are
-injected via a scripted module, so these tests exercise the real assembly logic — dropping
-the flagged label node from `contents` — without dspy or network."""
+The identity pass (label/number/title/field) and the bodylist pass are injected via a
+scripted module, so these tests exercise the real assembly logic — peeling the label off
+the content (dropping a pure-label node, keeping a fused one) — without dspy or network."""
 
 import asyncio
 
@@ -37,7 +37,7 @@ def _run(entity, nodes, module):
 def test_flagged_label_node_is_dropped_from_contents():
     nodes = _nodes()
     entity = Entity(type=EntityType.DEFINITION, members=[0, 1, 2])
-    ident = Identity(label="1.2 Definition", number="1.2", title="Vector Space", field="algebra", label_position=0)
+    ident = Identity(label="1.2 Definition", number="1.2", title="Vector Space", field="algebra")
     module = _ScriptedModule(ident, [BodySegment(description="A vector space is a set $V$ ...", action="definition")])
     attrs = _run(entity, nodes, module)
 
@@ -45,26 +45,26 @@ def test_flagged_label_node_is_dropped_from_contents():
     assert attrs.number == "1.2"
     assert attrs.title == "Vector Space"
     assert attrs.field == "algebra"
-    # The pure-label node (position 0) is dropped; statement + math remain.
+    # The pure-label node ("1.2 Definition") strips to empty and is dropped; statement + math remain.
     assert attrs.contents == ["A vector space is a set $V$ ...", "$$V \\times V \\to V$$"]
     assert [s.action for s in attrs.bodylist] == ["definition"]
 
 
-def test_fused_label_keeps_all_members_in_contents():
+def test_fused_label_is_stripped_from_contents():
     node = ASTNode(type=NodeType.PARAGRAPH, content="Definition 1.2 A group is a set with ...", id=5, seg_index=0)
     entity = Entity(type=EntityType.DEFINITION, members=[5])
-    # label_position=-1: the label is fused into prose, so nothing is dropped.
-    ident = Identity(label="Definition 1.2", number="1.2", title="Group", field="algebra", label_position=-1)
+    # Fused label: the prefix is peeled off the first content string, the node is kept.
+    ident = Identity(label="Definition 1.2", number="1.2", title="Group", field="algebra")
     attrs = _run(entity, [node], _ScriptedModule(ident, []))
 
     assert attrs.number == "1.2"
-    assert attrs.contents == ["Definition 1.2 A group is a set with ..."]
+    assert attrs.contents == ["A group is a set with ..."]
 
 
 def test_no_label_leaves_number_none_and_keeps_members():
     node = ASTNode(type=NodeType.PARAGRAPH, content="A ring is a set with two operations ...", id=7, seg_index=0)
     entity = Entity(type=EntityType.DEFINITION, members=[7])
-    ident = Identity(label=None, number=None, title="Ring", field="algebra", label_position=-1)
+    ident = Identity(label=None, number=None, title="Ring", field="algebra")
     attrs = _run(entity, [node], _ScriptedModule(ident, []))
 
     assert attrs.label is None

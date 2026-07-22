@@ -39,10 +39,12 @@ about whether the enriched entity lands in ``entities.json`` today or a graph ve
 tomorrow.
 """
 
+import re
+
 import dspy
 from pydantic import BaseModel
 
-from .state import ASTNode, Entity, BodySegment
+from .state import ASTNode, Entity, NodeType, BodySegment
 from .llm import text_lm
 
 
@@ -77,11 +79,50 @@ ACTIONS_ALL = [
 # mislabelled a notation remark `assumption` and inverted premise/definition.
 DEFINITION_ACTIONS = ["premise", "definition", "assumption", "enumeration"]
 
+# Sentence splitting for the span-based ("units") bodylist path. A prose node is cut into
+# sentence units so the model can label sub-node pieces; display math and list/table blocks
+# stay whole. Math spans are masked first so a "." inside `$...$` never triggers a cut.
+_MATH_SPAN = re.compile(r"\$\$.*?\$\$|\$[^$]*\$", re.DOTALL)
+_SENTENCE_BOUNDARY = re.compile(r"(?<=[.!?])\s+")
+
+
+def _sentence_split(text: str) -> list[str]:
+    """Split prose into sentence units without ever cutting inside a `$...$`/`$$...$$` span."""
+    spans: list[str] = []
+
+    def _mask(mo: re.Match) -> str:
+        spans.append(mo.group(0))
+        return f"\x00{len(spans) - 1}\x00"
+
+    masked = _MATH_SPAN.sub(_mask, text)
+    out: list[str] = []
+    for piece in _SENTENCE_BOUNDARY.split(masked):
+        for i, s in enumerate(spans):
+            piece = piece.replace(f"\x00{i}\x00", s)
+        piece = piece.strip()
+        if piece:
+            out.append(piece)
+    return out
+
+
 class MemberNode(BaseModel):
     """One member node as the identity pass sees it: a local position and its content."""
     position: int
     type: str
     content: str | None = None
+
+
+class UnitNode(BaseModel):
+    """One atomic content unit (a sentence or a whole block) for the span-based bodylist."""
+    position: int
+    content: str
+
+
+class BodySpan(BaseModel):
+    """A bodylist piece as an inclusive [start, end] range of unit positions, plus its role."""
+    start: int
+    end: int
+    action: str
 
 
 class Identify(dspy.Signature):
@@ -99,11 +140,6 @@ class Identify(dspy.Signature):
         and not the word "Definition".
       * field — the single most relevant mathematical field, chosen ONLY from the given
         list. Pick exactly one.
-      * label_position — the `position` of the member node that is JUST the label (a node
-        whose whole content is the label, e.g. a heading "1.2 Definition"). Use -1 if the
-        label is instead fused into a prose node or the definition has no separate label
-        node. This lets the label node be dropped from the content; do not return the
-        position of a node that also carries the defining statement.
     """
 
     nodes: list[MemberNode] = dspy.InputField(description="The definition's member nodes, in order.")
@@ -112,7 +148,6 @@ class Identify(dspy.Signature):
     number: str = dspy.OutputField(description="The reference number in the label, or empty string.")
     title: str = dspy.OutputField(description="Short noun phrase naming the defined concept.")
     field: str = dspy.OutputField(description="Exactly one field from the given list.")
-    label_position: int = dspy.OutputField(description="Position of the pure-label member node, or -1 if none.")
 
 
 class Bodylist(dspy.Signature):
@@ -144,7 +179,14 @@ class Bodylist(dspy.Signature):
     `premise`, and do not split it across pieces.
 
     SEGMENTS: cut the content where its role changes; keep each piece contiguous and in the
-    original order. Concatenating the descriptions in order must reproduce the content.
+    original order.
+
+    PARTITION (critical): the pieces must exactly PARTITION the content. Every part of the
+    content belongs to EXACTLY ONE piece — never place the same text in two pieces (do not
+    repeat a sentence under two roles), and never drop any text. Reading the descriptions in
+    order, with nothing added and nothing removed, must reproduce the content exactly. If a
+    single sentence plays two roles, assign it the single most fitting one; do not emit it
+    twice.
 
     DESCRIPTIONS: copy each piece's text VERBATIM — reproduce all mathematics and LaTeX
     exactly as given, changing nothing.
@@ -157,13 +199,47 @@ class Bodylist(dspy.Signature):
     )
 
 
+class BodylistSpans(dspy.Signature):
+    r"""
+    Segment one mathematical DEFINITION into its logical pieces and label each with its role.
+    The content is already split into numbered UNITS (sentences and whole blocks). Group
+    consecutive units that share a role and return each group as an inclusive [start, end]
+    range of unit positions plus one action label — you do NOT rewrite any text.
+
+    THE FOUR ROLES (choose exactly one per piece):
+      * premise — a setup clause introducing the objects the definition is built from, before
+        the concept is fixed ("Let $S$ be a set."). Scaffolding, not the definition.
+      * definition — the clause that FIXES the concept's meaning: it names the thing or says
+        what it consists of / is called. A unit that only introduces notation for the newly
+        defined object is `definition`, even when phrased as a condition ("If ... then
+        denoted $S_n$").
+      * assumption — a condition/constraint that RESTRICTS the objects the definition applies
+        to, stated inline ("where $n \ge 3$"). A notation remark is NOT an assumption.
+      * enumeration — an itemized/numbered list of conditions, axioms, or cases. A whole
+        list block is one enumeration piece.
+
+    TYPICAL SHAPE: zero or more `premise` units, then a single `definition` unit/range that
+    fixes the concept, optionally followed by `assumption`/`enumeration`. Almost always
+    EXACTLY ONE `definition` piece.
+
+    PARTITION (critical): the ranges must COVER EVERY unit exactly once — contiguous, in
+    order, non-overlapping, from the first unit to the last. Do not skip a unit and do not
+    place a unit in two ranges.
+    """
+
+    units: list[UnitNode] = dspy.InputField(description="The definition's content as numbered units, in order.")
+    actions: list[str] = dspy.InputField(description="The allowed action labels for a definition; choose one per piece.")
+    pieces: list[BodySpan] = dspy.OutputField(
+        description="Ordered [start, end, action] ranges of unit positions; together they cover all units exactly once."
+    )
+
+
 class Identity(BaseModel):
     """The identity pass's result for one definition."""
     label: str | None = None
     number: str | None = None
     title: str | None = None
     field: str | None = None
-    label_position: int = -1
 
 
 class Module(dspy.Module):
@@ -173,6 +249,7 @@ class Module(dspy.Module):
         super().__init__()
         self.identify = dspy.Predict(Identify)
         self.bodylist = dspy.ChainOfThought(Bodylist)
+        self.spans = dspy.ChainOfThought(BodylistSpans)
         self.set_lm(lm or text_lm())
 
     async def identity(self, members: list[ASTNode]) -> Identity:
@@ -186,12 +263,24 @@ class Module(dspy.Module):
             number=(r.number or None),
             title=(r.title or None),
             field=(r.field if r.field in FIELDS else None),
-            label_position=(r.label_position if isinstance(r.label_position, int) else -1),
         )
 
     async def body(self, contents: str) -> list[BodySegment]:
         result = await self.bodylist.acall(contents=contents, actions=DEFINITION_ACTIONS)
         return [s for s in (result.bodylist or []) if s.action in DEFINITION_ACTIONS]
+
+    async def body_spans(self, units: list[str]) -> list[BodySegment]:
+        """Span-based bodylist: the model returns [start, end, action] ranges over the given
+        numbered units; descriptions are sliced from the units, so the model never rewrites
+        text and coverage is enforced deterministically (every unit lands in exactly one
+        piece — see ``_cover``)."""
+        if not units:
+            return []
+        result = await self.spans.acall(
+            units=[UnitNode(position=i, content=u) for i, u in enumerate(units)],
+            actions=DEFINITION_ACTIONS,
+        )
+        return _cover(units, list(result.pieces or []))
 
 
 def _members(entity: Entity, nodes_by_id: dict[int, ASTNode]) -> list[ASTNode]:
@@ -199,35 +288,124 @@ def _members(entity: Entity, nodes_by_id: dict[int, ASTNode]) -> list[ASTNode]:
     return [nodes_by_id[i] for i in entity.members if i in nodes_by_id]
 
 
-def _contents(members: list[ASTNode], label_position: int) -> list[str]:
-    """The content members as a list of sequence strings (AutoMathKG's `contents`),
-    dropping the node the identity pass flagged as the pure label."""
-    return [
-        m.content
-        for k, m in enumerate(members)
-        if k != label_position and m.content and m.content.strip()
+def _content_parts(
+    members: list[ASTNode], label: str | None
+) -> list[tuple[NodeType | None, str]]:
+    """The content members as (type, text) pairs, with the label peeled off the front.
+
+    The label is stripped from the *first* piece only (the finder anchors a definition's
+    span at its label). A standalone label node ("1.2 Definition") strips to empty and is
+    dropped; a fused label ("Definition 2.1. A sequence ...") leaves its statement, which is
+    kept. Crucially a content-bearing node is never dropped wholesale — that once silently
+    lost a defining sentence the identity pass mis-flagged as a label. The node type is kept
+    so the span path can split prose but leave math/list blocks whole."""
+    parts = [
+        (m.type, m.content)
+        for m in members
+        if m.content and m.content.strip()
     ]
+    if parts and label:  # peel the label off the first content piece; drop it if that empties it
+        typ, text = parts[0]
+        head = _strip_label_prefix(text, label)
+        parts = ([(typ, head)] if head.strip() else []) + parts[1:]
+    return parts
+
+
+def _units(parts: list[tuple[NodeType | None, str]]) -> list[str]:
+    """Atomic units for the span-based bodylist: prose split into sentences, other blocks
+    (display math, lists, tables) kept whole."""
+    units: list[str] = []
+    for typ, content in parts:
+        c = (content or "").strip()
+        if not c:
+            continue
+        if typ in (NodeType.PARAGRAPH, None):
+            units.extend(_sentence_split(c))
+        else:
+            units.append(c)
+    return units
+
+
+def _cover(units: list[str], pieces: list[BodySpan]) -> list[BodySegment]:
+    """Turn the model's [start, end, action] ranges into a clean partition of the units.
+
+    Coverage is enforced here, not trusted from the model: each unit gets the label of the
+    first valid range covering it; any unit left uncovered inherits its neighbour's label
+    (forward then backward fill, `definition` as the last resort). Consecutive same-label
+    units are then coalesced into segments whose description is their joined text. The result
+    always covers every unit exactly once — no duplication, no omission."""
+    n = len(units)
+    labels: list[str | None] = [None] * n
+    for p in sorted(pieces, key=lambda s: s.start):
+        if p.action not in DEFINITION_ACTIONS:
+            continue
+        start = max(0, min(p.start, n - 1))
+        end = max(start, min(p.end, n - 1))
+        for i in range(start, end + 1):
+            if labels[i] is None:
+                labels[i] = p.action
+    last = None
+    for i in range(n):  # forward-fill uncovered units
+        last = labels[i] = labels[i] or last
+    nxt = None
+    for i in range(n - 1, -1, -1):  # back-fill a leading gap
+        nxt = labels[i] = labels[i] or nxt
+    labels = [lab or "definition" for lab in labels]
+
+    segments: list[BodySegment] = []
+    i = 0
+    while i < n:
+        j = i
+        while j + 1 < n and labels[j + 1] == labels[i]:
+            j += 1
+        segments.append(BodySegment(description=" ".join(units[i:j + 1]), action=labels[i]))
+        i = j + 1
+    return segments
+
+
+def _strip_label_prefix(text: str, label: str | None) -> str:
+    """Remove a *fused* label ("Definition 1.3.") from the front of the first content string.
+
+    The identity pass records the label separately; when it was fused into a prose node
+    (no standalone label node to drop) the label text would otherwise sit in `contents`
+    twice. Keyed on the LLM-extracted label string via a plain prefix match — no regex.
+    Returns the text unchanged if it does not start with the label."""
+    if not label or not text:
+        return text
+    body = text.lstrip()
+    lab = label.strip().rstrip(".")
+    if lab and body[: len(lab)].lower() == lab.lower():
+        return body[len(lab):].lstrip(" .:\t\n")
+    return text
 
 
 async def attribute_definition(
     entity: Entity,
     nodes_by_id: dict[int, ASTNode],
     module: Module | None = None,
+    mode: str = "copy",
 ) -> Entity:
     """Fill in the self-contained attributes on one Definition entity, in place.
 
     One LLM call identifies label/number/title/field (and points at the label node); the
     content members are assembled deterministically minus that label node; a second LLM
-    call builds the bodylist. The attributes are written onto the passed entity (the same
-    entity the finder produced) and it is returned. Persistence-agnostic: whether the
-    enriched entity is dumped to JSON or loaded into the graph is the caller's concern.
+    call builds the bodylist. ``mode`` picks that second call: ``"copy"`` has the model
+    write each description verbatim; ``"spans"`` splits the content into numbered units and
+    has the model return unit ranges, so the partition is enforced deterministically. The
+    attributes are written onto the passed entity (the same entity the finder produced) and
+    it is returned. Persistence-agnostic: whether the enriched entity is dumped to JSON or
+    loaded into the graph is the caller's concern.
     """
     module = module or Module()
     members = _members(entity, nodes_by_id)
     ident = await module.identity(members)
-    contents = _contents(members, ident.label_position)
-    blob = "\n\n".join(contents)
-    bodylist = await module.body(blob) if blob else []
+    parts = _content_parts(members, ident.label)
+    contents = [text for _, text in parts]
+    if mode == "spans":
+        bodylist = await module.body_spans(_units(parts))
+    else:
+        blob = "\n\n".join(contents)
+        bodylist = await module.body(blob) if blob else []
 
     entity.label = ident.label
     entity.number = ident.number
