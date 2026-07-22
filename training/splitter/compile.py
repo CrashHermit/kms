@@ -70,7 +70,7 @@ def main(traces_path: str, out_path: str | Path = OUT_DEFAULT) -> None:
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     compiled.save(str(out_path))
-    n_demos = len(getattr(compiled.splitter, "demos", []))
+    n_demos = sum(len(getattr(p, "demos", [])) for _, p in compiled.named_predictors())
     print(f"saved {n_demos} demo(s) -> {out_path}")
 
 
