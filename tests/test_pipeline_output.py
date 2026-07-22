@@ -44,3 +44,16 @@ def test_write_entities_is_a_flat_list_with_members_into_nodes(tmp_path):
         {"id": 0, "type": "definition", "members": [0]},
         {"id": 1, "type": "theorem", "members": [1, 2]},
     ]
+
+
+def test_write_entities_serializes_the_instruction_attribute(tmp_path):
+    entities = [
+        Entity(type=EntityType.PROBLEM, members=[3], id=0, number="1.23",
+               contents=["A"], instruction="find the eigenvalues"),
+    ]
+    _write_entities(entities, tmp_path)
+    payload = json.loads((tmp_path / "entities.json").read_text())
+    assert payload == [{
+        "id": 0, "type": "problem", "members": [3],
+        "number": "1.23", "instruction": "find the eigenvalues", "contents": ["A"],
+    }]

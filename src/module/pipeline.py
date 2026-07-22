@@ -11,23 +11,29 @@ sequential nodes (their cursor-walk cannot be sharded) that fan out in parallel 
 seam-merge collect.
 
 Stage order:
-    corrector -> extractor -> seam_merger (even, odd)
+    corrector -> extractor -> seam_merger (even, odd) -> splitter
               -> {problem, definition, theorem}_finder -> {…}_attributor
+              -> (problem chain only) instruction_distributor
 
 Two phases split at the seam merger. Ingestion is per-page: `segments` (already carrying
 Mistral's markdown + figures) is the backbone, and the corrector proofreads each page's
 transcription against its image before the (purely structural) extractor parses it into
 nodes. The seam merger heals nodes split across page breaks and then flattens the healed
-backbone into the global ordered `nodes` list (stable ids + seg_index). Three per-type
-chains then run in parallel: each finder walks `nodes` to build its entity overlay, and its
-attributor enriches those entities with the self-contained AutoMathKG attributes (label,
-number, title, field, contents, bodylist; plus proofs for theorems and solutions for
-problems). After the graph returns, `run()` concatenates the three overlays into one flat,
-document-ordered entity list (global ids) and writes both the entities and the node stream
-itself — the nodes are persisted for provenance so an entity's `members` resolve to real
-source chunks. Cross-entity attributes (refs/references_tactics) and the instruction
-governor are later graph-tier work. Assembly walks `nodes` after the graph returns,
-consulting `segments` only for picture inventories.
+backbone into the global ordered `nodes` list (stable ids + seg_index). The splitter then
+normalises that stream — it rewrites any node that packs several exercises into one node per
+exercise (and tags lead-in nodes `role="instruction"`) — so the finders see atomic exercises
+and no longer collapse them into duplicate-membered entities. Three per-type chains then run
+in parallel: each finder walks `nodes` to build its entity overlay, and its attributor
+enriches those entities with the self-contained AutoMathKG attributes (label, number, title,
+field, contents, bodylist; plus proofs for theorems and solutions for problems). After the
+graph returns, `run()` concatenates the three overlays into one flat, document-ordered entity
+list (global ids) and writes both the entities and the node stream itself — the nodes are
+persisted for provenance so an entity's `members` resolve to real source chunks. On the
+problem chain one further stage, the instruction distributor, then stamps `Problem.instruction`
+from the splitter's tagged lead-in nodes (the shared directive of a grouped-exercise run).
+Cross-entity attributes (refs/references_tactics) are later graph-tier work. Assembly walks
+`nodes` after the graph returns, consulting `segments` only
+for picture inventories.
 """
 
 from pathlib import Path
@@ -45,6 +51,8 @@ from .theorem_finder import TheoremFinderNode
 from .problem_attributor import ProblemAttributorNode
 from .definition_attributor import DefinitionAttributorNode
 from .theorem_attributor import TheoremAttributorNode
+from .exercise_splitter import SplitterNode
+from .instruction_distributor import InstructionDistributorNode
 
 
 def build_graph():
@@ -64,6 +72,8 @@ def build_graph():
     problem_attributor = ProblemAttributorNode()
     definition_attributor = DefinitionAttributorNode()
     theorem_attributor = TheoremAttributorNode()
+    splitter = SplitterNode()
+    instruction_distributor = InstructionDistributorNode()
 
     g = StateGraph(State)
 
@@ -82,6 +92,8 @@ def build_graph():
     g.add_node("problem_attributor", problem_attributor.run)
     g.add_node("definition_attributor", definition_attributor.run)
     g.add_node("theorem_attributor", theorem_attributor.run)
+    g.add_node("splitter", splitter.run)
+    g.add_node("instruction_distributor", instruction_distributor.run)
 
     # A stage's dispatch is a conditional edge off the previous collect: it either fans
     # out Sends to the worker or short-circuits straight to its own collect.
@@ -98,20 +110,32 @@ def build_graph():
     g.add_conditional_edges("seam_even_collect", seam.dispatch_odd, ["seam_odd_worker", "seam_odd_collect"])
     g.add_edge("seam_odd_worker", "seam_odd_collect")
 
-    # Three per-type chains run in parallel off the seam collect: each finder does a
-    # sequential cursor-walk (not shardable) to build its overlay, then its attributor
-    # enriches those entities with the self-contained AutoMathKG attributes. Each chain
-    # writes only its own entity channel; overlap between overlays is fine (members are
-    # node-id pointers). `run()` concatenates the three channels after the graph returns.
+    # The splitter runs once after the seam collect, normalising the node stream so each
+    # exercise is its own node (and lead-ins are tagged) before any finder walks it.
+    g.add_edge("seam_odd_collect", "splitter")
+
+    # Three per-type chains run in parallel off the splitter: each finder does a sequential
+    # cursor-walk (not shardable) to build its overlay, then its attributor enriches those
+    # entities with the self-contained AutoMathKG attributes. Each chain writes only its own
+    # entity channel; overlap between overlays is fine (members are node-id pointers).
+    # `run()` concatenates the three channels after the graph returns.
     chains = [
         ("problem_finder", "problem_attributor"),
         ("definition_finder", "definition_attributor"),
         ("theorem_finder", "theorem_attributor"),
     ]
     for finder, attributor in chains:
-        g.add_edge("seam_odd_collect", finder)
+        g.add_edge("splitter", finder)
         g.add_edge(finder, attributor)
-        g.add_edge(attributor, END)
+
+    # The definition and theorem chains end at their attributor. The problem chain has one
+    # more step: the instruction distributor stamps `Problem.instruction` from the splitter's
+    # tagged lead-in nodes, and must run after the attributor because it matches on each
+    # problem's `number` (which the attributor fills).
+    g.add_edge("definition_attributor", END)
+    g.add_edge("theorem_attributor", END)
+    g.add_edge("problem_attributor", "instruction_distributor")
+    g.add_edge("instruction_distributor", END)
 
     return g.compile()
 
@@ -146,7 +170,9 @@ def _flatten_entities(result: dict, nodes: list) -> list:
     """Concatenate the three per-type finder overlays into one flat, document-ordered
     entity list and assign each a global id. The overlays are independent and may
     reference the same node more than once (members are node-id pointers) — they are
-    concatenated, not merged."""
+    concatenated, not merged. Because the splitter made exercise nodes atomic upstream,
+    the problem finder already emits one entity per exercise with distinct members, so no
+    coarse-vs-fine reconciliation is needed here."""
     entities = (
         result.get("problem_entities", [])
         + result.get("definition_entities", [])
@@ -171,6 +197,7 @@ def _write_nodes(nodes: list, output_dir: Path) -> Path:
             "type": node.type.value if node.type else None,
             "content": node.content,
             "seg_index": node.seg_index,
+            **({"role": node.role} if node.role else {}),
         }
         for node in nodes
     ]
@@ -199,7 +226,7 @@ def _entity_payload(e) -> dict:
     set. Structured attributes (bodylist/proofs/solutions) are unpacked by hand rather than
     via pydantic `.model_dump()` so this stays importable under the test stubs."""
     d = {"id": e.id, "type": e.type.value, "members": e.members}
-    for key in ("label", "number", "title", "field"):
+    for key in ("label", "number", "title", "field", "instruction"):
         value = getattr(e, key)
         if value is not None:
             d[key] = value

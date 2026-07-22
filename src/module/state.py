@@ -160,11 +160,16 @@ class ASTNode:
     source of truth; `id` is how every later stage and the entity overlay reference a
     node, and `seg_index` is retained only so the assembler can resolve `![N]()`
     picture placeholders against the right page's pictures.
+
+    `role` is a non-structural annotation the splitter may set (currently only "instruction",
+    marking an exercise lead-in). It is kept off `type` deliberately: `type` is the purely
+    structural taxonomy, `role` is an entity-layer hint that rides along on the node.
     """
     type: NodeType | None = None
     content: str | None = None
     id: int | None = None              # stable global id, assigned once when the flat list is born
     seg_index: int | None = None       # originating page, for picture resolution after flattening
+    role: str | None = None            # non-structural annotation (e.g. "instruction" lead-in), set by the splitter
 
 
 @dataclass
@@ -192,8 +197,10 @@ class State(TypedDict, total=False):
     The three `*_entities` channels are each written once, by their own finder (the
     finders run in parallel over `nodes`). They are independent sparse overlays and may
     reference the same node from more than one entity — that is fine, members are node-id
-    pointers. `run()` concatenates the three into one flat, document-ordered entity list
-    with global ids for the emitted `entities.json`.
+    pointers. Because the splitter has already made exercise nodes atomic (one node per
+    exercise), the problem finder emits one entity per exercise with distinct members — no
+    coarse-vs-fine reconciliation is needed. `run()` concatenates the three into one flat,
+    document-ordered entity list with global ids for the emitted `entities.json`.
 
     The `*_results` channels are map-reduce scratch space: parallel Send workers append
     entries and the stage's collect step drains them back into the active backbone. They
