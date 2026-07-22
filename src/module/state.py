@@ -138,6 +138,7 @@ class Entity:
     proofs: list[Proof] = field(default_factory=list) # Theorem-only: its proof(s)
     solutions: list[Solution] = field(default_factory=list)  # Problem-only: its solution(s)
     field: str | None = None                          # mathematical field (fixed taxonomy)
+    instruction: str | None = None                    # Problem-only: shared exercise-group directive
 
 
 @dataclass
