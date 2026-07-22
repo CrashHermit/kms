@@ -129,13 +129,17 @@ class Bodylist(dspy.Signature):
         ...", "where $n \ge 3$"). A notation/abbreviation remark is NOT an assumption, even
         when it opens with "if".
       * enumeration — an itemized or numbered list of conditions, axioms, or cases (e.g. a
-        numbered list of vector-space axioms). The whole list is ONE enumeration piece.
+        numbered list of vector-space axioms). The whole list is ONE enumeration piece:
+        never lift an individual item out as its own segment, and never repeat an item's
+        text in another piece.
 
     TYPICAL SHAPE: zero or more `premise` setup clauses, then a single `definition` clause
     that fixes the concept, optionally followed by `assumption`/`enumeration` pieces for its
     conditions. A definition has almost always EXACTLY ONE `definition` piece — the clause
     that says what the concept is or is called. Do not label the core defining clause
-    `premise`, and do not split it across pieces.
+    `premise`, and do not split it across pieces. A lead-in of the form "X is Y if ...:" or
+    "... such that:" that introduces a following list is itself the `definition` clause (the
+    list after it is the `enumeration`), NOT a premise.
 
     SEGMENTS: cut the content where its role changes; keep each piece contiguous and in the
     original order.
