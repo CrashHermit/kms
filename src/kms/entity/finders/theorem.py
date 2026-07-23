@@ -36,8 +36,9 @@ in parallel with the Problem and Definition finders.
 import dspy
 from pydantic import BaseModel, Field
 
-from .llm import text_lm
-from .state import ASTNode, Entity, EntityType, State
+from kms.core.llm import text_lm
+from kms.core.models import ASTNode, Entity, EntityType
+from kms.core.state import State
 
 # Soft look-ahead budget (~4 chars/token). A single node larger than the budget still
 # forms a window (at least one node). When the only theorem in a window reaches its edge,
@@ -121,7 +122,7 @@ class Signature(dspy.Signature):
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None):
+    def __init__(self, lm: dspy.LM | None = None) -> None:
         super().__init__()
         self.finder = dspy.ChainOfThought(Signature)
         self.set_lm(lm or text_lm())
@@ -230,7 +231,7 @@ class TheoremFinderNode:
     this is a plain graph node rather than the map-reduce dispatch/worker/collect shape
     the parallel stages use."""
 
-    def __init__(self, module: Module | None = None):
+    def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
     async def run(self, state: State) -> dict:

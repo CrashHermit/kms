@@ -2,8 +2,9 @@ import dspy
 from langgraph.types import Send
 from pydantic import BaseModel, Field
 
-from .llm import text_lm
-from .state import ASTNode, NodeType, Segment, State
+from kms.core.llm import text_lm
+from kms.core.models import ASTNode, NodeType, Segment, merge_results_into_segments
+from kms.core.state import State
 
 
 class DSPyModel(BaseModel):
@@ -70,21 +71,21 @@ class Signature(dspy.Signature):
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None):
+    def __init__(self, lm: dspy.LM | None = None) -> None:
         super().__init__()
         self.extractor = dspy.ChainOfThought(Signature)
         self.set_lm(lm or text_lm())
 
-    async def aforward(self, segment_markdown: str):
+    async def aforward(self, segment_markdown: str) -> list[DSPyModel]:
         result = await self.extractor.acall(segment_markdown=segment_markdown)
-        return dspy.Prediction(nodes=result.nodes)
+        return list(result.nodes or [])
 
 
 # --- LangGraph node: parse each segment's markdown into AST nodes ---
 
 
 class ExtractorNode:
-    def __init__(self, module: Module | None = None):
+    def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
     def dispatch(self, state: State) -> list[Send] | str:
@@ -102,14 +103,13 @@ class ExtractorNode:
     async def worker(self, state: dict) -> dict:
         """Parse one segment's markdown into a flat list of AST nodes."""
         segment: Segment = state["segment"]
-        prediction = await self.module.aforward(segment_markdown=segment.content)
-        nodes = [ASTNode(type=node.type, content=node.content) for node in prediction.nodes]
+        extracted = await self.module.aforward(segment_markdown=segment.content)
+        nodes = [ASTNode(type=node.type, content=node.content) for node in extracted]
         return {"extract_results": [(segment.index, nodes)]}
 
     def collect(self, state: State) -> dict:
         """Merge each segment's extracted AST nodes back into the ordered backbone."""
-        nodes_by_index = dict(state.get("extract_results", []))
-        for segment in state["segments"]:
-            if segment.index in nodes_by_index:
-                segment.nodes = nodes_by_index[segment.index]
-        return {"segments": state["segments"]}
+        segments = merge_results_into_segments(
+            state["segments"], state.get("extract_results", []), "nodes"
+        )
+        return {"segments": segments}

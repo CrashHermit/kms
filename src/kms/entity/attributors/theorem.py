@@ -43,8 +43,9 @@ import asyncio
 import dspy
 from pydantic import BaseModel
 
-from .llm import text_lm
-from .state import FIELDS, ASTNode, BodySegment, Entity, Proof, State
+from kms.core.llm import text_lm
+from kms.core.models import FIELDS, ASTNode, BodySegment, Entity, Proof
+from kms.core.state import State
 
 # Subsets of ACTIONS_ALL for the two contexts a theorem's bodylist runs in. A STATEMENT is a
 # hypothesis→conclusion assertion (no reasoning steps, no defining); a PROOF is a reasoning
@@ -192,7 +193,7 @@ class Identity(BaseModel):
 class Module(dspy.Module):
     """Runs the identity pass and the two bodylist passes (statement, proof) for one theorem."""
 
-    def __init__(self, lm: dspy.LM | None = None):
+    def __init__(self, lm: dspy.LM | None = None) -> None:
         super().__init__()
         self.identify = dspy.Predict(Identify)
         self.statement_bodylist = dspy.ChainOfThought(StatementBodylist)
@@ -311,7 +312,7 @@ class TheoremAttributorNode:
     per-entity attributions are independent, so they run concurrently; the enriched entities
     (mutated in place) are written back to the same channel."""
 
-    def __init__(self, module: Module | None = None):
+    def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
     async def run(self, state: State) -> dict:

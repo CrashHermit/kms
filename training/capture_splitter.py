@@ -20,12 +20,12 @@ from pathlib import Path
 
 from langgraph.graph import END, START, StateGraph
 
-from module import mistral_ocr
-from module.corrector import CorrectorNode
-from module.exercise_splitter import SplitterNode
-from module.extractor import ExtractorNode
-from module.seam_merger import SeamMergerNode
-from module.state import State
+from kms.core.state import State
+from kms.entity.splitter import SplitterNode
+from kms.ingestion import ocr as mistral_ocr
+from kms.ingestion.corrector import CorrectorNode
+from kms.ingestion.extractor import ExtractorNode
+from kms.ingestion.seam_merger import SeamMergerNode
 
 FIXTURES = Path("tests/fixtures/books")
 

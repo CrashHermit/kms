@@ -1,7 +1,7 @@
 """Correction pass — pure dispatch/collect + the divergence guard. No network/LLM."""
 
-from module.corrector import CorrectorNode, _normalize_math_delimiters, _within_tolerance
-from module.state import Segment
+from kms.core.models import Segment
+from kms.ingestion.corrector import CorrectorNode, _normalize_math_delimiters, _within_tolerance
 
 # Keeps the node's pure dispatch/collect off the real (vision) LLM constructor.
 SENTINEL = object()
@@ -39,14 +39,12 @@ def test_normalize_math_delimiters_leaves_dollars_and_prose_untouched():
 
 def test_worker_output_is_delimiter_normalized_when_correction_rejected():
     # A runaway correction is rejected (kept original), but the kept text is still normalized.
-    # image_path="" -> load_dspy_image returns None, so the worker needs no image file on disk.
+    # image_path="" -> _load_dspy_image returns None, so the worker needs no image file on disk.
     seg = _seg(0, r"kept \(x\) original", image_path="")
 
     class _RunawayModule:
         async def aforward(self, page_image, transcription):
-            import dspy
-
-            return dspy.Prediction(corrected="x" * 10_000)  # rejected by the guard
+            return "x" * 10_000  # rejected by the guard
 
     import asyncio
 

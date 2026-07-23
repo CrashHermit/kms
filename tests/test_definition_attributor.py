@@ -6,8 +6,8 @@ the content (dropping a pure-label node, keeping a fused one) — without dspy o
 
 import asyncio
 
-from module.definition_attributor import Identity, attribute_definition
-from module.state import ASTNode, BodySegment, Entity, EntityType, NodeType
+from kms.core.models import ASTNode, BodySegment, Entity, EntityType, NodeType
+from kms.entity.attributors.definition import Identity, attribute_definition
 
 
 def _nodes():

@@ -36,26 +36,32 @@ Cross-entity attributes (refs/references_tactics) are later graph-tier work. Ass
 for picture inventories.
 """
 
+import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from langgraph.graph import END, START, StateGraph
 
-from .assembler import assemble
-from .corrector import CorrectorNode
-from .definition_attributor import DefinitionAttributorNode
-from .definition_finder import DefinitionFinderNode
-from .exercise_splitter import SplitterNode
-from .extractor import ExtractorNode
-from .instruction_distributor import InstructionDistributorNode
-from .problem_attributor import ProblemAttributorNode
-from .problem_finder import ProblemFinderNode
-from .seam_merger import SeamMergerNode
-from .state import State
-from .theorem_attributor import TheoremAttributorNode
-from .theorem_finder import TheoremFinderNode
+from kms.core.models import ASTNode, BodySegment, Entity
+from kms.core.state import State
+from kms.entity.attributors.definition import DefinitionAttributorNode
+from kms.entity.attributors.problem import ProblemAttributorNode
+from kms.entity.attributors.theorem import TheoremAttributorNode
+from kms.entity.finders.definition import DefinitionFinderNode
+from kms.entity.finders.problem import ProblemFinderNode
+from kms.entity.finders.theorem import TheoremFinderNode
+from kms.entity.instruction_distributor import InstructionDistributorNode
+from kms.entity.splitter import SplitterNode
+from kms.ingestion.corrector import CorrectorNode
+from kms.ingestion.extractor import ExtractorNode
+from kms.ingestion.seam_merger import SeamMergerNode
+from kms.output.assembler import assemble
+
+if TYPE_CHECKING:
+    from langgraph.graph.state import CompiledStateGraph
 
 
-def build_graph():
+def build_graph() -> "CompiledStateGraph":
     """Assemble and compile the LangGraph pipeline over the shared State.
 
     A single straight path: the correction pass proofreads each Mistral-transcribed
@@ -160,9 +166,9 @@ async def run(
     Returns the path of the assembled document.
     """
     output_dir = Path(output_dir)
-    from . import mistral_ocr
+    from kms.ingestion import ocr
 
-    segments = mistral_ocr.extract(pdf_path, output_dir=output_dir, pages=pages)
+    segments = ocr.extract(pdf_path, output_dir=output_dir, pages=pages)
     graph = build_graph()
     result = await graph.ainvoke({"segments": segments}, {"recursion_limit": 1000})
     nodes = result["nodes"]
@@ -172,7 +178,7 @@ async def run(
     return written
 
 
-def _flatten_entities(result: dict, nodes: list) -> list:
+def _flatten_entities(result: dict, nodes: list[ASTNode]) -> list[Entity]:
     """Concatenate the three per-type finder overlays into one flat, document-ordered
     entity list and assign each a global id. The overlays are independent and may
     reference the same node more than once (members are node-id pointers) — they are
@@ -192,11 +198,9 @@ def _flatten_entities(result: dict, nodes: list) -> list:
     return entities
 
 
-def _write_nodes(nodes: list, output_dir: Path) -> Path:
+def _write_nodes(nodes: list[ASTNode], output_dir: Path) -> Path:
     """Persist the flat node stream as JSON for provenance — an entity's `members` are node
     ids into this file, so the later graph phase can link an entity to its source chunks."""
-    import json
-
     payload = [
         {
             "id": node.id,
@@ -207,27 +211,25 @@ def _write_nodes(nodes: list, output_dir: Path) -> Path:
         }
         for node in nodes
     ]
-    path = Path(output_dir) / "nodes.json"
+    path = output_dir / "nodes.json"
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return path
 
 
-def _write_entities(entities: list, output_dir: Path) -> Path:
+def _write_entities(entities: list[Entity], output_dir: Path) -> Path:
     """Persist the flat entity overlay as JSON beside the assembled document — the artifact
     the later graph phase (edges, fusion, completion) consumes. Each entity carries `{id,
     type, members}` (members are node ids into `nodes.json`) plus whatever self-contained
     attributes its attributor filled in; unset attributes are omitted, so a bare (un-attributed)
     entity serializes to just `{id, type, members}`. This is a debug/inspection dump of what
     the entity holds, not a designed schema — the graph tier will own persistence."""
-    import json
-
     payload = [_entity_payload(e) for e in entities]
-    path = Path(output_dir) / "entities.json"
+    path = output_dir / "entities.json"
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return path
 
 
-def _entity_payload(e) -> dict:
+def _entity_payload(e: Entity) -> dict:
     """One entity as a JSON-ready dict: id/type/members always, then any attribute that is
     set. Structured attributes (bodylist/proofs/solutions) are unpacked by hand rather than
     via pydantic `.model_dump()` so this stays importable under the test stubs."""
@@ -249,16 +251,6 @@ def _entity_payload(e) -> dict:
     return d
 
 
-def _seg(segment) -> dict:
+def _seg(segment: BodySegment) -> dict:
     """A bodylist segment as a plain dict (no pydantic dependency)."""
     return {"description": segment.description, "action": segment.action}
-
-
-if __name__ == "__main__":
-    import asyncio
-    import sys
-
-    pdf = sys.argv[1] if len(sys.argv) > 1 else "test.pdf"
-    out_dir = sys.argv[2] if len(sys.argv) > 2 else "output"
-    written = asyncio.run(run(pdf, output_dir=out_dir))
-    print(f"Wrote assembled document to: {written}")

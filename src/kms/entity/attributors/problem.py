@@ -34,8 +34,9 @@ import asyncio
 import dspy
 from pydantic import BaseModel
 
-from .llm import text_lm
-from .state import FIELDS, ASTNode, Entity, Solution, State
+from kms.core.llm import text_lm
+from kms.core.models import FIELDS, ASTNode, Entity, Solution
+from kms.core.state import State
 
 
 class MemberNode(BaseModel):
@@ -98,7 +99,7 @@ class Identity(BaseModel):
 class Module(dspy.Module):
     """Runs the single identity pass for one problem (no bodylist passes)."""
 
-    def __init__(self, lm: dspy.LM | None = None):
+    def __init__(self, lm: dspy.LM | None = None) -> None:
         super().__init__()
         self.identify = dspy.Predict(Identify)
         self.set_lm(lm or text_lm())
@@ -194,7 +195,7 @@ class ProblemAttributorNode:
     per-entity attributions are independent, so they run concurrently; the enriched entities
     (mutated in place) are written back to the same channel."""
 
-    def __init__(self, module: Module | None = None):
+    def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
     async def run(self, state: State) -> dict:

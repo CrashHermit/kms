@@ -24,8 +24,8 @@ from pathlib import Path
 
 import dspy
 
-from module.instruction_distributor import Module as DistributorModule
-from module.llm import teacher_lm, text_lm
+from kms.core.llm import teacher_lm, text_lm
+from kms.entity.instruction_distributor import Module as DistributorModule
 from training.distributor.dataset import load_runs, load_traces
 from training.distributor.metric import distributor_score
 

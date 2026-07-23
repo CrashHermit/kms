@@ -34,15 +34,30 @@ conditional-output variant (emit a sentinel when the page is already clean, to s
 rewrite output) is a drop-in future optimization behind the same interface.
 """
 
+import base64
+from pathlib import Path
+
 import dspy
 from langgraph.types import Send
 
-from .llm import corrector_lm
-from .state import Segment, State, load_dspy_image
+from kms.core.llm import corrector_lm
+from kms.core.models import Segment, merge_results_into_segments
+from kms.core.state import State
 
 # A correction should be a light edit; reject anything outside this band of the
 # original length as a runaway rewrite or a truncation.
 _TOLERANCE = 0.30
+
+
+def _load_dspy_image(path: str | None) -> dspy.Image | None:
+    """Load a PNG from disk into a dspy.Image (base64 data URL), or None if no path.
+
+    The corrector is the only stage that needs a page image at the LLM boundary, so this
+    dspy-specific helper lives here rather than in the (dspy-free) core models."""
+    if not path:
+        return None
+    encoded = base64.b64encode(Path(path).read_bytes()).decode("utf-8")
+    return dspy.Image(url=f"data:image/png;base64,{encoded}")
 
 
 def _within_tolerance(original: str, corrected: str) -> bool:
@@ -114,21 +129,21 @@ class Signature(dspy.Signature):
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None):
+    def __init__(self, lm: dspy.LM | None = None) -> None:
         super().__init__()
         self.proofreader = dspy.Predict(Signature)
         self.set_lm(lm or corrector_lm())
 
-    async def aforward(self, page_image: dspy.Image, transcription: str):
+    async def aforward(self, page_image: dspy.Image, transcription: str) -> str:
         result = await self.proofreader.acall(page_image=page_image, transcription=transcription)
-        return dspy.Prediction(corrected=result.corrected)
+        return result.corrected or ""
 
 
 # --- LangGraph node: proofread each Mistral-transcribed page against its image ---
 
 
 class CorrectorNode:
-    def __init__(self, module: Module | None = None):
+    def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
     def dispatch(self, state: State) -> list[Send] | str:
@@ -147,11 +162,10 @@ class CorrectorNode:
         """Proofread one page's transcription against its image, keeping the original if
         the correction diverges too far (runaway rewrite / truncation)."""
         segment: Segment = state["segment"]
-        prediction = await self.module.aforward(
-            page_image=load_dspy_image(segment.image_path),
+        corrected = await self.module.aforward(
+            page_image=_load_dspy_image(segment.image_path),
             transcription=segment.content,
         )
-        corrected = prediction.corrected
         final = corrected if _within_tolerance(segment.content, corrected) else segment.content
         # Normalize math delimiters on the chosen text — even when the correction was
         # rejected, so a kept-original page still gets uniform `$$`/`$` delimiters.
@@ -161,8 +175,7 @@ class CorrectorNode:
     def collect(self, state: State) -> dict:
         """Write each corrected transcription back into its segment. Segments that were
         not dispatched keep their original content untouched."""
-        corrected_by_index = dict(state.get("correction_results", []))
-        for segment in state["segments"]:
-            if segment.index in corrected_by_index:
-                segment.content = corrected_by_index[segment.index]
-        return {"segments": state["segments"]}
+        segments = merge_results_into_segments(
+            state["segments"], state.get("correction_results", []), "content"
+        )
+        return {"segments": segments}

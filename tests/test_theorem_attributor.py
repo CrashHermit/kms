@@ -6,8 +6,8 @@ statement vs proof at proof_start, label peeling, proofs population — without 
 
 import asyncio
 
-from module.state import ASTNode, BodySegment, Entity, EntityType, NodeType
-from module.theorem_attributor import Identity, attribute_theorem
+from kms.core.models import ASTNode, BodySegment, Entity, EntityType, NodeType
+from kms.entity.attributors.theorem import Identity, attribute_theorem
 
 
 def _nodes():

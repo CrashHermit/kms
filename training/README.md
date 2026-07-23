@@ -13,7 +13,7 @@ Pilot stage: **exercise splitter**.
 
 1. **Capture** — run fixtures with `KMS_TRACE_DIR` set; each stage appends its real
    per-call `(inputs, outputs)` to `$KMS_TRACE_DIR/<stage>.jsonl`
-   (`module/tracing.py`). Traces come from the *actual* input a stage received, so an
+   (`core/tracing.py`). Traces come from the *actual* input a stage received, so an
    upstream failure (e.g. an OCR-dropped lead-in) is never mislabeled as this stage's
    error.
 

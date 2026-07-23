@@ -37,9 +37,10 @@ from pathlib import Path
 import dspy
 from pydantic import BaseModel, Field
 
-from . import tracing
-from .llm import text_lm
-from .state import ASTNode, State
+from kms.core import tracing
+from kms.core.llm import text_lm
+from kms.core.models import ASTNode
+from kms.core.state import State
 
 # Same look-ahead budget shape as the finders (~4 chars/token). The splitter only needs
 # enough context to recognise a lead-in and the exercise run it introduces; a packed
@@ -144,7 +145,7 @@ _COMPILED_PATH = os.environ.get("KMS_SPLITTER_PROGRAM", "training/splitter/compi
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None, compiled: bool = True):
+    def __init__(self, lm: dspy.LM | None = None, compiled: bool = True) -> None:
         super().__init__()
         self.splitter = dspy.ChainOfThought(Signature)
         self.set_lm(lm or text_lm())
@@ -274,7 +275,7 @@ class SplitterNode:
     `nodes` channel is safe because no entity overlay exists yet — nothing references the old
     ids."""
 
-    def __init__(self, module: Module | None = None):
+    def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
     async def run(self, state: State) -> dict:

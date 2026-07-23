@@ -2,8 +2,8 @@
 
 import asyncio
 
-from module.problem_finder import ProblemFinderNode, ProblemSpan, find_problems
-from module.state import ASTNode, EntityType, NodeType
+from kms.core.models import ASTNode, EntityType, NodeType
+from kms.entity.finders.problem import ProblemFinderNode, ProblemSpan, find_problems
 
 
 def _nodes():

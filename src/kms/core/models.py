@@ -1,27 +1,24 @@
 """
-Shared in-memory pipeline state for the processing nodes.
+Domain models for the pipeline: the in-memory AST and entity data structures, the
+shared AutoMathKG vocabularies, and the pure helpers that operate on them.
 
-The pipeline assembles an ordered AST in memory: a list of Segments (one per page,
-in document order), each owning its pictures, its OCR'd markdown content, and the
-AST nodes extracted from that content. `segments` is the ordered backbone and the
+These are the vocabulary the whole system is *about*. They depend only on the standard
+library and pydantic — deliberately free of the orchestration framework (LangGraph) and
+the LLM stack (dspy), so a test, the graph tier, or a future non-LangGraph runner can use
+them in isolation. The LangGraph ``State`` that carries these through the graph lives in
+its sibling ``kms.core.state``.
+
+The pipeline assembles an ordered AST in memory: a list of Segments (one per page, in
+document order), each owning its pictures, its OCR'd markdown content, and the AST nodes
+extracted from that content. The seam merger later flattens the per-page segments into one
+global ordered node list (``flatten_segments``); from that point the flat list is the
 single source of truth.
-
-Parallel Send workers never mutate `segments` directly. Each worker returns a
-`(segment_index, result)` entry into a per-stage reducer channel (operator.add, so
-concurrent writes merge instead of clashing), and the stage's `collect` step drains
-that channel back into the matching Segment keyed by its index. Because the merge
-keys into the already-ordered backbone, document order is preserved without a
-separate sort — the reducer's arrival order does not matter.
 """
 
-import base64
-import operator
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
-from typing import Annotated, TypedDict
+from typing import Any
 
-import dspy
 from pydantic import BaseModel
 
 # --- AST data structures ---
@@ -114,7 +111,7 @@ class Solution(BaseModel):
     contents: list[str] = []
 
 
-@dataclass
+@dataclass(slots=True)
 class Entity:
     """A math-semantic entity: a typed grouping of member nodes — a sparse overlay on the
     flat node stream (most nodes belong to no entity). `members` are node ids in document
@@ -147,7 +144,7 @@ class Entity:
     instruction: str | None = None  # Problem-only: shared exercise-group directive
 
 
-@dataclass
+@dataclass(slots=True)
 class Picture:
     """An image extracted from a page. `index` is the 1-based placeholder id that
     OCR's ![N]() markers refer to."""
@@ -156,7 +153,7 @@ class Picture:
     image_path: str
 
 
-@dataclass
+@dataclass(slots=True)
 class ASTNode:
     """A single extracted block node in the AST.
 
@@ -182,7 +179,7 @@ class ASTNode:
     )
 
 
-@dataclass
+@dataclass(slots=True)
 class Segment:
     """One page of the document. `index` is 0-based document order."""
 
@@ -193,54 +190,24 @@ class Segment:
     nodes: list[ASTNode] = field(default_factory=list)  # filled by the extractor stage
 
 
-# --- LangGraph state ---
+# --- Helpers (pure functions over the models above) ---
 
 
-class State(TypedDict, total=False):
-    """Shared state for every stage.
+def merge_results_into_segments(
+    segments: list[Segment], results: list[tuple[int, Any]], attr: str
+) -> list[Segment]:
+    """Drain a stage's ``(segment_index, value)`` reducer channel back into the ordered
+    segment backbone, setting ``attr`` on each segment that has a result.
 
-    Two backbones, one after the other. During per-page ingestion (corrector, extractor,
-    seam) `segments` is the ordered backbone. The seam merger then flattens the healed
-    per-page nodes into `nodes` — the global ordered node list that the per-type entity
-    finders each walk. `segments` is retained past that point only for its pictures
-    (picture resolution at assembly). Both backbones use the default overwrite reducer
-    because only the sequential collect steps write them.
-
-    The three `*_entities` channels are each written once, by their own finder (the
-    finders run in parallel over `nodes`). They are independent sparse overlays and may
-    reference the same node from more than one entity — that is fine, members are node-id
-    pointers. Because the splitter has already made exercise nodes atomic (one node per
-    exercise), the problem finder emits one entity per exercise with distinct members — no
-    coarse-vs-fine reconciliation is needed. `run()` concatenates the three into one flat,
-    document-ordered entity list with global ids for the emitted `entities.json`.
-
-    The `*_results` channels are map-reduce scratch space: parallel Send workers append
-    entries and the stage's collect step drains them back into the active backbone. They
-    carry an operator.add reducer so concurrent worker writes merge rather than clash.
-    """
-
-    segments: list[Segment]
-    nodes: list[ASTNode]
-    problem_entities: list[Entity]  # written by the problem finder
-    definition_entities: list[Entity]  # written by the definition finder
-    theorem_entities: list[Entity]  # written by the theorem finder
-    correction_results: Annotated[
-        list[tuple[int, str]], operator.add
-    ]  # (segment index, corrected markdown)
-    extract_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
-    seam_even_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
-    seam_odd_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
-
-
-# --- Helpers ---
-
-
-def load_dspy_image(path: str | None) -> dspy.Image | None:
-    """Load a PNG from disk into a dspy.Image (base64 data URL)."""
-    if not path:
-        return None
-    encoded = base64.b64encode(Path(path).read_bytes()).decode("utf-8")
-    return dspy.Image(url=f"data:image/png;base64,{encoded}")
+    Every map-reduce ingestion stage (corrector, extractor, seam merger) ends by folding
+    its parallel workers' output back into the backbone keyed by segment index; this is
+    that shared drain. Segments with no result are left untouched. Mutates and returns the
+    same list (the collect steps run sequentially, so in-place is safe)."""
+    by_index = dict(results)
+    for segment in segments:
+        if segment.index in by_index:
+            setattr(segment, attr, by_index[segment.index])
+    return segments
 
 
 def flatten_segments(segments: list[Segment]) -> list[ASTNode]:

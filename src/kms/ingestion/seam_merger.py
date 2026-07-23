@@ -2,8 +2,9 @@ import dspy
 from langgraph.types import Send
 from pydantic import BaseModel
 
-from .llm import text_lm
-from .state import ASTNode, Segment, State, flatten_segments
+from kms.core.llm import text_lm
+from kms.core.models import ASTNode, Segment, flatten_segments, merge_results_into_segments
+from kms.core.state import State
 
 
 class SeamNodeDTO(BaseModel):
@@ -58,7 +59,7 @@ class Signature(dspy.Signature):
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None):
+    def __init__(self, lm: dspy.LM | None = None) -> None:
         super().__init__()
         self.merger = dspy.ChainOfThought(Signature)
         self.set_lm(lm or text_lm())
@@ -69,14 +70,14 @@ class Module(dspy.Module):
         bottom_top_edge_node: SeamNodeDTO,
         top_node_context: SeamNodeDTO | None = None,
         bottom_node_context: SeamNodeDTO | None = None,
-    ):
+    ) -> SeamNodeDTO | None:
         result = await self.merger.acall(
             top_node_context=top_node_context,
             top_bottom_edge_node=top_bottom_edge_node,
             bottom_top_edge_node=bottom_top_edge_node,
             bottom_node_context=bottom_node_context,
         )
-        return dspy.Prediction(node=result.node)
+        return result.node
 
 
 # --- LangGraph node: stitch nodes split across segment boundaries ---
@@ -116,14 +117,12 @@ async def _merge_pair(
     top_context = top_nodes[-2] if len(top_nodes) > 1 else None
     bottom_context = bottom_nodes[1] if len(bottom_nodes) > 1 else None
 
-    prediction = await module.aforward(
+    merged = await module.aforward(
         top_bottom_edge_node=_to_dto(tail),
         bottom_top_edge_node=_to_dto(head),
         top_node_context=_to_dto(top_context),
         bottom_node_context=_to_dto(bottom_context),
     )
-
-    merged = prediction.node
     if merged is not None and merged.content:
         tail.content = merged.content
         bottom_nodes = bottom_nodes[1:]
@@ -132,7 +131,7 @@ async def _merge_pair(
 
 
 class SeamMergerNode:
-    def __init__(self, module: Module | None = None):
+    def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
     def dispatch_even(self, state: State) -> list[Send] | str:
@@ -152,11 +151,8 @@ class SeamMergerNode:
         return {"seam_odd_results": await _merge_pair(self.module, state["top"], state["bottom"])}
 
     def _collect(self, state: State, channel: str) -> dict:
-        nodes_by_index = dict(state.get(channel, []))
-        for segment in state["segments"]:
-            if segment.index in nodes_by_index:
-                segment.nodes = nodes_by_index[segment.index]
-        return {"segments": state["segments"]}
+        segments = merge_results_into_segments(state["segments"], state.get(channel, []), "nodes")
+        return {"segments": segments}
 
     def even_collect(self, state: State) -> dict:
         return self._collect(state, "seam_even_results")

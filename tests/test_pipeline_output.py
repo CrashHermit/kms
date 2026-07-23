@@ -2,8 +2,8 @@
 
 import json
 
-from module.pipeline import _flatten_entities, _write_entities, _write_nodes
-from module.state import ASTNode, Entity, EntityType, NodeType
+from kms.core.models import ASTNode, Entity, EntityType, NodeType
+from kms.pipeline import _flatten_entities, _write_entities, _write_nodes
 
 
 def _nodes():

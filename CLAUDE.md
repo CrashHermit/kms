@@ -20,21 +20,30 @@ fusion, Math-LLM completion — is the next big piece and is **not started**.
 
 ## Layout
 
-- `src/module/` — the pipeline, wired by `pipeline.py`. Ingestion stages use the map-reduce
-  `dispatch → worker → collect` shape; the splitter, finders, attributors, and distributor are
-  plain sequential nodes. Flow:
-  `mistral_ocr → corrector → extractor → seam_merger → splitter →
-  {problem,definition,theorem}_finder → {…}_attributor`, and the problem chain has one more
-  stage, `instruction_distributor`; `assembler` runs after the graph. Two phases split at
-  `seam_merger`: per-page ingestion (backbone `segments`) → flat global node stream (backbone
-  `nodes`, stable ids). The **splitter** rewrites `nodes` so each exercise is its own node and
-  tags lead-ins `role="instruction"`. The three finders walk `nodes` in parallel and write their
-  own entity channel; each attributor enriches its channel in place; `run()` concatenates the
-  three into one flat, document-ordered `entities.json` (`[{id, type, members, …attrs}]`,
-  overlap is fine — members are node-id pointers) and persists the node stream to `nodes.json`
-  for provenance. The finders (and attributors) are self-contained copies of one shape. The
-  extractor is **purely structural**; math-semantic typing lives entirely in the entity layer.
-- `docs/HANDOFF.md` — full context.
+- `src/kms/` — the pipeline, organized by phase (see `docs/ARCHITECTURE.md` for the full
+  rationale and the backward-only dependency rule). Packages:
+  - `core/` — shared center that every stage depends on and that depends on no stage:
+    `models.py` (domain data, dspy/langgraph-free), `state.py` (the LangGraph `State`),
+    `llm.py` (LM config), `tracing.py`.
+  - `ingestion/` — phase 1 (backbone `segments`): `ocr.py` (Mistral front-end), `corrector.py`,
+    `extractor.py` (purely structural), `seam_merger.py`. Map-reduce `dispatch → worker → collect`.
+  - `entity/` — phase 2 (backbone `nodes`): `splitter.py`, `finders/{problem,definition,theorem}.py`,
+    `attributors/{problem,definition,theorem}.py`, and `instruction_distributor.py` (problem chain only).
+    Plain sequential nodes.
+  - `output/` — `assembler.py` (runs after the graph).
+  - `graph/` — phase 3 (cross-entity refs/tactics, MathVD fusion, Math-LLM completion). **Not started.**
+  - `pipeline.py` wires the graph; `cli.py` is the `__main__` entry; `kms/__init__.py` exposes `run`.
+- Flow: `ocr → corrector → extractor → seam_merger → splitter →
+  {problem,definition,theorem} finder → {…} attributor`, and the problem chain has one more stage,
+  the instruction distributor. Two phases split at `seam_merger`: per-page ingestion (backbone
+  `segments`) → flat global node stream (backbone `nodes`, stable ids). The **splitter** rewrites
+  `nodes` so each exercise is its own node and tags lead-ins `role="instruction"`. The three finders
+  walk `nodes` in parallel and write their own entity channel; each attributor enriches its channel
+  in place; `run()` concatenates the three into one flat, document-ordered `entities.json`
+  (`[{id, type, members, …attrs}]`, overlap is fine — members are node-id pointers) and persists the
+  node stream to `nodes.json` for provenance. The finders (and attributors) are self-contained copies
+  of one shape.
+- `docs/HANDOFF.md` — full context. `docs/ARCHITECTURE.md` — the package layout and its rules.
 
 ## Commands
 
@@ -42,8 +51,9 @@ fusion, Math-LLM completion — is the next big piece and is **not started**.
   used to render page images for the correction pass). **No GPU anywhere.**
 - Tests: `PYTHONPATH=src uv run pytest -q` (46 tests) — `conftest` stubs the heavy deps, so it
   runs anywhere, no keys needed.
-- Run (full pipeline): `PYTHONPATH=src uv run --extra mistral python -m module.pipeline book.pdf out/`,
-  or from Python `run(pdf, output_dir="out/", pages=[...])` to limit pages (0-based). Writes
+- Run (full pipeline): `PYTHONPATH=src uv run --extra mistral python -m kms.cli book.pdf out/`,
+  or from Python `from kms import run; run(pdf, output_dir="out/", pages=[...])` to limit pages
+  (0-based). Writes
   `out/document.md` + `out/entities.json` + `out/nodes.json`. Needs the three API keys below and
   the `mistral` extra (a plain `uv run` drops it — see HANDOFF gotchas).
 
@@ -52,7 +62,9 @@ fusion, Math-LLM completion — is the next big piece and is **not started**.
 - Keys (in `.env` — see `.env.example` — or environment secrets):
   `MISTRAL_API_KEY` (page OCR), `OPENROUTER_API_KEY` (correction pass, Qwen3-VL),
   `DEEPSEEK_API_KEY` (text stages).
-- The package imports as `module.*` (pyproject `package = false`); set `PYTHONPATH=src`.
+- The package imports as `kms.*` (pyproject `package = false`); set `PYTHONPATH=src`. Internal
+  imports are absolute (`from kms.core.state import ...`); dependencies point backward only
+  (`core ← ingestion ← entity ← graph ← output`), never forward.
 - Match the surrounding code's style. Parallel (map-reduce) stages use the
   `dispatch → worker → collect` shape; a genuinely sequential stage (e.g. `problem_finder`)
   is a plain graph node instead of forcing a single-Send fan-out.
