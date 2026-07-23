@@ -31,8 +31,8 @@ class State(TypedDict, total=False):
     reference the same node from more than one entity — that is fine, members are node-id
     pointers. Because the splitter has already made exercise nodes atomic (one node per
     exercise), the problem finder emits one entity per exercise with distinct members — no
-    coarse-vs-fine reconciliation is needed. `run()` concatenates the three into one flat,
-    document-ordered entity list with global ids for the emitted `entities.json`.
+    coarse-vs-fine reconciliation is needed. The entity persister stage flattens the three into
+    one document-ordered, globally-id'd list and upserts them as the graph's `:Entity` layer.
 
     The `*_results` channels are map-reduce scratch space: parallel Send workers append
     entries and the stage's collect step drains them back into the active backbone. They

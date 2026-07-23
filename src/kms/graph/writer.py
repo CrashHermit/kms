@@ -1,23 +1,33 @@
 """
-Persist the structural node stream into Neo4j — the I/O half of the ``:Node`` layer.
+Persist the structural node stream and the entity overlay into Neo4j — the I/O half of the graph.
 
-Writes one ``:Source`` vertex for the book, one vertex per ``ASTNode`` (base ``:Node`` label + its
-per-type label), all MERGEd on their deterministic uuids so re-running a book is idempotent, then
-wires them up: ``(:Source)-[:HEAD]->`` the first node, and ``:NEXT`` edges threading the rest in
-document order so the stream hangs off the source and is walkable in Cypher.
+``persist_nodes`` writes the ``:Node`` layer: one ``:Source`` vertex for the book, one vertex per
+``ASTNode`` (base ``:Node`` label + its per-type label), all MERGEd on their deterministic uuids so
+re-running a book is idempotent, then wires them up — ``(:Source)-[:HEAD]->`` the first node and
+``:NEXT`` edges threading the rest in document order so the stream hangs off the source and is
+walkable in Cypher. ``persist_entities`` writes the ``:Entity`` overlay on top: one vertex per
+Definition / Theorem / Problem (base ``:Entity`` label + its per-type label), rooted under the book
+via ``:HAS_ENTITY`` and linked back to the structural chunks it was built from via ``:HAS_MEMBER``.
 
-Writes are batched: Cypher can't parameterize a label, but the label comes from the closed
-``NodeType`` enum, so grouping nodes by label and interpolating it is safe and turns the whole
-stream into one MERGE per label plus a couple for the source/edges — no per-node round-trips. The
-pure planning (grouping, edge pairs, head) is factored out and unit-tested; only the ``session.run``
-calls need a live database.
+Writes are batched: Cypher can't parameterize a label, but the label comes from a closed enum
+(``NodeType`` / ``EntityType``), so grouping by label and interpolating it is safe and turns the
+whole stream into one MERGE per label plus a couple for the source/edges — no per-vertex
+round-trips. The pure planning (grouping, edge pairs, head) is factored out and unit-tested; only the
+``session.run`` calls need a live database.
 """
 
 from collections import defaultdict
 from typing import Any
 
-from kms.core.models import ASTNode
+from kms.core.models import ASTNode, Entity
 from kms.graph.db import database, driver
+from kms.graph.entities import (
+    ENTITY_LABEL,
+    entity_label,
+    entity_properties,
+    entity_uuid,
+    member_uuid,
+)
 from kms.graph.nodes import (
     NODE_LABEL,
     SOURCE_LABEL,
@@ -25,6 +35,7 @@ from kms.graph.nodes import (
     node_properties,
     node_uuid,
     source_properties,
+    source_uuid,
 )
 
 
@@ -89,5 +100,64 @@ async def persist_nodes(
                 f"UNWIND $pairs AS pair "
                 f"MATCH (a:{NODE_LABEL} {{uuid: pair.from}}), (b:{NODE_LABEL} {{uuid: pair.to}}) "
                 f"MERGE (a)-[:NEXT]->(b)",
+                pairs=pairs,
+            )
+
+
+def entity_batches(entities: list[Entity], source: str) -> dict[str, list[dict]]:
+    """Group the entities' property maps by their per-type label, so each label is one batched
+    MERGE. Every entity is typed, so there is no ``None`` bucket (unlike ``node_batches``)."""
+    batches: dict[str, list[dict]] = defaultdict(list)
+    for entity in entities:
+        batches[entity_label(entity)].append(entity_properties(entity, source))
+    return dict(batches)
+
+
+def member_pairs(entities: list[Entity], source: str) -> list[dict]:
+    """The ``{entity, node}`` uuid pairs for the ``:HAS_MEMBER`` edges: one per (entity, member) so
+    an entity links to every source chunk it was built from. Members are node ids resolved to the
+    ``:Node`` layer's deterministic uuids."""
+    return [
+        {"entity": entity_uuid(source, entity.id), "node": member_uuid(source, member)}
+        for entity in entities
+        for member in entity.members
+    ]
+
+
+async def persist_entities(entities: list[Entity], source: str) -> None:
+    """Upsert the book's ``:Entity`` overlay: one vertex per entity (base ``:Entity`` label + its
+    per-type label), rooted under the already-persisted ``:Source`` via ``:HAS_ENTITY``, and linked
+    to its structural chunks via ``:HAS_MEMBER``. Idempotent — every MERGE keys on a deterministic
+    uuid, so re-persisting the same ``source`` updates in place. A no-op for an empty overlay. The
+    ``:Source`` and ``:Node`` vertices are expected to already exist (the node persister runs first);
+    the MATCHes here attach to them rather than creating them. Every entity's id must be assigned
+    (post-flatten)."""
+    if not entities:
+        return
+    batches = entity_batches(entities, source)
+    pairs = member_pairs(entities, source)
+    src = source_uuid(source)
+    uuids = [entity_uuid(source, entity.id) for entity in entities]
+
+    async with driver().session(database=database()) as session:
+        for label, rows in batches.items():
+            await session.run(
+                f"UNWIND $rows AS row MERGE (e:{ENTITY_LABEL} {{uuid: row.uuid}}) "
+                f"SET e += row SET e:{label}",
+                rows=rows,
+            )
+        await session.run(
+            f"MATCH (s:{SOURCE_LABEL} {{uuid: $src}}) "
+            f"UNWIND $uuids AS uuid "
+            f"MATCH (e:{ENTITY_LABEL} {{uuid: uuid}}) "
+            f"MERGE (s)-[:HAS_ENTITY]->(e)",
+            src=src,
+            uuids=uuids,
+        )
+        if pairs:
+            await session.run(
+                f"UNWIND $pairs AS pair "
+                f"MATCH (e:{ENTITY_LABEL} {{uuid: pair.entity}}), (n:{NODE_LABEL} {{uuid: pair.node}}) "
+                f"MERGE (e)-[:HAS_MEMBER]->(n)",
                 pairs=pairs,
             )

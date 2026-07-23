@@ -13,7 +13,7 @@ seam-merge collect.
 Stage order:
     corrector -> extractor -> seam_merger (even, odd) -> splitter -> instruction_finder
               -> node_persister -> {problem, definition, theorem}_finder -> {…}_attributor
-              -> (problem chain only) instruction_distributor
+              -> (problem chain only) instruction_distributor -> entity_persister
 
 Two phases split at the seam merger. Ingestion is per-page: `segments` (already carrying
 Mistral's markdown + figures) is the backbone, and the corrector proofreads each page's
@@ -24,30 +24,27 @@ normalises that stream — it rewrites any node that packs several exercises int
 exercise (embedded lead-ins broken out onto their own nodes too) — so the finders see atomic
 exercises and no longer collapse them into duplicate-membered entities. The instruction finder
 then tags every lead-in node `role="instruction"` over that atomic stream, one uniform pass.
-The node persister then writes the
-finalized stream to Neo4j as the graph's provenance layer (a `:Source` root with its `:Node` chain);
-it runs after the splitter so the persisted ids match the entity `members`, and is a no-op when
-Neo4j isn't configured. Three per-type chains then run
+The node persister then writes the finalized stream to Neo4j as the graph's provenance layer (a
+`:Source` root with its `:Node` chain); it runs after the splitter so the persisted ids match the
+entity `members`, and is a no-op when Neo4j isn't configured. Three per-type chains then run
 in parallel: each finder walks `nodes` to build its entity overlay, and its attributor
 enriches those entities with the self-contained AutoMathKG attributes (label, number, title,
-field, contents, bodylist; plus proofs for theorems and solutions for problems). After the
-graph returns, `run()` concatenates the three overlays into one flat, document-ordered entity
-list (global ids) and writes both the entities and the node stream itself — the nodes are
-persisted for provenance so an entity's `members` resolve to real source chunks. On the
+field, contents, bodylist; plus proofs for theorems and solutions for problems). On the
 problem chain one further stage, the instruction distributor, then stamps `Problem.instruction`
 from the instruction finder's tagged lead-in nodes (the shared directive of a grouped-exercise run).
-Cross-entity attributes (refs/references_tactics) are later graph-tier work. Assembly walks
-`nodes` after the graph returns, consulting `segments` only
-for picture inventories.
+The three chains fan into the entity persister, the terminal stage: it flattens the overlays into
+one document-ordered, globally-id'd list and upserts them as the graph's `:Entity` layer, rooted
+under the `:Source` and linked back to their member `:Node` chunks (a no-op when Neo4j isn't
+configured). Cross-entity attributes (refs/references_tactics) and the step-level event layer are
+later graph-tier work. After the graph returns, `run()` only assembles the markdown document:
+assembly walks `nodes`, consulting `segments` only for picture inventories.
 """
 
-import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from langgraph.graph import END, START, StateGraph
 
-from kms.core.models import ASTNode, BodySegment, Entity
 from kms.core.state import State
 from kms.entity.attributors.definition import DefinitionAttributorNode
 from kms.entity.attributors.problem import ProblemAttributorNode
@@ -59,7 +56,7 @@ from kms.entity.instruction_distributor import InstructionDistributorNode
 from kms.entity.instruction_finder import InstructionFinderNode
 from kms.entity.splitter import SplitterNode
 from kms.graph.db import close_driver
-from kms.graph.persister import NodePersisterNode
+from kms.graph.persister import EntityPersisterNode, NodePersisterNode
 from kms.ingestion.corrector import CorrectorNode
 from kms.ingestion.extractor import ExtractorNode
 from kms.ingestion.seam_merger import SeamMergerNode
@@ -89,6 +86,7 @@ def build_graph() -> "CompiledStateGraph":
     splitter = SplitterNode()
     instruction_finder = InstructionFinderNode()
     node_persister = NodePersisterNode()
+    entity_persister = EntityPersisterNode()
     instruction_distributor = InstructionDistributorNode()
 
     g = StateGraph(State)
@@ -111,6 +109,7 @@ def build_graph() -> "CompiledStateGraph":
     g.add_node("splitter", splitter.run)
     g.add_node("instruction_finder", instruction_finder.run)
     g.add_node("node_persister", node_persister.run)
+    g.add_node("entity_persister", entity_persister.run)
     g.add_node("instruction_distributor", instruction_distributor.run)
 
     # A stage's dispatch is a conditional edge off the previous collect: it either fans
@@ -162,14 +161,19 @@ def build_graph() -> "CompiledStateGraph":
         g.add_edge("node_persister", finder)
         g.add_edge(finder, attributor)
 
-    # The definition and theorem chains end at their attributor. The problem chain has one
-    # more step: the instruction distributor stamps `Problem.instruction` from the instruction
-    # finder's tagged lead-in nodes, and must run after the attributor because it matches on each
-    # problem's `number` (which the attributor fills).
-    g.add_edge("definition_attributor", END)
-    g.add_edge("theorem_attributor", END)
+    # The definition and theorem chains end at their attributor; the problem chain has one more
+    # step, the instruction distributor, which stamps `Problem.instruction` from the instruction
+    # finder's tagged lead-in nodes and must run after the attributor because it matches on each
+    # problem's `number` (which the attributor fills). All three then fan into the entity persister.
+    g.add_edge("definition_attributor", "entity_persister")
+    g.add_edge("theorem_attributor", "entity_persister")
     g.add_edge("problem_attributor", "instruction_distributor")
-    g.add_edge("instruction_distributor", END)
+    g.add_edge("instruction_distributor", "entity_persister")
+
+    # The entity persister is the fan-in: it runs once all three chains complete, flattens the
+    # overlays into one document-ordered list, and upserts them as the graph's `:Entity` layer
+    # (a no-op when Neo4j isn't configured). It is the pipeline's terminal stage.
+    g.add_edge("entity_persister", END)
 
     return g.compile()
 
@@ -183,15 +187,17 @@ async def run(
     title: str | None = None,
     author: str | None = None,
 ) -> Path:
-    """Run the full pipeline on a PDF and write the assembled markdown + entities.
+    """Run the full pipeline on a PDF: assemble the markdown document and persist the graph.
 
     The Mistral OCR API turns each page into reading-ordered markdown plus extracted
-    figures (no GPU, no docling); the graph then corrects, parses, heals, and builds the
-    typed entity overlay. ``pages`` (0-based) optionally limits which pages are sent.
-    ``source`` is the book identity used as the graph's Neo4j key (defaults to the PDF's
-    filename); ``title``/``author`` are optional book attributes stored on the ``:Source``
-    node. Graph persistence is skipped entirely when Neo4j isn't configured. Returns the
-    path of the assembled document.
+    figures (no GPU, no docling); the graph then corrects, parses, heals, builds the typed
+    entity overlay, and (when Neo4j is configured) persists the ``:Node`` provenance layer and
+    the ``:Entity`` overlay on top of it. ``pages`` (0-based) optionally limits which pages are
+    sent. ``source`` is the book identity used as the graph's Neo4j key (defaults to the PDF's
+    filename); ``title``/``author`` are optional book attributes stored on the ``:Source`` node.
+    Graph persistence is skipped entirely when Neo4j isn't configured — a DB-less run still
+    produces ``document.md`` but persists no nodes or entities. Returns the path of the assembled
+    document.
     """
     output_dir = Path(output_dir)
     from kms.ingestion import ocr
@@ -207,86 +213,6 @@ async def run(
         )
         nodes = result["nodes"]
         written = assemble(nodes, result["segments"], output_dir=output_dir, filename=filename)
-        _write_nodes(nodes, output_dir)
-        _write_entities(_flatten_entities(result, nodes), output_dir)
         return written
     finally:
         await close_driver()  # release the Neo4j connection pool (a no-op if never opened)
-
-
-def _flatten_entities(result: dict, nodes: list[ASTNode]) -> list[Entity]:
-    """Concatenate the three per-type finder overlays into one flat, document-ordered
-    entity list and assign each a global id. The overlays are independent and may
-    reference the same node more than once (members are node-id pointers) — they are
-    concatenated, not merged. Because the splitter made exercise nodes atomic upstream,
-    the problem finder already emits one entity per exercise with distinct members, so no
-    coarse-vs-fine reconciliation is needed here."""
-    entities = (
-        result.get("problem_entities", [])
-        + result.get("definition_entities", [])
-        + result.get("theorem_entities", [])
-    )
-    order = {node.id: i for i, node in enumerate(nodes)}
-    big = len(order)
-    entities.sort(key=lambda e: order.get(e.members[0], big) if e.members else big)
-    for i, entity in enumerate(entities):
-        entity.id = i
-    return entities
-
-
-def _write_nodes(nodes: list[ASTNode], output_dir: Path) -> Path:
-    """Persist the flat node stream as JSON for provenance — an entity's `members` are node
-    ids into this file, so the later graph phase can link an entity to its source chunks."""
-    payload = [
-        {
-            "id": node.id,
-            "type": node.type.value if node.type else None,
-            "content": node.content,
-            "seg_index": node.seg_index,
-            **({"role": node.role} if node.role else {}),
-        }
-        for node in nodes
-    ]
-    path = output_dir / "nodes.json"
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return path
-
-
-def _write_entities(entities: list[Entity], output_dir: Path) -> Path:
-    """Persist the flat entity overlay as JSON beside the assembled document — the artifact
-    the later graph phase (edges, fusion, completion) consumes. Each entity carries `{id,
-    type, members}` (members are node ids into `nodes.json`) plus whatever self-contained
-    attributes its attributor filled in; unset attributes are omitted, so a bare (un-attributed)
-    entity serializes to just `{id, type, members}`. This is a debug/inspection dump of what
-    the entity holds, not a designed schema — the graph tier will own persistence."""
-    payload = [_entity_payload(e) for e in entities]
-    path = output_dir / "entities.json"
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    return path
-
-
-def _entity_payload(e: Entity) -> dict:
-    """One entity as a JSON-ready dict: id/type/members always, then any attribute that is
-    set. Structured attributes (bodylist/proofs/solutions) are unpacked by hand rather than
-    via pydantic `.model_dump()` so this stays importable under the test stubs."""
-    d = {"id": e.id, "type": e.type.value, "members": e.members}
-    for key in ("label", "number", "title", "field", "instruction"):
-        value = getattr(e, key)
-        if value is not None:
-            d[key] = value
-    if e.contents:
-        d["contents"] = e.contents
-    if e.bodylist:
-        d["bodylist"] = [_seg(s) for s in e.bodylist]
-    if e.proofs:
-        d["proofs"] = [
-            {"contents": p.contents, "bodylist": [_seg(s) for s in p.bodylist]} for p in e.proofs
-        ]
-    if e.solutions:
-        d["solutions"] = [{"contents": s.contents} for s in e.solutions]
-    return d
-
-
-def _seg(segment: BodySegment) -> dict:
-    """A bodylist segment as a plain dict (no pydantic dependency)."""
-    return {"description": segment.description, "action": segment.action}

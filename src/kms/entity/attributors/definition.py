@@ -34,8 +34,7 @@ The entry point is ``attribute_definition(entity, nodes_by_id)`` (async): it wri
 attributes onto the passed Definition entity (extending what the finder produced) and
 returns it. Wiring it into the pipeline as a per-entity pass is the next step, once we
 are happy with the attributes it produces. Kept persistence-agnostic — it says nothing
-about whether the enriched entity lands in ``entities.json`` today or a graph vertex
-tomorrow.
+about how the enriched entity is stored; the entity persister maps it onto a graph vertex.
 """
 
 import asyncio
@@ -249,8 +248,8 @@ async def attribute_definition(
     One LLM call identifies label/number/title/field; the content members are assembled
     deterministically with the label peeled off; a second LLM call builds the bodylist,
     writing each description verbatim. The attributes are written onto the passed entity
-    (the same entity the finder produced) and it is returned. Persistence-agnostic: whether
-    the enriched entity is dumped to JSON or loaded into the graph is the caller's concern.
+    (the same entity the finder produced) and it is returned. Persistence-agnostic: how the
+    enriched entity is stored (the entity persister loads it into the graph) is the caller's concern.
     """
     module = module or Module()
     members = _members(entity, nodes_by_id)

@@ -210,6 +210,32 @@ def merge_results_into_segments(
     return segments
 
 
+def flatten_entities(
+    problem: list["Entity"],
+    definition: list["Entity"],
+    theorem: list["Entity"],
+    nodes: list[ASTNode],
+) -> list["Entity"]:
+    """Concatenate the three per-type finder overlays into one flat, document-ordered entity list
+    and assign each a global id.
+
+    The overlays are independent and may reference the same node more than once (members are
+    node-id pointers) — they are concatenated, not merged. Ordering is by each entity's first
+    member's position in the flat node stream; an entity with no members sorts to the end. Because
+    the splitter made exercise nodes atomic upstream, the problem finder already emits one entity
+    per exercise with distinct members, so no coarse-vs-fine reconciliation is needed. The assigned
+    `id` is the entity's stable document-order position — the key the graph tier's entity vertex
+    uuid is derived from — so a re-run maps onto the same vertices.
+    """
+    entities = list(problem) + list(definition) + list(theorem)
+    order = {node.id: i for i, node in enumerate(nodes)}
+    big = len(order)
+    entities.sort(key=lambda e: order.get(e.members[0], big) if e.members else big)
+    for i, entity in enumerate(entities):
+        entity.id = i
+    return entities
+
+
 def flatten_segments(segments: list[Segment]) -> list[ASTNode]:
     """Project the per-page segment backbone into one global ordered node list.
 

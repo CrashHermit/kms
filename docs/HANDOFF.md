@@ -15,8 +15,10 @@ update for the graph work.
 
 ## TL;DR status
 
-- The pipeline runs **end-to-end, no GPU**: PDF → `document.md` + `entities.json` +
-  `nodes.json`. Validated on real pages (see Validation).
+- The pipeline runs **end-to-end, no GPU**: PDF → `document.md`, and (when Neo4j is configured)
+  the persisted `:Node` provenance layer + `:Entity` overlay in the graph. The graph now owns
+  persistence — the old `entities.json`/`nodes.json` artifacts are gone. Validated on real pages
+  (see Validation).
 - The **extraction front-end is Mistral OCR + a vision correction pass** (Qwen3-VL). Mistral
   does layout/reading-order/figure-extraction server-side; the corrector proofreads each page
   against its image to catch Mistral's occasional subtle math errors and normalizes math
@@ -67,17 +69,27 @@ provenance layer** — and left the semantic tiers as a design (below).
 - `nodes.py` — pure `ASTNode → Neo4j` mapping, reusing `core.NodeType` (invents no node types).
   Deterministic `uuid5(source, index)` identity; each node carries the base `:Node` label **plus**
   its per-type label (`:Node:Math`, …); a `:Source` root per book with deterministic `source_uuid`.
-- `schema.py` — idempotent bootstrap: uuid uniqueness constraints on `:Node`/`:Source` + an index
-  on `:Node(source)`. No vector index (embeddings belong to the semantic tiers, not here).
-- `writer.py` — `persist_nodes`: MERGE the `:Source` root + batched multi-label nodes, then wire
-  `(:Source)-[:HEAD]->` first node and the `:NEXT` reading-order chain. Pure planning
-  (`node_batches`/`next_pairs`/`head_uuid`) is factored out and unit-tested.
-- `persister.py` — `NodePersisterNode`, the pipeline stage. Wired **after the splitter, before the
-  finders** (the splitter re-ids the stream at `splitter.py:249`, so this is the first point the ids
-  are final and match the entity `members`). A **no-op** when Neo4j isn't configured or the run has
-  no `source`, so DB-less runs and the test suite are unchanged.
+- `entities.py` — pure `Entity → Neo4j` mapping, reusing `core.EntityType` (invents no types).
+  Deterministic `uuid5(source, "entity#"+id)` identity (disjoint from node uuids); each entity carries
+  the base `:Entity` label **plus** its per-type label (`:Entity:Theorem`, …). Scalar attributes +
+  `contents` (string array) are native properties; the nested `bodylist`/`proofs`/`solutions` (the
+  step material the future event layer will reify) are preserved as JSON-string properties for now.
+- `schema.py` — idempotent bootstrap: uuid uniqueness constraints on `:Node`/`:Source`/`:Entity` +
+  `source` indexes on `:Node`/`:Entity`. No vector index (embeddings belong to the semantic tiers).
+- `writer.py` — `persist_nodes` (MERGE the `:Source` root + batched multi-label nodes, then wire
+  `(:Source)-[:HEAD]->` first node and the `:NEXT` reading-order chain) and `persist_entities` (batched
+  multi-label `:Entity` MERGEs, rooted under the `:Source` via `:HAS_ENTITY` and linked to member
+  `:Node` s via `:HAS_MEMBER`). Pure planning (`node_batches`/`next_pairs`/`head_uuid`,
+  `entity_batches`/`member_pairs`) is factored out and unit-tested.
+- `persister.py` — two stages. `NodePersisterNode` is wired **after the splitter, before the finders**
+  (the splitter re-ids the stream at `splitter.py:249`, so this is the first point the ids are final
+  and match the entity `members`); `EntityPersisterNode` is the **fan-in after all three chains**, so
+  it sees the fully attributed overlay, flattens it (`core.flatten_entities`), and writes it. Both are
+  **no-ops** when Neo4j isn't configured or the run has no `source`, so DB-less runs and the test suite
+  still complete (producing only `document.md`).
 - `pipeline.py` — `run()` gained `source` (defaults to the PDF filename) + `title`/`author`, threaded
-  via `State.source` / `State.source_metadata`; closes the driver in a `finally`.
+  via `State.source` / `State.source_metadata`; closes the driver in a `finally`. After the graph
+  returns it only assembles `document.md` — persistence is entirely the graph tier's job now.
 
 **Design decisions (planning, for the semantic tiers — NOT yet built):** a four-tier hybrid — the
 math-specialized **mention** (Def/Thm/Prob, today's entities) → non-destructive **canonical** dedup
@@ -146,9 +158,10 @@ fine-tuning (DeepSeek's API doesn't expose that). Pieces: `core/tracing.py` (opt
 `KMS_TRACE_DIR` capture) and per-stage `training/<stage>/{metric,dataset,compile}.py`; the
 splitter and distributor nodes auto-load `training/<stage>/compiled.json` if present (override
 with `KMS_SPLITTER_PROGRAM` / `KMS_DISTRIBUTOR_PROGRAM`).
-- **Cheap-data trick:** distributor examples are reconstructed straight from finished run
-  artifacts (`out/<fixture>/nodes.json` + `entities.json`) via the positional bracketing — 41
-  examples from 5 runs, **zero new pipeline calls** (`training/distributor/dataset.py::load_runs`).
+- **Cheap-data source:** distributor examples come from a live-captured `distributor.jsonl`
+  (`KMS_TRACE_DIR` on a run) — `training/distributor/dataset.py::load_traces`. (An earlier
+  reconstruct-from-`out/<fixture>/` path, 41 examples from 5 runs with zero new calls, retired with
+  the `nodes.json`/`entities.json` artifacts when the graph became the store.)
 - **Pilot results:** both stages already judged near-perfect, so naïve `BootstrapFewShot` had no
   headroom — splitter dev pass-rate 1.00→1.00 (and its demos are ~2.7k-token page-sized windows,
   a bad fit); distributor 0.90→0.80 (within noise; demos small but non-targeted). **Neither
@@ -182,7 +195,8 @@ Phase 2 — flat node stream (backbone = `nodes`, global ordered list)
     → { problem_finder    → problem_attributor    → instruction_distributor }   (parallel
       { definition_finder → definition_attributor }                              chains,
       { theorem_finder    → theorem_attributor }                                 one per type)
-  then, after the graph: assemble + write nodes.json / entities.json
+    → entity_persister (fan-in: flatten overlays → :Entity graph)
+  then, after the graph: assemble document.md
 ```
 
 - **`mistral_ocr`** calls Mistral's document OCR API (`mistral-ocr-latest`). Per page it
@@ -219,13 +233,16 @@ Phase 2 — flat node stream (backbone = `nodes`, global ordered list)
 - **The three attributors** (`{problem,definition,theorem}_attributor.py`) each run after their
   finder, enriching that overlay's entities with the self-contained AutoMathKG attributes in
   place. See "The attributors" below.
-- **`instruction_distributor`** runs after the problem attributor (the problem chain's terminal
-  stage): a growing-window walk that stamps `Problem.instruction` from the instruction finder's
-  tagged lead-in nodes. See "The instruction distributor" below.
-- **After the graph:** `run()` concatenates the three overlays into one flat, document-ordered
-  `entities.json` (assigning global ids), and writes `nodes.json` (the node stream, for
-  provenance — an entity's `members` are node ids into it). `assemble` walks `nodes` →
-  `document.md`, resolving `![N]()` via `seg_index`.
+- **`instruction_distributor`** runs after the problem attributor: a growing-window walk that
+  stamps `Problem.instruction` from the instruction finder's tagged lead-in nodes. See "The
+  instruction distributor" below.
+- **`entity_persister`** is the fan-in of all three chains (the pipeline's terminal stage): it
+  flattens the three overlays into one flat, document-ordered list (assigning global ids), then
+  upserts them as the `:Entity` graph layer — each rooted under the book's `:Source` via
+  `:HAS_ENTITY` and linked to its member `:Node` chunks via `:HAS_MEMBER`. A no-op when Neo4j isn't
+  configured. See the graph tier section.
+- **After the graph:** `run()` only assembles — `assemble` walks `nodes` → `document.md`, resolving
+  `![N]()` via `seg_index`. All persistence happens inside the graph (node + entity persisters).
 
 ### Module map (`src/kms/`)
 
@@ -234,7 +251,7 @@ only: `core ← ingestion ← entity ← graph ← output`.
 
 | file | role |
 |---|---|
-| `core/models.py` | data model (`ASTNode`/`Segment`/`Entity`/…, `EntityType`, `FIELDS`), `flatten_segments`, `merge_results_into_segments` — dspy/langgraph-free |
+| `core/models.py` | data model (`ASTNode`/`Segment`/`Entity`/…, `EntityType`, `FIELDS`), `flatten_segments`, `flatten_entities`, `merge_results_into_segments` — dspy/langgraph-free |
 | `core/state.py` | the LangGraph `State` (channels + reducers); imports `models` |
 | `core/llm.py` | `text_lm` (DeepSeek, text stages), `corrector_lm` (Qwen3-VL via OpenRouter) |
 | `core/tracing.py` | opt-in per-call trace capture (the data→compile loop's raw material) |
@@ -251,7 +268,9 @@ only: `core ← ingestion ← entity ← graph ← output`.
 | `entity/attributors/theorem.py` | **attributor**: label/number/title/field/contents + bodylist + proofs |
 | `entity/instruction_distributor.py` | **distributor**: growing-window; stamp `Problem.instruction` from tagged lead-ins |
 | `output/assembler.py` | walk `nodes` → `document.md`, resolving `![N]()` via `seg_index` |
-| `pipeline.py` | graph wiring + `run()`; flattens the 3 overlays and writes `entities.json` + `nodes.json` |
+| `graph/entities.py` | `Entity → Neo4j` mapping (deterministic uuids, multi-label, nested attrs as JSON strings) |
+| `graph/persister.py` | `NodePersisterNode` (after splitter) + `EntityPersisterNode` (fan-in): persist the two graph layers |
+| `pipeline.py` | graph wiring + `run()`; after the graph, only assembles `document.md` (persistence is the graph tier's) |
 | `cli.py` | `__main__` entry point: `python -m kms.cli book.pdf out/` |
 
 ### Entity data model (`core/models.py`)
@@ -263,12 +282,12 @@ only: `core ← ingestion ← entity ← graph ← output`.
   back to the source nodes); a finder emits just `{type, members}` and the type's attributor
   fills the rest: `label`, `number`, `title`, `field`, `contents`, `bodylist` (Def/Thm),
   `proofs` (Thm), `solutions` (Prob), plus `instruction` (Prob, filled by the distributor, not
-  the attributor). Unset attributes are omitted from `entities.json`, so a bare entity still
-  serialises to `{id, type, members}`. Cross-entity `refs`/`references_tactics` are **not** here
-  — graph tier.
+  the attributor). Unset attributes are omitted when persisted, so a bare entity is just
+  `{id, type, members}` → a minimal `:Entity` vertex. Cross-entity `refs`/`references_tactics` are
+  **not** here — later graph tier.
 - `ASTNode` now carries a `role` field — a non-structural annotation kept **off** the structural
   `NodeType`. The splitter sets `role="instruction"` on exercise lead-ins; the distributor reads
-  it. It is serialised into `nodes.json` only when set.
+  it. It is written onto the `:Node` vertex only when set.
 - The overlay is **sparse**: most nodes (prose, figures, headers) belong to no entity.
 - Overlays from the three finders are **independent** — they may reference the same node from
   more than one entity. That is fine because members are pointers, not copies; no merging or
@@ -416,8 +435,8 @@ numbers and governance is semantic (the walk correctly stops at a following *com
   `uuid5(source, index)` — **deterministic**, so re-persisting a book MERGEs onto the same vertices
   instead of duplicating, and `source` disambiguates the same index across books. The int is
   demoted to an `index` provenance property, and reading order is kept both as `index` and as
-  `:NEXT` edges. Entities still need only a uuid when they land (their order derives from
-  `members[0]`) — that's the semantic tier's call.
+  `:NEXT` edges. Entities get the same treatment: a deterministic `uuid5(source, "entity#"+id)`,
+  where `id` is the document-order position from `flatten_entities` (order derives from `members[0]`).
 
 ---
 
@@ -474,8 +493,8 @@ the whole run.
 - **Mistral's subtle math errors are real**; the corrector is the mitigation, tested clean but
   on an adversarial sample, not exhaustive.
 - **Validation corpus is still small** — Hefferon §III.1 plus the front-end's earlier multi-book
-  corpus. Widen to more books/sections and inspect `document.md` + `nodes.json` + `entities.json`
-  together. Cross-entity attributes (`refs`/`references_tactics`) are still unbuilt (graph tier).
+  corpus. Widen to more books/sections and inspect `document.md` alongside the persisted `:Node` +
+  `:Entity` graph. Cross-entity attributes (`refs`/`references_tactics`) are still unbuilt (graph tier).
 
 ---
 
@@ -494,7 +513,7 @@ the whole run.
 - `uv sync` — light CPU core.
 - `uv sync --extra mistral` — adds `pypdfium2` + `pillow` (render page images for the corrector).
 
-**Tests:** `PYTHONPATH=src uv run pytest -q` (46 tests). `tests/conftest.py` stubs
+**Tests:** `PYTHONPATH=src uv run pytest -q` (105 tests). `tests/conftest.py` stubs
 dspy/pydantic/langgraph *only if absent*, so the suite runs with or without the real deps.
 
 **Style (ruff):** `uv run ruff format . && uv run ruff check .` — both must be clean before
@@ -524,7 +543,7 @@ PYTHONPATH=src uv run python -m kms.cli book.pdf out/
 # or, from Python, to limit pages (0-based):
 PYTHONPATH=src uv run python -c "import asyncio; from kms import run; \
     asyncio.run(run('book.pdf', output_dir='out/', pages=[223,224,225]))"
-# -> out/document.md, out/entities.json (flat [{id,type,members}]), out/nodes.json (provenance)
+# -> out/document.md; with NEO4J_* set, also the persisted :Node + :Entity graph
 ```
 Good test PDF: Hefferon Linear Algebra — `https://jheffero.w3.uvm.edu/linearalgebra/book.pdf`
 (525 pp; §III.1 exposition ≈ 0-based pages 223–227, exercises ≈ 228–230).
@@ -570,8 +589,9 @@ Good test PDF: Hefferon Linear Algebra — `https://jheffero.w3.uvm.edu/linearal
   __future__` (runtime is 3.14). The whole repo was reformatted once — that commit is isolated
   for `git blame`.
 - **Reuse the committed fixtures** in `tests/fixtures/books/` for stress tests; don't re-download
-  full books. Distributor training data reconstructs from finished `out/<run>/` artifacts —
-  keep a run's `nodes.json`+`entities.json` if you want to grow the trainset cheaply.
+  full books. Distributor training data comes from a live-captured `distributor.jsonl` — set
+  `KMS_TRACE_DIR` on a run to grow the trainset (the old reconstruct-from-`out/<run>/` path retired
+  with the JSON artifacts).
 - **`uv run` re-syncs and drops the `mistral` extra.** A plain `uv run …` (e.g. `pytest`) after
   `uv sync --extra mistral` uninstalls `pypdfium2`/`pillow`, so the next pipeline run dies with
   "No module named 'pypdfium2'". For a full run use `uv run --extra mistral python …` (or re-sync
