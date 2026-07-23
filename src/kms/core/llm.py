@@ -97,7 +97,7 @@ def text_lm() -> dspy.LM:
         os.environ.get("TEXT_MODEL", "deepseek/deepseek-v4-flash"),
         api_key=_require_key(DEEPSEEK_ENV_KEY, "sk-..."),
         temperature=0.0,
-        max_tokens=8000,
+        max_tokens=128000,
         extra_body={"thinking": {"type": "disabled"}},
     )
 
@@ -120,7 +120,7 @@ def teacher_lm() -> dspy.LM:
         os.environ.get("TEACHER_MODEL", "deepseek/deepseek-v4-pro"),
         api_key=_require_key(DEEPSEEK_ENV_KEY, "sk-..."),
         temperature=0.0,
-        max_tokens=8000,
+        max_tokens=128000,
     )
 
 
@@ -139,6 +139,6 @@ def corrector_lm() -> dspy.LM:
         os.environ.get("CORRECTOR_MODEL", "openrouter/qwen/qwen3-vl-235b-a22b-instruct"),
         api_key=_require_key(OPENROUTER_ENV_KEY, "sk-or-..."),
         temperature=0.0,
-        max_tokens=8000,
+        max_tokens=128000,
         **_provider_routing(os.environ.get("CORRECTOR_PROVIDER", "DeepInfra")),
     )
