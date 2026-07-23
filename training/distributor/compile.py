@@ -4,18 +4,18 @@ flash student, judged by the strong teacher (deepseek-v4-pro).
 
 Unlike the splitter (page-sized windows → few, huge examples), the distributor's examples
 are small — one lead-in plus a handful of following problems — so demo bootstrapping fits
-well, and every stress-test run on disk contributes many lead-ins for free.
+well, and a single captured trace file contributes many lead-ins for free.
 
 Loop:
-  1. Reconstruct examples from finished run dirs (out/<fixture>/), or load live traces.
+  1. Load examples from a live-captured ``distributor.jsonl`` (set ``KMS_TRACE_DIR`` on a run).
   2. Split train / dev.
   3. BootstrapFewShot runs the TEACHER over the train examples; the LLM judge
      (`distributor_score`) keeps only approved governance decisions as demos for the STUDENT.
   4. Report judge pass-rate: bare student vs compiled, on dev.
   5. Save to ``training/distributor/compiled.json`` (loaded by the serving node if present).
 
-Run:  PYTHONPATH=src uv run python -m training.distributor.compile out/ea2e_ch1_review out/ea2e_sec1_3 out/lebl_ra1 ...
-(args are run dirs; pass a single *.jsonl to use live traces instead.)
+Run:  PYTHONPATH=src uv run python -m training.distributor.compile path/to/distributor.jsonl
+(the arg is a live-captured trace file; capture it by setting KMS_TRACE_DIR on a pipeline run.)
 """
 
 import random
@@ -26,7 +26,7 @@ import dspy
 
 from kms.core.llm import teacher_lm, text_lm
 from kms.entity.instruction_distributor import Module as DistributorModule
-from training.distributor.dataset import load_runs, load_traces
+from training.distributor.dataset import load_traces
 from training.distributor.metric import distributor_score
 
 OUT_DEFAULT = Path("training/distributor/compiled.json")
@@ -41,9 +41,9 @@ def _passrate(program, devset) -> float:
 
 
 def _load(args: list[str]) -> list[dspy.Example]:
-    if len(args) == 1 and args[0].endswith(".jsonl"):
-        return load_traces(args[0])
-    return load_runs(args)
+    if len(args) != 1 or not args[0].endswith(".jsonl"):
+        raise SystemExit("pass a single live-captured *.jsonl trace file (see module docstring)")
+    return load_traces(args[0])
 
 
 def main(args: list[str], out_path: str | Path = OUT_DEFAULT) -> None:

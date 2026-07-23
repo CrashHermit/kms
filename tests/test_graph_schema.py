@@ -4,14 +4,18 @@ conftest)."""
 from kms.graph.schema import schema_statements
 
 
-def test_declares_uuid_constraints_for_node_and_source():
+def test_declares_uuid_constraints_for_node_source_entity_and_hub():
     stmts = schema_statements()
     assert any("(n:Node)" in s and "IS UNIQUE" in s for s in stmts)
     assert any("(s:Source)" in s and "IS UNIQUE" in s for s in stmts)
+    assert any("(e:Entity)" in s and "IS UNIQUE" in s for s in stmts)
+    assert any("(g:GeneralEntity)" in s and "IS UNIQUE" in s for s in stmts)
 
 
-def test_indexes_node_source_for_book_scoped_lookups():
-    assert any("INDEX" in s and "ON (n.source)" in s for s in schema_statements())
+def test_indexes_node_and_entity_source_for_book_scoped_lookups():
+    stmts = schema_statements()
+    assert any("INDEX" in s and "ON (n.source)" in s for s in stmts)
+    assert any("INDEX" in s and "ON (e.source)" in s for s in stmts)
 
 
 def test_every_statement_is_idempotent():

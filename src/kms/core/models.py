@@ -81,6 +81,10 @@ ACTIONS_ALL = [
     "enumeration",
 ]
 
+# The entity kinds a cross-entity reference may target (AutoMathKG's `definition:`/`theorem:`
+# prefixes). Shared by the per-type referencers so the allowed set lives in one place.
+REFERENCE_KINDS = ["definition", "theorem"]
+
 
 class BodySegment(BaseModel):
     """One `bodylist` piece: a contiguous slice of an entity's content and the role it
@@ -105,10 +109,24 @@ class Proof(BaseModel):
 class Solution(BaseModel):
     """One solution of a Problem (AutoMathKG's Prob-only `solutions`, each element
     `{contents, ...}`). A Problem carries no bodylist — even in the paper a solution's
-    bodylist is empty — and refs/references_tactics are deferred to the graph tier, so a
-    solution reduces to just its contents here."""
+    bodylist is empty — so a solution reduces to just its contents here."""
 
     contents: list[str] = []
+
+
+class Reference(BaseModel):
+    """One outgoing cross-entity reference — AutoMathKG's `refs` + `references_tactics` fused into a
+    single record (the graph tier keeps them as one edge). `target` is the referenced entity's name
+    as written ("Set", "positive definite matrix"); `kind` is its type prefix (`"definition"` /
+    `"theorem"`, the paper's `definition:`/`theorem:` convention); `tactic` is the role the reference
+    plays, one of `ACTIONS_ALL`. Resolved to a graph edge onto a general-entity hub keyed by
+    (kind, normalized target), so references from different books/entities converge on one target.
+    A pydantic model like BodySegment — it doubles as a DSPy structured type at the referencer's LLM
+    boundary and is carried on the entity until the graph tier turns it into an edge."""
+
+    target: str
+    kind: str  # "definition" | "theorem"
+    tactic: str  # one of ACTIONS_ALL
 
 
 @dataclass(slots=True)
@@ -123,9 +141,9 @@ class Entity:
     they are concatenated, not merged.
 
     The self-contained AutoMathKG attributes below are filled in by the per-type attributor
-    passes (only the Definition attributor exists so far); they stay unset (None / empty)
-    until then. Cross-entity attributes (refs / references_tactics) and the type-specific
-    proofs/solutions are not here yet — they belong to the later graph tier."""
+    passes; they stay unset (None / empty) until then. `refs` is the one cross-entity attribute —
+    filled by the per-type referencer pass (after the attributor) and turned into graph edges (onto
+    general-entity hubs) by the entity persister; it stays empty until the referencer runs."""
 
     type: EntityType
     members: list[int] = field(default_factory=list)  # member node ids, document order
@@ -140,6 +158,9 @@ class Entity:
     bodylist: list[BodySegment] = field(default_factory=list)  # role-labelled segmentation
     proofs: list[Proof] = field(default_factory=list)  # Theorem-only: its proof(s)
     solutions: list[Solution] = field(default_factory=list)  # Problem-only: its solution(s)
+    refs: list[Reference] = field(
+        default_factory=list
+    )  # cross-entity references (referencer output)
     field: str | None = None  # mathematical field (fixed taxonomy)
     instruction: str | None = None  # Problem-only: shared exercise-group directive
 
@@ -208,6 +229,32 @@ def merge_results_into_segments(
         if segment.index in by_index:
             setattr(segment, attr, by_index[segment.index])
     return segments
+
+
+def flatten_entities(
+    problem: list["Entity"],
+    definition: list["Entity"],
+    theorem: list["Entity"],
+    nodes: list[ASTNode],
+) -> list["Entity"]:
+    """Concatenate the three per-type finder overlays into one flat, document-ordered entity list
+    and assign each a global id.
+
+    The overlays are independent and may reference the same node more than once (members are
+    node-id pointers) — they are concatenated, not merged. Ordering is by each entity's first
+    member's position in the flat node stream; an entity with no members sorts to the end. Because
+    the splitter made exercise nodes atomic upstream, the problem finder already emits one entity
+    per exercise with distinct members, so no coarse-vs-fine reconciliation is needed. The assigned
+    `id` is the entity's stable document-order position — the key the graph tier's entity vertex
+    uuid is derived from — so a re-run maps onto the same vertices.
+    """
+    entities = list(problem) + list(definition) + list(theorem)
+    order = {node.id: i for i, node in enumerate(nodes)}
+    big = len(order)
+    entities.sort(key=lambda e: order.get(e.members[0], big) if e.members else big)
+    for i, entity in enumerate(entities):
+        entity.id = i
+    return entities
 
 
 def flatten_segments(segments: list[Segment]) -> list[ASTNode]:

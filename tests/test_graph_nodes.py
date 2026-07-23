@@ -32,7 +32,7 @@ def test_node_properties_maps_type_content_and_provenance():
 def test_node_properties_omits_unset_role_but_keeps_index_zero():
     node = ASTNode(type=NodeType.PARAGRAPH, content="text", id=0, seg_index=0)
     props = node_properties(node, "book.pdf")
-    assert "role" not in props  # None is dropped, like in nodes.json
+    assert "role" not in props  # None-valued fields are dropped from the property map
     assert props["index"] == 0  # a falsy-but-valid value is kept
 
 

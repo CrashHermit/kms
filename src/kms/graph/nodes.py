@@ -68,8 +68,8 @@ def node_label(node: ASTNode) -> str | None:
 def node_properties(node: ASTNode, source: str) -> dict:
     """The Neo4j property map for one structural node: its stable uuid, the structural type,
     the markdown content, and provenance (document-order ``index`` + originating ``seg_index``).
-    None-valued fields (e.g. an unset ``role``) are omitted, matching how they're dropped from
-    ``nodes.json``. Precondition: ``node.id`` is set (true once the stream is flattened)."""
+    None-valued fields (e.g. an unset ``role``) are omitted rather than written as nulls.
+    Precondition: ``node.id`` is set (true once the stream is flattened)."""
     props = {
         "uuid": node_uuid(source, node.id),
         "source": source_uuid(source),  # links back to the :Source node
