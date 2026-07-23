@@ -97,6 +97,34 @@ def _langgraph_types():
     return {"langgraph": pkg, "langgraph.types": sub}
 
 
+def _neo4j():
+    # Enough surface for `kms.graph.db` / `kms.graph.schema` to import and for the pure
+    # helpers (schema_statements, vector_dim) to be unit-tested with no server. Anything
+    # that actually talks to a database is exercised only by the opt-in integration test,
+    # which skips unless NEO4J_URI is set.
+    m = types.ModuleType("neo4j")
+
+    class AsyncDriver:
+        async def close(self):
+            pass
+
+        async def verify_connectivity(self):
+            pass
+
+        def session(self, **k):
+            raise RuntimeError("stub neo4j driver has no live session")
+
+    class AsyncGraphDatabase:
+        @staticmethod
+        def driver(*a, **k):
+            return AsyncDriver()
+
+    m.AsyncDriver = AsyncDriver
+    m.AsyncGraphDatabase = AsyncGraphDatabase
+    return {"neo4j": m}
+
+
 _install_if_missing("dspy", _dspy)
 _install_if_missing("pydantic", _pydantic)
 _install_if_missing("langgraph.types", _langgraph_types)
+_install_if_missing("neo4j", _neo4j)
