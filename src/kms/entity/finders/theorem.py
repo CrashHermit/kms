@@ -37,7 +37,8 @@ import dspy
 from pydantic import BaseModel, Field
 
 from kms.core.llm import text_lm
-from kms.core.state import ASTNode, Entity, EntityType, State
+from kms.core.models import ASTNode, Entity, EntityType
+from kms.core.state import State
 
 # Soft look-ahead budget (~4 chars/token). A single node larger than the budget still
 # forms a window (at least one node). When the only theorem in a window reaches its edge,

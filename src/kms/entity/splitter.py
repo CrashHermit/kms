@@ -39,7 +39,8 @@ from pydantic import BaseModel, Field
 
 from kms.core import tracing
 from kms.core.llm import text_lm
-from kms.core.state import ASTNode, State
+from kms.core.models import ASTNode
+from kms.core.state import State
 
 # Same look-ahead budget shape as the finders (~4 chars/token). The splitter only needs
 # enough context to recognise a lead-in and the exercise run it introduces; a packed

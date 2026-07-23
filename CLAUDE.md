@@ -23,7 +23,8 @@ fusion, Math-LLM completion — is the next big piece and is **not started**.
 - `src/kms/` — the pipeline, organized by phase (see `docs/ARCHITECTURE.md` for the full
   rationale and the backward-only dependency rule). Packages:
   - `core/` — shared center that every stage depends on and that depends on no stage:
-    `state.py` (domain models + the LangGraph `State`), `llm.py` (LM config), `tracing.py`.
+    `models.py` (domain data, dspy/langgraph-free), `state.py` (the LangGraph `State`),
+    `llm.py` (LM config), `tracing.py`.
   - `ingestion/` — phase 1 (backbone `segments`): `ocr.py` (Mistral front-end), `corrector.py`,
     `extractor.py` (purely structural), `seam_merger.py`. Map-reduce `dispatch → worker → collect`.
   - `entity/` — phase 2 (backbone `nodes`): `splitter.py`, `finders/{problem,definition,theorem}.py`,

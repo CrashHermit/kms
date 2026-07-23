@@ -6,7 +6,7 @@ statement vs proof at proof_start, label peeling, proofs population — without 
 
 import asyncio
 
-from kms.core.state import ASTNode, BodySegment, Entity, EntityType, NodeType
+from kms.core.models import ASTNode, BodySegment, Entity, EntityType, NodeType
 from kms.entity.attributors.theorem import Identity, attribute_theorem
 
 

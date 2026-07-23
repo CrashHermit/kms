@@ -3,7 +3,7 @@
 import pathlib
 import tempfile
 
-from kms.core.state import ASTNode, NodeType, Segment, flatten_segments
+from kms.core.models import ASTNode, NodeType, Segment, flatten_segments
 from kms.output.assembler import assemble
 
 

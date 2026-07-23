@@ -4,13 +4,9 @@ The package organization the pipeline uses. This layout is **realized** — the 
 matches `src/kms/` as it stands. Read `HANDOFF.md` first for what the pipeline actually does
 and why; this doc is only about *where the code lives* and *which direction dependencies point*.
 
-**Two rules from this doc are intentionally deferred** (pragmatic MVP calls; both are cheap to
-do later because stages don't cross-import):
+**One rule from this doc is intentionally deferred** (a pragmatic MVP call; cheap to do later
+because stages don't cross-import):
 
-- **`core/state.py` is not yet split into `models.py` + `state.py`.** The domain models and the
-  LangGraph `State` still share one module. Splitting them (rule 3 below) is a purity win, not a
-  functional need, and it introduces a placement question for `load_dspy_image` (which pulls in
-  dspy). Deferred until there's a reason.
 - **No `core/errors.py` hierarchy yet.** There's little ad-hoc failure signaling to justify one;
   `MistralOCRError` (in `ingestion/ocr.py`) covers the one real domain error today.
 
@@ -44,8 +40,8 @@ src/kms/
 
   core/                    # shared center; depends on nothing, everything depends on it
     __init__.py
-    state.py               # domain models (ASTNode, Segment, Entity, …) + the LangGraph State
-                           #   (deferred: split into models.py + state.py — see status note above)
+    models.py              # domain data: ASTNode, Segment, Entity, … + flatten/merge helpers (dspy/langgraph-free)
+    state.py               # the LangGraph State TypedDict + reducer channels (imports models)
     llm.py                 # text_lm / teacher_lm / corrector_lm config
     tracing.py             # opt-in trace capture (the data→compile loop's raw material)
                            # (deferred: errors.py KmsError hierarchy)
@@ -117,16 +113,18 @@ models, the orchestration state, LM config, tracing, and the error hierarchy. It
 nothing is allowed to import upward from. Named `core/` (not `_core/`) because
 `kms/__init__.py` is already the one public door — the underscore would be redundant signal.
 
-### 3. Split `models.py` from `state.py`
+### 3. `models.py` is separate from `state.py`
 
-Today `state.py` mixes two concerns: the pure data containers (`Entity`, `ASTNode`, …) and the
-LangGraph `State` TypedDict with its `operator.add` reducers. Long-term these are different
-things — the models are what the system is *about*; `State` is a mechanism of the runner we
-happen to use.
+Two concerns, two modules: `models.py` holds the pure data containers (`Entity`, `ASTNode`, …)
+and the pure helpers over them (`flatten_segments`, `merge_results_into_segments`); `state.py`
+holds the LangGraph `State` TypedDict with its `operator.add` reducers. The models are what the
+system is *about*; `State` is a mechanism of the runner we happen to use.
 
-Splitting them keeps the domain types free of any LangGraph import, so a test, the graph tier,
-or a future non-LangGraph runner can use `Entity`/`ASTNode` in isolation. `models.py` imports
-only stdlib + pydantic; `state.py` imports `models` + langgraph.
+Keeping them apart keeps the domain types free of any LangGraph/dspy import, so a test, the graph
+tier, or a future non-LangGraph runner can use `Entity`/`ASTNode` in isolation. `models.py`
+imports only stdlib + pydantic; `state.py` imports `models` + langgraph. The one dspy-using
+helper, `_load_dspy_image` (loads a page image at the corrector's LLM boundary), lives in
+`ingestion/corrector.py` — its only caller — rather than contaminating `models.py`.
 
 ### 4. Entity layer is grouped by **stage**, not by type
 
@@ -181,7 +179,7 @@ exceptions** — they're what the conventions look like once they meet this stac
   plain-function / dataclass rule. (The dataclasses in `models.py` correctly use
   `field(default_factory=...)`; both idioms coexisting is expected.)
 - **`None` for absence is fine; `None` for *failure* is not.** Returning `None` for a
-  legitimately-absent optional (e.g. `load_dspy_image(None)`) is correct. Signaling an *error*
+  legitimately-absent optional (e.g. `_load_dspy_image(None)`) is correct. Signaling an *error*
   with `None`/`False`/a sentinel string is not — raise a `KmsError` subclass instead.
 
 ---

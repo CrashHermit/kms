@@ -2,7 +2,7 @@
 
 import asyncio
 
-from kms.core.state import ASTNode, EntityType, NodeType
+from kms.core.models import ASTNode, EntityType, NodeType
 from kms.entity.finders.definition import DefinitionFinderNode, DefinitionSpan, find_definitions
 
 

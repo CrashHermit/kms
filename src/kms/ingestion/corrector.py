@@ -34,15 +34,30 @@ conditional-output variant (emit a sentinel when the page is already clean, to s
 rewrite output) is a drop-in future optimization behind the same interface.
 """
 
+import base64
+from pathlib import Path
+
 import dspy
 from langgraph.types import Send
 
 from kms.core.llm import corrector_lm
-from kms.core.state import Segment, State, load_dspy_image, merge_results_into_segments
+from kms.core.models import Segment, merge_results_into_segments
+from kms.core.state import State
 
 # A correction should be a light edit; reject anything outside this band of the
 # original length as a runaway rewrite or a truncation.
 _TOLERANCE = 0.30
+
+
+def _load_dspy_image(path: str | None) -> dspy.Image | None:
+    """Load a PNG from disk into a dspy.Image (base64 data URL), or None if no path.
+
+    The corrector is the only stage that needs a page image at the LLM boundary, so this
+    dspy-specific helper lives here rather than in the (dspy-free) core models."""
+    if not path:
+        return None
+    encoded = base64.b64encode(Path(path).read_bytes()).decode("utf-8")
+    return dspy.Image(url=f"data:image/png;base64,{encoded}")
 
 
 def _within_tolerance(original: str, corrected: str) -> bool:
@@ -148,7 +163,7 @@ class CorrectorNode:
         the correction diverges too far (runaway rewrite / truncation)."""
         segment: Segment = state["segment"]
         corrected = await self.module.aforward(
-            page_image=load_dspy_image(segment.image_path),
+            page_image=_load_dspy_image(segment.image_path),
             transcription=segment.content,
         )
         final = corrected if _within_tolerance(segment.content, corrected) else segment.content

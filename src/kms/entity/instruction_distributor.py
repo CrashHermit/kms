@@ -34,7 +34,8 @@ from pydantic import BaseModel
 
 from kms.core import tracing
 from kms.core.llm import text_lm
-from kms.core.state import ASTNode, Entity, State
+from kms.core.models import ASTNode, Entity
+from kms.core.state import State
 
 # Compiled few-shot program from `training/distributor/compile.py`, loaded at serve time
 # if present so the data-optimized governance demos ship with the pipeline; override with

@@ -3,7 +3,7 @@ onto the Problems it governs. The LLM (which judges the governed extent) is inje
 
 import asyncio
 
-from kms.core.state import ASTNode, Entity, EntityType, NodeType
+from kms.core.models import ASTNode, Entity, EntityType, NodeType
 from kms.entity.instruction_distributor import (
     InstructionDistributorNode,
     distribute_instructions,

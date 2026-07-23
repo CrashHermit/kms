@@ -171,7 +171,8 @@ only: `core ← ingestion ← entity ← graph ← output`.
 
 | file | role |
 |---|---|
-| `core/state.py` | data model + `State` (LangGraph channels), `flatten_segments`, `merge_results_into_segments`, `load_dspy_image` |
+| `core/models.py` | data model (`ASTNode`/`Segment`/`Entity`/…, `EntityType`, `FIELDS`), `flatten_segments`, `merge_results_into_segments` — dspy/langgraph-free |
+| `core/state.py` | the LangGraph `State` (channels + reducers); imports `models` |
 | `core/llm.py` | `text_lm` (DeepSeek, text stages), `corrector_lm` (Qwen3-VL via OpenRouter) |
 | `core/tracing.py` | opt-in per-call trace capture (the data→compile loop's raw material) |
 | `ingestion/ocr.py` | **front-end**: Mistral OCR API → `Segment` backbone (markdown + figures + page renders) |
@@ -190,7 +191,7 @@ only: `core ← ingestion ← entity ← graph ← output`.
 | `pipeline.py` | graph wiring + `run()`; flattens the 3 overlays and writes `entities.json` + `nodes.json` |
 | `cli.py` | `__main__` entry point: `python -m kms.cli book.pdf out/` |
 
-### Entity data model (`core/state.py`)
+### Entity data model (`core/models.py`)
 
 - **3 types** (`EntityType`): `Definition`, `Theorem` (**subsumes** proposition/corollary/
   lemma), `Problem` (worked examples **and** exercises — AutoMathKG's model: same type,
@@ -253,7 +254,7 @@ before any entity overlay exists (nothing references the old ids yet).
 
 Each runs after its finder and fills the **self-contained** AutoMathKG attributes on that type's
 entities, in place, reading only the entity's own member nodes (drawing `FIELDS`/`ACTIONS`
-taxonomies from `core/state.py`):
+taxonomies from `core/models.py`):
 
 - **Problem** — one identity pass (label/number/title/field + a `solution_start` boundary);
   members split into statement vs shown solution, both halves always kept. No bodylist (Table B3

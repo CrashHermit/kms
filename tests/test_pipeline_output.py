@@ -2,7 +2,7 @@
 
 import json
 
-from kms.core.state import ASTNode, Entity, EntityType, NodeType
+from kms.core.models import ASTNode, Entity, EntityType, NodeType
 from kms.pipeline import _flatten_entities, _write_entities, _write_nodes
 
 

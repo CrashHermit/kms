@@ -29,7 +29,7 @@ from pathlib import Path
 
 import httpx
 
-from kms.core.state import Picture, Segment
+from kms.core.models import Picture, Segment
 
 MISTRAL_OCR_URL = "https://api.mistral.ai/v1/ocr"
 MISTRAL_OCR_MODEL = "mistral-ocr-latest"

@@ -5,7 +5,7 @@ module, so these tests exercise the real split/assembly logic without dspy."""
 
 import asyncio
 
-from kms.core.state import ASTNode, Entity, EntityType, NodeType
+from kms.core.models import ASTNode, Entity, EntityType, NodeType
 from kms.entity.attributors.problem import Identity, attribute_problem
 
 

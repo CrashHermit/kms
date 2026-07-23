@@ -3,7 +3,8 @@ from langgraph.types import Send
 from pydantic import BaseModel, Field
 
 from kms.core.llm import text_lm
-from kms.core.state import ASTNode, NodeType, Segment, State, merge_results_into_segments
+from kms.core.models import ASTNode, NodeType, Segment, merge_results_into_segments
+from kms.core.state import State
 
 
 class DSPyModel(BaseModel):

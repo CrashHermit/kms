@@ -35,7 +35,8 @@ import dspy
 from pydantic import BaseModel
 
 from kms.core.llm import text_lm
-from kms.core.state import FIELDS, ASTNode, Entity, Solution, State
+from kms.core.models import FIELDS, ASTNode, Entity, Solution
+from kms.core.state import State
 
 
 class MemberNode(BaseModel):

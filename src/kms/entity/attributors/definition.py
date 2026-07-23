@@ -44,7 +44,8 @@ import dspy
 from pydantic import BaseModel
 
 from kms.core.llm import text_lm
-from kms.core.state import FIELDS, ASTNode, BodySegment, Entity, State
+from kms.core.models import FIELDS, ASTNode, BodySegment, Entity
+from kms.core.state import State
 
 # The subset of ACTIONS_ALL a DEFINITION actually exercises. The proof-oriented roles
 # (lemma, corollary, deduction, calculation, conclusion) never legitimately apply to a

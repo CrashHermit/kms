@@ -21,7 +21,7 @@ import re
 import shutil
 from pathlib import Path
 
-from kms.core.state import ASTNode, Picture, Segment
+from kms.core.models import ASTNode, Picture, Segment
 
 # Tolerant match for an image placeholder: ![N]() with optional surrounding
 # whitespace and an empty link target.

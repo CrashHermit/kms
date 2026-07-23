@@ -3,7 +3,8 @@ from langgraph.types import Send
 from pydantic import BaseModel
 
 from kms.core.llm import text_lm
-from kms.core.state import ASTNode, Segment, State, flatten_segments, merge_results_into_segments
+from kms.core.models import ASTNode, Segment, flatten_segments, merge_results_into_segments
+from kms.core.state import State
 
 
 class SeamNodeDTO(BaseModel):
