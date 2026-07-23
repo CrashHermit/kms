@@ -114,7 +114,9 @@ def _write_image(data: str, path: Path) -> None:
         data = data.split(",", 1)[-1]
     try:
         path.write_bytes(base64.b64decode(data))
-    except Exception:
+    except (ValueError, OSError):
+        # A malformed figure (bad base64 -> ValueError) or a write failure (OSError)
+        # must not abort the whole document — skip just this figure.
         pass
 
 

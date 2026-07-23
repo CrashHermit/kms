@@ -114,7 +114,7 @@ class Solution(BaseModel):
     contents: list[str] = []
 
 
-@dataclass
+@dataclass(slots=True)
 class Entity:
     """A math-semantic entity: a typed grouping of member nodes — a sparse overlay on the
     flat node stream (most nodes belong to no entity). `members` are node ids in document
@@ -147,7 +147,7 @@ class Entity:
     instruction: str | None = None  # Problem-only: shared exercise-group directive
 
 
-@dataclass
+@dataclass(slots=True)
 class Picture:
     """An image extracted from a page. `index` is the 1-based placeholder id that
     OCR's ![N]() markers refer to."""
@@ -156,7 +156,7 @@ class Picture:
     image_path: str
 
 
-@dataclass
+@dataclass(slots=True)
 class ASTNode:
     """A single extracted block node in the AST.
 
@@ -182,7 +182,7 @@ class ASTNode:
     )
 
 
-@dataclass
+@dataclass(slots=True)
 class Segment:
     """One page of the document. `index` is 0-based document order."""
 

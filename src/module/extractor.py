@@ -70,7 +70,7 @@ class Signature(dspy.Signature):
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None):
+    def __init__(self, lm: dspy.LM | None = None) -> None:
         super().__init__()
         self.extractor = dspy.ChainOfThought(Signature)
         self.set_lm(lm or text_lm())
@@ -84,7 +84,7 @@ class Module(dspy.Module):
 
 
 class ExtractorNode:
-    def __init__(self, module: Module | None = None):
+    def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
     def dispatch(self, state: State) -> list[Send] | str:

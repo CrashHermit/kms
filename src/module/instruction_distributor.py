@@ -87,7 +87,7 @@ class GovernExtent(dspy.Signature):
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None, compiled: bool = True):
+    def __init__(self, lm: dspy.LM | None = None, compiled: bool = True) -> None:
         super().__init__()
         self.judge = dspy.ChainOfThought(GovernExtent)
         self.set_lm(lm or text_lm())
@@ -204,7 +204,7 @@ class InstructionDistributorNode:
     lead-in tags. Runs after the Problem attributor (it reads each problem's contents/number) and
     writes the enriched entities back to the ``problem_entities`` channel."""
 
-    def __init__(self, module: Module | None = None):
+    def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
     async def run(self, state: State) -> dict:

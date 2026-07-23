@@ -44,5 +44,7 @@ def record(stage: str, inputs: dict[str, Any], outputs: dict[str, Any], **meta: 
         )
         with _lock, (d / f"{stage}.jsonl").open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
-    except Exception:
+    except (OSError, TypeError, ValueError):
+        # Best-effort telemetry: a filesystem error (OSError) or a non-serializable
+        # payload (TypeError/ValueError from json.dumps) must never break a run.
         pass

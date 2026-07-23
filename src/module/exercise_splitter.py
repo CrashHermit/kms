@@ -144,7 +144,7 @@ _COMPILED_PATH = os.environ.get("KMS_SPLITTER_PROGRAM", "training/splitter/compi
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None, compiled: bool = True):
+    def __init__(self, lm: dspy.LM | None = None, compiled: bool = True) -> None:
         super().__init__()
         self.splitter = dspy.ChainOfThought(Signature)
         self.set_lm(lm or text_lm())
@@ -274,7 +274,7 @@ class SplitterNode:
     `nodes` channel is safe because no entity overlay exists yet — nothing references the old
     ids."""
 
-    def __init__(self, module: Module | None = None):
+    def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
     async def run(self, state: State) -> dict:

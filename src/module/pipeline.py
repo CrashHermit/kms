@@ -37,7 +37,9 @@ for picture inventories.
 """
 
 import json
+import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from langgraph.graph import END, START, StateGraph
 
@@ -55,8 +57,13 @@ from .state import State
 from .theorem_attributor import TheoremAttributorNode
 from .theorem_finder import TheoremFinderNode
 
+if TYPE_CHECKING:
+    from langgraph.graph.state import CompiledStateGraph
 
-def build_graph():
+logger = logging.getLogger(__name__)
+
+
+def build_graph() -> "CompiledStateGraph":
     """Assemble and compile the LangGraph pipeline over the shared State.
 
     A single straight path: the correction pass proofreads each Mistral-transcribed
@@ -255,7 +262,8 @@ if __name__ == "__main__":
     import asyncio
     import sys
 
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     pdf = sys.argv[1] if len(sys.argv) > 1 else "test.pdf"
     out_dir = sys.argv[2] if len(sys.argv) > 2 else "output"
     written = asyncio.run(run(pdf, output_dir=out_dir))
-    print(f"Wrote assembled document to: {written}")
+    logger.info("Wrote assembled document to: %s", written)

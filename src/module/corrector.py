@@ -114,7 +114,7 @@ class Signature(dspy.Signature):
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None):
+    def __init__(self, lm: dspy.LM | None = None) -> None:
         super().__init__()
         self.proofreader = dspy.Predict(Signature)
         self.set_lm(lm or corrector_lm())
@@ -128,7 +128,7 @@ class Module(dspy.Module):
 
 
 class CorrectorNode:
-    def __init__(self, module: Module | None = None):
+    def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
     def dispatch(self, state: State) -> list[Send] | str:

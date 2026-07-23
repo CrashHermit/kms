@@ -192,7 +192,7 @@ class Identity(BaseModel):
 class Module(dspy.Module):
     """Runs the identity pass and the two bodylist passes (statement, proof) for one theorem."""
 
-    def __init__(self, lm: dspy.LM | None = None):
+    def __init__(self, lm: dspy.LM | None = None) -> None:
         super().__init__()
         self.identify = dspy.Predict(Identify)
         self.statement_bodylist = dspy.ChainOfThought(StatementBodylist)
@@ -311,7 +311,7 @@ class TheoremAttributorNode:
     per-entity attributions are independent, so they run concurrently; the enriched entities
     (mutated in place) are written back to the same channel."""
 
-    def __init__(self, module: Module | None = None):
+    def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
     async def run(self, state: State) -> dict:
