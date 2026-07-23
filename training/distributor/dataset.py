@@ -19,7 +19,7 @@ from pathlib import Path
 
 import dspy
 
-from module.instruction_distributor import WindowProblem
+from kms.entity.instruction_distributor import WindowProblem
 
 
 def _problem_text(contents, number) -> str:

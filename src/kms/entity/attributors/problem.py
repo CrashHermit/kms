@@ -34,8 +34,8 @@ import asyncio
 import dspy
 from pydantic import BaseModel
 
-from .llm import text_lm
-from .state import FIELDS, ASTNode, Entity, Solution, State
+from kms.core.llm import text_lm
+from kms.core.state import FIELDS, ASTNode, Entity, Solution, State
 
 
 class MemberNode(BaseModel):

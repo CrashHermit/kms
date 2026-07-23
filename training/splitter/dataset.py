@@ -14,7 +14,7 @@ from pathlib import Path
 
 import dspy
 
-from module.exercise_splitter import WindowNode
+from kms.entity.splitter import WindowNode
 
 
 def load_windows(traces_path: str | Path) -> list[dspy.Example]:

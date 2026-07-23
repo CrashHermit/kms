@@ -3,7 +3,7 @@ pure transform that turns an OCR JSON response into the pipeline's Segment backb
 
 from pathlib import Path
 
-from module.mistral_ocr import _rewrite_page, build_segments
+from kms.ingestion.ocr import _rewrite_page, build_segments
 
 # A 1x1 PNG, base64 — stands in for a returned figure crop.
 _PNG_B64 = (

@@ -37,30 +37,27 @@ for picture inventories.
 """
 
 import json
-import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from langgraph.graph import END, START, StateGraph
 
-from .assembler import assemble
-from .corrector import CorrectorNode
-from .definition_attributor import DefinitionAttributorNode
-from .definition_finder import DefinitionFinderNode
-from .exercise_splitter import SplitterNode
-from .extractor import ExtractorNode
-from .instruction_distributor import InstructionDistributorNode
-from .problem_attributor import ProblemAttributorNode
-from .problem_finder import ProblemFinderNode
-from .seam_merger import SeamMergerNode
-from .state import State
-from .theorem_attributor import TheoremAttributorNode
-from .theorem_finder import TheoremFinderNode
+from kms.core.state import State
+from kms.entity.attributors.definition import DefinitionAttributorNode
+from kms.entity.attributors.problem import ProblemAttributorNode
+from kms.entity.attributors.theorem import TheoremAttributorNode
+from kms.entity.finders.definition import DefinitionFinderNode
+from kms.entity.finders.problem import ProblemFinderNode
+from kms.entity.finders.theorem import TheoremFinderNode
+from kms.entity.instruction_distributor import InstructionDistributorNode
+from kms.entity.splitter import SplitterNode
+from kms.ingestion.corrector import CorrectorNode
+from kms.ingestion.extractor import ExtractorNode
+from kms.ingestion.seam_merger import SeamMergerNode
+from kms.output.assembler import assemble
 
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
-
-logger = logging.getLogger(__name__)
 
 
 def build_graph() -> "CompiledStateGraph":
@@ -168,9 +165,9 @@ async def run(
     Returns the path of the assembled document.
     """
     output_dir = Path(output_dir)
-    from . import mistral_ocr
+    from kms.ingestion import ocr
 
-    segments = mistral_ocr.extract(pdf_path, output_dir=output_dir, pages=pages)
+    segments = ocr.extract(pdf_path, output_dir=output_dir, pages=pages)
     graph = build_graph()
     result = await graph.ainvoke({"segments": segments}, {"recursion_limit": 1000})
     nodes = result["nodes"]
@@ -256,14 +253,3 @@ def _entity_payload(e) -> dict:
 def _seg(segment) -> dict:
     """A bodylist segment as a plain dict (no pydantic dependency)."""
     return {"description": segment.description, "action": segment.action}
-
-
-if __name__ == "__main__":
-    import asyncio
-    import sys
-
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
-    pdf = sys.argv[1] if len(sys.argv) > 1 else "test.pdf"
-    out_dir = sys.argv[2] if len(sys.argv) > 2 else "output"
-    written = asyncio.run(run(pdf, output_dir=out_dir))
-    logger.info("Wrote assembled document to: %s", written)

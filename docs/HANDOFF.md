@@ -22,16 +22,16 @@ Hefferon pages.
   delimiters. Solid.
 - The **extractor is purely structural** — it emits only general document structure
   (paragraph/math/list/table/image/caption/header/code) and knows nothing math-specific.
-- **The exercise splitter** (`exercise_splitter.py`) runs between the seam merger and the
+- **The exercise splitter** (`entity/splitter.py`) runs between the seam merger and the
   finders. It rewrites the canonical node stream so each exercise is its OWN node (fixing the
   granularity mismatch below) and tags exercise lead-ins `role="instruction"`.
 - The **entity layer is three independent per-type finders** (`problem_finder`,
   `definition_finder`, `theorem_finder`), each a self-contained copy of the same cursor-walk,
   running in parallel and emitting a sparse overlay of its type.
-- **Per-type attributors are built and wired** (`{problem,definition,theorem}_attributor.py`).
+- **Per-type attributors are built and wired** (`entity/attributors/{problem,definition,theorem}.py`).
   Each enriches its finder's entities with the self-contained AutoMathKG attributes: label,
   number, title, field, contents, bodylist (Def/Thm), proofs (Thm), solutions (Prob).
-- **The instruction distributor** (`instruction_distributor.py`) runs at the end of the problem
+- **The instruction distributor** (`entity/instruction_distributor.py`) runs at the end of the problem
   chain: a growing-window walk that copies a grouped-exercise lead-in's shared directive onto
   the `Problem.instruction` of the problems it governs (LLM-judged extent, no number matching).
 - **Still deferred to the graph tier:** cross-entity attributes (`refs`/`references_tactics`),
@@ -83,7 +83,7 @@ own-numbered-exercise-is-not-a-lead-in case).
 **DSPy training harness (`training/`) — data-driven stage tuning instead of prompt-chasing.**
 Teacher `deepseek-v4-pro` bootstraps traces; a reference-free **LLM-as-judge** (also on the
 teacher) filters them into few-shot demos for the flash student — DSPy *compilation*, not weight
-fine-tuning (DeepSeek's API doesn't expose that). Pieces: `module/tracing.py` (opt-in
+fine-tuning (DeepSeek's API doesn't expose that). Pieces: `core/tracing.py` (opt-in
 `KMS_TRACE_DIR` capture) and per-stage `training/<stage>/{metric,dataset,compile}.py`; the
 splitter and distributor nodes auto-load `training/<stage>/compiled.json` if present (override
 with `KMS_SPLITTER_PROGRAM` / `KMS_DISTRIBUTOR_PROGRAM`).
@@ -145,7 +145,7 @@ Phase 2 — flat node stream (backbone = `nodes`, global ordered list)
   cut mid-way, judged on structure, not subject matter), then **flattens** `segments[].nodes`
   into one global `nodes` list, stamping each `ASTNode` with a stable `id` (document-order
   int) and its `seg_index`. Everything after works on `nodes` keyed by id.
-- **`splitter`** (`exercise_splitter.py`) normalises the flat stream once, before the finders.
+- **`splitter`** (`entity/splitter.py`) normalises the flat stream once, before the finders.
   Any node that packs two-or-more numbered exercises (the extractor emits a run of exercises as
   ONE `list` node) is **replaced in place by one node per exercise**; exercise lead-ins are
   tagged `role="instruction"`. It re-ids the stream; split pieces inherit their parent's
@@ -164,28 +164,33 @@ Phase 2 — flat node stream (backbone = `nodes`, global ordered list)
   provenance — an entity's `members` are node ids into it). `assemble` walks `nodes` →
   `document.md`, resolving `![N]()` via `seg_index`.
 
-### Module map (`src/module/`)
+### Module map (`src/kms/`)
+
+Organized by phase (see `ARCHITECTURE.md` for the dependency rule). Dependencies point backward
+only: `core ← ingestion ← entity ← graph ← output`.
 
 | file | role |
 |---|---|
-| `state.py` | data model + `State` (LangGraph channels), `flatten_segments`, `load_dspy_image` |
-| `mistral_ocr.py` | **front-end**: Mistral OCR API → `Segment` backbone (markdown + figures + page renders) |
-| `corrector.py` | **correction pass**: vision model proofreads each page vs its image; divergence-guarded; delimiter normalization |
-| `extractor.py` | markdown → flat **structural** nodes (no math typing) |
-| `seam_merger.py` | heal page-split nodes (structural); **birth the flat `nodes` list** |
-| `exercise_splitter.py` | **splitter**: split packed exercise nodes → one node per exercise; tag lead-ins `role="instruction"` |
-| `problem_finder.py` | **finder**: cursor-walk → Problem entities (worked examples AND exercises) |
-| `definition_finder.py` | **finder**: cursor-walk → Definition entities |
-| `theorem_finder.py` | **finder**: cursor-walk → Theorem entities (subsumes prop/cor/lemma; includes proof) |
-| `problem_attributor.py` | **attributor**: label/number/title/field/contents + solution split |
-| `definition_attributor.py` | **attributor**: label/number/title/field/contents + bodylist (4 roles) |
-| `theorem_attributor.py` | **attributor**: label/number/title/field/contents + bodylist + proofs |
-| `instruction_distributor.py` | **distributor**: growing-window; stamp `Problem.instruction` from tagged lead-ins |
-| `assembler.py` | walk `nodes` → `document.md`, resolving `![N]()` via `seg_index` |
+| `core/state.py` | data model + `State` (LangGraph channels), `flatten_segments`, `merge_results_into_segments`, `load_dspy_image` |
+| `core/llm.py` | `text_lm` (DeepSeek, text stages), `corrector_lm` (Qwen3-VL via OpenRouter) |
+| `core/tracing.py` | opt-in per-call trace capture (the data→compile loop's raw material) |
+| `ingestion/ocr.py` | **front-end**: Mistral OCR API → `Segment` backbone (markdown + figures + page renders) |
+| `ingestion/corrector.py` | **correction pass**: vision model proofreads each page vs its image; divergence-guarded; delimiter normalization |
+| `ingestion/extractor.py` | markdown → flat **structural** nodes (no math typing) |
+| `ingestion/seam_merger.py` | heal page-split nodes (structural); **birth the flat `nodes` list** |
+| `entity/splitter.py` | **splitter**: split packed exercise nodes → one node per exercise; tag lead-ins `role="instruction"` |
+| `entity/finders/problem.py` | **finder**: cursor-walk → Problem entities (worked examples AND exercises) |
+| `entity/finders/definition.py` | **finder**: cursor-walk → Definition entities |
+| `entity/finders/theorem.py` | **finder**: cursor-walk → Theorem entities (subsumes prop/cor/lemma; includes proof) |
+| `entity/attributors/problem.py` | **attributor**: label/number/title/field/contents + solution split |
+| `entity/attributors/definition.py` | **attributor**: label/number/title/field/contents + bodylist (4 roles) |
+| `entity/attributors/theorem.py` | **attributor**: label/number/title/field/contents + bodylist + proofs |
+| `entity/instruction_distributor.py` | **distributor**: growing-window; stamp `Problem.instruction` from tagged lead-ins |
+| `output/assembler.py` | walk `nodes` → `document.md`, resolving `![N]()` via `seg_index` |
 | `pipeline.py` | graph wiring + `run()`; flattens the 3 overlays and writes `entities.json` + `nodes.json` |
-| `llm.py` | `text_lm` (DeepSeek, text stages), `corrector_lm` (Qwen3-VL via OpenRouter) |
+| `cli.py` | `__main__` entry point: `python -m kms.cli book.pdf out/` |
 
-### Entity data model (`state.py`)
+### Entity data model (`core/state.py`)
 
 - **3 types** (`EntityType`): `Definition`, `Theorem` (**subsumes** proposition/corollary/
   lemma), `Problem` (worked examples **and** exercises — AutoMathKG's model: same type,
@@ -221,7 +226,7 @@ at its boundary; theorem spans include the proof, problem spans include a shown 
 The three finders are **deliberate copies**, not a shared abstraction (decided this session —
 keep them dumb and explicit). If you change the walk, change it in three places.
 
-### The splitter (`exercise_splitter.py`)
+### The splitter (`entity/splitter.py`)
 
 One LLM walk over the flat stream doing two local, per-node jobs, then a single deterministic
 rebuild:
@@ -248,7 +253,7 @@ before any entity overlay exists (nothing references the old ids yet).
 
 Each runs after its finder and fills the **self-contained** AutoMathKG attributes on that type's
 entities, in place, reading only the entity's own member nodes (drawing `FIELDS`/`ACTIONS`
-taxonomies from `state.py`):
+taxonomies from `core/state.py`):
 
 - **Problem** — one identity pass (label/number/title/field + a `solution_start` boundary);
   members split into statement vs shown solution, both halves always kept. No bodylist (Table B3
@@ -258,7 +263,7 @@ taxonomies from `state.py`):
 - **Theorem** — identity + statement bodylist + a per-proof pass (each proof gets contents +
   bodylist); statement vs proof split on a boundary, like the problem's solution split.
 
-### The instruction distributor (`instruction_distributor.py`)
+### The instruction distributor (`entity/instruction_distributor.py`)
 
 `instruction` is a cross-entity, positional attribute (a lead-in governs a *run* of problems and
 is a member of none of them), so it is **not** a per-entity attributor pass — it is one more
@@ -420,16 +425,16 @@ committing Python. Config in `pyproject.toml` (line-length 100, lint set `F/E/I/
 Session update for the codified conventions.
 
 **Stress-test the governor:** run the pipeline on a fixture and inspect, e.g.
-`PYTHONPATH=src uv run --extra mistral python -m module.pipeline
+`PYTHONPATH=src uv run --extra mistral python -m kms.cli
 tests/fixtures/books/ea2e_ch1_review.pdf out/ea2e_ch1_review`. To capture DSPy training traces,
 prefix with `KMS_TRACE_DIR=out/traces`. Compile a stage:
 `PYTHONPATH=src uv run python -m training.distributor.compile out/<run_dir> ...`.
 
 **Run the pipeline:**
 ```bash
-PYTHONPATH=src uv run python -m module.pipeline book.pdf out/
+PYTHONPATH=src uv run python -m kms.cli book.pdf out/
 # or, from Python, to limit pages (0-based):
-PYTHONPATH=src uv run python -c "import asyncio; from module.pipeline import run; \
+PYTHONPATH=src uv run python -c "import asyncio; from kms import run; \
     asyncio.run(run('book.pdf', output_dir='out/', pages=[223,224,225]))"
 # -> out/document.md, out/entities.json (flat [{id,type,members}]), out/nodes.json (provenance)
 ```

@@ -37,8 +37,8 @@ rewrite output) is a drop-in future optimization behind the same interface.
 import dspy
 from langgraph.types import Send
 
-from .llm import corrector_lm
-from .state import Segment, State, load_dspy_image, merge_results_into_segments
+from kms.core.llm import corrector_lm
+from kms.core.state import Segment, State, load_dspy_image, merge_results_into_segments
 
 # A correction should be a light edit; reject anything outside this band of the
 # original length as a runaway rewrite or a truncation.

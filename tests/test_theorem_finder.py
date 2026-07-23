@@ -2,8 +2,8 @@
 
 import asyncio
 
-from module.state import ASTNode, EntityType, NodeType
-from module.theorem_finder import TheoremFinderNode, TheoremSpan, find_theorems
+from kms.core.state import ASTNode, EntityType, NodeType
+from kms.entity.finders.theorem import TheoremFinderNode, TheoremSpan, find_theorems
 
 
 def _nodes():

@@ -43,8 +43,8 @@ import asyncio
 import dspy
 from pydantic import BaseModel
 
-from .llm import text_lm
-from .state import FIELDS, ASTNode, BodySegment, Entity, Proof, State
+from kms.core.llm import text_lm
+from kms.core.state import FIELDS, ASTNode, BodySegment, Entity, Proof, State
 
 # Subsets of ACTIONS_ALL for the two contexts a theorem's bodylist runs in. A STATEMENT is a
 # hypothesis→conclusion assertion (no reasoning steps, no defining); a PROOF is a reasoning

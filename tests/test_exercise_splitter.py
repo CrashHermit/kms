@@ -3,8 +3,8 @@ The LLM is injected via a scripted module returning (splits, instruction_positio
 
 import asyncio
 
-from module.exercise_splitter import NodeSplit, SplitExercise, SplitterNode, split_exercises
-from module.state import ASTNode, NodeType
+from kms.core.state import ASTNode, NodeType
+from kms.entity.splitter import NodeSplit, SplitExercise, SplitterNode, split_exercises
 
 
 class _ScriptedSplitter:

@@ -22,8 +22,8 @@ from pathlib import Path
 
 import dspy
 
-from module.exercise_splitter import Module as SplitterModule
-from module.llm import teacher_lm, text_lm
+from kms.core.llm import teacher_lm, text_lm
+from kms.entity.splitter import Module as SplitterModule
 from training.splitter.dataset import load_windows
 from training.splitter.metric import splitter_score
 

@@ -4,13 +4,13 @@ import ast
 import pathlib
 import re
 
-MODULE_DIR = pathlib.Path(__file__).resolve().parent.parent / "src" / "module"
+MODULE_DIR = pathlib.Path(__file__).resolve().parent.parent / "src" / "kms"
 
 
 def test_every_send_target_and_dispatch_fallback_is_a_registered_node():
     registered = set(re.findall(r'add_node\("([a-z_]+)"', (MODULE_DIR / "pipeline.py").read_text()))
     send_targets, fallbacks = set(), set()
-    for f in MODULE_DIR.glob("*.py"):
+    for f in MODULE_DIR.rglob("*.py"):
         text = f.read_text()
         send_targets |= set(re.findall(r'Send\("([a-z_]+)"', text))
         fallbacks |= set(re.findall(r'return sends or "([a-z_]+)"', text))
@@ -23,5 +23,5 @@ def test_every_send_target_and_dispatch_fallback_is_a_registered_node():
 
 
 def test_all_modules_parse():
-    for f in MODULE_DIR.glob("*.py"):
+    for f in MODULE_DIR.rglob("*.py"):
         ast.parse(f.read_text())

@@ -1,4 +1,4 @@
-"""Test setup: make `module.*` importable and stub the heavy third-party deps.
+"""Test setup: make `kms.*` importable and stub the heavy third-party deps.
 
 The unit suite exercises pure pipeline logic (flattening, windowing, the finder
 cursor-walk, entity output) and must run without installing dspy/pydantic/langgraph.
@@ -10,7 +10,7 @@ import pathlib
 import sys
 import types
 
-# `pyproject` sets package=false and the code imports itself as `module.*`, so the
+# `pyproject` sets package=false and the code imports itself as `kms.*`, so the
 # package root is `src/`. Put it on the path for the tests.
 SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
 if str(SRC) not in sys.path:

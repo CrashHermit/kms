@@ -14,7 +14,7 @@ early stop, or a wrong/unstripped instruction string.
 
 import dspy
 
-from module.llm import teacher_lm
+from kms.core.llm import teacher_lm
 
 
 class JudgeGovern(dspy.Signature):

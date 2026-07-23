@@ -15,7 +15,7 @@ grader is stronger than the student it grades.
 
 import dspy
 
-from module.llm import teacher_lm
+from kms.core.llm import teacher_lm
 
 
 class JudgeSplit(dspy.Signature):

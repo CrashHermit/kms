@@ -1,11 +1,18 @@
 # KMS — Target Architecture
 
-The long-term package organization the pipeline should move toward. This is a **proposal /
-target**, not a description of the tree as it stands today (today everything is flat under
-`src/module/`). It captures the decisions from the greenfield design discussion so the next
-reorganization has a map to follow. Read `HANDOFF.md` first for what the pipeline actually
-does and why; this doc is only about *where the code lives* and *which direction dependencies
-point*.
+The package organization the pipeline uses. This layout is **realized** — the tree below
+matches `src/kms/` as it stands. Read `HANDOFF.md` first for what the pipeline actually does
+and why; this doc is only about *where the code lives* and *which direction dependencies point*.
+
+**Two rules from this doc are intentionally deferred** (pragmatic MVP calls; both are cheap to
+do later because stages don't cross-import):
+
+- **`core/state.py` is not yet split into `models.py` + `state.py`.** The domain models and the
+  LangGraph `State` still share one module. Splitting them (rule 3 below) is a purity win, not a
+  functional need, and it introduces a placement question for `load_dspy_image` (which pulls in
+  dspy). Deferred until there's a reason.
+- **No `core/errors.py` hierarchy yet.** There's little ad-hoc failure signaling to justify one;
+  `MistralOCRError` (in `ingestion/ocr.py`) covers the one real domain error today.
 
 ---
 
@@ -37,11 +44,11 @@ src/kms/
 
   core/                    # shared center; depends on nothing, everything depends on it
     __init__.py
-    models.py              # ASTNode, Segment, Entity, Picture, BodySegment, Proof, Solution
-    state.py               # the LangGraph State TypedDict + reducer channels
+    state.py               # domain models (ASTNode, Segment, Entity, …) + the LangGraph State
+                           #   (deferred: split into models.py + state.py — see status note above)
     llm.py                 # text_lm / teacher_lm / corrector_lm config
     tracing.py             # opt-in trace capture (the data→compile loop's raw material)
-    errors.py              # KmsError hierarchy (new)
+                           # (deferred: errors.py KmsError hierarchy)
 
   ingestion/               # PHASE 1: PDF → healed per-page nodes    (backbone: segments)
     __init__.py
@@ -65,11 +72,8 @@ src/kms/
       theorem.py
     instruction_distributor.py   # Problem-only; the lone per-type exception, kept at entity level
 
-  graph/                   # PHASE 3: NOT STARTED — scaffold now so the seam is physical
-    __init__.py
-    refs.py                # cross-entity refs / references_tactics
-    fusion.py              # MathVD fusion
-    completion.py          # Math-LLM completion
+  graph/                   # PHASE 3: NOT STARTED — package exists so the seam is physical
+    __init__.py            # (refs / fusion / completion modules added when the tier is built)
 
   output/
     __init__.py

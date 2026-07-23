@@ -1,7 +1,7 @@
 """Correction pass — pure dispatch/collect + the divergence guard. No network/LLM."""
 
-from module.corrector import CorrectorNode, _normalize_math_delimiters, _within_tolerance
-from module.state import Segment
+from kms.core.state import Segment
+from kms.ingestion.corrector import CorrectorNode, _normalize_math_delimiters, _within_tolerance
 
 # Keeps the node's pure dispatch/collect off the real (vision) LLM constructor.
 SENTINEL = object()

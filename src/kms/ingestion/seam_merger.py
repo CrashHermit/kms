@@ -2,8 +2,8 @@ import dspy
 from langgraph.types import Send
 from pydantic import BaseModel
 
-from .llm import text_lm
-from .state import ASTNode, Segment, State, flatten_segments, merge_results_into_segments
+from kms.core.llm import text_lm
+from kms.core.state import ASTNode, Segment, State, flatten_segments, merge_results_into_segments
 
 
 class SeamNodeDTO(BaseModel):
