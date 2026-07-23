@@ -44,9 +44,7 @@ def test_worker_output_is_delimiter_normalized_when_correction_rejected():
 
     class _RunawayModule:
         async def aforward(self, page_image, transcription):
-            import dspy
-
-            return dspy.Prediction(corrected="x" * 10_000)  # rejected by the guard
+            return "x" * 10_000  # rejected by the guard
 
     import asyncio
 

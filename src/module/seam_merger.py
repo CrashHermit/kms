@@ -69,14 +69,14 @@ class Module(dspy.Module):
         bottom_top_edge_node: SeamNodeDTO,
         top_node_context: SeamNodeDTO | None = None,
         bottom_node_context: SeamNodeDTO | None = None,
-    ):
+    ) -> SeamNodeDTO | None:
         result = await self.merger.acall(
             top_node_context=top_node_context,
             top_bottom_edge_node=top_bottom_edge_node,
             bottom_top_edge_node=bottom_top_edge_node,
             bottom_node_context=bottom_node_context,
         )
-        return dspy.Prediction(node=result.node)
+        return result.node
 
 
 # --- LangGraph node: stitch nodes split across segment boundaries ---
@@ -116,14 +116,12 @@ async def _merge_pair(
     top_context = top_nodes[-2] if len(top_nodes) > 1 else None
     bottom_context = bottom_nodes[1] if len(bottom_nodes) > 1 else None
 
-    prediction = await module.aforward(
+    merged = await module.aforward(
         top_bottom_edge_node=_to_dto(tail),
         bottom_top_edge_node=_to_dto(head),
         top_node_context=_to_dto(top_context),
         bottom_node_context=_to_dto(bottom_context),
     )
-
-    merged = prediction.node
     if merged is not None and merged.content:
         tail.content = merged.content
         bottom_nodes = bottom_nodes[1:]

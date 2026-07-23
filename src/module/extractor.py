@@ -75,9 +75,9 @@ class Module(dspy.Module):
         self.extractor = dspy.ChainOfThought(Signature)
         self.set_lm(lm or text_lm())
 
-    async def aforward(self, segment_markdown: str):
+    async def aforward(self, segment_markdown: str) -> list[DSPyModel]:
         result = await self.extractor.acall(segment_markdown=segment_markdown)
-        return dspy.Prediction(nodes=result.nodes)
+        return list(result.nodes or [])
 
 
 # --- LangGraph node: parse each segment's markdown into AST nodes ---
@@ -102,8 +102,8 @@ class ExtractorNode:
     async def worker(self, state: dict) -> dict:
         """Parse one segment's markdown into a flat list of AST nodes."""
         segment: Segment = state["segment"]
-        prediction = await self.module.aforward(segment_markdown=segment.content)
-        nodes = [ASTNode(type=node.type, content=node.content) for node in prediction.nodes]
+        extracted = await self.module.aforward(segment_markdown=segment.content)
+        nodes = [ASTNode(type=node.type, content=node.content) for node in extracted]
         return {"extract_results": [(segment.index, nodes)]}
 
     def collect(self, state: State) -> dict:

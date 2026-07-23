@@ -119,9 +119,9 @@ class Module(dspy.Module):
         self.proofreader = dspy.Predict(Signature)
         self.set_lm(lm or corrector_lm())
 
-    async def aforward(self, page_image: dspy.Image, transcription: str):
+    async def aforward(self, page_image: dspy.Image, transcription: str) -> str:
         result = await self.proofreader.acall(page_image=page_image, transcription=transcription)
-        return dspy.Prediction(corrected=result.corrected)
+        return result.corrected or ""
 
 
 # --- LangGraph node: proofread each Mistral-transcribed page against its image ---
@@ -147,11 +147,10 @@ class CorrectorNode:
         """Proofread one page's transcription against its image, keeping the original if
         the correction diverges too far (runaway rewrite / truncation)."""
         segment: Segment = state["segment"]
-        prediction = await self.module.aforward(
+        corrected = await self.module.aforward(
             page_image=load_dspy_image(segment.image_path),
             transcription=segment.content,
         )
-        corrected = prediction.corrected
         final = corrected if _within_tolerance(segment.content, corrected) else segment.content
         # Normalize math delimiters on the chosen text — even when the correction was
         # rejected, so a kept-original page still gets uniform `$$`/`$` delimiters.
