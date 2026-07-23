@@ -57,8 +57,8 @@ def test_persist_nodes_upserts_labels_and_next_chain():
     async def scenario():
         try:
             await ensure_schema()
-            await persist_nodes(stream, source)
-            await persist_nodes(stream, source)  # idempotent: no duplicates on re-run
+            await persist_nodes(stream, source, {"title": "Test Book"})
+            await persist_nodes(stream, source, {"title": "Test Book"})  # idempotent re-run
             async with driver().session(database=database()) as session:
                 # multi-label: the math node is reachable as :Math and carries base :Node too
                 math = await one(
@@ -69,11 +69,17 @@ def test_persist_nodes_upserts_labels_and_next_chain():
                     session,
                     "MATCH p=(:Node)-[:NEXT*]->(:Node) RETURN max(length(p)) AS longest",
                 )
+                # the source roots the chain: :Source -HEAD-> the first node, and carries metadata
+                head = await one(
+                    session,
+                    "MATCH (s:Source {title: 'Test Book'})-[:HEAD]->(n:Node) RETURN n.content AS c",
+                )
                 assert math["c"] == 1  # re-run did not duplicate the node
                 assert chain["longest"] == 2
+                assert head["c"] == "§1"  # hangs off the first structural node
         finally:
             async with driver().session(database=database()) as session:
-                await session.run("MATCH (n:Node) DETACH DELETE n")  # test DB: clear the graph
+                await session.run("MATCH (n) DETACH DELETE n")  # test DB: clear the graph
             await close_driver()
 
     asyncio.run(scenario())

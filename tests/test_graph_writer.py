@@ -3,7 +3,7 @@ persist_nodes are covered by the opt-in integration test."""
 
 from kms.core.models import ASTNode, NodeType
 from kms.graph.nodes import node_uuid
-from kms.graph.writer import next_pairs, node_batches
+from kms.graph.writer import head_uuid, next_pairs, node_batches
 
 _STREAM = [
     ASTNode(type=NodeType.HEADER, content="§1", id=0, seg_index=0),
@@ -40,3 +40,8 @@ def test_next_pairs_thread_consecutive_nodes_in_order():
 def test_next_pairs_empty_for_single_or_no_nodes():
     assert next_pairs(_STREAM[:1], "book.pdf") == []
     assert next_pairs([], "book.pdf") == []
+
+
+def test_head_uuid_is_the_first_node_or_none():
+    assert head_uuid(_STREAM, "book.pdf") == node_uuid("book.pdf", 0)
+    assert head_uuid([], "book.pdf") is None

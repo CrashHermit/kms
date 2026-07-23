@@ -20,13 +20,21 @@ The uuid is DETERMINISTIC — uuid5 over ``(source, index)`` — so re-persistin
 onto the same vertices instead of duplicating them, and ``source`` disambiguates the same index
 across different books. Callers pass ``source`` (the book identity); ``index`` is the node's id,
 which is always assigned by the time the flat stream reaches the graph tier.
+
+Source root: each book is a ``:Source`` vertex (deterministic ``source_uuid``) that roots its
+stream via ``(:Source)-[:HEAD]->(:Node)`` to the first node — walk ``:NEXT`` from there to read the
+book in order. Every ``:Node`` also carries a ``source`` property (the source uuid) so book-scoped
+lookups are one indexed hop, not a chain walk. Book metadata (title, author, …) is open: a required
+``key`` plus whatever the caller supplies, not a fixed schema.
 """
 
+from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from kms.core.models import ASTNode
 
 NODE_LABEL = "Node"
+SOURCE_LABEL = "Source"
 
 
 def node_uuid(source: str, index: int) -> str:
@@ -34,6 +42,20 @@ def node_uuid(source: str, index: int) -> str:
     and the node's document-order ``index``. Deterministic so a re-run MERGEs rather than
     duplicates; ``source`` keeps the same index in two different books distinct."""
     return uuid5(NAMESPACE_URL, f"{source}#{index}").hex
+
+
+def source_uuid(source: str) -> str:
+    """Stable, deterministic vertex key for a book/source: uuid5 over the source key. This is the
+    ``:Source`` node's uuid and the value each ``:Node`` carries in its ``source`` property."""
+    return uuid5(NAMESPACE_URL, source).hex
+
+
+def source_properties(source: str, metadata: dict[str, Any] | None = None) -> dict:
+    """The Neo4j property map for the ``:Source`` node: its uuid, the ``key`` (the stable source
+    string), and any caller-supplied book metadata (title/author/…). ``uuid``/``key`` are
+    authoritative — metadata can't clobber them — and None values are dropped."""
+    props = {**(metadata or {}), "uuid": source_uuid(source), "key": source}
+    return {key: value for key, value in props.items() if value is not None}
 
 
 def node_label(node: ASTNode) -> str | None:
@@ -50,6 +72,7 @@ def node_properties(node: ASTNode, source: str) -> dict:
     ``nodes.json``. Precondition: ``node.id`` is set (true once the stream is flattened)."""
     props = {
         "uuid": node_uuid(source, node.id),
+        "source": source_uuid(source),  # links back to the :Source node
         "type": node.type.value if node.type else None,
         "content": node.content,
         "index": node.id,
