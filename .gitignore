@@ -11,7 +11,7 @@ test.pdf
 # Ad-hoc validation run artifacts (scratch)
 out/
 scratch_*
-
+output/
 # Secrets
 .env
 
