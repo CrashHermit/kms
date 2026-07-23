@@ -8,6 +8,9 @@ re-running a book is idempotent, then wires them up — ``(:Source)-[:HEAD]->`` 
 walkable in Cypher. ``persist_entities`` writes the ``:Entity`` overlay on top: one vertex per
 Definition / Theorem / Problem (base ``:Entity`` label + its per-type label), rooted under the book
 via ``:HAS_ENTITY`` and linked back to the structural chunks it was built from via ``:DERIVED_FROM``.
+``persist_references`` writes the cross-entity layer: a global ``:GeneralEntity`` hub per distinct
+reference target, and a ``(:Entity)-[:REFERENCES {tactic}]->(:GeneralEntity)`` edge per reference (see
+``graph.references`` for why references route through hubs).
 
 Writes are batched: Cypher can't parameterize a label, but the label comes from a closed enum
 (``NodeType`` / ``EntityType``), so grouping by label and interpolating it is safe and turns the
@@ -37,6 +40,7 @@ from kms.graph.nodes import (
     source_properties,
     source_uuid,
 )
+from kms.graph.references import GENERAL_ENTITY_LABEL, hub_batch, reference_rows
 
 
 def node_batches(nodes: list[ASTNode], source: str) -> dict[str | None, list[dict]]:
@@ -161,3 +165,29 @@ async def persist_entities(entities: list[Entity], source: str) -> None:
                 f"MERGE (e)-[:DERIVED_FROM]->(n)",
                 pairs=pairs,
             )
+
+
+async def persist_references(entities: list[Entity], source: str) -> None:
+    """Upsert the cross-entity reference layer: mint a global ``:GeneralEntity`` hub per distinct
+    reference target, then draw a ``(:Entity)-[:REFERENCES {tactic}]->(:GeneralEntity)`` edge for each
+    reference. Idempotent — hubs MERGE on their deterministic global uuid and edges MERGE on the
+    (entity, hub) pair (the tactic is set on the relationship, so a re-run updates it in place). A
+    no-op when no entity carries references. The citing ``:Entity`` vertices are expected to already
+    exist (the entity persister writes them first); the MATCH attaches to them."""
+    rows = reference_rows(entities, source)
+    if not rows:
+        return
+    hubs = hub_batch(entities)
+
+    async with driver().session(database=database()) as session:
+        await session.run(
+            f"UNWIND $hubs AS h MERGE (g:{GENERAL_ENTITY_LABEL} {{uuid: h.uuid}}) SET g += h",
+            hubs=hubs,
+        )
+        await session.run(
+            f"UNWIND $rows AS row "
+            f"MATCH (e:{ENTITY_LABEL} {{uuid: row.entity}}), "
+            f"(g:{GENERAL_ENTITY_LABEL} {{uuid: row.hub}}) "
+            f"MERGE (e)-[ref:REFERENCES]->(g) SET ref.tactic = row.tactic",
+            rows=rows,
+        )

@@ -13,7 +13,7 @@ seam-merge collect.
 Stage order:
     corrector -> extractor -> seam_merger (even, odd) -> splitter -> instruction_finder
               -> node_persister -> {problem, definition, theorem}_finder -> {…}_attributor
-              -> (problem chain only) instruction_distributor -> entity_persister
+              -> {…}_referencer -> (problem chain only) instruction_distributor -> entity_persister
 
 Two phases split at the seam merger. Ingestion is per-page: `segments` (already carrying
 Mistral's markdown + figures) is the backbone, and the corrector proofreads each page's
@@ -27,17 +27,19 @@ then tags every lead-in node `role="instruction"` over that atomic stream, one u
 The node persister then writes the finalized stream to Neo4j as the graph's provenance layer (a
 `:Source` root with its `:Node` chain); it runs after the splitter so the persisted ids match the
 entity `members`, and is a no-op when Neo4j isn't configured. Three per-type chains then run
-in parallel: each finder walks `nodes` to build its entity overlay, and its attributor
-enriches those entities with the self-contained AutoMathKG attributes (label, number, title,
-field, contents, bodylist; plus proofs for theorems and solutions for problems). On the
-problem chain one further stage, the instruction distributor, then stamps `Problem.instruction`
-from the instruction finder's tagged lead-in nodes (the shared directive of a grouped-exercise run).
-The three chains fan into the entity persister, the terminal stage: it flattens the overlays into
-one document-ordered, globally-id'd list and upserts them as the graph's `:Entity` layer, rooted
-under the `:Source` and linked back to their member `:Node` chunks (a no-op when Neo4j isn't
-configured). Cross-entity attributes (refs/references_tactics) and the step-level event layer are
-later graph-tier work. After the graph returns, `run()` only assembles the markdown document:
-assembly walks `nodes`, consulting `segments` only for picture inventories.
+in parallel: each finder walks `nodes` to build its entity overlay, its attributor enriches those
+entities with the self-contained AutoMathKG attributes (label, number, title, field, contents,
+bodylist; plus proofs for theorems and solutions for problems), and its referencer then extracts the
+one cross-entity attribute — `refs`, the definitions/theorems the entity cites, each with a tactic
+label. On the problem chain one further stage, the instruction distributor, then stamps
+`Problem.instruction` from the instruction finder's tagged lead-in nodes (the shared directive of a
+grouped-exercise run). The three chains fan into the entity persister, the terminal stage: it flattens
+the overlays into one document-ordered, globally-id'd list and upserts them as the graph's `:Entity`
+layer (rooted under the `:Source`, linked back to their member `:Node` chunks), then the reference
+layer — `:REFERENCES` edges onto `:GeneralEntity` hubs, so citations from any entity converge on one
+target (a no-op when Neo4j isn't configured). The step-level event layer is later graph-tier work.
+After the graph returns, `run()` only assembles the markdown document: assembly walks `nodes`,
+consulting `segments` only for picture inventories.
 """
 
 from pathlib import Path
@@ -54,6 +56,9 @@ from kms.entity.finders.problem import ProblemFinderNode
 from kms.entity.finders.theorem import TheoremFinderNode
 from kms.entity.instruction_distributor import InstructionDistributorNode
 from kms.entity.instruction_finder import InstructionFinderNode
+from kms.entity.referencers.definition import DefinitionReferencerNode
+from kms.entity.referencers.problem import ProblemReferencerNode
+from kms.entity.referencers.theorem import TheoremReferencerNode
 from kms.entity.splitter import SplitterNode
 from kms.graph.db import close_driver
 from kms.graph.persister import EntityPersisterNode, NodePersisterNode
@@ -83,6 +88,9 @@ def build_graph() -> "CompiledStateGraph":
     problem_attributor = ProblemAttributorNode()
     definition_attributor = DefinitionAttributorNode()
     theorem_attributor = TheoremAttributorNode()
+    problem_referencer = ProblemReferencerNode()
+    definition_referencer = DefinitionReferencerNode()
+    theorem_referencer = TheoremReferencerNode()
     splitter = SplitterNode()
     instruction_finder = InstructionFinderNode()
     node_persister = NodePersisterNode()
@@ -106,6 +114,9 @@ def build_graph() -> "CompiledStateGraph":
     g.add_node("problem_attributor", problem_attributor.run)
     g.add_node("definition_attributor", definition_attributor.run)
     g.add_node("theorem_attributor", theorem_attributor.run)
+    g.add_node("problem_referencer", problem_referencer.run)
+    g.add_node("definition_referencer", definition_referencer.run)
+    g.add_node("theorem_referencer", theorem_referencer.run)
     g.add_node("splitter", splitter.run)
     g.add_node("instruction_finder", instruction_finder.run)
     g.add_node("node_persister", node_persister.run)
@@ -161,13 +172,18 @@ def build_graph() -> "CompiledStateGraph":
         g.add_edge("node_persister", finder)
         g.add_edge(finder, attributor)
 
-    # The definition and theorem chains end at their attributor; the problem chain has one more
-    # step, the instruction distributor, which stamps `Problem.instruction` from the instruction
-    # finder's tagged lead-in nodes and must run after the attributor because it matches on each
-    # problem's `number` (which the attributor fills). All three then fan into the entity persister.
-    g.add_edge("definition_attributor", "entity_persister")
-    g.add_edge("theorem_attributor", "entity_persister")
-    g.add_edge("problem_attributor", "instruction_distributor")
+    # Each attributor is followed by its per-type referencer, which extracts the entity's
+    # cross-entity `refs` (needs `contents`, so it runs after the attributor). The definition and
+    # theorem chains then fan into the entity persister; the problem chain has one more step first,
+    # the instruction distributor, which stamps `Problem.instruction` from the instruction finder's
+    # tagged lead-in nodes and must run after the attributor because it matches on each problem's
+    # `number` (which the attributor fills).
+    g.add_edge("definition_attributor", "definition_referencer")
+    g.add_edge("definition_referencer", "entity_persister")
+    g.add_edge("theorem_attributor", "theorem_referencer")
+    g.add_edge("theorem_referencer", "entity_persister")
+    g.add_edge("problem_attributor", "problem_referencer")
+    g.add_edge("problem_referencer", "instruction_distributor")
     g.add_edge("instruction_distributor", "entity_persister")
 
     # The entity persister is the fan-in: it runs once all three chains complete, flattens the

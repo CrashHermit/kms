@@ -143,3 +143,64 @@ def test_persist_entities_upserts_labels_root_and_members():
             await close_driver()
 
     asyncio.run(scenario())
+
+
+def test_persist_references_mints_hubs_and_edges():
+    from kms.core.models import ASTNode, Entity, EntityType, NodeType, Reference
+    from kms.graph.db import close_driver, database, driver
+    from kms.graph.schema import ensure_schema
+    from kms.graph.writer import persist_entities, persist_nodes, persist_references
+
+    source = "integration-test-book"
+    stream = [ASTNode(type=NodeType.PARAGRAPH, content="…", id=0, seg_index=0)]
+    # Two entities that both reference "Set" — they must converge on ONE hub.
+    overlay = [
+        Entity(
+            type=EntityType.THEOREM,
+            members=[0],
+            id=0,
+            refs=[Reference(target="Set", kind="definition", tactic="premise")],
+        ),
+        Entity(
+            type=EntityType.PROBLEM,
+            members=[0],
+            id=1,
+            refs=[Reference(target="set", kind="definition", tactic="deduction")],
+        ),
+    ]
+
+    async def one(session, query):
+        return await (await session.run(query)).single()
+
+    async def scenario():
+        try:
+            await ensure_schema()
+            await persist_nodes(stream, source)
+            await persist_entities(overlay, source)
+            await persist_references(overlay, source)
+            await persist_references(overlay, source)  # idempotent re-run
+            async with driver().session(database=database()) as session:
+                # "Set" and "set" collapse to a single hub
+                hubs = await one(
+                    session, "MATCH (g:GeneralEntity {kind: 'definition'}) RETURN count(g) AS c"
+                )
+                # both entities reference that one hub -> two :REFERENCES edges into it
+                edges = await one(
+                    session,
+                    "MATCH (:Entity)-[r:REFERENCES]->(:GeneralEntity {name: 'Set'}) "
+                    "RETURN count(r) AS c",
+                )
+                # the tactic rides on the relationship
+                tactic = await one(
+                    session,
+                    "MATCH (:Theorem)-[r:REFERENCES]->(:GeneralEntity) RETURN r.tactic AS t",
+                )
+                assert hubs["c"] == 1  # converged, and re-run did not duplicate
+                assert edges["c"] == 2
+                assert tactic["t"] == "premise"
+        finally:
+            async with driver().session(database=database()) as session:
+                await session.run("MATCH (n) DETACH DELETE n")  # test DB: clear the graph
+            await close_driver()
+
+    asyncio.run(scenario())

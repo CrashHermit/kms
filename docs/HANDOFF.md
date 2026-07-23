@@ -74,19 +74,28 @@ provenance layer** — and left the semantic tiers as a design (below).
   the base `:Entity` label **plus** its per-type label (`:Entity:Theorem`, …). Scalar attributes +
   `contents` (string array) are native properties; the nested `bodylist`/`proofs`/`solutions` (the
   step material the future event layer will reify) are preserved as JSON-string properties for now.
-- `schema.py` — idempotent bootstrap: uuid uniqueness constraints on `:Node`/`:Source`/`:Entity` +
-  `source` indexes on `:Node`/`:Entity`. No vector index (embeddings belong to the semantic tiers).
+- `references.py` — pure `refs → Neo4j` mapping. Each `Reference(target, kind, tactic)` becomes an
+  edge onto a **general-entity hub** — a `:GeneralEntity` node keyed by a **global** (not
+  source-scoped) `uuid5(kind, normalized target)`, so a reference to "Set" from any entity/book lands
+  on ONE hub. `normalize_target` lowercases + collapses whitespace, giving cheap exact-name clustering
+  the semantic dedup tier refines later. References route through hubs uniformly (never straight to a
+  local mention) so the graph doesn't fragment across sources.
+- `schema.py` — idempotent bootstrap: uuid uniqueness constraints on `:Node`/`:Source`/`:Entity`/
+  `:GeneralEntity` + `source` indexes on `:Node`/`:Entity`. No vector index (embeddings belong to the
+  semantic tiers).
 - `writer.py` — `persist_nodes` (MERGE the `:Source` root + batched multi-label nodes, then wire
-  `(:Source)-[:HEAD]->` first node and the `:NEXT` reading-order chain) and `persist_entities` (batched
+  `(:Source)-[:HEAD]->` first node and the `:NEXT` reading-order chain), `persist_entities` (batched
   multi-label `:Entity` MERGEs, rooted under the `:Source` via `:HAS_ENTITY` and linked to member
-  `:Node` s via `:DERIVED_FROM`). Pure planning (`node_batches`/`next_pairs`/`head_uuid`,
-  `entity_batches`/`member_pairs`) is factored out and unit-tested.
+  `:Node` s via `:DERIVED_FROM`), and `persist_references` (MERGE the global hubs, then
+  `(:Entity)-[:REFERENCES {tactic}]->(:GeneralEntity)` edges). Pure planning (`node_batches`/
+  `next_pairs`/`head_uuid`, `entity_batches`/`member_pairs`, `hub_batch`/`reference_rows`) is factored
+  out and unit-tested.
 - `persister.py` — two stages. `NodePersisterNode` is wired **after the splitter, before the finders**
   (the splitter re-ids the stream at `splitter.py:249`, so this is the first point the ids are final
   and match the entity `members`); `EntityPersisterNode` is the **fan-in after all three chains**, so
-  it sees the fully attributed overlay, flattens it (`core.flatten_entities`), and writes it. Both are
-  **no-ops** when Neo4j isn't configured or the run has no `source`, so DB-less runs and the test suite
-  still complete (producing only `document.md`).
+  it sees the fully attributed + referenced overlay, flattens it (`core.flatten_entities`), and writes
+  the `:Entity` layer then the reference layer. Both are **no-ops** when Neo4j isn't configured or the
+  run has no `source`, so DB-less runs and the test suite still complete (producing only `document.md`).
 - `pipeline.py` — `run()` gained `source` (defaults to the PDF filename) + `title`/`author`, threaded
   via `State.source` / `State.source_metadata`; closes the driver in a `finally`. After the graph
   returns it only assembles `document.md` — persistence is entirely the graph tier's job now.
@@ -266,10 +275,12 @@ only: `core ← ingestion ← entity ← graph ← output`.
 | `entity/attributors/problem.py` | **attributor**: label/number/title/field/contents + solution split |
 | `entity/attributors/definition.py` | **attributor**: label/number/title/field/contents + bodylist (4 roles) |
 | `entity/attributors/theorem.py` | **attributor**: label/number/title/field/contents + bodylist + proofs |
+| `entity/referencers/{problem,definition,theorem}.py` | **referencer**: extract each entity's cross-entity `refs` (target + kind + tactic) |
 | `entity/instruction_distributor.py` | **distributor**: growing-window; stamp `Problem.instruction` from tagged lead-ins |
 | `output/assembler.py` | walk `nodes` → `document.md`, resolving `![N]()` via `seg_index` |
 | `graph/entities.py` | `Entity → Neo4j` mapping (deterministic uuids, multi-label, nested attrs as JSON strings) |
-| `graph/persister.py` | `NodePersisterNode` (after splitter) + `EntityPersisterNode` (fan-in): persist the two graph layers |
+| `graph/references.py` | `refs → Neo4j`: global `:GeneralEntity` hubs + `:REFERENCES {tactic}` edge rows |
+| `graph/persister.py` | `NodePersisterNode` (after splitter) + `EntityPersisterNode` (fan-in): persist all three graph layers |
 | `pipeline.py` | graph wiring + `run()`; after the graph, only assembles `document.md` (persistence is the graph tier's) |
 | `cli.py` | `__main__` entry point: `python -m kms.cli book.pdf out/` |
 
@@ -282,9 +293,11 @@ only: `core ← ingestion ← entity ← graph ← output`.
   back to the source nodes); a finder emits just `{type, members}` and the type's attributor
   fills the rest: `label`, `number`, `title`, `field`, `contents`, `bodylist` (Def/Thm),
   `proofs` (Thm), `solutions` (Prob), plus `instruction` (Prob, filled by the distributor, not
-  the attributor). Unset attributes are omitted when persisted, so a bare entity is just
-  `{id, type, members}` → a minimal `:Entity` vertex. Cross-entity `refs`/`references_tactics` are
-  **not** here — later graph tier.
+  the attributor), plus `refs` (the cross-entity references — a `list[Reference]` of {target, kind,
+  tactic} — filled by the type's referencer, after the attributor). Unset attributes are omitted when
+  persisted, so a bare entity is just `{id, type, members}` → a minimal `:Entity` vertex. `refs` don't
+  land as entity properties — the entity persister turns them into `:REFERENCES` edges onto
+  `:GeneralEntity` hubs.
 - `ASTNode` now carries a `role` field — a non-structural annotation kept **off** the structural
   `NodeType`. The splitter sets `role="instruction"` on exercise lead-ins; the distributor reads
   it. It is written onto the `:Node` vertex only when set.
@@ -513,7 +526,7 @@ the whole run.
 - `uv sync` — light CPU core.
 - `uv sync --extra mistral` — adds `pypdfium2` + `pillow` (render page images for the corrector).
 
-**Tests:** `PYTHONPATH=src uv run pytest -q` (105 tests). `tests/conftest.py` stubs
+**Tests:** `PYTHONPATH=src uv run pytest -q` (124 tests). `tests/conftest.py` stubs
 dspy/pydantic/langgraph *only if absent*, so the suite runs with or without the real deps.
 
 **Style (ruff):** `uv run ruff format . && uv run ruff check .` — both must be clean before

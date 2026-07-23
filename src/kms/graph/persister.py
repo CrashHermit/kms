@@ -21,7 +21,7 @@ from kms.core.models import flatten_entities
 from kms.core.state import State
 from kms.graph.db import is_configured
 from kms.graph.schema import ensure_schema
-from kms.graph.writer import persist_entities, persist_nodes
+from kms.graph.writer import persist_entities, persist_nodes, persist_references
 
 
 class NodePersisterNode:
@@ -38,7 +38,9 @@ class NodePersisterNode:
 
 class EntityPersisterNode:
     """Sequential fan-in stage: flatten the three per-type overlays and upsert them as the graph's
-    ``:Entity`` layer, rooted under the book's ``:Source`` and linked to their member ``:Node`` s."""
+    ``:Entity`` layer (rooted under the book's ``:Source``, linked to their member ``:Node`` s), then
+    the cross-entity reference layer (``:REFERENCES`` edges onto ``:GeneralEntity`` hubs). References
+    are written after the entities so the citing vertices exist to attach to."""
 
     async def run(self, state: State) -> dict:
         source = state.get("source")
@@ -52,4 +54,5 @@ class EntityPersisterNode:
             state.get("nodes", []),
         )
         await persist_entities(entities, source)
+        await persist_references(entities, source)
         return {}
