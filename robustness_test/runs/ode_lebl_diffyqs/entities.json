@@ -1,0 +1,357 @@
+[
+  {
+    "id": 0,
+    "type": "problem",
+    "members": [
+      4,
+      5,
+      6
+    ],
+    "label": "Example 1.2.1:",
+    "number": "1.2.1",
+    "title": "Solving a Differential Equation with Initial Condition",
+    "field": "analysis",
+    "contents": [
+      "**Example 1.2.1:** Attempt to solve:",
+      "$$y' = \\frac{1}{x}, \\quad y(0) = 0.$$",
+      "Integrate to find the general solution $y = \\ln |x| + C$. The solution does not exist at $x = 0$. See Figure 1.6 on the following page. You may say one can see the division by zero a mile away, but the equation may have been written as the seemingly harmless $xy' = 1$."
+    ]
+  },
+  {
+    "id": 1,
+    "type": "problem",
+    "members": [
+      7,
+      8,
+      9,
+      10
+    ],
+    "label": "Example 1.2.2:",
+    "number": "1.2.2",
+    "title": "Differential Equation with Absolute Value",
+    "field": "analysis",
+    "contents": [
+      "**Example 1.2.2:** Solve:",
+      "$$y' = 2\\sqrt{|y|}, \\quad y(0) = 0.$$",
+      "See Figure 1.7 on the next page. Note that $y = 0$ is a solution. But another solution is the function",
+      "$$y(x) = \\begin{cases} x^2 & \\text{if } x \\geq 0, \\\\ -x^2 & \\text{if } x < 0. \\end{cases}$$"
+    ]
+  },
+  {
+    "id": 2,
+    "type": "theorem",
+    "members": [
+      15
+    ],
+    "label": "Theorem 1.2.1",
+    "number": "1.2.1",
+    "title": "Picard's theorem on existence and uniqueness",
+    "field": "analysis",
+    "contents": [
+      "**Theorem 1.2.1** (Picard's theorem on existence and uniqueness). If $f(x, y)$ is continuous (as a function of two variables) and $\\frac{\\partial f}{\\partial y}$ exists and is continuous near some $(x_0, y_0)$, then a solution to\n\n$$y' = f(x, y), \\quad y(x_0) = y_0,$$\n\nexists (at least for $x$ in some small interval) and is unique."
+    ],
+    "bodylist": [
+      {
+        "description": "**Theorem 1.2.1** (Picard's theorem on existence and uniqueness). ",
+        "action": "premise"
+      },
+      {
+        "description": "If $f(x, y)$ is continuous (as a function of two variables) and $\\frac{\\partial f}{\\partial y}$ exists and is continuous near some $(x_0, y_0)$, then ",
+        "action": "assumption"
+      },
+      {
+        "description": "a solution to\n\n$$y' = f(x, y), \\quad y(x_0) = y_0,$$\n\nexists (at least for $x$ in some small interval) and is unique.",
+        "action": "conclusion"
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "type": "problem",
+    "members": [
+      17,
+      18
+    ],
+    "label": "**Example 1.2.3:**",
+    "number": "1.2.3",
+    "title": "Solving a first-order ODE with initial condition",
+    "field": "analysis",
+    "contents": [
+      "For some constant $A$, solve:\n\n$$y' = y^2, \\quad y(0) = A.$$\n\nWe know how to solve this equation. First assume that $A \\neq 0$, so $y$ is not equal to zero at least for some $x$ near 0. So $x' = 1/y^2$, so $x = -1/y + C$, so $y = \\frac{1}{C-x}$. If $y(0) = A$, then $C = 1/A$ so\n\n$$y = \\frac{1}{1/A - x}.$$\n\nIf $A = 0$, then $y = 0$ is a solution.",
+      "For instance, when $A = 1$ the solution \"blows up\" at $x = 1$. Hence, the solution does not exist for all $x$ even if the equation itself is nice everywhere—it only exists in the interval $(-\\infty, 1)$. The equation $y' = y^2$ certainly looks nice."
+    ]
+  },
+  {
+    "id": 4,
+    "type": "problem",
+    "members": [
+      21
+    ],
+    "label": "1.2.1",
+    "number": "1.2.1",
+    "title": "Slope field for exponential differential equation",
+    "field": "analysis",
+    "contents": [
+      "Sketch the slope field for $y' = e^{x-y}$. How do the solutions behave as $x$ grows? Can you guess a particular solution by looking at the slope field?"
+    ]
+  },
+  {
+    "id": 5,
+    "type": "problem",
+    "members": [
+      22
+    ],
+    "label": "1.2.2",
+    "number": "1.2.2",
+    "title": "Slope field for y' = x^2",
+    "field": "analysis",
+    "contents": [
+      "Sketch the slope field for $y' = x^2$."
+    ]
+  },
+  {
+    "id": 6,
+    "type": "problem",
+    "members": [
+      23
+    ],
+    "label": "1.2.3 Sketch the slope field for $y' = y^2$.",
+    "number": "1.2.3",
+    "title": "Slope field for a differential equation",
+    "field": "analysis"
+  },
+  {
+    "id": 7,
+    "type": "problem",
+    "members": [
+      24
+    ],
+    "label": "1.2.4",
+    "number": "1.2.4",
+    "title": "Existence of solution to differential equation",
+    "field": "analysis",
+    "contents": [
+      "Is it possible to solve the equation $y' = \\frac{xy}{\\cos x}$ for $y(0) = 1$? Justify."
+    ]
+  },
+  {
+    "id": 8,
+    "type": "problem",
+    "members": [
+      25
+    ],
+    "label": "1.2.5",
+    "number": "1.2.5",
+    "title": "Existence and uniqueness of solution to a differential equation",
+    "field": "analysis",
+    "contents": [
+      "Is it possible to solve the equation $y' = y\\sqrt{|x|}$ for $y(0) = 0$? Is the solution unique? Justify."
+    ]
+  },
+  {
+    "id": 9,
+    "type": "problem",
+    "members": [
+      26
+    ],
+    "label": "1.2.6",
+    "number": "1.2.6",
+    "title": "Matching equations to slope fields",
+    "field": "analysis",
+    "contents": [
+      "Match equations $y' = 1 - x$, $y' = x - 2y$, $y' = x(1 - y)$ to slope fields. Justify.\n\na) ![a](image_a.png) b) ![b](image_b.png) c) ![c](image_c.png)"
+    ]
+  },
+  {
+    "id": 10,
+    "type": "problem",
+    "members": [
+      27
+    ],
+    "label": "1.2.7",
+    "number": "1.2.7",
+    "title": "Behavior of solution as x goes to infinity",
+    "field": "analysis",
+    "contents": [
+      "Take $y' = f(x, y)$, $y(0) = 0$, where $f(x, y) > 1$ for all $x$ and $y$. If the solution exists for all $x$, can you say what happens to $y(x)$ as $x$ goes to positive infinity? Explain."
+    ]
+  },
+  {
+    "id": 11,
+    "type": "problem",
+    "members": [
+      28
+    ],
+    "label": "1.2.8",
+    "number": "1.2.8",
+    "title": "Differential equation with non-unique solutions",
+    "field": "analysis",
+    "contents": [
+      "Take $(y - x)y' = 0$, $y(0) = 0$.\n\n- a) Find two distinct solutions.\n- b) Explain why this does not violate Picard's theorem."
+    ]
+  },
+  {
+    "id": 12,
+    "type": "problem",
+    "members": [
+      29
+    ],
+    "label": "1.2.9",
+    "number": "1.2.9",
+    "title": "Slope field behavior based on properties of f",
+    "field": "analysis",
+    "contents": [
+      "Suppose $y' = f(x, y)$. What will the slope field look like, explain and sketch an example, if you know the following about $f(x, y)$:\n\n- a) $f$ does not depend on $y$.\n- b) $f$ does not depend on $x$.\n- c) $f(t, t) = 0$ for any number $t$.\n- d) $f(x, 0) = 0$ and $f(x, 1) = 1$ for all $x$."
+    ]
+  },
+  {
+    "id": 13,
+    "type": "problem",
+    "members": [
+      30
+    ],
+    "label": "1.2.10",
+    "number": "1.2.10",
+    "title": "Solution to a differential equation with absolute value",
+    "field": "analysis",
+    "contents": [
+      "Find a solution to $y' = |y|$, $y(0) = 0$. Does Picard's theorem apply?"
+    ]
+  },
+  {
+    "id": 14,
+    "type": "problem",
+    "members": [
+      31
+    ],
+    "label": "1.2.11",
+    "number": "1.2.11",
+    "title": "Solving a Differential Equation with Unknown Function",
+    "field": "analysis",
+    "contents": [
+      "Take an equation $y' = (y - 2x)g(x, y) + 2$ for some function $g(x, y)$. Can you solve the problem for the initial condition $y(0) = 0$, and if so what is the solution?"
+    ]
+  },
+  {
+    "id": 15,
+    "type": "problem",
+    "members": [
+      32,
+      33
+    ],
+    "label": "Exercise 1.2.12 (challenging):",
+    "number": "1.2.12",
+    "title": "Properties of Solutions to a Differential Equation",
+    "field": "analysis",
+    "contents": [
+      "**Exercise 1.2.12 (challenging):**",
+      "Suppose $y' = f(x, y)$ is such that $f(x, 1) = 0$ for every $x$, $f$ is continuous and $\\frac{\\partial f}{\\partial y}$ exists and is continuous for every $x$ and $y$.\n\na) Guess a solution given the initial condition $y(0) = 1$.\nb) Can graphs of two solutions of the equation for different initial conditions ever intersect?\nc) Given $y(0) = 0$, what can you say about the solution. In particular, can $y(x) > 1$ for any $x$? Can $y(x) = 1$ for any $x$? Why or why not?"
+    ]
+  },
+  {
+    "id": 16,
+    "type": "problem",
+    "members": [
+      34,
+      35
+    ],
+    "label": "Exercise 1.2.101:",
+    "number": "1.2.101",
+    "title": "Slope field of y' = y^3",
+    "field": "analysis",
+    "contents": [
+      "**Exercise 1.2.101:**",
+      "Sketch the slope field of $y' = y^3$. Can you visually find the solution that satisfies $y(0) = 0$?"
+    ]
+  },
+  {
+    "id": 17,
+    "type": "problem",
+    "members": [
+      36,
+      37
+    ],
+    "label": "Exercise 1.2.102:",
+    "number": "1.2.102",
+    "title": "Existence and Uniqueness of Solution to Differential Equation",
+    "field": "analysis",
+    "contents": [
+      "**Exercise 1.2.102:**",
+      "Is it possible to solve $y' = xy$ for $y(0) = 0$? Is the solution unique?"
+    ]
+  },
+  {
+    "id": 18,
+    "type": "problem",
+    "members": [
+      38,
+      39
+    ],
+    "label": "Exercise 1.2.103:",
+    "number": "1.2.103",
+    "title": "Existence of solution for a differential equation",
+    "field": "analysis",
+    "contents": [
+      "**Exercise 1.2.103:**",
+      "Is it possible to solve $y' = \\frac{x}{x^2 - 1}$ for $y(1) = 0$?"
+    ]
+  },
+  {
+    "id": 19,
+    "type": "problem",
+    "members": [
+      40,
+      41,
+      42,
+      43,
+      44
+    ],
+    "label": "Exercise 1.2.104:",
+    "number": "1.2.104",
+    "title": "Matching Differential Equations to Slope Fields",
+    "field": "applied mathematics",
+    "contents": [
+      "**Exercise 1.2.104:**",
+      "Match equations $y' = \\sin x$, $y' = \\cos y$, $y' = y \\cos(x)$ to slope fields. Justify.",
+      "![1]()",
+      "![2]()",
+      "![3]()"
+    ]
+  },
+  {
+    "id": 20,
+    "type": "problem",
+    "members": [
+      45,
+      46,
+      47,
+      48
+    ],
+    "label": "Exercise 1.2.105 (tricky):",
+    "number": "1.2.105",
+    "title": "Existence of Continuously Differentiable Solution for ODE with Discontinuous Right-Hand Side",
+    "field": "analysis",
+    "contents": [
+      "**Exercise 1.2.105 (tricky):**",
+      "Suppose",
+      "$$f(y) = \\begin{cases} 0 & \\text{if } y > 0, \\\\ 1 & \\text{if } y \\leq 0. \\end{cases}$$",
+      "Does $y' = f(y)$, $y(0) = 0$ have a continuously differentiable solution? Does Picard apply? Why, or why not?"
+    ]
+  },
+  {
+    "id": 21,
+    "type": "problem",
+    "members": [
+      49,
+      50
+    ],
+    "label": "Exercise 1.2.106:",
+    "number": "1.2.106",
+    "title": "Existence of Solution for y' = f(x)",
+    "field": "analysis",
+    "contents": [
+      "**Exercise 1.2.106:**",
+      "Consider an equation of the form $y' = f(x)$ for some continuous function $f$, and an initial condition $y(x_0) = y_0$. Does a solution exist for all $x$? Why or why not?"
+    ]
+  }
+]

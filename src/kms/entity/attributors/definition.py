@@ -43,6 +43,7 @@ import asyncio
 import dspy
 from pydantic import BaseModel
 
+from kms.core import tracing
 from kms.core.llm import text_lm
 from kms.core.models import FIELDS, ASTNode, BodySegment, Entity
 from kms.core.state import State
@@ -173,6 +174,16 @@ class Module(dspy.Module):
             for k, m in enumerate(members)
         ]
         r = await self.identify.acall(nodes=nodes, field_choices=FIELDS)
+        tracing.record(
+            "definition_identify",
+            inputs={"nodes": [n.model_dump() for n in nodes], "field_choices": FIELDS},
+            outputs={
+                "label": r.label,
+                "number": r.number,
+                "title": r.title,
+                "field": r.field,
+            },
+        )
         return Identity(
             label=(r.label or None),
             number=(r.number or None),
@@ -182,7 +193,13 @@ class Module(dspy.Module):
 
     async def body(self, contents: str) -> list[BodySegment]:
         result = await self.bodylist.acall(contents=contents, actions=DEFINITION_ACTIONS)
-        return [s for s in (result.bodylist or []) if s.action in DEFINITION_ACTIONS]
+        bodylist = [s for s in (result.bodylist or []) if s.action in DEFINITION_ACTIONS]
+        tracing.record(
+            "definition_bodylist",
+            inputs={"contents": contents, "actions": DEFINITION_ACTIONS},
+            outputs={"bodylist": [s.model_dump() for s in bodylist]},
+        )
+        return bodylist
 
 
 def _members(entity: Entity, nodes_by_id: dict[int, ASTNode]) -> list[ASTNode]:

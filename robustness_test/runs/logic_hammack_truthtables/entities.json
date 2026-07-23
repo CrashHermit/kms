@@ -1,0 +1,240 @@
+[
+  {
+    "id": 0,
+    "type": "problem",
+    "members": [
+      8
+    ],
+    "label": "1",
+    "number": "1",
+    "title": "Invertibility condition for a matrix",
+    "field": "algebra",
+    "instruction": "Without changing their meanings, convert each of the following sentences into a sentence having the form “$P$ if and only if $Q$.”",
+    "contents": [
+      "For matrix $A$ to be invertible, it is necessary and sufficient that $\\det(A) \\neq 0$."
+    ]
+  },
+  {
+    "id": 1,
+    "type": "problem",
+    "members": [
+      9
+    ],
+    "label": "2",
+    "number": "2",
+    "title": "Constant derivative implies linearity",
+    "field": "analysis",
+    "instruction": "Without changing their meanings, convert each of the following sentences into a sentence having the form “$P$ if and only if $Q$.”",
+    "contents": [
+      "If a function has a constant derivative then it is linear, and conversely."
+    ]
+  },
+  {
+    "id": 2,
+    "type": "problem",
+    "members": [
+      10
+    ],
+    "label": "3",
+    "number": "3",
+    "title": "Zero product property",
+    "field": "algebra",
+    "instruction": "Without changing their meanings, convert each of the following sentences into a sentence having the form “$P$ if and only if $Q$.”",
+    "contents": [
+      "If $xy = 0$ then $x = 0$ or $y = 0$, and conversely."
+    ]
+  },
+  {
+    "id": 3,
+    "type": "problem",
+    "members": [
+      11
+    ],
+    "label": "4",
+    "number": "4",
+    "title": "Rationality of multiples",
+    "field": "logic",
+    "instruction": "Without changing their meanings, convert each of the following sentences into a sentence having the form “$P$ if and only if $Q$.”",
+    "contents": [
+      "If $a \\in \\mathbb{Q}$ then $5a \\in \\mathbb{Q}$, and if $5a \\in \\mathbb{Q}$ then $a \\in \\mathbb{Q}$."
+    ]
+  },
+  {
+    "id": 4,
+    "type": "problem",
+    "members": [
+      12
+    ],
+    "label": "5",
+    "number": "5",
+    "title": "Adventure Occurrence Condition",
+    "field": "logic",
+    "instruction": "Without changing their meanings, convert each of the following sentences into a sentence having the form “$P$ if and only if $Q$.”",
+    "contents": [
+      "For an occurrence to become an adventure, it is necessary and sufficient for one to recount it. (Jean-Paul Sartre)"
+    ]
+  },
+  {
+    "id": 5,
+    "type": "problem",
+    "members": [
+      34
+    ],
+    "label": "1",
+    "number": "1",
+    "title": "Propositional Logic Expression",
+    "field": "logic",
+    "instruction": "Write a truth table for the logical statements.",
+    "contents": [
+      "$P \\vee (Q \\Rightarrow R)$"
+    ]
+  },
+  {
+    "id": 6,
+    "type": "problem",
+    "members": [
+      35
+    ],
+    "label": "2",
+    "number": "2",
+    "title": "Logical equivalence of disjunction and conjunction",
+    "field": "logic",
+    "instruction": "Write a truth table for the logical statements.",
+    "contents": [
+      "$(Q \\vee R) \\Leftrightarrow (R \\wedge Q)$"
+    ]
+  },
+  {
+    "id": 7,
+    "type": "problem",
+    "members": [
+      36
+    ],
+    "label": "3",
+    "number": "3",
+    "title": "Negation of Implication",
+    "field": "logic",
+    "instruction": "Write a truth table for the logical statements.",
+    "contents": [
+      "$\\sim (P \\Rightarrow Q)$"
+    ]
+  },
+  {
+    "id": 8,
+    "type": "problem",
+    "members": [
+      37
+    ],
+    "label": "4",
+    "number": "4",
+    "title": "Simplification of a Logical Expression",
+    "field": "logic",
+    "instruction": "Write a truth table for the logical statements.",
+    "contents": [
+      "$\\sim (P \\vee Q) \\vee (\\sim P)$"
+    ]
+  },
+  {
+    "id": 9,
+    "type": "problem",
+    "members": [
+      38
+    ],
+    "label": "5",
+    "number": "5",
+    "title": "Logical expression evaluation",
+    "field": "logic",
+    "instruction": "Write a truth table for the logical statements.",
+    "contents": [
+      "$(P \\wedge \\sim P) \\vee Q$"
+    ]
+  },
+  {
+    "id": 10,
+    "type": "problem",
+    "members": [
+      39
+    ],
+    "label": "6",
+    "number": "6",
+    "title": "Logical Expression",
+    "field": "logic",
+    "instruction": "Write a truth table for the logical statements.",
+    "contents": [
+      "$(P \\wedge \\sim P) \\wedge Q$"
+    ]
+  },
+  {
+    "id": 11,
+    "type": "problem",
+    "members": [
+      40
+    ],
+    "label": "7",
+    "number": "7",
+    "title": "Implication from a Contradiction",
+    "field": "logic",
+    "instruction": "Write a truth table for the logical statements.",
+    "contents": [
+      "$(P \\wedge \\sim P) \\Rightarrow Q$"
+    ]
+  },
+  {
+    "id": 12,
+    "type": "problem",
+    "members": [
+      41
+    ],
+    "label": "8",
+    "number": "8",
+    "title": "Propositional Logic Expression",
+    "field": "logic",
+    "instruction": "Write a truth table for the logical statements.",
+    "contents": [
+      "$P \\vee (Q \\wedge \\sim R)$"
+    ]
+  },
+  {
+    "id": 13,
+    "type": "problem",
+    "members": [
+      42
+    ],
+    "label": "9",
+    "number": "9",
+    "title": "Simplification of a Negated Disjunction",
+    "field": "logic",
+    "instruction": "Write a truth table for the logical statements.",
+    "contents": [
+      "$\\sim (\\sim P \\vee \\sim Q)$"
+    ]
+  },
+  {
+    "id": 14,
+    "type": "problem",
+    "members": [
+      43
+    ],
+    "label": "10",
+    "number": "10",
+    "title": "Truth values of propositional variables",
+    "field": "logic",
+    "contents": [
+      "Suppose the statement $((P \\wedge Q) \\vee R) \\Rightarrow (R \\vee S)$ is false. Find the truth values of $P, Q, R$ and $S$. (This can be done without a truth table.)"
+    ]
+  },
+  {
+    "id": 15,
+    "type": "problem",
+    "members": [
+      44
+    ],
+    "label": "11",
+    "number": "11",
+    "title": "Truth values of R and S given a logical equivalence",
+    "field": "logic",
+    "contents": [
+      "Suppose $P$ is false and that the statement $(R \\Rightarrow S) \\Leftrightarrow (P \\wedge Q)$ is true. Find the truth values of $R$ and $S$. (This can be done without a truth table.)"
+    ]
+  }
+]

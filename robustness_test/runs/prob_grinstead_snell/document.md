@@ -1,0 +1,152 @@
+At the hotel there lived also some students with whom I usually took my meals and had friendly relations. On a certain day one of them expected the visit of his fiancée, what (sic) I knew, but I did not foresee that he and his fiancée would also set out for a stroll in the woods, and then suddenly I met them there. And then I met them the same morning repeatedly, I don't remember how many times, but certainly much too often and I felt embarrassed: It looked as if I was snooping around which was, I assure you, not the case.$^{13}$
+
+This set him to thinking about whether random walkers were destined to meet.
+
+Pólya considered random walkers in one, two, and three dimensions. In one dimension, he envisioned the walker on a very long street. At each intersection the walker flips a fair coin to decide which direction to walk next (see Figure 1.6a). In two dimensions, the walker is walking on a grid of streets, and at each intersection he chooses one of the four possible directions with equal probability (see Figure 1.6b). In three dimensions (we might better speak of a random climber), the walker moves on a three-dimensional grid, and at each intersection there are now six different directions that the walker may choose, each with equal probability (see Figure 1.6c).
+
+The reader is referred to Section 12.1, where this and related problems are discussed.
+
+(a) Write a program to simulate a random walk in one dimension starting at 0. Have your program print out the lengths of the times between returns to the starting point (returns to 0). See if you can guess from this simulation the answer to the following question: Will the walker always return to his starting point eventually or might he drift away forever?
+
+(b) The paths of two walkers in two dimensions who meet after $n$ steps can be considered to be a single path that starts at $(0, 0)$ and returns to $(0, 0)$ after $2n$ steps. This means that the probability that two random walkers in two dimensions meet is the same as the probability that a single walker in two dimensions ever returns to the starting point. Thus the question of whether two walkers are sure to meet is the same as the question of whether a single walker is sure to return to the starting point.
+
+Write a program to simulate a random walk in two dimensions and see if you think that the walker is sure to return to $(0, 0)$. If so, Pólya would be sure to keep meeting his friends in the park. Perhaps by now you have conjectured the answer to the question: Is a random walker in one or two dimensions sure to return to the starting point? Pólya answered
+
+$^{13}$G. Pólya, "Two Incidents," *Scientists at Work: Festschrift in Honour of Herman Wold*, ed. T. Dalenius, G. Karlsson, and S. Malmquist (Uppsala: Almquist & Wiksells Boktryckeri AB, 1970).
+
+this question for dimensions one, two, and three. He established the remarkable result that the answer is *yes* in one and two dimensions and *no* in three dimensions.
+
+(c) Write a program to simulate a random walk in three dimensions and see whether, from this simulation and the results of (a) and (b), you could have guessed Pólya's result.
+
+## 1.2 Discrete Probability Distributions
+
+In this book we shall study many different experiments from a probabilistic point of view. What is involved in this study will become evident as the theory is developed and examples are analyzed. However, the overall idea can be described and illustrated as follows: to each experiment that we consider there will be associated a random variable, which represents the outcome of any particular experiment. The set of possible outcomes is called the *sample space*. In the first part of this section, we will consider the case where the experiment has only finitely many possible outcomes, i.e., the sample space is finite. We will then generalize to the case that the sample space is either finite or countably infinite. This leads us to the following definition.
+
+### Random Variables and Sample Spaces
+
+**Definition 1.1** Suppose we have an experiment whose outcome depends on chance. We represent the outcome of the experiment by a capital Roman letter, such as $X$, called a *random variable*. The *sample space* of the experiment is the set of all possible outcomes. If the sample space is either finite or countably infinite, the random variable is said to be *discrete*. $\square$
+
+We generally denote a sample space by the capital Greek letter $\Omega$. As stated above, in the correspondence between an experiment and the mathematical theory by which it is studied, the sample space $\Omega$ corresponds to the set of possible outcomes of the experiment.
+
+We now make two additional definitions. These are subsidiary to the definition of sample space and serve to make precise some of the common terminology used in conjunction with sample spaces. First of all, we define the elements of a sample space to be *outcomes*. Second, each subset of a sample space is defined to be an *event*. Normally, we shall denote outcomes by lower case letters and events by capital letters.
+
+**Example 1.6** A die is rolled once. We let $X$ denote the outcome of this experiment. Then the sample space for this experiment is the 6-element set
+
+$$\Omega = \{1, 2, 3, 4, 5, 6\},$$
+
+where each outcome $i$, for $i = 1, \dots, 6$, corresponds to the number of dots on the face which turns up. The event
+
+$$E = \{2, 4, 6\}$$
+
+corresponds to the statement that the result of the roll is an even number. The event $E$ can also be described by saying that $X$ is even. Unless there is reason to believe the die is loaded, the natural assumption is that every outcome is equally likely. Adopting this convention means that we assign a probability of $1/6$ to each of the six outcomes, i.e., $m(i) = 1/6$, for $1 \leq i \leq 6$. $\square$
+
+## Distribution Functions
+
+We next describe the assignment of probabilities. The definitions are motivated by the example above, in which we assigned to each outcome of the sample space a nonnegative number such that the sum of the numbers assigned is equal to 1.
+
+**Definition 1.2**
+
+Let $X$ be a random variable which denotes the value of the outcome of a certain experiment, and assume that this experiment has only finitely many possible outcomes. Let $\Omega$ be the sample space of the experiment (i.e., the set of all possible values of $X$, or equivalently, the set of all possible outcomes of the experiment.) A *distribution function* for $X$ is a real-valued function $m$ whose domain is $\Omega$ and which satisfies:
+
+1. $m(\omega) \geq 0$, for all $\omega \in \Omega$, and
+2. $\sum_{\omega \in \Omega} m(\omega) = 1$.
+
+For any subset $E$ of $\Omega$, we define the *probability* of $E$ to be the number $P(E)$ given by
+
+$$P(E) = \sum_{\omega \in E} m(\omega).$$
+
+$\square$
+
+**Example 1.7**
+
+Consider an experiment in which a coin is tossed twice. Let $X$ be the random variable which corresponds to this experiment. We note that there are several ways to record the outcomes of this experiment. We could, for example, record the two tosses, in the order in which they occurred. In this case, we have $\Omega = \{HH, HT, TH, TT\}$. We could also record the outcomes by simply noting the number of heads that appeared. In this case, we have $\Omega = \{0, 1, 2\}$. Finally, we could record the two outcomes, without regard to the order in which they occurred. In this case, we have $\Omega = \{HH, HT, TT\}$.
+
+We will use, for the moment, the first of the sample spaces given above. We will assume that all four outcomes are equally likely, and define the distribution function $m(\omega)$ by
+
+$$m(\mathrm{HH}) = m(\mathrm{HT}) = m(\mathrm{TH}) = m(\mathrm{TT}) = \frac{1}{4}.$$
+
+Let $E = \{\mathrm{HH}, \mathrm{HT}, \mathrm{TH}\}$ be the event that at least one head comes up. Then, the probability of $E$ can be calculated as follows:
+
+$$
+\begin{array}{l} P(E) = m(\mathrm{HH}) + m(\mathrm{HT}) + m(\mathrm{TH}) \\ = \frac{1}{4} + \frac{1}{4} + \frac{1}{4} = \frac{3}{4}. \end{array}
+$$
+
+Similarly, if $F = \{\mathrm{HH}, \mathrm{HT}\}$ is the event that heads comes up on the first toss, then we have
+
+$$
+\begin{array}{l} P(F) = m(\mathrm{HH}) + m(\mathrm{HT}) \\ = \frac{1}{4} + \frac{1}{4} = \frac{1}{2}. \end{array}
+$$
+
+□
+
+**Example 1.8** (Example 1.6 continued)
+
+The sample space for the experiment in which the die is rolled is the 6-element set $\Omega = \{1, 2, 3, 4, 5, 6\}$. We assumed that the die was fair, and we chose the distribution function defined by
+
+$$
+m(i) = \frac{1}{6}, \qquad \text{for } i = 1, \dots, 6.
+$$
+
+If $E$ is the event that the result of the roll is an even number, then $E = \{2, 4, 6\}$ and
+
+$$
+\begin{array}{l} P(E) = m(2) + m(4) + m(6) \\ = \frac{1}{6} + \frac{1}{6} + \frac{1}{6} = \frac{1}{2}. \end{array}
+$$
+
+□
+
+Notice that it is an immediate consequence of the above definitions that, for every $\omega \in \Omega$,
+
+$$
+P(\{\omega\}) = m(\omega).
+$$
+
+That is, the probability of the elementary event $\{\omega\}$, consisting of a single outcome $\omega$, is equal to the value $m(\omega)$ assigned to the outcome $\omega$ by the distribution function.
+
+**Example 1.9**
+
+Three people, A, B, and C, are running for the same office, and we assume that one and only one of them wins. The sample space may be taken as the 3-element set $\Omega = \{\mathrm{A}, \mathrm{B}, \mathrm{C}\}$ where each element corresponds to the outcome of that candidate's winning. Suppose that A and B have the same chance of winning, but that C has only $1/2$ the chance of A or B. Then we assign
+
+$$
+m(\mathrm{A}) = m(\mathrm{B}) = 2m(\mathrm{C}).
+$$
+
+Since
+
+$$
+m(\mathrm{A}) + m(\mathrm{B}) + m(\mathrm{C}) = 1,
+$$
+
+we see that
+
+$$2m(\mathrm{C}) + 2m(\mathrm{C}) + m(\mathrm{C}) = 1 \text{ ,}$$
+
+which implies that $5m(\mathrm{C}) = 1$. Hence,
+
+$$m(\mathrm{A}) = \frac{2}{5} \text{ ,} \qquad m(\mathrm{B}) = \frac{2}{5} \text{ ,} \qquad m(\mathrm{C}) = \frac{1}{5} \text{ .}$$
+
+Let $E$ be the event that either A or C wins. Then $E = \{\mathrm{A}, \mathrm{C}\}$, and
+
+$$P(E) = m(\mathrm{A}) + m(\mathrm{C}) = \frac{2}{5} + \frac{1}{5} = \frac{3}{5} \text{ .}$$
+
+□
+
+In many cases, events can be described in terms of other events through the use of the standard constructions of set theory. We will briefly review the definitions of these constructions. The reader is referred to Figure 1.7 for Venn diagrams which illustrate these constructions.
+
+Let $A$ and $B$ be two sets. Then the union of $A$ and $B$ is the set
+
+$$A \cup B = \{x \mid x \in A \text{ or } x \in B\} \text{ .}$$
+
+The intersection of $A$ and $B$ is the set
+
+$$A \cap B = \{x \mid x \in A \text{ and } x \in B\} \text{ .}$$
+
+The difference of $A$ and $B$ is the set
+
+$$A - B = \{x \mid x \in A \text{ and } x \notin B\} \text{ .}$$
+
+The set $A$ is a subset of $B$, written $A \subset B$, if every element of $A$ is also an element of $B$. Finally, the complement of $A$ is the set
+
+$$\tilde{A} = \{x \mid x \in \Omega \text{ and } x \notin A\} \text{ .}$$
+
+The reason that these constructions are important is that it is typically the case that complicated events described in English can be broken down into simpler events using these constructions. For example, if $A$ is the event that “it will snow tomorrow and it will rain the next day,” $B$ is the event that “it will snow tomorrow,” and $C$ is the event that “it will rain two days from now,” then $A$ is the intersection of the events $B$ and $C$. Similarly, if $D$ is the event that “it will snow tomorrow or it will rain the next day,” then $D = B \cup C$. (Note that care must be taken here, because sometimes the word “or” in English means that exactly one of the two alternatives will occur. The meaning is usually clear from context. In this book, we will always use the word “or” in the inclusive sense, i.e., $A$ or $B$ means that at least one of the two events $A$, $B$ is true.) The event $\tilde{B}$ is the event that “it will not snow tomorrow.” Finally, if $E$ is the event that “it will snow tomorrow but it will not rain the next day,” then $E = B - C$.

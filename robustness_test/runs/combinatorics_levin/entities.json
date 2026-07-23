@@ -1,0 +1,334 @@
+[
+  {
+    "id": 0,
+    "type": "definition",
+    "members": [
+      10,
+      11
+    ],
+    "label": "Definition 2.1.6",
+    "number": "2.1.6",
+    "title": "Subgraphs",
+    "field": "applied mathematics",
+    "contents": [
+      "#### Definition 2.1.6 Subgraphs.",
+      "We say that $G' = (V', E')$ is a **subgraph** of $G = (V, E)$, and write $G' \\subseteq G$, provided $V' \\subseteq V$ and $E' \\subseteq E$.\n\nWe say that $G' = (V', E')$ is an **induced subgraph** of $G = (V, E)$ provided $V' \\subseteq V$ and every edge in $E$ whose vertices are still in $V'$ is also an edge in $E'$."
+    ],
+    "bodylist": [
+      {
+        "description": "We say that $G' = (V', E')$ is a **subgraph** of $G = (V, E)$, and write $G' \\subseteq G$, provided",
+        "action": "definition"
+      },
+      {
+        "description": "$V' \\subseteq V$ and $E' \\subseteq E$.",
+        "action": "assumption"
+      },
+      {
+        "description": "We say that $G' = (V', E')$ is an **induced subgraph** of $G = (V, E)$ provided",
+        "action": "definition"
+      },
+      {
+        "description": "$V' \\subseteq V$ and every edge in $E$ whose vertices are still in $V'$ is also an edge in $E'$.",
+        "action": "assumption"
+      }
+    ]
+  },
+  {
+    "id": 1,
+    "type": "problem",
+    "members": [
+      13,
+      14,
+      15,
+      16,
+      17
+    ],
+    "label": "Example 2.1.7",
+    "number": "2.1.7",
+    "title": "Subgraphs and Induced Subgraphs",
+    "field": "foundations of mathematics",
+    "contents": [
+      "# **Example 2.1.7**",
+      "Consider the graphs:",
+      "![1]()",
+      "Here both $G_2$ and $G_3$ are subgraphs of $G_1$. But only $G_2$ is an *induced* subgraph. Every edge in $G_1$ that connects vertices in $G_2$ is also an edge in $G_2$. In $G_3$, the edge $\\{a, b\\}$ is in $E_1$ but not $E_3$, even though vertices $a$ and $b$ are in $V_3$.",
+      "The graph $G_4$ is NOT a subgraph of $G_1$, even though it looks like all we did is remove vertex $e$. The reason is that in $E_4$ we have the edge $\\{c, f\\}$, but this is not an element of $E_1$, so we don't have the required $E_4 \\subseteq E_1$."
+    ]
+  },
+  {
+    "id": 2,
+    "type": "definition",
+    "members": [
+      18
+    ],
+    "title": "Simple graph",
+    "field": "foundations of mathematics",
+    "contents": [
+      "Back to some basic graph theory definitions. Notice that all the graphs we have drawn above have the property that no pair of vertices is connected more than once, and no vertex is connected to itself. Graphs like these are sometimes called **simple**, although we will just call them *graphs*. This is because our definition of a graph says that the edges form a set of 2-element subsets of the vertices. Remember that it doesn't make sense to say a set contains an element more than once. So no pair of vertices can be connected by an edge more than once. Also, since each edge must be a set containing two vertices, we cannot have a single vertex connected to itself by an edge."
+    ],
+    "bodylist": [
+      {
+        "description": "Back to some basic graph theory definitions. Notice that all the graphs we have drawn above have the property that no pair of vertices is connected more than once, and no vertex is connected to itself. Graphs like these are sometimes called **simple**, although we will just call them *graphs*. This is because our definition of a graph says that the edges form a set of 2-element subsets of the vertices. Remember that it doesn't make sense to say a set contains an element more than once. So no pair of vertices can be connected by an edge more than once. Also, since each edge must be a set containing two vertices, we cannot have a single vertex connected to itself by an edge.",
+        "action": "definition"
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "type": "definition",
+    "members": [
+      19
+    ],
+    "title": "multigraphs",
+    "field": "applied mathematics",
+    "contents": [
+      "That said, there are times we want to consider double (or more) edges and single-edge loops. For example, the “graph” we drew for the Bridges of Königsberg problem had double edges because there really are two bridges connecting a particular island to the near shore. We will call these objects **multigraphs**. This is a good name: A *multiset* is a set in which we are allowed to include a single element multiple times."
+    ],
+    "bodylist": [
+      {
+        "description": "That said, there are times we want to consider double (or more) edges and single-edge loops. For example, the “graph” we drew for the Bridges of Königsberg problem had double edges because there really are two bridges connecting a particular island to the near shore.",
+        "action": "premise"
+      },
+      {
+        "description": "We will call these objects **multigraphs**. This is a good name: A *multiset* is a set in which we are allowed to include a single element multiple times.",
+        "action": "definition"
+      }
+    ]
+  },
+  {
+    "id": 4,
+    "type": "definition",
+    "members": [
+      20
+    ],
+    "title": "Connected Graph",
+    "field": "applied mathematics",
+    "contents": [
+      "The graphs above are also **connected**: you can get from any vertex to any other vertex by following some path of edges. A graph that is not connected can be thought of as two separate graphs drawn close together. For example, the following graph is NOT connected because there is no path from $a$ to $b$:"
+    ],
+    "bodylist": [
+      {
+        "description": "The graphs above are also **connected**: you can get from any vertex to any other vertex by following some path of edges. A graph that is not connected can be thought of as two separate graphs drawn close together. For example, the following graph is NOT connected because there is no path from $a$ to $b$:",
+        "action": "definition"
+      }
+    ]
+  },
+  {
+    "id": 5,
+    "type": "definition",
+    "members": [
+      22
+    ],
+    "title": "complete graph",
+    "field": "algebra",
+    "contents": [
+      "Vertices in a graph do not always have edges between them. If we add all possible edges, then the resulting graph is called **complete**. That is, a graph is complete if every pair of vertices is connected by an edge. Since a graph is determined completely by which vertices are adjacent to which other vertices, there is only one complete graph with a given number of vertices. We give these a special name: $K_n$ is the complete graph on $n$ vertices."
+    ],
+    "bodylist": [
+      {
+        "description": "Vertices in a graph do not always have edges between them.",
+        "action": "premise"
+      },
+      {
+        "description": "If we add all possible edges, then the resulting graph is called **complete**. That is, a graph is complete if every pair of vertices is connected by an edge. Since a graph is determined completely by which vertices are adjacent to which other vertices, there is only one complete graph with a given number of vertices. We give these a special name: $K_n$ is the complete graph on $n$ vertices.",
+        "action": "definition"
+      }
+    ]
+  },
+  {
+    "id": 6,
+    "type": "definition",
+    "members": [
+      23
+    ],
+    "title": "degree",
+    "field": "algebra",
+    "contents": [
+      "Each vertex in $K_n$ is adjacent to $n - 1$ other vertices. We call the number of edges emanating from a given vertex the **degree** of that vertex. So every vertex in $K_n$ has degree $n - 1$. How many edges does $K_n$ have? One might think the answer should be $n(n - 1)$, since we count $n - 1$ edges $n$ times (once for each vertex). However, each edge is incident to 2 vertices, so we counted every edge exactly twice. Thus there are $n(n - 1)/2$ edges in $K_n$. Alternatively, we can say there are $\\binom{n}{2}$ edges, since to draw an edge we must choose 2 of the $n$ vertices."
+    ],
+    "bodylist": [
+      {
+        "description": "Each vertex in $K_n$ is adjacent to $n - 1$ other vertices.",
+        "action": "premise"
+      },
+      {
+        "description": "We call the number of edges emanating from a given vertex the **degree** of that vertex.",
+        "action": "definition"
+      },
+      {
+        "description": "So every vertex in $K_n$ has degree $n - 1$. How many edges does $K_n$ have? One might think the answer should be $n(n - 1)$, since we count $n - 1$ edges $n$ times (once for each vertex). However, each edge is incident to 2 vertices, so we counted every edge exactly twice. Thus there are $n(n - 1)/2$ edges in $K_n$. Alternatively, we can say there are $\\binom{n}{2}$ edges, since to draw an edge we must choose 2 of the $n$ vertices.",
+        "action": "assumption"
+      }
+    ]
+  },
+  {
+    "id": 7,
+    "type": "theorem",
+    "members": [
+      26,
+      27,
+      28,
+      29,
+      30
+    ],
+    "label": "Lemma 2.1.8 Handshake Lemma.",
+    "number": "2.1.8",
+    "title": "Handshake Lemma",
+    "field": "applied mathematics",
+    "contents": [
+      "#### Lemma 2.1.8 Handshake Lemma.",
+      "*In any graph, the sum of the degrees of vertices in the graph is always twice the number of edges.*",
+      "The handshake lemma$^2$ is sometimes called the *degree sum formula*, and can be written symbolically as",
+      "$$\\sum_{v \\in V} d(v) = 2e.$$",
+      "Here we are using the notation $d(v)$ for the degree of the vertex $v$."
+    ],
+    "bodylist": [
+      {
+        "description": "In any graph,",
+        "action": "premise"
+      },
+      {
+        "description": "the sum of the degrees of vertices in the graph is always twice the number of edges.",
+        "action": "conclusion"
+      }
+    ]
+  },
+  {
+    "id": 8,
+    "type": "definition",
+    "members": [
+      31
+    ],
+    "title": "degree sequence",
+    "field": "applied mathematics",
+    "contents": [
+      "One use for the lemma is to actually find the number of edges in a graph. To do this, you must be given the **degree sequence** for the graph (or be able to find it from other information). This is a list of every degree of every vertex in the graph, generally written in non-increasing order."
+    ],
+    "bodylist": [
+      {
+        "description": "One use for the lemma is to actually find the number of edges in a graph. To do this, you must be given the **degree sequence** for the graph (or be able to find it from other information).",
+        "action": "premise"
+      },
+      {
+        "description": "This is a list of every degree of every vertex in the graph, generally written in non-increasing order.",
+        "action": "definition"
+      }
+    ]
+  },
+  {
+    "id": 9,
+    "type": "problem",
+    "members": [
+      32,
+      33,
+      34,
+      35,
+      36,
+      37
+    ],
+    "label": "Example 2.1.9",
+    "number": "2.1.9",
+    "title": "Vertices and edges from degree sequence",
+    "field": "applied mathematics",
+    "contents": [
+      "#### Example 2.1.9",
+      "How many vertices and edges must a graph have if its degree sequence is",
+      "$$(4, 4, 3, 3, 3, 2, 1)?$$"
+    ],
+    "solutions": [
+      {
+        "contents": [
+          "**Solution.** The number of vertices is easy to find. It is the number of degrees in the sequence: 7. To find the number of edges, we compute the degree sum",
+          "$$4 + 4 + 3 + 3 + 3 + 2 + 1 = 20,$$",
+          "so the number of edges is half this: 10."
+        ]
+      }
+    ]
+  },
+  {
+    "id": 10,
+    "type": "problem",
+    "members": [
+      39,
+      40,
+      41
+    ],
+    "label": "Example 2.1.10",
+    "number": "2.1.10",
+    "title": "Handshake Problem",
+    "field": "logic",
+    "contents": [
+      "### Example 2.1.10",
+      "At a recent math seminar, 9 mathematicians greeted each other by shaking hands. Is it possible that each mathematician shook hands with exactly 7 people at the seminar?"
+    ],
+    "solutions": [
+      {
+        "contents": [
+          "**Solution.** It seems like this should be possible. Each mathematician chooses one person to not shake hands with. But this cannot happen. We are asking whether a graph with 9 vertices can have each vertex have degree 7. If such a graph existed, the sum of the degrees of the vertices would be $9 \\cdot 7 = 63$. This would be twice the number of edges (handshakes) resulting in a graph with 31.5 edges. That is impossible. Thus at least one (in fact an odd number) of the mathematicians must have shaken hands with an *even* number of people at the seminar."
+        ]
+      }
+    ]
+  },
+  {
+    "id": 11,
+    "type": "theorem",
+    "members": [
+      43,
+      44,
+      45
+    ],
+    "label": "Proposition 2.1.11",
+    "number": "2.1.11",
+    "title": "Number of Odd-Degree Vertices is Even",
+    "field": "applied mathematics",
+    "contents": [
+      "### Proposition 2.1.11",
+      "*In any graph, the number of vertices with odd degree must be even.*"
+    ],
+    "bodylist": [
+      {
+        "description": "### Proposition 2.1.11\n\n*In any graph, the number of vertices with odd degree must be even.*",
+        "action": "conclusion"
+      }
+    ],
+    "proofs": [
+      {
+        "contents": [
+          "**Proof.** Suppose there were a graph with an odd number of vertices with odd degree. Then the sum of the degrees in the graph would be odd, which is impossible, by the handshake lemma."
+        ],
+        "bodylist": [
+          {
+            "description": "Suppose there were a graph with an odd number of vertices with odd degree.",
+            "action": "assumption"
+          },
+          {
+            "description": "Then the sum of the degrees in the graph would be odd, which is impossible, by the handshake lemma.",
+            "action": "deduction"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 12,
+    "type": "definition",
+    "members": [
+      47
+    ],
+    "title": "bipartite graph",
+    "field": "applied mathematics",
+    "contents": [
+      "One final definition: We say a graph is **bipartite** if the vertices can be divided into two sets, $A$ and $B$, with no two vertices in $A$ adjacent and no two vertices in $B$ adjacent. The vertices in $A$ can be adjacent to some or all of the vertices in $B$. If each vertex in $A$ is adjacent to all the vertices in $B$, then the graph is a **complete bipartite graph**, and gets a special name: $K_{m,n}$, where $|A| = m$ and $|B| = n$."
+    ],
+    "bodylist": [
+      {
+        "description": "One final definition: We say a graph is **bipartite** if the vertices can be divided into two sets, $A$ and $B$, with no two vertices in $A$ adjacent and no two vertices in $B$ adjacent. The vertices in $A$ can be adjacent to some or all of the vertices in $B$.",
+        "action": "definition"
+      },
+      {
+        "description": "If each vertex in $A$ is adjacent to all the vertices in $B$, then the graph is a **complete bipartite graph**, and gets a special name: $K_{m,n}$, where $|A| = m$ and $|B| = n$.",
+        "action": "definition"
+      }
+    ]
+  }
+]

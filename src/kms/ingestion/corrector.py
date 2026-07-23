@@ -40,6 +40,7 @@ from pathlib import Path
 import dspy
 from langgraph.types import Send
 
+from kms.core import tracing
 from kms.core.llm import corrector_lm
 from kms.core.models import Segment, merge_results_into_segments
 from kms.core.state import State
@@ -136,7 +137,16 @@ class Module(dspy.Module):
 
     async def aforward(self, page_image: dspy.Image, transcription: str) -> str:
         result = await self.proofreader.acall(page_image=page_image, transcription=transcription)
-        return result.corrected or ""
+        corrected = result.corrected or ""
+        # The page image is intentionally not captured (large base64, and it is
+        # reconstructable from the input PDF); the trainable text signal is the
+        # transcription -> corrected pair.
+        tracing.record(
+            "corrector",
+            inputs={"transcription": transcription, "page_image": "<omitted: page render>"},
+            outputs={"corrected": corrected},
+        )
+        return corrected
 
 
 # --- LangGraph node: proofread each Mistral-transcribed page against its image ---
