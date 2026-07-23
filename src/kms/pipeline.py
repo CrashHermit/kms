@@ -42,6 +42,7 @@ from typing import TYPE_CHECKING
 
 from langgraph.graph import END, START, StateGraph
 
+from kms.core.models import ASTNode, BodySegment, Entity
 from kms.core.state import State
 from kms.entity.attributors.definition import DefinitionAttributorNode
 from kms.entity.attributors.problem import ProblemAttributorNode
@@ -177,7 +178,7 @@ async def run(
     return written
 
 
-def _flatten_entities(result: dict, nodes: list) -> list:
+def _flatten_entities(result: dict, nodes: list[ASTNode]) -> list[Entity]:
     """Concatenate the three per-type finder overlays into one flat, document-ordered
     entity list and assign each a global id. The overlays are independent and may
     reference the same node more than once (members are node-id pointers) — they are
@@ -197,7 +198,7 @@ def _flatten_entities(result: dict, nodes: list) -> list:
     return entities
 
 
-def _write_nodes(nodes: list, output_dir: Path) -> Path:
+def _write_nodes(nodes: list[ASTNode], output_dir: Path) -> Path:
     """Persist the flat node stream as JSON for provenance — an entity's `members` are node
     ids into this file, so the later graph phase can link an entity to its source chunks."""
     payload = [
@@ -215,7 +216,7 @@ def _write_nodes(nodes: list, output_dir: Path) -> Path:
     return path
 
 
-def _write_entities(entities: list, output_dir: Path) -> Path:
+def _write_entities(entities: list[Entity], output_dir: Path) -> Path:
     """Persist the flat entity overlay as JSON beside the assembled document — the artifact
     the later graph phase (edges, fusion, completion) consumes. Each entity carries `{id,
     type, members}` (members are node ids into `nodes.json`) plus whatever self-contained
@@ -228,7 +229,7 @@ def _write_entities(entities: list, output_dir: Path) -> Path:
     return path
 
 
-def _entity_payload(e) -> dict:
+def _entity_payload(e: Entity) -> dict:
     """One entity as a JSON-ready dict: id/type/members always, then any attribute that is
     set. Structured attributes (bodylist/proofs/solutions) are unpacked by hand rather than
     via pydantic `.model_dump()` so this stays importable under the test stubs."""
@@ -250,6 +251,6 @@ def _entity_payload(e) -> dict:
     return d
 
 
-def _seg(segment) -> dict:
+def _seg(segment: BodySegment) -> dict:
     """A bodylist segment as a plain dict (no pydantic dependency)."""
     return {"description": segment.description, "action": segment.action}
