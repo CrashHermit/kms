@@ -81,6 +81,10 @@ ACTIONS_ALL = [
     "enumeration",
 ]
 
+# The entity kinds a cross-entity reference may target (AutoMathKG's `definition:`/`theorem:`
+# prefixes). Shared by the per-type referencers so the allowed set lives in one place.
+REFERENCE_KINDS = ["definition", "theorem"]
+
 
 class BodySegment(BaseModel):
     """One `bodylist` piece: a contiguous slice of an entity's content and the role it

@@ -29,7 +29,6 @@ from kms.graph.entities import (
     entity_label,
     entity_properties,
     entity_uuid,
-    member_uuid,
 )
 from kms.graph.nodes import (
     NODE_LABEL,
@@ -119,10 +118,10 @@ def entity_batches(entities: list[Entity], source: str) -> dict[str, list[dict]]
 
 def member_pairs(entities: list[Entity], source: str) -> list[dict]:
     """The ``{entity, node}`` uuid pairs for the ``:DERIVED_FROM`` edges: one per (entity, member) so
-    an entity links to every source chunk it was built from. Members are node ids resolved to the
-    ``:Node`` layer's deterministic uuids."""
+    an entity links to every source chunk it was built from. A member id resolves to the ``:Node``
+    layer's own deterministic ``node_uuid``, so the edge lands on the real provenance chunk."""
     return [
-        {"entity": entity_uuid(source, entity.id), "node": member_uuid(source, member)}
+        {"entity": entity_uuid(source, entity.id), "node": node_uuid(source, member)}
         for entity in entities
         for member in entity.members
     ]

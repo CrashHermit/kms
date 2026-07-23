@@ -6,12 +6,7 @@ import asyncio
 import json
 
 from kms.core.models import BodySegment, Entity, EntityType, Proof, Solution
-from kms.graph.entities import (
-    entity_label,
-    entity_properties,
-    entity_uuid,
-    member_uuid,
-)
+from kms.graph.entities import entity_label, entity_properties, entity_uuid
 from kms.graph.nodes import node_uuid, source_uuid
 from kms.graph.writer import entity_batches, member_pairs, persist_entities
 
@@ -34,10 +29,6 @@ def test_entity_uuid_is_deterministic_and_distinct_by_id_and_source():
 def test_entity_uuid_is_disjoint_from_node_uuid_for_the_same_index():
     # entity#3 and node#3 must not collide — they share a uuid namespace but different keys.
     assert entity_uuid("book.pdf", 3) != node_uuid("book.pdf", 3)
-
-
-def test_member_uuid_resolves_to_the_node_layer_key():
-    assert member_uuid("book.pdf", 5) == node_uuid("book.pdf", 5)
 
 
 # --- labels ---

@@ -33,7 +33,7 @@ import json
 from uuid import NAMESPACE_URL, uuid5
 
 from kms.core.models import BodySegment, Entity
-from kms.graph.nodes import node_uuid, source_uuid
+from kms.graph.nodes import source_uuid
 
 ENTITY_LABEL = "Entity"
 
@@ -98,9 +98,3 @@ def entity_properties(entity: Entity, source: str) -> dict:
         ),
     }
     return {key: value for key, value in props.items() if value is not None}
-
-
-def member_uuid(source: str, member_id: int) -> str:
-    """The node uuid an entity ``members`` id resolves to — the same deterministic key the ``:Node``
-    layer wrote — so ``(:Entity)-[:DERIVED_FROM]->(:Node)`` lands on the real provenance chunk."""
-    return node_uuid(source, member_id)

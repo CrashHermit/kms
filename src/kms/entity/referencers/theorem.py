@@ -24,11 +24,8 @@ import dspy
 
 from kms.core import tracing
 from kms.core.llm import text_lm
-from kms.core.models import ACTIONS_ALL, Entity, Reference
+from kms.core.models import ACTIONS_ALL, REFERENCE_KINDS, Entity, Reference
 from kms.core.state import State
-
-# The two entity kinds a reference may target — the `definition:`/`theorem:` prefixes in AutoMathKG.
-REFERENCE_KINDS = ["definition", "theorem"]
 
 
 class ExtractReferences(dspy.Signature):
