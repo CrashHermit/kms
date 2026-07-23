@@ -56,9 +56,10 @@ def test_persist_nodes_upserts_labels_and_next_chain():
 
     async def scenario():
         try:
+            meta = {"title": "Test Book", "author": "A. Mathematician"}
             await ensure_schema()
-            await persist_nodes(stream, source, {"title": "Test Book"})
-            await persist_nodes(stream, source, {"title": "Test Book"})  # idempotent re-run
+            await persist_nodes(stream, source, meta)
+            await persist_nodes(stream, source, meta)  # idempotent re-run
             async with driver().session(database=database()) as session:
                 # multi-label: the math node is reachable as :Math and carries base :Node too
                 math = await one(
@@ -72,11 +73,12 @@ def test_persist_nodes_upserts_labels_and_next_chain():
                 # the source roots the chain: :Source -HEAD-> the first node, and carries metadata
                 head = await one(
                     session,
-                    "MATCH (s:Source {title: 'Test Book'})-[:HEAD]->(n:Node) RETURN n.content AS c",
+                    "MATCH (s:Source {title: 'Test Book', author: 'A. Mathematician'})"
+                    "-[:HEAD]->(n:Node) RETURN n.content AS c",
                 )
                 assert math["c"] == 1  # re-run did not duplicate the node
                 assert chain["longest"] == 2
-                assert head["c"] == "§1"  # hangs off the first structural node
+                assert head["c"] == "§1"  # title+author on the source, hangs off the first node
         finally:
             async with driver().session(database=database()) as session:
                 await session.run("MATCH (n) DETACH DELETE n")  # test DB: clear the graph

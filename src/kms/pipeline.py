@@ -170,6 +170,8 @@ async def run(
     filename: str = "document.md",
     pages: list[int] | None = None,
     source: str | None = None,
+    title: str | None = None,
+    author: str | None = None,
 ) -> Path:
     """Run the full pipeline on a PDF and write the assembled markdown + entities.
 
@@ -177,18 +179,21 @@ async def run(
     figures (no GPU, no docling); the graph then corrects, parses, heals, and builds the
     typed entity overlay. ``pages`` (0-based) optionally limits which pages are sent.
     ``source`` is the book identity used as the graph's Neo4j key (defaults to the PDF's
-    filename); graph persistence is skipped entirely when Neo4j isn't configured.
-    Returns the path of the assembled document.
+    filename); ``title``/``author`` are optional book attributes stored on the ``:Source``
+    node. Graph persistence is skipped entirely when Neo4j isn't configured. Returns the
+    path of the assembled document.
     """
     output_dir = Path(output_dir)
     from kms.ingestion import ocr
 
     source = source or Path(pdf_path).name
+    metadata = {"title": title, "author": author}
     segments = ocr.extract(pdf_path, output_dir=output_dir, pages=pages)
     graph = build_graph()
     try:
         result = await graph.ainvoke(
-            {"segments": segments, "source": source}, {"recursion_limit": 1000}
+            {"segments": segments, "source": source, "source_metadata": metadata},
+            {"recursion_limit": 1000},
         )
         nodes = result["nodes"]
         written = assemble(nodes, result["segments"], output_dir=output_dir, filename=filename)

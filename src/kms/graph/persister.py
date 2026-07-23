@@ -25,5 +25,5 @@ class NodePersisterNode:
         if not is_configured() or not source:
             return {}
         await ensure_schema()
-        await persist_nodes(state.get("nodes", []), source)
+        await persist_nodes(state.get("nodes", []), source, state.get("source_metadata"))
         return {}
