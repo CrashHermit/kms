@@ -1,0 +1,2 @@
+2026/07/23 16:40:36 WARNING dspy.adapters.json_adapter: Failed to use structured output format, falling back to JSON mode.
+Wrote assembled document to: robustness_test/runs/prob_grinstead_snell/document.md

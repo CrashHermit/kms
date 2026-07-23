@@ -1,0 +1,297 @@
+[
+  {
+    "id": 0,
+    "type": "definition",
+    "members": [
+      7,
+      8
+    ],
+    "label": "Definition 2.5.1 (Primitive Root).",
+    "number": "2.5.1",
+    "title": "Primitive Root",
+    "field": "algebra",
+    "contents": [
+      "A primitive root modulo an integer $n$ is an element of $(\\mathbf{Z}/n\\mathbf{Z})^*$ of order $\\varphi(n)$."
+    ],
+    "bodylist": [
+      {
+        "description": "A primitive root modulo an integer $n$ is an element of $(\\mathbf{Z}/n\\mathbf{Z})^*$ of order $\\varphi(n)$.",
+        "action": "definition"
+      }
+    ]
+  },
+  {
+    "id": 1,
+    "type": "theorem",
+    "members": [
+      15,
+      16,
+      17,
+      18,
+      19
+    ],
+    "label": "Proposition 2.5.3",
+    "number": "2.5.3",
+    "title": "Root Bound",
+    "field": "algebra",
+    "contents": [
+      "**Proposition 2.5.3** (Root Bound).",
+      "*Let $f \\in k[x]$ be a nonzero polynomial over a field $k$. Then there are at most $\\deg(f)$ elements $\\alpha \\in k$ such that $f(\\alpha) = 0$.*"
+    ],
+    "bodylist": [
+      {
+        "description": "**Proposition 2.5.3** (Root Bound).\n\n*Let $f \\in k[x]$ be a nonzero polynomial over a field $k$.",
+        "action": "premise"
+      },
+      {
+        "description": " Then there are at most $\\deg(f)$ elements $\\alpha \\in k$ such that $f(\\alpha) = 0$.*",
+        "action": "conclusion"
+      }
+    ],
+    "proofs": [
+      {
+        "contents": [
+          "*Proof.* We prove the proposition by induction on $\\deg(f)$. The cases in which $\\deg(f) \\leq 1$ are clear. Write $f = a_n x^n + \\cdots + a_1 x + a_0$. If $f(\\alpha) = 0$, then",
+          "$$\\begin{aligned} f(x) &= f(x) - f(\\alpha) \\\\ &= a_n(x^n - \\alpha^n) + \\cdots + a_1(x - \\alpha) + a_0(1 - 1) \\\\ &= (x - \\alpha)(a_n(x^{n-1} + \\cdots + \\alpha^{n-1}) + \\cdots + a_2(x + \\alpha) + a_1) \\\\ &= (x - \\alpha)g(x), \\end{aligned}$$",
+          "for some polynomial $g(x) \\in k[x]$. Next, suppose that $f(\\beta) = 0$ with $\\beta \\neq \\alpha$. Then $(\\beta - \\alpha)g(\\beta) = 0$, so, since $\\beta - \\alpha \\neq 0$ and $k$ is a field, we have $g(\\beta) = 0$. By our inductive hypothesis, $g$ has at most $n - 1$ roots, so there are at most $n - 1$ possibilities for $\\beta$. It follows that $f$ has at most $n$ roots. $\\square$"
+        ],
+        "bodylist": [
+          {
+            "description": "We prove the proposition by induction on $\\deg(f)$.",
+            "action": "premise"
+          },
+          {
+            "description": "The cases in which $\\deg(f) \\leq 1$ are clear.",
+            "action": "premise"
+          },
+          {
+            "description": "Write $f = a_n x^n + \\cdots + a_1 x + a_0$.",
+            "action": "premise"
+          },
+          {
+            "description": "If $f(\\alpha) = 0$, then\n\n$$\\begin{aligned} f(x) &= f(x) - f(\\alpha) \\\\ &= a_n(x^n - \\alpha^n) + \\cdots + a_1(x - \\alpha) + a_0(1 - 1) \\\\ &= (x - \\alpha)(a_n(x^{n-1} + \\cdots + \\alpha^{n-1}) + \\cdots + a_2(x + \\alpha) + a_1) \\\\ &= (x - \\alpha)g(x), \\end{aligned}$$\n\nfor some polynomial $g(x) \\in k[x]$.",
+            "action": "calculation"
+          },
+          {
+            "description": "Next, suppose that $f(\\beta) = 0$ with $\\beta \\neq \\alpha$.",
+            "action": "assumption"
+          },
+          {
+            "description": "Then $(\\beta - \\alpha)g(\\beta) = 0$, so, since $\\beta - \\alpha \\neq 0$ and $k$ is a field, we have $g(\\beta) = 0$.",
+            "action": "deduction"
+          },
+          {
+            "description": "By our inductive hypothesis, $g$ has at most $n - 1$ roots, so there are at most $n - 1$ possibilities for $\\beta$.",
+            "action": "deduction"
+          },
+          {
+            "description": "It follows that $f$ has at most $n$ roots. $\\square$",
+            "action": "conclusion"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "type": "theorem",
+    "members": [
+      23,
+      24,
+      25,
+      26
+    ],
+    "label": "Proposition 2.5.5",
+    "number": "2.5.5",
+    "title": "Roots of x^d - 1 in Z/pZ",
+    "field": "algebra",
+    "contents": [
+      "**Proposition 2.5.5.** *Let $p$ be a prime number and let $d$ be a divisor of $p - 1$. Then $f = x^d - 1 \\in (\\mathbf{Z}/p\\mathbf{Z})[x]$ has exactly $d$ roots in $\\mathbf{Z}/p\\mathbf{Z}$.*"
+    ],
+    "bodylist": [
+      {
+        "description": "Let $p$ be a prime number and let $d$ be a divisor of $p - 1$. ",
+        "action": "premise"
+      },
+      {
+        "description": "Then $f = x^d - 1 \\in (\\mathbf{Z}/p\\mathbf{Z})[x]$ has exactly $d$ roots in $\\mathbf{Z}/p\\mathbf{Z}$.",
+        "action": "conclusion"
+      }
+    ],
+    "proofs": [
+      {
+        "contents": [
+          "*Proof.* Let $e = (p - 1)/d$. We have",
+          "$$\\begin{aligned} x^{p-1} - 1 &= (x^d)^e - 1 \\\\ &= (x^d - 1)((x^d)^{e-1} + (x^d)^{e-2} + \\cdots + 1) \\\\ &= (x^d - 1)g(x), \\end{aligned}$$",
+          "where $g \\in (\\mathbf{Z}/p\\mathbf{Z})[x]$ and $\\deg(g) = de - d = p - 1 - d$. Theorem 2.1.20 implies that $x^{p-1} - 1$ has exactly $p - 1$ roots in $\\mathbf{Z}/p\\mathbf{Z}$, since every nonzero element of $\\mathbf{Z}/p\\mathbf{Z}$ is a root! By Proposition 2.5.3, $g$ has *at most* $p - 1 - d$ roots and $x^d - 1$ has at most $d$ roots. Since a root of $(x^d - 1)g(x)$ is a root of either $x^d - 1$ or $g(x)$ and $x^{p-1} - 1$ has $p - 1$ roots, $g$ must have exactly $p - 1 - d$ roots and $x^d - 1$ must have exactly $d$ roots, as claimed. $\\square$"
+        ],
+        "bodylist": [
+          {
+            "description": "*Proof.* Let $e = (p - 1)/d$. We have",
+            "action": "premise"
+          },
+          {
+            "description": "\n\n$$\\begin{aligned} x^{p-1} - 1 &= (x^d)^e - 1 \\\\ &= (x^d - 1)((x^d)^{e-1} + (x^d)^{e-2} + \\cdots + 1) \\\\ &= (x^d - 1)g(x), \\end{aligned}$$\n\nwhere $g \\in (\\mathbf{Z}/p\\mathbf{Z})[x]$ and $\\deg(g) = de - d = p - 1 - d$.",
+            "action": "calculation"
+          },
+          {
+            "description": " Theorem 2.1.20 implies that $x^{p-1} - 1$ has exactly $p - 1$ roots in $\\mathbf{Z}/p\\mathbf{Z}$, since every nonzero element of $\\mathbf{Z}/p\\mathbf{Z}$ is a root!",
+            "action": "lemma"
+          },
+          {
+            "description": " By Proposition 2.5.3, $g$ has *at most* $p - 1 - d$ roots and $x^d - 1$ has at most $d$ roots.",
+            "action": "lemma"
+          },
+          {
+            "description": " Since a root of $(x^d - 1)g(x)$ is a root of either $x^d - 1$ or $g(x)$ and $x^{p-1} - 1$ has $p - 1$ roots, $g$ must have exactly $p - 1 - d$ roots and $x^d - 1$ must have exactly $d$ roots, as claimed.",
+            "action": "deduction"
+          },
+          {
+            "description": " $\\square$",
+            "action": "conclusion"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 3,
+    "type": "theorem",
+    "members": [
+      33,
+      34,
+      35,
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      42
+    ],
+    "label": "Lemma 2.5.7",
+    "number": "2.5.7",
+    "title": "Order of Product of Commuting Elements with Coprime Orders",
+    "field": "algebra",
+    "contents": [
+      "**Lemma 2.5.7.** Suppose $a, b \\in (\\mathbf{Z}/n\\mathbf{Z})^*$ have orders $r$ and $s$, respectively, and that $\\gcd(r, s) = 1$. Then $ab$ has order $rs$."
+    ],
+    "bodylist": [
+      {
+        "description": "**Lemma 2.5.7.** ",
+        "action": "premise"
+      },
+      {
+        "description": "Suppose $a, b \\in (\\mathbf{Z}/n\\mathbf{Z})^*$ have orders $r$ and $s$, respectively, and that $\\gcd(r, s) = 1$. ",
+        "action": "assumption"
+      },
+      {
+        "description": "Then $ab$ has order $rs$.",
+        "action": "conclusion"
+      }
+    ],
+    "proofs": [
+      {
+        "contents": [
+          "*Proof.* This is a general fact about commuting elements of any group; our proof only uses that $ab = ba$ and nothing special about $(\\mathbf{Z}/n\\mathbf{Z})^*$. Since",
+          "$$ (ab)^{rs} = a^{rs}b^{rs} = 1, $$",
+          "the order of $ab$ is a divisor of $rs$. Write this divisor as $r_1s_1$ where $r_1 \\mid r$ and $s_1 \\mid s$. Raise both sides of the equation",
+          "$$ a^{r_1s_1}b^{r_1s_1} = (ab)^{r_1s_1} = 1 $$",
+          "to the power $r_2 = r/r_1$ to obtain",
+          "$$ a^{r_1r_2s_1}b^{r_1r_2s_1} = 1. $$",
+          "Since $a^{r_1r_2s_1} = (a^{r_1r_2})^{s_1} = 1$, we have",
+          "$$ b^{r_1r_2s_1} = 1, $$",
+          "so $s \\mid r_1r_2s_1$. Since $\\gcd(s, r_1r_2) = \\gcd(s, r) = 1$, it follows that $s = s_1$. Similarly $r = r_1$, so the order of $ab$ is $rs$. $\\square$"
+        ],
+        "bodylist": [
+          {
+            "description": "*Proof.* This is a general fact about commuting elements of any group; our proof only uses that $ab = ba$ and nothing special about $(\\mathbf{Z}/n\\mathbf{Z})^*$. Since",
+            "action": "premise"
+          },
+          {
+            "description": "$$ (ab)^{rs} = a^{rs}b^{rs} = 1, $$",
+            "action": "calculation"
+          },
+          {
+            "description": "the order of $ab$ is a divisor of $rs$.",
+            "action": "deduction"
+          },
+          {
+            "description": "Write this divisor as $r_1s_1$ where $r_1 \\mid r$ and $s_1 \\mid s$.",
+            "action": "premise"
+          },
+          {
+            "description": "Raise both sides of the equation\n\n$$ a^{r_1s_1}b^{r_1s_1} = (ab)^{r_1s_1} = 1 $$\n\nto the power $r_2 = r/r_1$ to obtain\n\n$$ a^{r_1r_2s_1}b^{r_1r_2s_1} = 1. $$",
+            "action": "calculation"
+          },
+          {
+            "description": "Since $a^{r_1r_2s_1} = (a^{r_1r_2})^{s_1} = 1$, we have\n\n$$ b^{r_1r_2s_1} = 1, $$",
+            "action": "deduction"
+          },
+          {
+            "description": "so $s \\mid r_1r_2s_1$.",
+            "action": "deduction"
+          },
+          {
+            "description": "Since $\\gcd(s, r_1r_2) = \\gcd(s, r) = 1$, it follows that $s = s_1$.",
+            "action": "deduction"
+          },
+          {
+            "description": "Similarly $r = r_1$, so the order of $ab$ is $rs$. $\\square$",
+            "action": "conclusion"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": 4,
+    "type": "theorem",
+    "members": [
+      43,
+      44,
+      45,
+      46
+    ],
+    "label": "Theorem 2.5.8 (Primitive Roots)",
+    "number": "2.5.8",
+    "title": "Primitive Roots",
+    "field": "algebra",
+    "contents": [
+      "**Theorem 2.5.8 (Primitive Roots).** There is a primitive root modulo any prime $p$. In particular, the group $(\\mathbf{Z}/p\\mathbf{Z})^*$ is cyclic."
+    ],
+    "bodylist": [
+      {
+        "description": "**Theorem 2.5.8 (Primitive Roots).** There is a primitive root modulo any prime $p$. In particular, the group $(\\mathbf{Z}/p\\mathbf{Z})^*$ is cyclic.",
+        "action": "conclusion"
+      }
+    ],
+    "proofs": [
+      {
+        "contents": [
+          "*Proof.* The theorem is true if $p = 2$, since 1 is a primitive root, so we may assume $p > 2$. Write $p - 1$ as a product of distinct prime powers $q_i^{n_i}$:",
+          "$$ p - 1 = q_1^{n_1}q_2^{n_2}\\cdots q_r^{n_r}. $$",
+          "By Proposition 2.5.5, the polynomial $x^{q_i^{n_i}} - 1$ has exactly $q_i^{n_i}$ roots, and the polynomial $x^{q_i^{n_i-1}} - 1$ has exactly $q_i^{n_i-1}$ roots. There are $q_i^{n_i} - q_i^{n_i-1} =$"
+        ],
+        "bodylist": [
+          {
+            "description": "*Proof.* The theorem is true if $p = 2$, since 1 is a primitive root, so we may assume $p > 2$.",
+            "action": "premise"
+          },
+          {
+            "description": " Write $p - 1$ as a product of distinct prime powers $q_i^{n_i}$:\n\n$$ p - 1 = q_1^{n_1}q_2^{n_2}\\cdots q_r^{n_r}. $$",
+            "action": "premise"
+          },
+          {
+            "description": "\n\nBy Proposition 2.5.5, the polynomial $x^{q_i^{n_i}} - 1$ has exactly $q_i^{n_i}$ roots, and the polynomial $x^{q_i^{n_i-1}} - 1$ has exactly $q_i^{n_i-1}$ roots.",
+            "action": "lemma"
+          },
+          {
+            "description": " There are $q_i^{n_i} - q_i^{n_i-1} =$",
+            "action": "calculation"
+          }
+        ]
+      }
+    ]
+  }
+]

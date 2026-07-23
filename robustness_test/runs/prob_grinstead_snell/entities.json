@@ -1,0 +1,312 @@
+[
+  {
+    "id": 0,
+    "type": "problem",
+    "members": [
+      4,
+      5,
+      6,
+      7
+    ],
+    "title": "Random walk simulation and Pólya's theorem",
+    "field": "probability and statistics",
+    "contents": [
+      "(a) Write a program to simulate a random walk in one dimension starting at 0. Have your program print out the lengths of the times between returns to the starting point (returns to 0). See if you can guess from this simulation the answer to the following question: Will the walker always return to his starting point eventually or might he drift away forever?\n\n(b) The paths of two walkers in two dimensions who meet after $n$ steps can be considered to be a single path that starts at $(0, 0)$ and returns to $(0, 0)$ after $2n$ steps. This means that the probability that two random walkers in two dimensions meet is the same as the probability that a single walker in two dimensions ever returns to the starting point. Thus the question of whether two walkers are sure to meet is the same as the question of whether a single walker is sure to return to the starting point.\n\nWrite a program to simulate a random walk in two dimensions and see if you think that the walker is sure to return to $(0, 0)$. If so, Pólya would be sure to keep meeting his friends in the park. Perhaps by now you have conjectured the answer to the question: Is a random walker in one or two dimensions sure to return to the starting point? Pólya answered",
+      "$^{13}$G. Pólya, \"Two Incidents,\" *Scientists at Work: Festschrift in Honour of Herman Wold*, ed. T. Dalenius, G. Karlsson, and S. Malmquist (Uppsala: Almquist & Wiksells Boktryckeri AB, 1970).",
+      "this question for dimensions one, two, and three. He established the remarkable result that the answer is *yes* in one and two dimensions and *no* in three dimensions.",
+      "(c) Write a program to simulate a random walk in three dimensions and see whether, from this simulation and the results of (a) and (b), you could have guessed Pólya's result."
+    ]
+  },
+  {
+    "id": 1,
+    "type": "definition",
+    "members": [
+      11
+    ],
+    "label": "Definition 1.1",
+    "number": "1.1",
+    "title": "Random Variable",
+    "field": "probability and statistics",
+    "contents": [
+      "**Definition 1.1** Suppose we have an experiment whose outcome depends on chance. We represent the outcome of the experiment by a capital Roman letter, such as $X$, called a *random variable*. The *sample space* of the experiment is the set of all possible outcomes. If the sample space is either finite or countably infinite, the random variable is said to be *discrete*. $\\square$"
+    ],
+    "bodylist": [
+      {
+        "description": "**Definition 1.1** Suppose we have an experiment whose outcome depends on chance.",
+        "action": "premise"
+      },
+      {
+        "description": "We represent the outcome of the experiment by a capital Roman letter, such as $X$, called a *random variable*. The *sample space* of the experiment is the set of all possible outcomes.",
+        "action": "definition"
+      },
+      {
+        "description": "If the sample space is either finite or countably infinite, the random variable is said to be *discrete*. $\\square$",
+        "action": "assumption"
+      }
+    ]
+  },
+  {
+    "id": 2,
+    "type": "problem",
+    "members": [
+      14,
+      15,
+      16,
+      17,
+      18
+    ],
+    "label": "Example 1.6",
+    "number": "1.6",
+    "title": "Die Roll Sample Space and Probability",
+    "field": "probability and statistics",
+    "contents": [
+      "**Example 1.6** A die is rolled once. We let $X$ denote the outcome of this experiment. Then the sample space for this experiment is the 6-element set",
+      "$$\\Omega = \\{1, 2, 3, 4, 5, 6\\},$$",
+      "where each outcome $i$, for $i = 1, \\dots, 6$, corresponds to the number of dots on the face which turns up. The event",
+      "$$E = \\{2, 4, 6\\}$$",
+      "corresponds to the statement that the result of the roll is an even number. The event $E$ can also be described by saying that $X$ is even. Unless there is reason to believe the die is loaded, the natural assumption is that every outcome is equally likely. Adopting this convention means that we assign a probability of $1/6$ to each of the six outcomes, i.e., $m(i) = 1/6$, for $1 \\leq i \\leq 6$. $\\square$"
+    ]
+  },
+  {
+    "id": 3,
+    "type": "definition",
+    "members": [
+      21,
+      22,
+      23,
+      24,
+      25,
+      26
+    ],
+    "label": "Definition 1.2",
+    "number": "1.2",
+    "title": "Distribution function",
+    "field": "probability and statistics",
+    "contents": [
+      "**Definition 1.2**",
+      "Let $X$ be a random variable which denotes the value of the outcome of a certain experiment, and assume that this experiment has only finitely many possible outcomes. Let $\\Omega$ be the sample space of the experiment (i.e., the set of all possible values of $X$, or equivalently, the set of all possible outcomes of the experiment.) A *distribution function* for $X$ is a real-valued function $m$ whose domain is $\\Omega$ and which satisfies:",
+      "1. $m(\\omega) \\geq 0$, for all $\\omega \\in \\Omega$, and\n2. $\\sum_{\\omega \\in \\Omega} m(\\omega) = 1$.",
+      "For any subset $E$ of $\\Omega$, we define the *probability* of $E$ to be the number $P(E)$ given by",
+      "$$P(E) = \\sum_{\\omega \\in E} m(\\omega).$$",
+      "$\\square$"
+    ],
+    "bodylist": [
+      {
+        "description": "Let $X$ be a random variable which denotes the value of the outcome of a certain experiment, and assume that this experiment has only finitely many possible outcomes. Let $\\Omega$ be the sample space of the experiment (i.e., the set of all possible values of $X$, or equivalently, the set of all possible outcomes of the experiment.)",
+        "action": "premise"
+      },
+      {
+        "description": "A *distribution function* for $X$ is a real-valued function $m$ whose domain is $\\Omega$ and which satisfies:",
+        "action": "definition"
+      },
+      {
+        "description": "1. $m(\\omega) \\geq 0$, for all $\\omega \\in \\Omega$, and\n2. $\\sum_{\\omega \\in \\Omega} m(\\omega) = 1$.",
+        "action": "enumeration"
+      },
+      {
+        "description": "For any subset $E$ of $\\Omega$, we define the *probability* of $E$ to be the number $P(E)$ given by\n\n$$P(E) = \\sum_{\\omega \\in E} m(\\omega).$$\n\n$\\square$",
+        "action": "definition"
+      }
+    ]
+  },
+  {
+    "id": 4,
+    "type": "problem",
+    "members": [
+      27,
+      28,
+      29,
+      30,
+      31,
+      32,
+      33,
+      34,
+      35
+    ],
+    "label": "Example 1.7",
+    "number": "1.7",
+    "title": "Coin Tossing Experiment",
+    "field": "probability and statistics",
+    "contents": [
+      "**Example 1.7**",
+      "Consider an experiment in which a coin is tossed twice. Let $X$ be the random variable which corresponds to this experiment. We note that there are several ways to record the outcomes of this experiment. We could, for example, record the two tosses, in the order in which they occurred. In this case, we have $\\Omega = \\{HH, HT, TH, TT\\}$. We could also record the outcomes by simply noting the number of heads that appeared. In this case, we have $\\Omega = \\{0, 1, 2\\}$. Finally, we could record the two outcomes, without regard to the order in which they occurred. In this case, we have $\\Omega = \\{HH, HT, TT\\}$.",
+      "We will use, for the moment, the first of the sample spaces given above. We will assume that all four outcomes are equally likely, and define the distribution function $m(\\omega)$ by",
+      "$$m(\\mathrm{HH}) = m(\\mathrm{HT}) = m(\\mathrm{TH}) = m(\\mathrm{TT}) = \\frac{1}{4}.$$",
+      "Let $E = \\{\\mathrm{HH}, \\mathrm{HT}, \\mathrm{TH}\\}$ be the event that at least one head comes up. Then, the probability of $E$ can be calculated as follows:",
+      "$$\n\\begin{array}{l} P(E) = m(\\mathrm{HH}) + m(\\mathrm{HT}) + m(\\mathrm{TH}) \\\\ = \\frac{1}{4} + \\frac{1}{4} + \\frac{1}{4} = \\frac{3}{4}. \\end{array}\n$$",
+      "Similarly, if $F = \\{\\mathrm{HH}, \\mathrm{HT}\\}$ is the event that heads comes up on the first toss, then we have",
+      "$$\n\\begin{array}{l} P(F) = m(\\mathrm{HH}) + m(\\mathrm{HT}) \\\\ = \\frac{1}{4} + \\frac{1}{4} = \\frac{1}{2}. \\end{array}\n$$",
+      "□"
+    ]
+  },
+  {
+    "id": 5,
+    "type": "problem",
+    "members": [
+      36,
+      37,
+      38,
+      39,
+      40,
+      41
+    ],
+    "label": "Example 1.8",
+    "number": "1.8",
+    "title": "Example 1.6 continued (die roll probability)",
+    "field": "probability and statistics",
+    "contents": [
+      "**Example 1.8** (Example 1.6 continued)",
+      "The sample space for the experiment in which the die is rolled is the 6-element set $\\Omega = \\{1, 2, 3, 4, 5, 6\\}$. We assumed that the die was fair, and we chose the distribution function defined by",
+      "$$\nm(i) = \\frac{1}{6}, \\qquad \\text{for } i = 1, \\dots, 6.\n$$",
+      "If $E$ is the event that the result of the roll is an even number, then $E = \\{2, 4, 6\\}$ and",
+      "$$\n\\begin{array}{l} P(E) = m(2) + m(4) + m(6) \\\\ = \\frac{1}{6} + \\frac{1}{6} + \\frac{1}{6} = \\frac{1}{2}. \\end{array}\n$$",
+      "□"
+    ]
+  },
+  {
+    "id": 6,
+    "type": "problem",
+    "members": [
+      45,
+      46,
+      47,
+      48,
+      49,
+      50,
+      51,
+      52,
+      53,
+      54,
+      55,
+      56
+    ],
+    "label": "Example 1.9",
+    "number": "1.9",
+    "title": "Probability assignment for three candidates",
+    "field": "probability and statistics",
+    "contents": [
+      "**Example 1.9**",
+      "Three people, A, B, and C, are running for the same office, and we assume that one and only one of them wins. The sample space may be taken as the 3-element set $\\Omega = \\{\\mathrm{A}, \\mathrm{B}, \\mathrm{C}\\}$ where each element corresponds to the outcome of that candidate's winning. Suppose that A and B have the same chance of winning, but that C has only $1/2$ the chance of A or B. Then we assign",
+      "$$\nm(\\mathrm{A}) = m(\\mathrm{B}) = 2m(\\mathrm{C}).\n$$",
+      "Since",
+      "$$\nm(\\mathrm{A}) + m(\\mathrm{B}) + m(\\mathrm{C}) = 1,\n$$",
+      "we see that",
+      "$$2m(\\mathrm{C}) + 2m(\\mathrm{C}) + m(\\mathrm{C}) = 1 \\text{ ,}$$",
+      "which implies that $5m(\\mathrm{C}) = 1$. Hence,",
+      "$$m(\\mathrm{A}) = \\frac{2}{5} \\text{ ,} \\qquad m(\\mathrm{B}) = \\frac{2}{5} \\text{ ,} \\qquad m(\\mathrm{C}) = \\frac{1}{5} \\text{ .}$$",
+      "Let $E$ be the event that either A or C wins. Then $E = \\{\\mathrm{A}, \\mathrm{C}\\}$, and",
+      "$$P(E) = m(\\mathrm{A}) + m(\\mathrm{C}) = \\frac{2}{5} + \\frac{1}{5} = \\frac{3}{5} \\text{ .}$$",
+      "□"
+    ]
+  },
+  {
+    "id": 7,
+    "type": "definition",
+    "members": [
+      58,
+      59
+    ],
+    "title": "Union of two sets",
+    "field": "foundations of mathematics",
+    "contents": [
+      "Let $A$ and $B$ be two sets. Then the union of $A$ and $B$ is the set",
+      "$$A \\cup B = \\{x \\mid x \\in A \\text{ or } x \\in B\\} \\text{ .}$$"
+    ],
+    "bodylist": [
+      {
+        "description": "Let $A$ and $B$ be two sets.",
+        "action": "premise"
+      },
+      {
+        "description": "Then the union of $A$ and $B$ is the set\n\n$$A \\cup B = \\{x \\mid x \\in A \\text{ or } x \\in B\\} \\text{ .}$$",
+        "action": "definition"
+      }
+    ]
+  },
+  {
+    "id": 8,
+    "type": "definition",
+    "members": [
+      60,
+      61
+    ],
+    "title": "Intersection of Sets",
+    "field": "foundations of mathematics",
+    "contents": [
+      "The intersection of $A$ and $B$ is the set",
+      "$$A \\cap B = \\{x \\mid x \\in A \\text{ and } x \\in B\\} \\text{ .}$$"
+    ],
+    "bodylist": [
+      {
+        "description": "The intersection of $A$ and $B$ is the set\n\n$$A \\cap B = \\{x \\mid x \\in A \\text{ and } x \\in B\\} \\text{ .}$$",
+        "action": "definition"
+      }
+    ]
+  },
+  {
+    "id": 9,
+    "type": "definition",
+    "members": [
+      62,
+      63
+    ],
+    "title": "Set difference",
+    "field": "foundations of mathematics",
+    "contents": [
+      "The difference of $A$ and $B$ is the set",
+      "$$A - B = \\{x \\mid x \\in A \\text{ and } x \\notin B\\} \\text{ .}$$"
+    ],
+    "bodylist": [
+      {
+        "description": "The difference of $A$ and $B$ is the set\n\n$$A - B = \\{x \\mid x \\in A \\text{ and } x \\notin B\\} \\text{ .}}$$",
+        "action": "definition"
+      }
+    ]
+  },
+  {
+    "id": 10,
+    "type": "definition",
+    "members": [
+      64
+    ],
+    "title": "Subset",
+    "field": "foundations of mathematics",
+    "contents": [
+      "The set $A$ is a subset of $B$, written $A \\subset B$, if every element of $A$ is also an element of $B$. Finally, the complement of $A$ is the set"
+    ],
+    "bodylist": [
+      {
+        "description": "The set $A$ is a subset of $B$, written $A \\subset B$, if every element of $A$ is also an element of $B$.",
+        "action": "definition"
+      },
+      {
+        "description": " Finally, the complement of $A$ is the set",
+        "action": "definition"
+      }
+    ]
+  },
+  {
+    "id": 11,
+    "type": "definition",
+    "members": [
+      64,
+      65
+    ],
+    "title": "Complement of a set",
+    "field": "foundations of mathematics",
+    "contents": [
+      "The set $A$ is a subset of $B$, written $A \\subset B$, if every element of $A$ is also an element of $B$. Finally, the complement of $A$ is the set",
+      "$$\\tilde{A} = \\{x \\mid x \\in \\Omega \\text{ and } x \\notin A\\} \\text{ .}$$"
+    ],
+    "bodylist": [
+      {
+        "description": "The set $A$ is a subset of $B$, written $A \\subset B$, if every element of $A$ is also an element of $B$.",
+        "action": "definition"
+      },
+      {
+        "description": "Finally, the complement of $A$ is the set\n\n$$\\tilde{A} = \\{x \\mid x \\in \\Omega \\text{ and } x \\notin A\\} \\text{ .}$$",
+        "action": "definition"
+      }
+    ]
+  }
+]

@@ -1,0 +1,112 @@
+We now turn to a very important notion that you may not have met before.
+
+1.3.7 Definition. Let $f$ be a function from a set $X$ into a set $Y$. If $S$ is any subset of $Y$, then the set $f^{-1}(S)$ is defined by
+
+$$f^{-1}(S) = \{x : x \in X \text{ and } f(x) \in S\}.$$
+
+The subset $f^{-1}(S)$ of $X$ is said to be the inverse image of $S$.
+
+Note that an inverse function of $f: X \to Y$ exists if and only if $f$ is bijective. But the inverse image of any subset of $Y$ exists even if $f$ is neither one-to-one nor onto. The next example demonstrates this.
+
+1.3.8 Example. Let $f$ be the function from the set of integers, $\mathbb{Z}$, into itself given by $f(z) = |z|$, for each $z \in \mathbb{Z}$.
+
+The function $f$ is not one-to-one, since $f(1) = f(-1)$.
+
+It is also not onto, since there is no $z \in \mathbb{Z}$, such that $f(z) = -1$. So $f$ is certainly not bijective. Hence, by Proposition 1.3.6 (i), $f$ does not have an inverse function. However inverse images certainly exist. For example,
+
+$$f^{-1}(\{1, 2, 3\}) = \{-1, -2, -3, 1, 2, 3\}$$
+
+$$f^{-1}(\{-5, 3, 5, 7, 9\}) = \{-3, -5, -7, -9, 3, 5, 7, 9\}.$$
+
+We conclude this section with an interesting example.
+
+1.3.9 Example. Let $(Y, \mathcal{T})$ be a topological space and $X$ a non-empty set. Further, let $f$ be a function from $X$ into $Y$. Put $\mathcal{T}_1 = \{f^{-1}(S) : S \in \mathcal{T}\}$. Prove that $\mathcal{T}_1$ is a topology on $X$.
+
+Proof.
+
+Our task is to show that the collection of sets, $\mathcal{T}_1$, is a topology on $X$; that is, we have to show that $\mathcal{T}_1$ satisfies conditions (i), (ii) and (iii) of Definitions 1.1.1 $$X \in \mathcal{T}_1 \quad \text{since} \quad X = f^{-1}(Y) \quad \text{and} \quad Y \in \mathcal{T}.$$
+
+$$\emptyset \in \mathcal{T}_1 \quad \text{since} \quad \emptyset = f^{-1}(\emptyset) \quad \text{and} \quad \emptyset \in \mathcal{T}.$$
+
+Therefore $\mathcal{T}_1$ has property (i) of Definitions 1.1.1.
+
+To verify condition (ii) of Definitions 1.1.1, let $\{A_j : j \in J\}$ be a collection of members of $\mathcal{T}_1$, for some index set $J$. We have to show that $\bigcup_{j \in J} A_j \in \mathcal{T}_1$.
+
+As $A_j \in \mathcal{T}_1$, the definition of $\mathcal{T}_1$ implies that $A_j = f^{-1}(B_j)$, where $B_j \in \mathcal{T}$. Also $\bigcup_{j \in J} A_j = \bigcup_{j \in J} f^{-1}(B_j) = f^{-1}\left(\bigcup_{j \in J} B_j\right)$. [See Exercises 1.3 # 1.]
+
+Now $B_j \in \mathcal{T}$, for all $j \in J$, and so $\bigcup_{j \in J} B_j \in \mathcal{T}$, since $\mathcal{T}$ is a topology on $Y$. Therefore, by the definition of $\mathcal{T}_1$, $f^{-1}\left(\bigcup_{j \in J} B_j\right) \in \mathcal{T}_1$; that is, $\bigcup_{j \in J} A_j \in \mathcal{T}_1$.
+
+So $\mathcal{T}_1$ has property (ii) of Definitions 1.1.1.
+
+[Warning. You are reminded that not all sets are countable. (See the Appendix for comments on countable sets.) So it would not suffice, in the above argument, to assume that sets $A_1, A_2, \ldots, A_n, \ldots$ are in $\mathcal{T}_1$ and show that their union $A_1 \cup A_2 \cup \ldots \cup A_n \cup \ldots$ is in $\mathcal{T}_1$. This would prove only that the union of a countable number of sets in $\mathcal{T}_1$ lies in $\mathcal{T}_1$, but would not show that $\mathcal{T}_1$ has property (ii) of Definitions 1.1.1– this property requires all unions, whether countable or uncountable, of sets in $\mathcal{T}_1$ to be in $\mathcal{T}_1$.]
+
+Finally, let $A_1$ and $A_2$ be in $\mathcal{T}_1$. We have to show that $A_1 \cap A_2 \in \mathcal{T}_1$.
+
+As $A_1, A_2 \in \mathcal{T}_1$, $A_1 = f^{-1}(B_1)$ and $A_2 = f^{-1}(B_2)$, where $B_1, B_2 \in \mathcal{T}$.
+
+$$A_1 \cap A_2 = f^{-1}(B_1) \cap f^{-1}(B_2) = f^{-1}(B_1 \cap B_2). \quad [\text{See Exercises 1.3 \#1.}]$$
+
+As $B_1 \cap B_2 \in \mathcal{T}$, we have $f^{-1}(B_1 \cap B_2) \in \mathcal{T}_1$. Hence $A_1 \cap A_2 \in \mathcal{T}_1$, and we have shown that $\mathcal{T}_1$ also has property (iii) of Definitions 1.1.1.
+
+So $\mathcal{T}_1$ is indeed a topology on $X$.
+
+□
+
+### Exercises 1.3
+
+1. Let $f$ be a function from a set $X$ into a set $Y$. Then we stated in Example 1.3.9 that
+
+$$f^{-1}(\bigcup_{j \in J} B_j) = \bigcup_{j \in J} f^{-1}(B_j) \tag{1}$$
+
+and
+
+$$f^{-1}(B_1 \cap B_2) = f^{-1}(B_1) \cap f^{-1}(B_2) \tag{2}$$
+
+for any subsets $B_j$ of $Y$, and any index set $J$.
+
+(a) Prove that (1) is true.
+
+[Hint. Start your proof by letting $x$ be any element of the set on the left-hand side and show that it is in the set on the right-hand side. Then do the reverse.]
+
+(b) Prove that (2) is true.
+
+(c) Find (concrete) sets $A_1, A_2, X$, and $Y$ and a function $f: X \to Y$ such that $f(A_1 \cap A_2) \neq f(A_1) \cap f(A_2)$, where $A_1 \subseteq X$ and $A_2 \subseteq X$.
+
+2. Is the topology $\mathcal{T}$ described in Exercises 1.1 #6 (ii) the finite-closed topology? (Justify your answer.)
+
+### $\underline{\text{T}_1\text{-spaces}}$
+
+3. A topological space $(X, \mathcal{T})$ is said to be a $\underline{\text{T}_1\text{-space}}$ if every singleton set $\{x\}$ is closed in $(X, \mathcal{T})$. Show that precisely two of the following nine topological spaces are $\underline{\text{T}_1\text{-spaces}}$. (Justify your answer.)
+
+(i) a discrete space;
+
+(ii) an indiscrete space with at least two points;
+
+(iii) an infinite set with the finite-closed topology;
+
+(iv) Example 1.1.2;
+
+(v) Exercises 1.1 #5 (i);
+
+(vi) Exercises 1.1 #5 (ii);
+
+(vii) Exercises 1.1 #5 (iii);
+
+(viii) Exercises 1.1 #6 (i);
+
+(ix) Exercises 1.1 #6 (ii).
+
+4. Let $\mathcal{T}$ be the finite-closed topology on a set $X$. If $\mathcal{T}$ is also the discrete topology, prove that the set $X$ is finite.
+
+### T$_{0}$-spaces and the Sierpiński Space
+
+5. A topological space $(X, \mathcal{T})$ is said to be a **T$_{0}$-space** if for each pair of distinct points $a, b$ in $X$, either$^2$ there exists an open set containing $a$ and not $b$, or there exists an open set containing $b$ and not $a$.
+
+- (i) Prove that every T$_{1}$-space is a T$_{0}$-space.
+- (ii) Which of (i)–(vi) in Exercise 3 above are T$_{0}$-spaces? (Justify your answer.)
+- (iii) Put a topology $\mathcal{T}$ on the set $X = \{0, 1\}$ so that $(X, \mathcal{T})$ will be a T$_{0}$-space but not a T$_{1}$-space. [The topological space you obtain is called the **Sierpiński space**.]
+- (iv) Prove that each of the topological spaces described in **Exercises 1.1 #6** is a T$_{0}$-space. (Observe that in Exercise 3 above we saw that neither is a T$_{1}$-space.)
+
+### Countable-Closed Topology
+
+6. Let $X$ be any infinite set. The **countable-closed topology** is defined to be the topology having as its closed sets $X$ and all countable subsets of $X$. Prove that this is indeed a topology on $X$.
