@@ -37,7 +37,8 @@ completion.
     Plain sequential nodes.
   - `output/` — `assembler.py` (runs after the graph).
   - `graph/` — phase 3 (Neo4j). **Structural provenance layer built**: `db.py` (async driver, the
-    only neo4j import), `nodes.py` (ASTNode→Neo4j mapping, deterministic uuids, multi-label),
+    only neo4j import; plus an `NEO4J_TRANSPORT=http` HTTPS Query-API transport for sandboxes where
+    Bolt/7687 is blocked), `nodes.py` (ASTNode→Neo4j mapping, deterministic uuids, multi-label),
     `schema.py` (constraint/index bootstrap), `writer.py` (`persist_nodes`), `persister.py` (the
     pipeline stage). The semantic tiers (dedup canonicals, general entities, concepts, cross-entity
     refs/tactics, MathVD fusion, Math-LLM completion) are **not started**.
