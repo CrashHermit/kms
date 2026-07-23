@@ -68,8 +68,15 @@ src/kms/
       theorem.py
     instruction_distributor.py   # Problem-only; the lone per-type exception, kept at entity level
 
-  graph/                   # PHASE 3: NOT STARTED — package exists so the seam is physical
-    __init__.py            # (refs / fusion / completion modules added when the tier is built)
+  graph/                   # PHASE 3: Neo4j knowledge graph    (backbone: graph)
+    __init__.py
+    db.py                  # async Neo4j driver — the ONLY module that imports neo4j
+    nodes.py               # ASTNode -> :Node mapping (deterministic uuid, multi-label) + :Source root
+    schema.py              # idempotent constraint/index bootstrap
+    writer.py              # persist_nodes: :Source + :Node stream + :HEAD/:NEXT edges
+    persister.py           # NodePersisterNode — pipeline stage (after splitter, before finders)
+                           # structural provenance layer built; semantic tiers (canonicals/
+                           # entities/concepts, refs/tactics, fusion, completion) NOT started
 
   output/
     __init__.py
@@ -146,11 +153,13 @@ while the prompts are still being validated is deliberate: three copies you tune
 beat one abstraction you fight. Extract the shared shape only after splitter/distributor
 validation settles and the prompts stop moving.
 
-### 5. Scaffold `graph/` before it's written
+### 5. `graph/` reads entity outputs, never entity code
 
-It's the next big piece and the one place rule 1 earns its keep — the graph tier must read
-entity outputs and never be imported by the entity layer. Giving it a directory now (even as
-stubs) makes that direction physical instead of a convention to remember.
+This is the one place rule 1 earns its keep — the graph tier must read entity *outputs* and never
+be imported by the entity layer. The structural provenance layer has now landed here
+(`db`/`nodes`/`schema`/`writer`/`persister`), persisting the node stream to Neo4j after the
+splitter; the semantic tiers (canonicals, entities, concepts, refs/tactics, fusion, completion)
+build on top, still reading outputs only. `neo4j` imports stay quarantined in `graph.db`.
 
 ### 6. Library and CLI are separate
 

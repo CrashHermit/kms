@@ -5,10 +5,11 @@ Knowledge-management pipeline that turns a math textbook PDF into a structured
 AutoMathKG's model (arXiv:2505.13406). This doc is the pick-up point for the next
 session.
 
-**Working branch:** `claude/exercise-governor-graph-pb3nur`. Everything below (pure-structural
+**Working branch:** `claude/graph-dedup-planning-nwj0p7` (PR #12). The entity layer (pure-structural
 extractor + three per-type finders + per-type attributors + the exercise **splitter** and the
-**instruction distributor**) is committed and pushed there, validated end-to-end on real
-Hefferon pages.
+**instruction distributor**) plus the **graph tier's structural provenance layer** (Neo4j `:Source`
++ `:Node` stream) are committed and pushed there, validated end-to-end. See the 2026-07-23 session
+update for the graph work.
 
 ---
 
@@ -34,15 +35,63 @@ Hefferon pages.
 - **The instruction distributor** (`entity/instruction_distributor.py`) runs at the end of the problem
   chain: a growing-window walk that copies a grouped-exercise lead-in's shared directive onto
   the `Problem.instruction` of the problems it governs (LLM-judged extent, no number matching).
-- **Still deferred to the graph tier:** cross-entity attributes (`refs`/`references_tactics`),
-  and the whole **graph tier** (relationships/edges, MathVD fusion, LLM completion) — the big
-  next piece, not started.
+- **Graph tier — structural provenance layer built** (this session): the flat node stream is
+  persisted to Neo4j as a `:Source` node per book rooting its `:Node` markdown chain
+  (`:HEAD`/`:NEXT`), reusing `core.NodeType`, wired in after the splitter, validated against a
+  real Neo4j. **Still deferred:** the semantic tiers (dedup canonicals, general entities,
+  concepts), cross-entity `refs`/`references_tactics`, MathVD fusion, and Math-LLM completion.
 - **46 unit tests pass**; `conftest` stubs the heavy deps so they run anywhere.
 - **This session (see Session update):** splitter + distributor stress-tested across 6
   committed fixtures (elementary→graduate) — both strong; base-instruction fixes to the splitter
   lead-in test and the attributor `number`; a **DSPy training harness** (`training/`, teacher
   `deepseek-v4-pro`, LLM-judge) built and proven but with no headroom to ship yet; and **ruff**
   adopted for format + lint (line-length 100).
+
+---
+
+## Session update — graph tier: structural provenance layer (2026-07-23)
+
+Started the **graph tier** (phase 3, Neo4j) after planning the AutoMathKG + AutoSchemaKG hybrid for
+the eventual semantic layer. This session built only the piece we're sure of — the **structural
+provenance layer** — and left the semantic tiers as a design (below).
+
+**What shipped (`src/kms/graph/`, all committed to `claude/graph-dedup-planning-nwj0p7`, PR #12):**
+- `db.py` — the async Neo4j driver, the **only** module that imports `neo4j` (quarantined so the
+  rest of the tier stays pure/unit-testable). Mirrors `core.llm`'s pattern (guarded dotenv, env-key
+  constants, raise-on-use, a singleton) but uses an explicit module singleton + `close_driver`
+  because a connection pool needs teardown, unlike the stateless LM config. Config: `NEO4J_URI` /
+  `NEO4J_USERNAME` / `NEO4J_PASSWORD` / `NEO4J_DATABASE`; `is_configured()` gates the pipeline.
+- `nodes.py` — pure `ASTNode → Neo4j` mapping, reusing `core.NodeType` (invents no node types).
+  Deterministic `uuid5(source, index)` identity; each node carries the base `:Node` label **plus**
+  its per-type label (`:Node:Math`, …); a `:Source` root per book with deterministic `source_uuid`.
+- `schema.py` — idempotent bootstrap: uuid uniqueness constraints on `:Node`/`:Source` + an index
+  on `:Node(source)`. No vector index (embeddings belong to the semantic tiers, not here).
+- `writer.py` — `persist_nodes`: MERGE the `:Source` root + batched multi-label nodes, then wire
+  `(:Source)-[:HEAD]->` first node and the `:NEXT` reading-order chain. Pure planning
+  (`node_batches`/`next_pairs`/`head_uuid`) is factored out and unit-tested.
+- `persister.py` — `NodePersisterNode`, the pipeline stage. Wired **after the splitter, before the
+  finders** (the splitter re-ids the stream at `splitter.py:249`, so this is the first point the ids
+  are final and match the entity `members`). A **no-op** when Neo4j isn't configured or the run has
+  no `source`, so DB-less runs and the test suite are unchanged.
+- `pipeline.py` — `run()` gained `source` (defaults to the PDF filename) + `title`/`author`, threaded
+  via `State.source` / `State.source_metadata`; closes the driver in a `finally`.
+
+**Design decisions (planning, for the semantic tiers — NOT yet built):** a four-tier hybrid — the
+math-specialized **mention** (Def/Thm/Prob, today's entities) → non-destructive **canonical** dedup
+representative (synthesized, not elected) → AutoSchemaKG **general entity** (the connective hub that
+decouples the reference graph from corpus completeness) → **concept** (abstract category). Dedup =
+embed → (rerank) → LLM-judge, keeping instances distinct (AutoSchemaKG style) with AutoMathKG's
+fusion mechanism. References route through the general-entity hub with the 9 tactic labels; Neo4j is
+the durable "Existing KG", each run an "Input KG" fused in. Events tier: likely dropped for math.
+
+**Validation.** 78 hermetic tests pass (neo4j stubbed in `conftest`); ruff clean. The opt-in
+integration test (`tests/test_graph_db_integration.py`) is gated on an explicit `KMS_NEO4J_IT=1`
+flag — NOT on `NEO4J_URI`, because a configured `.env` (which `db.py` loads) would otherwise pull
+the slow live tests into every `pytest`. It was run against a **real Neo4j 5.26** — schema
+bootstrap, multi-label nodes, the `:Source`/`:HEAD`/`:NEXT` graph with `title`/`author`, all
+idempotent on re-run. **Aura note:** Bolt (7687) is blocked from the web-session sandbox
+(HTTPS-proxy-only network policy), so run persistence from a machine that can reach Aura; `.env`
+(gitignored) holds the creds.
 
 ---
 
@@ -336,12 +385,13 @@ numbers and governance is semantic (the walk correctly stops at a following *com
 
 ### Deferred decisions (recorded for the graph tier)
 
-- **UUIDs vs ints for ids.** Today a node's `id` is a document-order int (identity + order in
-  one). Harmless now because the node stream is immutable after flatten. At the **graph
-  boundary**, mint a `uuid` as the stable vertex key (int ids collide across books; MathVD
-  fusion needs global identity) and demote the int to an `index`/`order` provenance attribute.
-  Entities need only a uuid (their order is derivable from `members[0]`). A reference graph does
-  **not** preserve reading order for free — keep the node `index` as provenance if you want it.
+- **UUIDs vs ints for ids — DONE for nodes** (this session). A node's `id` stays a document-order
+  int in memory; at the graph boundary `graph.nodes.node_uuid` mints the stable vertex key as
+  `uuid5(source, index)` — **deterministic**, so re-persisting a book MERGEs onto the same vertices
+  instead of duplicating, and `source` disambiguates the same index across books. The int is
+  demoted to an `index` provenance property, and reading order is kept both as `index` and as
+  `:NEXT` edges. Entities still need only a uuid when they land (their order derives from
+  `members[0]`) — that's the semantic tier's call.
 
 ---
 
@@ -466,9 +516,12 @@ Good test PDF: Hefferon Linear Algebra — `https://jheffero.w3.uvm.edu/linearal
 2. **Cross-entity attributes** — `refs` / `references_tactics` (AutoMathKG's 9 tactic labels
    between entities). These are inherently graph-tier (they relate entities), so they fold into
    the next item rather than being per-entity passes.
-3. **Graph tier** (the big piece) — relationship/edge discovery between entities, then MathVD
-   (embeddings/vector DB) for fusion and the Math-LLM completion step. Mint UUIDs here (see
-   Deferred decisions). `neo4j` is already a dep.
+3. **Graph tier** (the big piece) — **structural provenance layer DONE this session** (`:Source`
+   + `:Node` stream in Neo4j; see the 2026-07-23 session update). Remaining: the **semantic tiers**
+   on top — dedup canonicals, general entities, concepts (the AutoMathKG + AutoSchemaKG hybrid),
+   relationship/edge discovery with `refs`/`references_tactics`, then MathVD (embeddings/vector DB)
+   for fusion and the Math-LLM completion step. Node UUIDs are already minted (see Deferred
+   decisions); entities/canonicals need theirs when they land.
 4. **Broaden front-end/finder validation** — more books/sections, watching finder boundaries,
    figure over-extraction on front matter, and correction-pass regressions.
 

@@ -1,10 +1,12 @@
-"""Opt-in Neo4j integration test. Skipped unless NEO4J_URI is set (a real, reachable
-instance), so it stays out of the hermetic unit suite — the same way live pipeline runs do.
-With a database configured it checks connectivity and a trivial round-trip query.
+"""Opt-in Neo4j integration test. Gated on an EXPLICIT flag (``KMS_NEO4J_IT``), not on the mere
+presence of ``NEO4J_URI`` — a configured ``.env`` (which ``db.py`` loads) would otherwise drag the
+slow, network-dependent live tests into every ``pytest`` run. With the flag set it checks
+connectivity, a round-trip query, and the structural-layer writes against a real, reachable
+instance whose creds come from ``NEO4J_URI``/``NEO4J_USERNAME``/``NEO4J_PASSWORD``.
 
 Driven via asyncio.run so it needs no pytest-asyncio (the repo declares no such dev dep).
 Run against a live DB with, e.g.:
-    NEO4J_URI=bolt://localhost:7687 NEO4J_USERNAME=neo4j NEO4J_PASSWORD=... \
+    KMS_NEO4J_IT=1 NEO4J_URI=bolt://localhost:7687 NEO4J_USERNAME=neo4j NEO4J_PASSWORD=... \
         PYTHONPATH=src uv run pytest tests/test_graph_db_integration.py -q
 """
 
@@ -14,8 +16,8 @@ import os
 import pytest
 
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("NEO4J_URI"),
-    reason="set NEO4J_URI (and NEO4J_USERNAME/PASSWORD) to run the Neo4j integration test",
+    not os.environ.get("KMS_NEO4J_IT"),
+    reason="set KMS_NEO4J_IT=1 (with NEO4J_URI/USERNAME/PASSWORD) to run the Neo4j integration test",
 )
 
 
