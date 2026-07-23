@@ -93,8 +93,15 @@ flag — NOT on `NEO4J_URI`, because a configured `.env` (which `db.py` loads) w
 the slow live tests into every `pytest`. It was run against a **real Neo4j 5.26** — schema
 bootstrap, multi-label nodes, the `:Source`/`:HEAD`/`:NEXT` graph with `title`/`author`, all
 idempotent on re-run. **Aura note:** Bolt (7687) is blocked from the web-session sandbox
-(HTTPS-proxy-only network policy), so run persistence from a machine that can reach Aura; `.env`
-(gitignored) holds the creds.
+(HTTPS-proxy-only network policy). `db.py` now carries a second transport for exactly this: set
+`NEO4J_TRANSPORT=http` and the tier talks to the SAME Aura instance over its HTTPS Query API
+(`POST /db/<db>/query/v2`, port 443) with the SAME creds — the https endpoint is derived from the
+`neo4j+s://` host, so nothing else changes. `HttpQueryDriver`/`HttpQuerySession` mirror the tiny
+`session().run()` slice the tier uses (httpx client, honours `HTTPS_PROXY`/`SSL_CERT_FILE`), so the
+whole graph stack runs unchanged from the sandbox. Verified end-to-end from the web session: the
+Query API is reachable on 443 and the full `driver → verify_connectivity → ensure_schema` path lands
+on Aura (the last live check stopped only at auth — the `.env` password was stale, not a transport
+issue). `.env` (gitignored) holds the creds. Leave `NEO4J_TRANSPORT` unset for normal Bolt.
 
 ---
 
