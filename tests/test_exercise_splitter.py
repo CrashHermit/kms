@@ -1,5 +1,6 @@
-"""Exercise splitter: split packed exercise nodes into per-exercise nodes and tag lead-ins.
-The LLM is injected via a scripted module returning (splits, instruction_positions) per window."""
+"""Exercise splitter: split packed exercise nodes into per-exercise nodes (split only — tagging
+lead-ins is the instruction finder's job). The LLM is injected via a scripted module returning
+the splits per window."""
 
 import asyncio
 
@@ -8,13 +9,13 @@ from kms.entity.splitter import NodeSplit, SplitExercise, SplitterNode, split_ex
 
 
 class _ScriptedSplitter:
-    """Replays one (splits, instruction_positions) verdict per window call."""
+    """Replays one `splits` verdict per window call."""
 
     def __init__(self, scripted):
         self._scripted = list(scripted)
 
     async def aforward(self, current_nodes):
-        return self._scripted.pop(0) if self._scripted else ([], [])
+        return self._scripted.pop(0) if self._scripted else []
 
 
 def _nodes():
@@ -30,8 +31,8 @@ def _nodes():
     ]
 
 
-def test_splits_a_packed_node_and_tags_the_lead_in():
-    # One window: node 1 splits into two exercises; node 0 is the lead-in.
+def test_splits_a_packed_node():
+    # One window: node 1 splits into two exercises.
     split = NodeSplit(
         position=1,
         exercises=[
@@ -39,7 +40,7 @@ def test_splits_a_packed_node_and_tags_the_lead_in():
             SplitExercise(number="4", content="matrix B"),
         ],
     )
-    out = asyncio.run(split_exercises(_nodes(), module=_ScriptedSplitter([([split], [0])])))
+    out = asyncio.run(split_exercises(_nodes(), module=_ScriptedSplitter([[split]])))
 
     # 3 nodes -> 4 (the packed node became two), ids re-assigned 0..3, seg_index inherited.
     assert [n.id for n in out] == [0, 1, 2, 3]
@@ -50,24 +51,24 @@ def test_splits_a_packed_node_and_tags_the_lead_in():
         "ordinary prose",
     ]
     assert all(n.seg_index == 0 for n in out)
-    # The lead-in is tagged; the split pieces and prose are not.
-    assert out[0].role == "instruction"
-    assert [n.role for n in out[1:]] == [None, None, None]
+    # The splitter never tags — that is the instruction finder's job.
+    assert [n.role for n in out] == [None, None, None, None]
     # A split piece inherits the parent node's structural type.
     assert out[1].type == NodeType.LIST and out[2].type == NodeType.LIST
 
 
-def test_an_embedded_lead_in_piece_is_tagged():
-    # A packed node whose middle piece is a lead-in (instruction=True) is tagged in place.
+def test_an_embedded_lead_in_is_broken_out_as_its_own_node():
+    # A packed node whose middle piece is a lead-in (empty number) lands on its own node,
+    # untagged — the instruction finder tags it in the next stage.
     split = NodeSplit(
         position=1,
         exercises=[
             SplitExercise(number="3", content="matrix A"),
-            SplitExercise(number="", content="4-5 find the inverse.", instruction=True),
+            SplitExercise(number="", content="4-5 find the inverse."),
             SplitExercise(number="4", content="matrix B"),
         ],
     )
-    out = asyncio.run(split_exercises(_nodes(), module=_ScriptedSplitter([([split], [])])))
+    out = asyncio.run(split_exercises(_nodes(), module=_ScriptedSplitter([[split]])))
     assert [n.content for n in out] == [
         "In Exercises 3-4, compute the determinant.",
         "3 matrix A",
@@ -75,20 +76,19 @@ def test_an_embedded_lead_in_piece_is_tagged():
         "4 matrix B",
         "ordinary prose",
     ]
-    # Only the embedded lead-in piece carries the instruction role; the exercises don't.
-    assert [n.role for n in out] == [None, None, "instruction", None, None]
+    assert [n.role for n in out] == [None, None, None, None, None]
 
 
 def test_single_exercise_is_not_split():
     # A verdict with only one exercise must be ignored (only GROUPS split).
     split = NodeSplit(position=1, exercises=[SplitExercise(number="3", content="only one")])
-    out = asyncio.run(split_exercises(_nodes(), module=_ScriptedSplitter([([split], [])])))
+    out = asyncio.run(split_exercises(_nodes(), module=_ScriptedSplitter([[split]])))
     assert len(out) == 3  # unchanged
     assert [n.content for n in out] == [n.content for n in _nodes()]
 
 
 def test_no_verdict_passes_the_stream_through_unchanged():
-    out = asyncio.run(split_exercises(_nodes(), module=_ScriptedSplitter([([], [])])))
+    out = asyncio.run(split_exercises(_nodes(), module=_ScriptedSplitter([[]])))
     assert [(n.id, n.content, n.role) for n in out] == [
         (0, "In Exercises 3-4, compute the determinant.", None),
         (1, "3 matrix A\n4 matrix B", None),
@@ -104,7 +104,7 @@ def test_splitter_node_writes_the_nodes_channel():
             SplitExercise(number="4", content="matrix B"),
         ],
     )
-    node = SplitterNode(module=_ScriptedSplitter([([split], [0])]))
+    node = SplitterNode(module=_ScriptedSplitter([[split]]))
     out = asyncio.run(node.run({"nodes": _nodes()}))
     assert set(out) == {"nodes"}
     assert len(out["nodes"]) == 4

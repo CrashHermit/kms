@@ -11,8 +11,8 @@ sequential nodes (their cursor-walk cannot be sharded) that fan out in parallel 
 seam-merge collect.
 
 Stage order:
-    corrector -> extractor -> seam_merger (even, odd) -> splitter -> node_persister
-              -> {problem, definition, theorem}_finder -> {…}_attributor
+    corrector -> extractor -> seam_merger (even, odd) -> splitter -> instruction_finder
+              -> node_persister -> {problem, definition, theorem}_finder -> {…}_attributor
               -> (problem chain only) instruction_distributor
 
 Two phases split at the seam merger. Ingestion is per-page: `segments` (already carrying
@@ -21,8 +21,10 @@ transcription against its image before the (purely structural) extractor parses 
 nodes. The seam merger heals nodes split across page breaks and then flattens the healed
 backbone into the global ordered `nodes` list (stable ids + seg_index). The splitter then
 normalises that stream — it rewrites any node that packs several exercises into one node per
-exercise (and tags lead-in nodes `role="instruction"`) — so the finders see atomic exercises
-and no longer collapse them into duplicate-membered entities. The node persister then writes the
+exercise (embedded lead-ins broken out onto their own nodes too) — so the finders see atomic
+exercises and no longer collapse them into duplicate-membered entities. The instruction finder
+then tags every lead-in node `role="instruction"` over that atomic stream, one uniform pass.
+The node persister then writes the
 finalized stream to Neo4j as the graph's provenance layer (a `:Source` root with its `:Node` chain);
 it runs after the splitter so the persisted ids match the entity `members`, and is a no-op when
 Neo4j isn't configured. Three per-type chains then run
@@ -33,7 +35,7 @@ graph returns, `run()` concatenates the three overlays into one flat, document-o
 list (global ids) and writes both the entities and the node stream itself — the nodes are
 persisted for provenance so an entity's `members` resolve to real source chunks. On the
 problem chain one further stage, the instruction distributor, then stamps `Problem.instruction`
-from the splitter's tagged lead-in nodes (the shared directive of a grouped-exercise run).
+from the instruction finder's tagged lead-in nodes (the shared directive of a grouped-exercise run).
 Cross-entity attributes (refs/references_tactics) are later graph-tier work. Assembly walks
 `nodes` after the graph returns, consulting `segments` only
 for picture inventories.
@@ -54,6 +56,7 @@ from kms.entity.finders.definition import DefinitionFinderNode
 from kms.entity.finders.problem import ProblemFinderNode
 from kms.entity.finders.theorem import TheoremFinderNode
 from kms.entity.instruction_distributor import InstructionDistributorNode
+from kms.entity.instruction_finder import InstructionFinderNode
 from kms.entity.splitter import SplitterNode
 from kms.graph.db import close_driver
 from kms.graph.persister import NodePersisterNode
@@ -84,6 +87,7 @@ def build_graph() -> "CompiledStateGraph":
     definition_attributor = DefinitionAttributorNode()
     theorem_attributor = TheoremAttributorNode()
     splitter = SplitterNode()
+    instruction_finder = InstructionFinderNode()
     node_persister = NodePersisterNode()
     instruction_distributor = InstructionDistributorNode()
 
@@ -105,6 +109,7 @@ def build_graph() -> "CompiledStateGraph":
     g.add_node("definition_attributor", definition_attributor.run)
     g.add_node("theorem_attributor", theorem_attributor.run)
     g.add_node("splitter", splitter.run)
+    g.add_node("instruction_finder", instruction_finder.run)
     g.add_node("node_persister", node_persister.run)
     g.add_node("instruction_distributor", instruction_distributor.run)
 
@@ -130,13 +135,18 @@ def build_graph() -> "CompiledStateGraph":
     g.add_edge("seam_odd_worker", "seam_odd_collect")
 
     # The splitter runs once after the seam collect, normalising the node stream so each
-    # exercise is its own node (and lead-ins are tagged) before any finder walks it.
+    # exercise (and each embedded lead-in) is its own node before any finder walks it.
     g.add_edge("seam_odd_collect", "splitter")
 
+    # The instruction finder then tags every lead-in node `role="instruction"` over the
+    # now-atomic stream — one uniform pass, standalone and embedded lead-ins alike.
+    g.add_edge("splitter", "instruction_finder")
+
     # Persist the finalized node stream as the graph's provenance layer BEFORE any finder runs.
-    # It sits after the splitter (which re-ids the stream) so the persisted node ids are the ones
-    # the entity overlay's `members` reference. A no-op when Neo4j isn't configured.
-    g.add_edge("splitter", "node_persister")
+    # It sits after the splitter (which re-ids the stream) and the instruction finder so the
+    # persisted node ids and role tags match the entity overlay. A no-op when Neo4j isn't
+    # configured.
+    g.add_edge("instruction_finder", "node_persister")
 
     # Three per-type chains run in parallel off the persister: each finder does a sequential
     # cursor-walk (not shardable) to build its overlay, then its attributor enriches those
@@ -153,8 +163,8 @@ def build_graph() -> "CompiledStateGraph":
         g.add_edge(finder, attributor)
 
     # The definition and theorem chains end at their attributor. The problem chain has one
-    # more step: the instruction distributor stamps `Problem.instruction` from the splitter's
-    # tagged lead-in nodes, and must run after the attributor because it matches on each
+    # more step: the instruction distributor stamps `Problem.instruction` from the instruction
+    # finder's tagged lead-in nodes, and must run after the attributor because it matches on each
     # problem's `number` (which the attributor fills).
     g.add_edge("definition_attributor", END)
     g.add_edge("theorem_attributor", END)

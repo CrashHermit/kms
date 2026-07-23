@@ -10,25 +10,22 @@ its source — it rewrites the canonical node stream so each exercise is its OWN
 runs, the finder sees atomic exercises and emits one clean entity each, with precise members;
 no downstream reconciliation is needed.
 
-It does two local jobs in one LLM walk over the flat stream:
+It does ONE job: SPLIT — any node that packs two or more numbered exercises is replaced, in
+place, by one node per exercise (its reference number kept as literal leading text, subparts
+kept nested, incidental markers like a "✓" recommended glyph kept verbatim for provenance). A
+single isolated exercise or a worked example is left untouched — only GROUPS are split. A
+shared-instruction lead-in embedded between the exercises is broken out onto its own node too,
+so it becomes atomic; TAGGING lead-ins is a separate stage (``instruction_finder``) that runs
+right after this one, over the already-atomic stream.
 
-  1. SPLIT — any node that packs two or more numbered exercises is replaced, in place, by one
-     node per exercise (its reference number kept as literal leading text, subparts kept
-     nested, incidental markers like a "✓" recommended glyph kept verbatim for provenance).
-     A single isolated exercise or a worked example is left untouched — only GROUPS are split.
-  2. TAG — a node that is an exercise LEAD-IN ("In Exercises 1.23-1.25, find the eigenvalues
-     …") is annotated `role="instruction"`. The splitter does NOT try to work out which
-     exercises the lead-in governs — that positional/range reasoning is the instruction
-     distributor's job, later. Here the lead-in is only *marked*; its content is untouched.
-
-Because both decisions are per-node (a node either is or isn't a composite list; is or isn't
-a lead-in) and a node's content is always wholly inside some window, there is no cross-window
-banking to get right: the walk gathers every decision keyed by the original node id, then
-rebuilds the stream once and re-assigns ids. `seg_index` is inherited by each split piece, so
-picture resolution at assembly is unaffected.
+Because the decision is per-node (a node either is or isn't a composite list) and a node's
+content is always wholly inside some window, there is no cross-window banking to get right: the
+walk gathers every split keyed by the original node id, then rebuilds the stream once and
+re-assigns ids. `seg_index` is inherited by each split piece, so picture resolution at assembly
+is unaffected.
 
 Wired in by ``SplitterNode`` (bottom of file): it runs right after the seam merger and before
-the three finders, overwriting the `nodes` channel with the normalized stream.
+the instruction finder, overwriting the `nodes` channel with the normalized stream.
 """
 
 import os
@@ -42,9 +39,9 @@ from kms.core.llm import text_lm
 from kms.core.models import ASTNode
 from kms.core.state import State
 
-# Same look-ahead budget shape as the finders (~4 chars/token). The splitter only needs
-# enough context to recognise a lead-in and the exercise run it introduces; a packed
-# exercise list is one node and always fits whole.
+# Same look-ahead budget shape as the finders (~4 chars/token). A packed exercise list is one
+# node and always fits whole (min-one-node), so the budget only needs to be large enough to
+# hold that node; a single list is all one split call needs to see.
 LOOKAHEAD_BUDGET = 2000
 
 
@@ -62,17 +59,14 @@ class WindowNode(BaseModel):
 
 class SplitExercise(BaseModel):
     """One piece carved out of a packed list node: usually an exercise (its own number and
-    text), but it may instead be an embedded lead-in (`instruction=True`)."""
+    text), but it may instead be a leading continuation fragment or an embedded lead-in
+    (both with an EMPTY `number`), so nothing in the node is dropped."""
 
     number: str = Field(
-        description="The exercise's own reference number as written, e.g. '1.23'. EMPTY for a leading continuation fragment that belongs to a previous exercise."
+        description="The exercise's own reference number as written, e.g. '1.23'. EMPTY for a leading continuation fragment that belongs to a previous exercise, or for an embedded shared-instruction lead-in."
     )
     content: str = Field(
-        description="The exercise's own statement text, copied verbatim, with its subparts, WITHOUT the leading number."
-    )
-    instruction: bool = Field(
-        default=False,
-        description="True only if this piece is a shared-instruction LEAD-IN embedded in the list (a directive introducing the exercises that follow, e.g. '9-16 Sketch the polar curve.'), not an exercise itself. Leave its text in `content` with an EMPTY `number`.",
+        description="The piece's own text, copied verbatim, with its subparts, WITHOUT the leading number."
     )
 
 
@@ -87,48 +81,31 @@ class NodeSplit(BaseModel):
 
 class Signature(dspy.Signature):
     r"""
-    Normalise a run of textbook nodes for the exercise layer. Do TWO independent things:
+    Normalise a run of textbook nodes for the exercise layer.
 
-    1. SPLITS — find any single node that packs TWO OR MORE numbered exercises into one block
-       (usually a `list` node like "1.23 … 1.24 … 1.25 …"). Return that node's position and
-       its exercises IN ORDER, each with its own `number` ("1.23") and its own `content` (that
-       exercise's statement text, copied VERBATIM — same wording, same LaTeX, same math, do not
-       paraphrase, reflow, or drop any subpart — keeping its subparts (a)(b)(c) together and
-       keeping any incidental markers like a leading "✓", but WITHOUT the reference number).
+    SPLITS — find any single node that packs TWO OR MORE numbered exercises into one block
+    (usually a `list` node like "1.23 … 1.24 … 1.25 …"). Return that node's position and its
+    exercises IN ORDER, each with its own `number` ("1.23") and its own `content` (that
+    exercise's statement text, copied VERBATIM — same wording, same LaTeX, same math, do not
+    paraphrase, reflow, or drop any subpart — keeping its subparts (a)(b)(c) together and
+    keeping any incidental markers like a leading "✓", but WITHOUT the reference number).
 
-       PRESERVE A LEADING FRAGMENT: if the node BEGINS with text that belongs to a PREVIOUS
-       exercise (a continuation the layout left at the top of this node — e.g. trailing
-       subparts "(d) … (e) …" before the first numbered exercise here), return it as the FIRST
-       item with an EMPTY `number` and that fragment as its verbatim `content`, so nothing is
-       lost. Every character of the node must land in exactly one item, in order.
+    PRESERVE A LEADING FRAGMENT: if the node BEGINS with text that belongs to a PREVIOUS
+    exercise (a continuation the layout left at the top of this node — e.g. trailing subparts
+    "(d) … (e) …" before the first numbered exercise here), return it as the FIRST item with an
+    EMPTY `number` and that fragment as its verbatim `content`, so nothing is lost.
 
-       MARK AN EMBEDDED LEAD-IN: if a piece BETWEEN the exercises is a shared-instruction
-       lead-in (no number of its own, a directive for the run that follows it, e.g.
-       "9-16 Sketch the polar curve."), keep it as its own piece with an EMPTY `number`, its
-       verbatim text as `content`, and set `instruction=True`. Numbered exercises stay
-       `instruction=False` (the default).
+    BREAK OUT AN EMBEDDED LEAD-IN: if a piece BETWEEN the exercises is a shared-instruction
+    lead-in (no number of its own, a directive for the run that follows it, e.g. "9-16 Sketch
+    the polar curve."), return it as its OWN item with an EMPTY `number` and its verbatim text as
+    `content`, so it lands on its own node. Do NOT tag it and do NOT fold it into an exercise —
+    a later pass decides which nodes are lead-ins.
 
-       A node holding only ONE exercise is NOT a split — leave it out. Worked examples,
-       definitions, theorems, prose, headers are never splits.
+    Every character of the node must land in exactly one item, in order. A node holding only ONE
+    exercise is NOT a split — leave it out. Worked examples, definitions, theorems, prose, and
+    headers are never splits.
 
-    2. INSTRUCTION_POSITIONS — find any node that is an exercise LEAD-IN: a short directive
-       that introduces a run of OTHER exercises and states a shared instruction. The decisive
-       test: a lead-in has NO reference number of its own, yet gives an imperative meant for a
-       run of separately-numbered exercises that follow it. It may name an explicit RANGE
-       ("In Exercises 1.23-1.25, find the eigenvalues of each matrix."; "For Exercises 5-6,
-       determine whether the set is a subspace.") OR name no range at all — and the range-less
-       form is the COMMON one, so do NOT require a range: "In the following exercises, simplify
-       each expression.", "For the following exercises, find the gradient.", "Prove each of the
-       following." are all lead-ins. Tag either form. Return its position.
-
-       CRITICAL: a node that BEGINS WITH ITS OWN EXERCISE NUMBER ("1.15 Perform each
-       multiplication.", "✓ 1.17 For a homomorphism …", "1.22 Represent each linear map …") is
-       an EXERCISE, never a lead-in — do NOT tag it, even though its own imperative reads like
-       an instruction, because that imperative governs only that one exercise's own subparts.
-       A lead-in governs several DIFFERENTLY-numbered exercises; an exercise governs only its
-       own (a)(b)(c). Prose and section headers are never lead-ins either.
-
-    Use the given `position` values, over the given nodes ONLY. Both lists may be empty.
+    Use the given `position` values, over the given nodes ONLY. The list may be empty.
     """
 
     current_nodes: list[WindowNode] = dspy.InputField(
@@ -137,16 +114,12 @@ class Signature(dspy.Signature):
     splits: list[NodeSplit] = dspy.OutputField(
         description="Nodes that pack two or more exercises, each split into its individual exercises."
     )
-    instruction_positions: list[int] = dspy.OutputField(
-        description="Positions of exercise lead-in nodes (shared-instruction directives)."
-    )
 
 
 class Decision(BaseModel):
     """The splitter's per-window verdict, positions already resolved to real node ids."""
 
     splits: dict[int, list[SplitExercise]] = {}  # node id -> its exercise pieces
-    instructions: set[int] = set()  # node ids that are lead-ins
 
 
 # Compiled few-shot program produced by `training/splitter/compile.py`. Loaded at serve
@@ -169,21 +142,15 @@ class Module(dspy.Module):
         ``self.splitter`` predictor, so demonstrations compiled here transfer to serving."""
         return self.splitter(current_nodes=current_nodes)
 
-    async def aforward(self, current_nodes: list[WindowNode]) -> tuple[list[NodeSplit], list[int]]:
+    async def aforward(self, current_nodes: list[WindowNode]) -> list[NodeSplit]:
         result = await self.splitter.acall(current_nodes=current_nodes)
-        splits, instruction_positions = (
-            list(result.splits or []),
-            list(result.instruction_positions or []),
-        )
+        splits = list(result.splits or [])
         tracing.record(
             "splitter",
             inputs={"current_nodes": [n.model_dump() for n in current_nodes]},
-            outputs={
-                "splits": [s.model_dump() for s in splits],
-                "instruction_positions": instruction_positions,
-            },
+            outputs={"splits": [s.model_dump() for s in splits]},
         )
-        return splits, instruction_positions
+        return splits
 
 
 def _window_from(nodes: list[ASTNode], cursor: int, budget: int) -> int:
@@ -201,17 +168,17 @@ def _window_from(nodes: list[ASTNode], cursor: int, budget: int) -> int:
 
 
 async def _gather_decisions(nodes: list[ASTNode], module: Module, budget: int) -> Decision:
-    """Walk the stream in windows and collect every per-node decision, keyed by node id.
+    """Walk the stream in windows and collect every split, keyed by node id.
 
-    Per-node decisions can't be split across a window (a node's content is wholly inside one
-    window), so the cursor simply advances by the whole window — no banking, no growth."""
+    A split is per-node (a node's content is wholly inside one window), so the cursor simply
+    advances by the whole window — no banking, no growth."""
     decision = Decision()
     cursor, n = 0, len(nodes)
     while cursor < n:
         end = _window_from(nodes, cursor, budget)
         window = nodes[cursor:end]
         last_local = len(window) - 1
-        splits, instruction_positions = await module.aforward(
+        splits = await module.aforward(
             [
                 WindowNode(
                     position=k, type=(node.type.value if node.type else ""), content=node.content
@@ -227,18 +194,13 @@ async def _gather_decisions(nodes: list[ASTNode], module: Module, budget: int) -
             ]
             if nid is not None and len(items) >= 2:  # only a genuine group is a split
                 decision.splits[nid] = items
-        for pos in instruction_positions:
-            p = min(max(pos, 0), last_local)
-            nid = window[p].id
-            if nid is not None:
-                decision.instructions.add(nid)
         cursor = end
     return decision
 
 
 def _rebuild(nodes: list[ASTNode], decision: Decision) -> list[ASTNode]:
-    """Materialise the normalised stream: replace each split node with one node per exercise,
-    tag each lead-in `role="instruction"`, pass everything else through, and re-assign ids.
+    """Materialise the normalised stream: replace each split node with one node per piece,
+    pass everything else through, and re-assign ids.
 
     A split piece inherits its parent's `type` and `seg_index`; its content is the reference
     number as literal leading text followed by the exercise body, so the number survives and
@@ -251,13 +213,8 @@ def _rebuild(nodes: list[ASTNode], decision: Decision) -> list[ASTNode]:
                 number = (item.number or "").strip()
                 body = (item.content or "").strip()
                 content = f"{number} {body}".strip() if number else body
-                role = "instruction" if item.instruction else None
-                out.append(
-                    ASTNode(type=node.type, content=content, seg_index=node.seg_index, role=role)
-                )
+                out.append(ASTNode(type=node.type, content=content, seg_index=node.seg_index))
         else:
-            if node.id in decision.instructions:
-                node.role = "instruction"
             out.append(node)
     for i, node in enumerate(out):
         node.id = i
@@ -269,8 +226,8 @@ async def split_exercises(
     module: Module | None = None,
     budget: int = LOOKAHEAD_BUDGET,
 ) -> list[ASTNode]:
-    """Normalise the flat node stream: split packed exercise nodes into per-exercise nodes and
-    tag lead-in nodes. Returns a new, re-id'd node list (the canonical stream is mutated)."""
+    """Normalise the flat node stream: split packed exercise nodes into per-exercise nodes.
+    Returns a new, re-id'd node list (the canonical stream is mutated)."""
     module = module or Module()
     if not nodes:
         return nodes
@@ -282,10 +239,10 @@ async def split_exercises(
 
 
 class SplitterNode:
-    """Rewrites the `nodes` channel so each exercise is its own node and lead-ins are tagged.
+    """Rewrites the `nodes` channel so each exercise (and each embedded lead-in) is its own node.
 
     A single sequential walk (a cursor over the stream cannot be sharded), so this is a plain
-    graph node. It runs after the seam merger and before the three finders; overwriting the
+    graph node. It runs after the seam merger and before the instruction finder; overwriting the
     `nodes` channel is safe because no entity overlay exists yet — nothing references the old
     ids."""
 
