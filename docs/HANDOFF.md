@@ -425,6 +425,17 @@ dspy/pydantic/langgraph *only if absent*, so the suite runs with or without the 
 committing Python. Config in `pyproject.toml` (line-length 100, lint set `F/E/I/B/UP`). See the
 Session update for the codified conventions.
 
+**Types (pyright): advisory-only, NOT a gate.** `pyright` is configured in `pyproject.toml` but
+not enforced, and `PYTHONPATH=src uv run pyright src/kms` currently reports **19 known
+pre-existing errors** — none are bugs. They're all benign: LangGraph `add_node`/`StateNode`
+generic friction (workers typed `state: dict`), runtime-safe nullability the dispatch guards
+already ensure (`X | None` at OCR/LLM boundaries used where non-`None` is guaranteed), the
+optional `pypdfium2` import (the `mistral` extra), and `total=False` TypedDict item access. Don't
+chase these to green piecemeal — it's churn on non-bugs. If pyright is ever made a real gate,
+green it in one deliberate pass (`assert ... is not None` at the guarded points, type workers as
+`State`, `# pyright: ignore` the optional import) and wire it into the workflow; until then treat
+a *rising* count as the signal (a refactor that adds errors), not the absolute number.
+
 **Stress-test the governor:** run the pipeline on a fixture and inspect, e.g.
 `PYTHONPATH=src uv run --extra mistral python -m kms.cli
 tests/fixtures/books/ea2e_ch1_review.pdf out/ea2e_ch1_review`. To capture DSPy training traces,
