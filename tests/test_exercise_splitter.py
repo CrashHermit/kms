@@ -57,6 +57,28 @@ def test_splits_a_packed_node_and_tags_the_lead_in():
     assert out[1].type == NodeType.LIST and out[2].type == NodeType.LIST
 
 
+def test_an_embedded_lead_in_piece_is_tagged():
+    # A packed node whose middle piece is a lead-in (instruction=True) is tagged in place.
+    split = NodeSplit(
+        position=1,
+        exercises=[
+            SplitExercise(number="3", content="matrix A"),
+            SplitExercise(number="", content="4-5 find the inverse.", instruction=True),
+            SplitExercise(number="4", content="matrix B"),
+        ],
+    )
+    out = asyncio.run(split_exercises(_nodes(), module=_ScriptedSplitter([([split], [])])))
+    assert [n.content for n in out] == [
+        "In Exercises 3-4, compute the determinant.",
+        "3 matrix A",
+        "4-5 find the inverse.",
+        "4 matrix B",
+        "ordinary prose",
+    ]
+    # Only the embedded lead-in piece carries the instruction role; the exercises don't.
+    assert [n.role for n in out] == [None, None, "instruction", None, None]
+
+
 def test_single_exercise_is_not_split():
     # A verdict with only one exercise must be ignored (only GROUPS split).
     split = NodeSplit(position=1, exercises=[SplitExercise(number="3", content="only one")])

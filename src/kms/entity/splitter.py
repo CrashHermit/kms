@@ -61,13 +61,18 @@ class WindowNode(BaseModel):
 
 
 class SplitExercise(BaseModel):
-    """One exercise carved out of a packed list node: its own number and its own text."""
+    """One piece carved out of a packed list node: usually an exercise (its own number and
+    text), but it may instead be an embedded lead-in (`instruction=True`)."""
 
     number: str = Field(
         description="The exercise's own reference number as written, e.g. '1.23'. EMPTY for a leading continuation fragment that belongs to a previous exercise."
     )
     content: str = Field(
         description="The exercise's own statement text, copied verbatim, with its subparts, WITHOUT the leading number."
+    )
+    instruction: bool = Field(
+        default=False,
+        description="True only if this piece is a shared-instruction LEAD-IN embedded in the list (a directive introducing the exercises that follow, e.g. '9-16 Sketch the polar curve.'), not an exercise itself. Leave its text in `content` with an EMPTY `number`.",
     )
 
 
@@ -96,6 +101,12 @@ class Signature(dspy.Signature):
        subparts "(d) … (e) …" before the first numbered exercise here), return it as the FIRST
        item with an EMPTY `number` and that fragment as its verbatim `content`, so nothing is
        lost. Every character of the node must land in exactly one item, in order.
+
+       MARK AN EMBEDDED LEAD-IN: if a piece BETWEEN the exercises is a shared-instruction
+       lead-in (no number of its own, a directive for the run that follows it, e.g.
+       "9-16 Sketch the polar curve."), keep it as its own piece with an EMPTY `number`, its
+       verbatim text as `content`, and set `instruction=True`. Numbered exercises stay
+       `instruction=False` (the default).
 
        A node holding only ONE exercise is NOT a split — leave it out. Worked examples,
        definitions, theorems, prose, headers are never splits.
@@ -240,7 +251,10 @@ def _rebuild(nodes: list[ASTNode], decision: Decision) -> list[ASTNode]:
                 number = (item.number or "").strip()
                 body = (item.content or "").strip()
                 content = f"{number} {body}".strip() if number else body
-                out.append(ASTNode(type=node.type, content=content, seg_index=node.seg_index))
+                role = "instruction" if item.instruction else None
+                out.append(
+                    ASTNode(type=node.type, content=content, seg_index=node.seg_index, role=role)
+                )
         else:
             if node.id in decision.instructions:
                 node.role = "instruction"
