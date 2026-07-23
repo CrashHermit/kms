@@ -41,6 +41,7 @@ class State(TypedDict, total=False):
 
     segments: list[Segment]
     nodes: list[ASTNode]
+    source: str  # book identity (the graph persister's Neo4j key); set by run()
     problem_entities: list[Entity]  # written by the problem finder
     definition_entities: list[Entity]  # written by the definition finder
     theorem_entities: list[Entity]  # written by the theorem finder

@@ -11,7 +11,7 @@ sequential nodes (their cursor-walk cannot be sharded) that fan out in parallel 
 seam-merge collect.
 
 Stage order:
-    corrector -> extractor -> seam_merger (even, odd) -> splitter
+    corrector -> extractor -> seam_merger (even, odd) -> splitter -> node_persister
               -> {problem, definition, theorem}_finder -> {…}_attributor
               -> (problem chain only) instruction_distributor
 
@@ -22,7 +22,10 @@ nodes. The seam merger heals nodes split across page breaks and then flattens th
 backbone into the global ordered `nodes` list (stable ids + seg_index). The splitter then
 normalises that stream — it rewrites any node that packs several exercises into one node per
 exercise (and tags lead-in nodes `role="instruction"`) — so the finders see atomic exercises
-and no longer collapse them into duplicate-membered entities. Three per-type chains then run
+and no longer collapse them into duplicate-membered entities. The node persister then writes the
+finalized stream to Neo4j as the graph's provenance layer (a `:Source` root with its `:Node` chain);
+it runs after the splitter so the persisted ids match the entity `members`, and is a no-op when
+Neo4j isn't configured. Three per-type chains then run
 in parallel: each finder walks `nodes` to build its entity overlay, and its attributor
 enriches those entities with the self-contained AutoMathKG attributes (label, number, title,
 field, contents, bodylist; plus proofs for theorems and solutions for problems). After the
@@ -52,6 +55,8 @@ from kms.entity.finders.problem import ProblemFinderNode
 from kms.entity.finders.theorem import TheoremFinderNode
 from kms.entity.instruction_distributor import InstructionDistributorNode
 from kms.entity.splitter import SplitterNode
+from kms.graph.db import close_driver
+from kms.graph.persister import NodePersisterNode
 from kms.ingestion.corrector import CorrectorNode
 from kms.ingestion.extractor import ExtractorNode
 from kms.ingestion.seam_merger import SeamMergerNode
@@ -79,6 +84,7 @@ def build_graph() -> "CompiledStateGraph":
     definition_attributor = DefinitionAttributorNode()
     theorem_attributor = TheoremAttributorNode()
     splitter = SplitterNode()
+    node_persister = NodePersisterNode()
     instruction_distributor = InstructionDistributorNode()
 
     g = StateGraph(State)
@@ -99,6 +105,7 @@ def build_graph() -> "CompiledStateGraph":
     g.add_node("definition_attributor", definition_attributor.run)
     g.add_node("theorem_attributor", theorem_attributor.run)
     g.add_node("splitter", splitter.run)
+    g.add_node("node_persister", node_persister.run)
     g.add_node("instruction_distributor", instruction_distributor.run)
 
     # A stage's dispatch is a conditional edge off the previous collect: it either fans
@@ -126,7 +133,12 @@ def build_graph() -> "CompiledStateGraph":
     # exercise is its own node (and lead-ins are tagged) before any finder walks it.
     g.add_edge("seam_odd_collect", "splitter")
 
-    # Three per-type chains run in parallel off the splitter: each finder does a sequential
+    # Persist the finalized node stream as the graph's provenance layer BEFORE any finder runs.
+    # It sits after the splitter (which re-ids the stream) so the persisted node ids are the ones
+    # the entity overlay's `members` reference. A no-op when Neo4j isn't configured.
+    g.add_edge("splitter", "node_persister")
+
+    # Three per-type chains run in parallel off the persister: each finder does a sequential
     # cursor-walk (not shardable) to build its overlay, then its attributor enriches those
     # entities with the self-contained AutoMathKG attributes. Each chain writes only its own
     # entity channel; overlap between overlays is fine (members are node-id pointers).
@@ -137,7 +149,7 @@ def build_graph() -> "CompiledStateGraph":
         ("theorem_finder", "theorem_attributor"),
     ]
     for finder, attributor in chains:
-        g.add_edge("splitter", finder)
+        g.add_edge("node_persister", finder)
         g.add_edge(finder, attributor)
 
     # The definition and theorem chains end at their attributor. The problem chain has one
@@ -157,25 +169,34 @@ async def run(
     output_dir: str | Path = "output",
     filename: str = "document.md",
     pages: list[int] | None = None,
+    source: str | None = None,
 ) -> Path:
     """Run the full pipeline on a PDF and write the assembled markdown + entities.
 
     The Mistral OCR API turns each page into reading-ordered markdown plus extracted
     figures (no GPU, no docling); the graph then corrects, parses, heals, and builds the
     typed entity overlay. ``pages`` (0-based) optionally limits which pages are sent.
+    ``source`` is the book identity used as the graph's Neo4j key (defaults to the PDF's
+    filename); graph persistence is skipped entirely when Neo4j isn't configured.
     Returns the path of the assembled document.
     """
     output_dir = Path(output_dir)
     from kms.ingestion import ocr
 
+    source = source or Path(pdf_path).name
     segments = ocr.extract(pdf_path, output_dir=output_dir, pages=pages)
     graph = build_graph()
-    result = await graph.ainvoke({"segments": segments}, {"recursion_limit": 1000})
-    nodes = result["nodes"]
-    written = assemble(nodes, result["segments"], output_dir=output_dir, filename=filename)
-    _write_nodes(nodes, output_dir)
-    _write_entities(_flatten_entities(result, nodes), output_dir)
-    return written
+    try:
+        result = await graph.ainvoke(
+            {"segments": segments, "source": source}, {"recursion_limit": 1000}
+        )
+        nodes = result["nodes"]
+        written = assemble(nodes, result["segments"], output_dir=output_dir, filename=filename)
+        _write_nodes(nodes, output_dir)
+        _write_entities(_flatten_entities(result, nodes), output_dir)
+        return written
+    finally:
+        await close_driver()  # release the Neo4j connection pool (a no-op if never opened)
 
 
 def _flatten_entities(result: dict, nodes: list[ASTNode]) -> list[Entity]:

@@ -5,7 +5,7 @@ import asyncio
 
 import pytest
 
-from kms.graph.db import close_driver, database, driver
+from kms.graph.db import close_driver, database, driver, is_configured
 
 _CONN_ENV = {
     "NEO4J_URI": "bolt://localhost:7687",
@@ -17,6 +17,13 @@ _CONN_ENV = {
 def _set_conn(monkeypatch):
     for k, v in _CONN_ENV.items():
         monkeypatch.setenv(k, v)
+
+
+def test_is_configured_tracks_the_uri_env(monkeypatch):
+    monkeypatch.delenv("NEO4J_URI", raising=False)
+    assert is_configured() is False
+    monkeypatch.setenv("NEO4J_URI", "bolt://localhost:7687")
+    assert is_configured() is True
 
 
 def test_database_defaults_to_neo4j_and_honours_override(monkeypatch):

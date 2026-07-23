@@ -53,6 +53,13 @@ def _require(env_key: str, example: str) -> str:
     return value
 
 
+def is_configured() -> bool:
+    """Whether a Neo4j target is configured (``NEO4J_URI`` set). Lets the pipeline skip graph
+    persistence gracefully when no database is wired, so DB-less runs (and the test suite) still
+    work end to end without a server."""
+    return bool(os.environ.get(URI_ENV))
+
+
 def database() -> str:
     """The target database name. Neo4j's default is ``neo4j``; Aura Free has exactly one."""
     return os.environ.get(DATABASE_ENV) or "neo4j"
