@@ -45,6 +45,7 @@ is fine, since members are node-id pointers, not copies.
 import dspy
 from pydantic import BaseModel, Field
 
+from kms.core import tracing
 from kms.core.llm import text_lm
 from kms.core.models import ASTNode, Entity, EntityType
 from kms.core.state import State
@@ -155,7 +156,13 @@ class Module(dspy.Module):
 
     async def aforward(self, current_nodes: list[WindowNode]) -> list[ProblemSpan]:
         result = await self.finder.acall(current_nodes=current_nodes)
-        return list(result.problems or [])
+        problems = list(result.problems or [])
+        tracing.record(
+            "problem_finder",
+            inputs={"current_nodes": [n.model_dump() for n in current_nodes]},
+            outputs={"problems": [p.model_dump() for p in problems]},
+        )
+        return problems
 
 
 def _window_from(nodes: list[ASTNode], cursor: int, budget: int) -> int:

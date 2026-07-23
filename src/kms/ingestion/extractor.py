@@ -2,6 +2,7 @@ import dspy
 from langgraph.types import Send
 from pydantic import BaseModel, Field
 
+from kms.core import tracing
 from kms.core.llm import text_lm
 from kms.core.models import ASTNode, NodeType, Segment, merge_results_into_segments
 from kms.core.state import State
@@ -78,7 +79,13 @@ class Module(dspy.Module):
 
     async def aforward(self, segment_markdown: str) -> list[DSPyModel]:
         result = await self.extractor.acall(segment_markdown=segment_markdown)
-        return list(result.nodes or [])
+        nodes = list(result.nodes or [])
+        tracing.record(
+            "extractor",
+            inputs={"segment_markdown": segment_markdown},
+            outputs={"nodes": [n.model_dump() for n in nodes]},
+        )
+        return nodes
 
 
 # --- LangGraph node: parse each segment's markdown into AST nodes ---

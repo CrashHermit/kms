@@ -43,6 +43,7 @@ import asyncio
 import dspy
 from pydantic import BaseModel
 
+from kms.core import tracing
 from kms.core.llm import text_lm
 from kms.core.models import FIELDS, ASTNode, BodySegment, Entity, Proof
 from kms.core.state import State
@@ -206,6 +207,17 @@ class Module(dspy.Module):
             for k, m in enumerate(members)
         ]
         r = await self.identify.acall(nodes=nodes, field_choices=FIELDS)
+        tracing.record(
+            "theorem_identify",
+            inputs={"nodes": [n.model_dump() for n in nodes], "field_choices": FIELDS},
+            outputs={
+                "label": r.label,
+                "number": r.number,
+                "title": r.title,
+                "field": r.field,
+                "proof_start": r.proof_start,
+            },
+        )
         return Identity(
             label=(r.label or None),
             number=(r.number or None),
@@ -216,11 +228,23 @@ class Module(dspy.Module):
 
     async def statement_body(self, contents: str) -> list[BodySegment]:
         result = await self.statement_bodylist.acall(contents=contents, actions=STATEMENT_ACTIONS)
-        return [s for s in (result.bodylist or []) if s.action in STATEMENT_ACTIONS]
+        bodylist = [s for s in (result.bodylist or []) if s.action in STATEMENT_ACTIONS]
+        tracing.record(
+            "theorem_statement_bodylist",
+            inputs={"contents": contents, "actions": STATEMENT_ACTIONS},
+            outputs={"bodylist": [s.model_dump() for s in bodylist]},
+        )
+        return bodylist
 
     async def proof_body(self, contents: str) -> list[BodySegment]:
         result = await self.proof_bodylist.acall(contents=contents, actions=PROOF_ACTIONS)
-        return [s for s in (result.bodylist or []) if s.action in PROOF_ACTIONS]
+        bodylist = [s for s in (result.bodylist or []) if s.action in PROOF_ACTIONS]
+        tracing.record(
+            "theorem_proof_bodylist",
+            inputs={"contents": contents, "actions": PROOF_ACTIONS},
+            outputs={"bodylist": [s.model_dump() for s in bodylist]},
+        )
+        return bodylist
 
 
 def _members(entity: Entity, nodes_by_id: dict[int, ASTNode]) -> list[ASTNode]:

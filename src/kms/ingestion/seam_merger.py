@@ -2,6 +2,7 @@ import dspy
 from langgraph.types import Send
 from pydantic import BaseModel
 
+from kms.core import tracing
 from kms.core.llm import text_lm
 from kms.core.models import ASTNode, Segment, flatten_segments, merge_results_into_segments
 from kms.core.state import State
@@ -76,6 +77,18 @@ class Module(dspy.Module):
             top_bottom_edge_node=top_bottom_edge_node,
             bottom_top_edge_node=bottom_top_edge_node,
             bottom_node_context=bottom_node_context,
+        )
+        tracing.record(
+            "seam_merger",
+            inputs={
+                "top_node_context": top_node_context.model_dump() if top_node_context else None,
+                "top_bottom_edge_node": top_bottom_edge_node.model_dump(),
+                "bottom_top_edge_node": bottom_top_edge_node.model_dump(),
+                "bottom_node_context": bottom_node_context.model_dump()
+                if bottom_node_context
+                else None,
+            },
+            outputs={"node": result.node.model_dump() if result.node else None},
         )
         return result.node
 

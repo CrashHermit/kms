@@ -34,6 +34,7 @@ import asyncio
 import dspy
 from pydantic import BaseModel
 
+from kms.core import tracing
 from kms.core.llm import text_lm
 from kms.core.models import FIELDS, ASTNode, Entity, Solution
 from kms.core.state import State
@@ -110,6 +111,17 @@ class Module(dspy.Module):
             for k, m in enumerate(members)
         ]
         r = await self.identify.acall(nodes=nodes, field_choices=FIELDS)
+        tracing.record(
+            "problem_identify",
+            inputs={"nodes": [n.model_dump() for n in nodes], "field_choices": FIELDS},
+            outputs={
+                "label": r.label,
+                "number": r.number,
+                "title": r.title,
+                "field": r.field,
+                "solution_start": r.solution_start,
+            },
+        )
         return Identity(
             label=(r.label or None),
             number=(r.number or None),

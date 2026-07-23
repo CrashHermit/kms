@@ -34,6 +34,7 @@ channel, in parallel with the Problem and Theorem finders.
 import dspy
 from pydantic import BaseModel, Field
 
+from kms.core import tracing
 from kms.core.llm import text_lm
 from kms.core.models import ASTNode, Entity, EntityType
 from kms.core.state import State
@@ -124,7 +125,13 @@ class Module(dspy.Module):
 
     async def aforward(self, current_nodes: list[WindowNode]) -> list[DefinitionSpan]:
         result = await self.finder.acall(current_nodes=current_nodes)
-        return list(result.definitions or [])
+        definitions = list(result.definitions or [])
+        tracing.record(
+            "definition_finder",
+            inputs={"current_nodes": [n.model_dump() for n in current_nodes]},
+            outputs={"definitions": [d.model_dump() for d in definitions]},
+        )
+        return definitions
 
 
 def _window_from(nodes: list[ASTNode], cursor: int, budget: int) -> int:
