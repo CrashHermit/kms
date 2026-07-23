@@ -28,8 +28,8 @@ def schema_statements() -> list[str]:
 
 
 async def ensure_schema() -> None:
-    """Create the structural-node constraint if absent. Idempotent — safe on every startup
-    before the tier writes."""
+    """Create the structural-layer constraints and index if absent. Idempotent — safe on every
+    startup before the tier writes."""
     async with driver().session(database=database()) as session:
         for statement in schema_statements():
             await session.run(statement)
