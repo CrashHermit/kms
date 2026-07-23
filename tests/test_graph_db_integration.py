@@ -36,3 +36,44 @@ def test_connectivity_round_trip_and_idempotent_schema():
             await close_driver()
 
     asyncio.run(scenario())
+
+
+def test_persist_nodes_upserts_labels_and_next_chain():
+    from kms.core.models import ASTNode, NodeType
+    from kms.graph.db import close_driver, database, driver
+    from kms.graph.schema import ensure_schema
+    from kms.graph.writer import persist_nodes
+
+    source = "integration-test-book"
+    stream = [
+        ASTNode(type=NodeType.HEADER, content="§1", id=0, seg_index=0),
+        ASTNode(type=NodeType.PARAGRAPH, content="a", id=1, seg_index=0),
+        ASTNode(type=NodeType.MATH, content="$x$", id=2, seg_index=0),
+    ]
+
+    async def one(session, query):
+        return await (await session.run(query)).single()
+
+    async def scenario():
+        try:
+            await ensure_schema()
+            await persist_nodes(stream, source)
+            await persist_nodes(stream, source)  # idempotent: no duplicates on re-run
+            async with driver().session(database=database()) as session:
+                # multi-label: the math node is reachable as :Math and carries base :Node too
+                math = await one(
+                    session, "MATCH (n:Math:Node {content: '$x$'}) RETURN count(n) AS c"
+                )
+                # the :NEXT chain threads all three in order: §1 -> a -> $x$ (length 2)
+                chain = await one(
+                    session,
+                    "MATCH p=(:Node)-[:NEXT*]->(:Node) RETURN max(length(p)) AS longest",
+                )
+                assert math["c"] == 1  # re-run did not duplicate the node
+                assert chain["longest"] == 2
+        finally:
+            async with driver().session(database=database()) as session:
+                await session.run("MATCH (n:Node) DETACH DELETE n")  # test DB: clear the graph
+            await close_driver()
+
+    asyncio.run(scenario())

@@ -2,7 +2,7 @@
 and that a core.ASTNode maps onto the expected Neo4j property shape."""
 
 from kms.core.models import ASTNode, NodeType
-from kms.graph.nodes import node_properties, node_uuid
+from kms.graph.nodes import node_label, node_properties, node_uuid
 
 
 def test_node_uuid_is_deterministic_for_same_source_and_index():
@@ -33,3 +33,12 @@ def test_node_properties_omits_unset_role_but_keeps_index_zero():
 def test_node_properties_keeps_role_when_set():
     node = ASTNode(type=NodeType.LIST, content="1. do it", id=5, seg_index=1, role="instruction")
     assert node_properties(node, "book.pdf")["role"] == "instruction"
+
+
+def test_node_label_is_the_capitalized_type():
+    assert node_label(ASTNode(type=NodeType.MATH)) == "Math"
+    assert node_label(ASTNode(type=NodeType.PARAGRAPH)) == "Paragraph"
+
+
+def test_node_label_is_none_without_a_type():
+    assert node_label(ASTNode()) is None

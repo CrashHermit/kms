@@ -8,9 +8,11 @@ This module maps a ``core.ASTNode`` onto its Neo4j form. It invents no new node 
 vocabulary is ``core.NodeType`` — and it stays free of the neo4j driver (pure mapping); the
 driver lives in ``graph.db``.
 
-Representation: one ``:Node`` label carrying the structural kind as a ``type`` property (mirrors
-``ASTNode.type`` one-to-one). Per-type labels (``:Math``, ``:Paragraph``, …) are a possible later
-refinement if querying wants them; kept to a single label for now.
+Representation: every structural node carries the shared ``:Node`` label AND its per-type label
+(``:Node:Math``, ``:Node:Paragraph``, … — Neo4j nodes hold multiple labels). ``:Node`` spans the
+whole stream (the uuid key and traversal attach here); the per-type label makes ``MATCH (n:Math)``
+a native label scan with no property index. The kind is also kept as a ``type`` property, mirroring
+``ASTNode.type`` for readback.
 
 Identity: a node's in-document int id collides across books, so the stable vertex key is a uuid
 (the HANDOFF's deferred decision), and the int is demoted to an ``index`` provenance property.
@@ -32,6 +34,13 @@ def node_uuid(source: str, index: int) -> str:
     and the node's document-order ``index``. Deterministic so a re-run MERGEs rather than
     duplicates; ``source`` keeps the same index in two different books distinct."""
     return uuid5(NAMESPACE_URL, f"{source}#{index}").hex
+
+
+def node_label(node: ASTNode) -> str | None:
+    """The per-type label for a structural node (``NodeType.MATH`` -> ``"Math"``), or None if the
+    node has no type. Applied ALONGSIDE the base ``:Node`` label, never instead of it. The
+    NodeType values are single lowercase words, so capitalizing yields a valid Neo4j label."""
+    return node.type.value.capitalize() if node.type else None
 
 
 def node_properties(node: ASTNode, source: str) -> dict:
