@@ -17,6 +17,7 @@ single source of truth.
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -193,7 +194,7 @@ class Segment:
 
 
 def merge_results_into_segments(
-    segments: list[Segment], results: list[tuple[int, object]], attr: str
+    segments: list[Segment], results: list[tuple[int, Any]], attr: str
 ) -> list[Segment]:
     """Drain a stage's ``(segment_index, value)`` reducer channel back into the ordered
     segment backbone, setting ``attr`` on each segment that has a result.
