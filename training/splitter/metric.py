@@ -21,20 +21,19 @@ from kms.core.llm import teacher_lm
 class JudgeSplit(dspy.Signature):
     r"""
     You are grading a SPLITTER that normalises a window of textbook nodes for the
-    exercise layer. It does two jobs and you judge whether BOTH are done correctly.
+    exercise layer. Its one job:
 
-    1. SPLIT: any single node that packs TWO OR MORE numbered exercises must be carved
-       into one piece per exercise — verbatim text, subparts (a)(b)(c) kept together,
-       reference number captured, nothing paraphrased, dropped, or duplicated. A node
-       with a single exercise, a worked example, prose, or a header must NOT be split.
-    2. TAG (instruction_positions): a node that is an exercise LEAD-IN — a directive with
-       NO number of its own that introduces a run of other, separately-numbered exercises
-       ("In the following exercises, simplify.", "For Exercises 5-6, …") — must be tagged.
-       A node that BEGINS WITH ITS OWN EXERCISE NUMBER is an exercise, never a lead-in,
-       even if its own imperative reads like an instruction. Prose/headers are not lead-ins.
+    SPLIT: any single node that packs TWO OR MORE numbered exercises must be carved
+    into one piece per exercise — verbatim text, subparts (a)(b)(c) kept together,
+    reference number captured, nothing paraphrased, dropped, or duplicated. A node
+    with a single exercise, a worked example, prose, or a header must NOT be split. A
+    shared-instruction lead-in embedded between the exercises (no number of its own,
+    e.g. "9-16 Sketch the polar curve.") must be broken out as its own piece with an
+    empty number, so nothing is lost — but the splitter does NOT tag lead-ins (a
+    separate stage does that), so do not penalise the absence of any tagging here.
 
-    Return correct=True only if the splits and the tagged positions are BOTH right for
-    this window (nothing missed, nothing spurious). Otherwise correct=False and say why.
+    Return correct=True only if the splits are right for this window (nothing missed,
+    nothing spurious). Otherwise correct=False and say why.
     """
 
     current_nodes: list = dspy.InputField(
@@ -43,13 +42,10 @@ class JudgeSplit(dspy.Signature):
     splits: list = dspy.InputField(
         description="Predicted splits: each {position, exercises:[{number, content}]}."
     )
-    instruction_positions: list = dspy.InputField(description="Predicted lead-in node positions.")
     reason: str = dspy.OutputField(
-        description="Brief justification; name any missed/spurious split or tag."
+        description="Brief justification; name any missed/spurious split."
     )
-    correct: bool = dspy.OutputField(
-        description="True iff both the splits and the tags are correct for this window."
-    )
+    correct: bool = dspy.OutputField(description="True iff the splits are correct for this window.")
 
 
 def _judge() -> dspy.Module:
@@ -83,6 +79,5 @@ def splitter_score(example, pred, trace=None) -> bool:
     r = _judge()(
         current_nodes=_dump(getattr(example, "current_nodes", None)),
         splits=_dump(getattr(pred, "splits", None)),
-        instruction_positions=list(getattr(pred, "instruction_positions", None) or []),
     )
     return bool(r.correct)

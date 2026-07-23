@@ -11,7 +11,8 @@ is just the quick reference.
 
 The extraction front-end is **Mistral OCR + a vision correction pass** (no GPU), validated
 on adversarial pages. The entity layer is **built**: an exercise **splitter** makes exercises
-atomic at the node level, three per-type **finders** (problem/definition/theorem) each build a
+atomic at the node level, an **instruction finder** then tags exercise lead-in nodes
+`role="instruction"`, three per-type **finders** (problem/definition/theorem) each build a
 sparse overlay, three per-type **attributors** fill the self-contained AutoMathKG attributes,
 and an **instruction distributor** propagates a grouped-exercise lead-in's directive onto the
 Problems it governs. The **graph tier** (Neo4j) is now **started**: its structural provenance
@@ -30,8 +31,9 @@ completion.
     `llm.py` (LM config), `tracing.py`.
   - `ingestion/` — phase 1 (backbone `segments`): `ocr.py` (Mistral front-end), `corrector.py`,
     `extractor.py` (purely structural), `seam_merger.py`. Map-reduce `dispatch → worker → collect`.
-  - `entity/` — phase 2 (backbone `nodes`): `splitter.py`, `finders/{problem,definition,theorem}.py`,
-    `attributors/{problem,definition,theorem}.py`, and `instruction_distributor.py` (problem chain only).
+  - `entity/` — phase 2 (backbone `nodes`): `splitter.py`, `instruction_finder.py`,
+    `finders/{problem,definition,theorem}.py`, `attributors/{problem,definition,theorem}.py`, and
+    `instruction_distributor.py` (problem chain only).
     Plain sequential nodes.
   - `output/` — `assembler.py` (runs after the graph).
   - `graph/` — phase 3 (Neo4j). **Structural provenance layer built**: `db.py` (async driver, the
@@ -40,11 +42,12 @@ completion.
     pipeline stage). The semantic tiers (dedup canonicals, general entities, concepts, cross-entity
     refs/tactics, MathVD fusion, Math-LLM completion) are **not started**.
   - `pipeline.py` wires the graph; `cli.py` is the `__main__` entry; `kms/__init__.py` exposes `run`.
-- Flow: `ocr → corrector → extractor → seam_merger → splitter → node_persister →
-  {problem,definition,theorem} finder → {…} attributor`, and the problem chain has one more stage,
-  the instruction distributor. Two phases split at `seam_merger`: per-page ingestion (backbone
-  `segments`) → flat global node stream (backbone `nodes`, stable ids). The **splitter** rewrites
-  `nodes` so each exercise is its own node and tags lead-ins `role="instruction"`. The three finders
+- Flow: `ocr → corrector → extractor → seam_merger → splitter → instruction_finder →
+  node_persister → {problem,definition,theorem} finder → {…} attributor`, and the problem chain has
+  one more stage, the instruction distributor. Two phases split at `seam_merger`: per-page ingestion
+  (backbone `segments`) → flat global node stream (backbone `nodes`, stable ids). The **splitter**
+  rewrites `nodes` so each exercise (and each embedded lead-in) is its own node; the **instruction
+  finder** then tags every lead-in node `role="instruction"` over that atomic stream. The three finders
   walk `nodes` in parallel and write their own entity channel; each attributor enriches its channel
   in place; `run()` concatenates the three into one flat, document-ordered `entities.json`
   (`[{id, type, members, …attrs}]`, overlap is fine — members are node-id pointers) and persists the

@@ -25,7 +25,10 @@ update for the graph work.
   (paragraph/math/list/table/image/caption/header/code) and knows nothing math-specific.
 - **The exercise splitter** (`entity/splitter.py`) runs between the seam merger and the
   finders. It rewrites the canonical node stream so each exercise is its OWN node (fixing the
-  granularity mismatch below) and tags exercise lead-ins `role="instruction"`.
+  granularity mismatch below); an embedded lead-in is broken out onto its own node too.
+- **The instruction finder** (`entity/instruction_finder.py`) runs immediately after the splitter
+  and tags every exercise lead-in node `role="instruction"` — one uniform pass over the now-atomic
+  stream (standalone and formerly-embedded lead-ins alike), consumed later by the distributor.
 - The **entity layer is three independent per-type finders** (`problem_finder`,
   `definition_finder`, `theorem_finder`), each a self-contained copy of the same cursor-walk,
   running in parallel and emitting a sparse overlay of its type.
@@ -168,7 +171,7 @@ Phase 1 — per-page ingestion (backbone = `segments`, one per page)
   mistral_ocr → corrector → extractor
 
 Phase 2 — flat node stream (backbone = `nodes`, global ordered list)
-  seam_merger → splitter
+  seam_merger → splitter → instruction_finder
     → { problem_finder    → problem_attributor    → instruction_distributor }   (parallel
       { definition_finder → definition_attributor }                              chains,
       { theorem_finder    → theorem_attributor }                                 one per type)
@@ -196,18 +199,22 @@ Phase 2 — flat node stream (backbone = `nodes`, global ordered list)
   int) and its `seg_index`. Everything after works on `nodes` keyed by id.
 - **`splitter`** (`entity/splitter.py`) normalises the flat stream once, before the finders.
   Any node that packs two-or-more numbered exercises (the extractor emits a run of exercises as
-  ONE `list` node) is **replaced in place by one node per exercise**; exercise lead-ins are
-  tagged `role="instruction"`. It re-ids the stream; split pieces inherit their parent's
+  ONE `list` node) is **replaced in place by one node per exercise** (an embedded lead-in broken
+  out onto its own node too). It re-ids the stream; split pieces inherit their parent's
   `seg_index`. This makes exercises atomic so the finders emit one clean entity each (see the
   granularity note in Key design decisions). See "The splitter" below.
+- **`instruction_finder`** (`entity/instruction_finder.py`) runs right after the splitter: a
+  cursor-walk that tags every exercise lead-in node `role="instruction"`. Because the splitter has
+  already made every lead-in a standalone node, this is one uniform per-node decision (no
+  split/segment work). Its output is tiny (a list of positions), so it can't truncate.
 - **The three finders** each cursor-walk `nodes` and emit a sparse overlay of one entity type
   (see Entity layer below). They run in parallel and each writes its own state channel.
 - **The three attributors** (`{problem,definition,theorem}_attributor.py`) each run after their
   finder, enriching that overlay's entities with the self-contained AutoMathKG attributes in
   place. See "The attributors" below.
 - **`instruction_distributor`** runs after the problem attributor (the problem chain's terminal
-  stage): a growing-window walk that stamps `Problem.instruction` from the splitter's tagged
-  lead-in nodes. See "The instruction distributor" below.
+  stage): a growing-window walk that stamps `Problem.instruction` from the instruction finder's
+  tagged lead-in nodes. See "The instruction distributor" below.
 - **After the graph:** `run()` concatenates the three overlays into one flat, document-ordered
   `entities.json` (assigning global ids), and writes `nodes.json` (the node stream, for
   provenance — an entity's `members` are node ids into it). `assemble` walks `nodes` →
@@ -278,26 +285,38 @@ keep them dumb and explicit). If you change the walk, change it in three places.
 
 ### The splitter (`entity/splitter.py`)
 
-One LLM walk over the flat stream doing two local, per-node jobs, then a single deterministic
-rebuild:
+One LLM walk over the flat stream doing one local, per-node job (**SPLIT**), then a single
+deterministic rebuild:
 
-- **SPLIT** — for a node that packs ≥2 numbered exercises, the LLM returns each exercise's
-  `number` + verbatim `content` (subparts kept nested, markers like `✓` kept). The rebuild
-  replaces that node with one node per exercise (number as literal leading text). A leading
-  **orphan fragment** (a previous exercise's continuation the OCR left at the head of the list
-  node, e.g. trailing `(d)…(e)…`) is returned as an empty-number item and emitted as its own
-  node, so nothing is dropped. **Content-based, not offset/anchor-based** — the LLM cannot
-  reproduce LaTeX verbatim, so anchor-into-original slicing fails (tried, reverted); the fix for
-  the orphan loss was a prompt change, not a mechanism change.
-- **TAG** — a node that is an exercise LEAD-IN (no number of its own, governs a run of *other*
-  exercises) is tagged `role="instruction"`. The decisive test in the prompt: a node beginning
-  with its **own** number is an exercise, never a lead-in (this killed 8 false positives on
-  Hefferon, where the section has *zero* true lead-ins).
+- For a node that packs ≥2 numbered exercises, the LLM returns each exercise's `number` +
+  verbatim `content` (subparts kept nested, markers like `✓` kept). The rebuild replaces that
+  node with one node per exercise (number as literal leading text). A leading **orphan fragment**
+  (a previous exercise's continuation the OCR left at the head of the list node, e.g. trailing
+  `(d)…(e)…`) and an **embedded lead-in** ("9-16 Sketch the polar curve." between the exercises)
+  are each returned as an empty-number item and emitted as their own node, so nothing is dropped
+  and every lead-in becomes a standalone node for the instruction finder to tag.
+- **Content-based, not offset/anchor-based** — the LLM cannot reproduce LaTeX verbatim, so
+  anchor-into-original slicing fails (tried, reverted); the fix for the orphan loss was a prompt
+  change, not a mechanism change.
 
-Decisions are per-node (a node either is or isn't a packed list / a lead-in) and a node's
-content is wholly inside one window, so there is **no cross-window banking** — the walk gathers
-decisions keyed by node id, then rebuilds once and re-ids. Re-iding is safe because it runs
-before any entity overlay exists (nothing references the old ids yet).
+The splitter does **not** tag lead-ins — that was folded out into `instruction_finder` so each
+stage has one focused prompt (the split prompt no longer juggles the "own number ≠ lead-in"
+caveat), and tagging happens once, uniformly, over the atomic stream.
+
+Decisions are per-node (a node either is or isn't a packed list) and a node's content is wholly
+inside one window, so there is **no cross-window banking** — the walk gathers splits keyed by
+node id, then rebuilds once and re-ids. Re-iding is safe because it runs before any entity
+overlay exists (nothing references the old ids yet).
+
+### The instruction finder (`entity/instruction_finder.py`)
+
+A cursor-walk that runs right after the splitter and tags every exercise lead-in node
+`role="instruction"`. Because the splitter has already made every lead-in a standalone node,
+this is one uniform per-node decision — no split/segment work. The decisive test in the prompt: a
+node beginning with its **own** number is an exercise, never a lead-in (this killed 8 false
+positives on Hefferon, where the section has *zero* true lead-ins); range-less lead-ins ("In the
+following exercises, …") are the common real case and are tagged too. Output is a tiny list of
+positions, so — unlike the splitter's verbatim output — it can't hit output-token truncation.
 
 ### The attributors (`{problem,definition,theorem}_attributor.py`)
 
