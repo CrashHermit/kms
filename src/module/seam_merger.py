@@ -3,7 +3,7 @@ from langgraph.types import Send
 from pydantic import BaseModel
 
 from .llm import text_lm
-from .state import ASTNode, Segment, State, flatten_segments
+from .state import ASTNode, Segment, State, flatten_segments, merge_results_into_segments
 
 
 class SeamNodeDTO(BaseModel):
@@ -152,11 +152,8 @@ class SeamMergerNode:
         return {"seam_odd_results": await _merge_pair(self.module, state["top"], state["bottom"])}
 
     def _collect(self, state: State, channel: str) -> dict:
-        nodes_by_index = dict(state.get(channel, []))
-        for segment in state["segments"]:
-            if segment.index in nodes_by_index:
-                segment.nodes = nodes_by_index[segment.index]
-        return {"segments": state["segments"]}
+        segments = merge_results_into_segments(state["segments"], state.get(channel, []), "nodes")
+        return {"segments": segments}
 
     def even_collect(self, state: State) -> dict:
         return self._collect(state, "seam_even_results")

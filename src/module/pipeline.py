@@ -36,6 +36,7 @@ Cross-entity attributes (refs/references_tactics) are later graph-tier work. Ass
 for picture inventories.
 """
 
+import json
 from pathlib import Path
 
 from langgraph.graph import END, START, StateGraph
@@ -195,8 +196,6 @@ def _flatten_entities(result: dict, nodes: list) -> list:
 def _write_nodes(nodes: list, output_dir: Path) -> Path:
     """Persist the flat node stream as JSON for provenance — an entity's `members` are node
     ids into this file, so the later graph phase can link an entity to its source chunks."""
-    import json
-
     payload = [
         {
             "id": node.id,
@@ -207,7 +206,7 @@ def _write_nodes(nodes: list, output_dir: Path) -> Path:
         }
         for node in nodes
     ]
-    path = Path(output_dir) / "nodes.json"
+    path = output_dir / "nodes.json"
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return path
 
@@ -219,10 +218,8 @@ def _write_entities(entities: list, output_dir: Path) -> Path:
     attributes its attributor filled in; unset attributes are omitted, so a bare (un-attributed)
     entity serializes to just `{id, type, members}`. This is a debug/inspection dump of what
     the entity holds, not a designed schema — the graph tier will own persistence."""
-    import json
-
     payload = [_entity_payload(e) for e in entities]
-    path = Path(output_dir) / "entities.json"
+    path = output_dir / "entities.json"
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     return path
 

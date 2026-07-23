@@ -38,7 +38,7 @@ import dspy
 from langgraph.types import Send
 
 from .llm import corrector_lm
-from .state import Segment, State, load_dspy_image
+from .state import Segment, State, load_dspy_image, merge_results_into_segments
 
 # A correction should be a light edit; reject anything outside this band of the
 # original length as a runaway rewrite or a truncation.
@@ -161,8 +161,7 @@ class CorrectorNode:
     def collect(self, state: State) -> dict:
         """Write each corrected transcription back into its segment. Segments that were
         not dispatched keep their original content untouched."""
-        corrected_by_index = dict(state.get("correction_results", []))
-        for segment in state["segments"]:
-            if segment.index in corrected_by_index:
-                segment.content = corrected_by_index[segment.index]
-        return {"segments": state["segments"]}
+        segments = merge_results_into_segments(
+            state["segments"], state.get("correction_results", []), "content"
+        )
+        return {"segments": segments}

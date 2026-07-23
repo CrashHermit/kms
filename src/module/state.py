@@ -243,6 +243,23 @@ def load_dspy_image(path: str | None) -> dspy.Image | None:
     return dspy.Image(url=f"data:image/png;base64,{encoded}")
 
 
+def merge_results_into_segments(
+    segments: list[Segment], results: list[tuple[int, object]], attr: str
+) -> list[Segment]:
+    """Drain a stage's ``(segment_index, value)`` reducer channel back into the ordered
+    segment backbone, setting ``attr`` on each segment that has a result.
+
+    Every map-reduce ingestion stage (corrector, extractor, seam merger) ends by folding
+    its parallel workers' output back into the backbone keyed by segment index; this is
+    that shared drain. Segments with no result are left untouched. Mutates and returns the
+    same list (the collect steps run sequentially, so in-place is safe)."""
+    by_index = dict(results)
+    for segment in segments:
+        if segment.index in by_index:
+            setattr(segment, attr, by_index[segment.index])
+    return segments
+
+
 def flatten_segments(segments: list[Segment]) -> list[ASTNode]:
     """Project the per-page segment backbone into one global ordered node list.
 

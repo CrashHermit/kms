@@ -3,7 +3,7 @@ from langgraph.types import Send
 from pydantic import BaseModel, Field
 
 from .llm import text_lm
-from .state import ASTNode, NodeType, Segment, State
+from .state import ASTNode, NodeType, Segment, State, merge_results_into_segments
 
 
 class DSPyModel(BaseModel):
@@ -108,8 +108,7 @@ class ExtractorNode:
 
     def collect(self, state: State) -> dict:
         """Merge each segment's extracted AST nodes back into the ordered backbone."""
-        nodes_by_index = dict(state.get("extract_results", []))
-        for segment in state["segments"]:
-            if segment.index in nodes_by_index:
-                segment.nodes = nodes_by_index[segment.index]
-        return {"segments": state["segments"]}
+        segments = merge_results_into_segments(
+            state["segments"], state.get("extract_results", []), "nodes"
+        )
+        return {"segments": segments}
