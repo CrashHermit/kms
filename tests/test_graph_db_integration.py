@@ -19,8 +19,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def test_connectivity_and_round_trip_query():
+def test_connectivity_round_trip_and_idempotent_schema():
     from kms.graph.db import close_driver, database, driver, verify_connectivity
+    from kms.graph.schema import ensure_schema
 
     async def scenario():
         try:
@@ -29,6 +30,8 @@ def test_connectivity_and_round_trip_query():
                 result = await session.run("RETURN 1 AS n")
                 record = await result.single()
                 assert record["n"] == 1
+            await ensure_schema()
+            await ensure_schema()  # idempotent: a second pass must not raise
         finally:
             await close_driver()
 

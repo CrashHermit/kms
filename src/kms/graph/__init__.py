@@ -1,8 +1,11 @@
 """Phase 3 — graph tier: the knowledge graph itself (Neo4j).
 
-Foundation so far is just the plumbing: ``db`` — the quarantined async Neo4j driver
-(connection, config, lifecycle). No graph schema or node/edge model is committed yet; the
-tiers (dedup canonicals, general entities, concepts) are still being designed, and the only
-node vocabulary we're sure of is the structural markdown types, which already live in
-``core.models`` (``NodeType``). Modelling and schema bootstrap come once that's settled.
+So far:
+- ``db`` — the quarantined async Neo4j driver (connection, config, lifecycle).
+- ``nodes`` — the graph representation of the structural node stream (the ``:Node`` layer,
+  reusing ``core.NodeType``): a pure ASTNode→Neo4j property mapping + deterministic uuid identity.
+- ``schema`` — idempotent bootstrap for that layer (uuid constraint + type index).
+
+The structural nodes are the provenance layer. The semantic tiers above them (dedup canonicals,
+general entities, concepts) are still being designed and not modelled yet.
 """
