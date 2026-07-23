@@ -7,7 +7,7 @@ re-running a book is idempotent, then wires them up — ``(:Source)-[:HEAD]->`` 
 ``:NEXT`` edges threading the rest in document order so the stream hangs off the source and is
 walkable in Cypher. ``persist_entities`` writes the ``:Entity`` overlay on top: one vertex per
 Definition / Theorem / Problem (base ``:Entity`` label + its per-type label), rooted under the book
-via ``:HAS_ENTITY`` and linked back to the structural chunks it was built from via ``:HAS_MEMBER``.
+via ``:HAS_ENTITY`` and linked back to the structural chunks it was built from via ``:DERIVED_FROM``.
 
 Writes are batched: Cypher can't parameterize a label, but the label comes from a closed enum
 (``NodeType`` / ``EntityType``), so grouping by label and interpolating it is safe and turns the
@@ -114,7 +114,7 @@ def entity_batches(entities: list[Entity], source: str) -> dict[str, list[dict]]
 
 
 def member_pairs(entities: list[Entity], source: str) -> list[dict]:
-    """The ``{entity, node}`` uuid pairs for the ``:HAS_MEMBER`` edges: one per (entity, member) so
+    """The ``{entity, node}`` uuid pairs for the ``:DERIVED_FROM`` edges: one per (entity, member) so
     an entity links to every source chunk it was built from. Members are node ids resolved to the
     ``:Node`` layer's deterministic uuids."""
     return [
@@ -127,7 +127,7 @@ def member_pairs(entities: list[Entity], source: str) -> list[dict]:
 async def persist_entities(entities: list[Entity], source: str) -> None:
     """Upsert the book's ``:Entity`` overlay: one vertex per entity (base ``:Entity`` label + its
     per-type label), rooted under the already-persisted ``:Source`` via ``:HAS_ENTITY``, and linked
-    to its structural chunks via ``:HAS_MEMBER``. Idempotent — every MERGE keys on a deterministic
+    to its structural chunks via ``:DERIVED_FROM``. Idempotent — every MERGE keys on a deterministic
     uuid, so re-persisting the same ``source`` updates in place. A no-op for an empty overlay. The
     ``:Source`` and ``:Node`` vertices are expected to already exist (the node persister runs first);
     the MATCHes here attach to them rather than creating them. Every entity's id must be assigned
@@ -158,6 +158,6 @@ async def persist_entities(entities: list[Entity], source: str) -> None:
             await session.run(
                 f"UNWIND $pairs AS pair "
                 f"MATCH (e:{ENTITY_LABEL} {{uuid: pair.entity}}), (n:{NODE_LABEL} {{uuid: pair.node}}) "
-                f"MERGE (e)-[:HAS_MEMBER]->(n)",
+                f"MERGE (e)-[:DERIVED_FROM]->(n)",
                 pairs=pairs,
             )

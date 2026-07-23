@@ -128,10 +128,10 @@ def test_persist_entities_upserts_labels_root_and_members():
                     "MATCH (:Source {key: '" + source + "'})-[:HAS_ENTITY]->(e:Entity) "
                     "RETURN count(e) AS c",
                 )
-                # the definition links to its member :Node (the paragraph) via :HAS_MEMBER
+                # the definition links to its member :Node (the paragraph) via :DERIVED_FROM
                 member = await one(
                     session,
-                    "MATCH (:Entity {title: 'Right triangle'})-[:HAS_MEMBER]->(n:Node) "
+                    "MATCH (:Entity {title: 'Right triangle'})-[:DERIVED_FROM]->(n:Node) "
                     "RETURN n.content AS c",
                 )
                 assert thm["c"] == 1  # re-run did not duplicate the entity

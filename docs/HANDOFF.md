@@ -79,7 +79,7 @@ provenance layer** — and left the semantic tiers as a design (below).
 - `writer.py` — `persist_nodes` (MERGE the `:Source` root + batched multi-label nodes, then wire
   `(:Source)-[:HEAD]->` first node and the `:NEXT` reading-order chain) and `persist_entities` (batched
   multi-label `:Entity` MERGEs, rooted under the `:Source` via `:HAS_ENTITY` and linked to member
-  `:Node` s via `:HAS_MEMBER`). Pure planning (`node_batches`/`next_pairs`/`head_uuid`,
+  `:Node` s via `:DERIVED_FROM`). Pure planning (`node_batches`/`next_pairs`/`head_uuid`,
   `entity_batches`/`member_pairs`) is factored out and unit-tested.
 - `persister.py` — two stages. `NodePersisterNode` is wired **after the splitter, before the finders**
   (the splitter re-ids the stream at `splitter.py:249`, so this is the first point the ids are final
@@ -239,7 +239,7 @@ Phase 2 — flat node stream (backbone = `nodes`, global ordered list)
 - **`entity_persister`** is the fan-in of all three chains (the pipeline's terminal stage): it
   flattens the three overlays into one flat, document-ordered list (assigning global ids), then
   upserts them as the `:Entity` graph layer — each rooted under the book's `:Source` via
-  `:HAS_ENTITY` and linked to its member `:Node` chunks via `:HAS_MEMBER`. A no-op when Neo4j isn't
+  `:HAS_ENTITY` and linked to its member `:Node` chunks via `:DERIVED_FROM`. A no-op when Neo4j isn't
   configured. See the graph tier section.
 - **After the graph:** `run()` only assembles — `assemble` walks `nodes` → `document.md`, resolving
   `![N]()` via `seg_index`. All persistence happens inside the graph (node + entity persisters).

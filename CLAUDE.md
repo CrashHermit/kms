@@ -19,7 +19,7 @@ Problems it governs. The **graph tier** (Neo4j) is now the pipeline's persistenc
 tiers: the structural provenance layer — a `:Source` node per book rooting its `:Node` markdown
 stream via `:HEAD`/`:NEXT` edges (reusing `core.NodeType`) — and the **`:Entity` overlay** on top of
 it — one Definition/Theorem/Problem vertex per entity, rooted under its `:Source` via `:HAS_ENTITY`
-and linked to its member `:Node` chunks via `:HAS_MEMBER`, carrying the self-contained AutoMathKG
+and linked to its member `:Node` chunks via `:DERIVED_FROM`, carrying the self-contained AutoMathKG
 attributes. Both are built and wired into the pipeline; the `:Node` layer was validated end-to-end
 against a real Neo4j, and the `:Entity` layer is covered by the opt-in integration test
 (`KMS_NEO4J_IT`, runnable against a live instance). The graph now **owns persistence** (the old

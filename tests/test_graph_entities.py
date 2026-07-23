@@ -154,8 +154,8 @@ def test_persist_entities_writes_vertices_root_and_members(monkeypatch):
     root = next(c for c in calls if ":HAS_ENTITY" in c[0])
     assert root[1]["src"] == source_uuid("book.pdf")
     assert set(root[1]["uuids"]) == {entity_uuid("book.pdf", i) for i in range(3)}
-    # members are linked via :HAS_MEMBER, one edge per (entity, member)
-    members = next(c for c in calls if ":HAS_MEMBER" in c[0])
+    # members are linked via :DERIVED_FROM, one edge per (entity, member)
+    members = next(c for c in calls if ":DERIVED_FROM" in c[0])
     assert len(members[1]["pairs"]) == 4
 
 

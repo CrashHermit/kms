@@ -11,7 +11,7 @@ Representation: every entity carries the shared ``:Entity`` label AND its per-ty
 (``:Entity:Problem``, ``:Entity:Definition``, ``:Entity:Theorem`` — Neo4j nodes hold multiple
 labels), so ``MATCH (e:Theorem)`` is a native label scan with no property index. It roots under its
 book via ``(:Source)-[:HAS_ENTITY]->(:Entity)`` and points back at the structural chunks it was built
-from via ``(:Entity)-[:HAS_MEMBER]->(:Node)`` (the entity's ``members`` are node ids, resolved to the
+from via ``(:Entity)-[:DERIVED_FROM]->(:Node)`` (the entity's ``members`` are node ids, resolved to the
 same deterministic node uuids the ``:Node`` layer wrote). Cross-entity reference edges
 (refs / references_tactics) and the step-level event layer are later graph-tier work; this layer is
 entity-grain only.
@@ -102,5 +102,5 @@ def entity_properties(entity: Entity, source: str) -> dict:
 
 def member_uuid(source: str, member_id: int) -> str:
     """The node uuid an entity ``members`` id resolves to — the same deterministic key the ``:Node``
-    layer wrote — so ``(:Entity)-[:HAS_MEMBER]->(:Node)`` lands on the real provenance chunk."""
+    layer wrote — so ``(:Entity)-[:DERIVED_FROM]->(:Node)`` lands on the real provenance chunk."""
     return node_uuid(source, member_id)
