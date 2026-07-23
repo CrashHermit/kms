@@ -2,7 +2,7 @@
 name = "kms"
 version = "0.1.0"
 description = "knowledge management and metacognitive learning system"
-requires-python = ">=3.12, <=3.14"
+requires-python = ">=3.13, <=3.14"
 # Light, portable core: the LLM pipeline (OCR/extract/seam/refine/govern/entity) and
 # its runtime. Everything here is CPU-only and installs in seconds — this is what
 # `uv sync` installs and what web sessions need.
