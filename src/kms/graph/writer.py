@@ -16,6 +16,9 @@ concept and a ``(:Entity)-[:INSTANCE_OF]->(:Concept)`` edge per entity concept (
 per distinct reference target, and a ``(:Entity)-[:REFERENCES {tactic}]->(:Canonical)`` edge per reference
 (see ``graph.references`` for why references route through canonicals). ``persist_uses`` adds the
 step-level ``(:Event)-[:USES {tactic}]->(:Canonical)`` edges on top (see ``graph.uses``).
+``persist_realizes`` closes the loop: a ``(:Entity:Mention)-[:REALIZES]->(:Entity:Canonical)`` edge
+ties each cited concept's canonical back to the in-corpus mention that defines/states it, so citations
+resolve through the hub to real knowledge (see ``graph.realizes``).
 
 Writes are batched: Cypher can't parameterize a label, but the label comes from a closed enum
 (``models.NodeType`` / ``models.EntityType``), so grouping by label and interpolating it is safe and turns the
@@ -56,6 +59,7 @@ from kms.graph.procedures import (
     procedure_batches,
     then_pairs,
 )
+from kms.graph.realizes import realizes_rows
 from kms.graph.references import canonical_batches, reference_rows
 from kms.graph.uses import uses_rows
 
@@ -321,5 +325,27 @@ async def persist_uses(entities: list[models.Entity], source: str) -> None:
             f'MATCH (v:{EVENT_LABEL} {{uuid: row.event}}), '
             f'(c:{CANONICAL_LABEL} {{uuid: row.canonical}}) '
             f'MERGE (v)-[u:USES]->(c) SET u.tactic = row.tactic',
+            rows=rows,
+        )
+
+
+async def persist_realizes(entities: list[models.Entity], source: str) -> None:
+    """Upsert the ``:REALIZES`` identity edges: for each titled Definition/Theorem mention whose
+    ``(type, title)`` names an already-persisted canonical, draw
+    ``(:Entity:Mention)-[:REALIZES]->(:Entity:Canonical)`` (see ``graph.realizes``). Idempotent — edges
+    MERGE on the (mention, canonical) pair. The ``MATCH`` on the canonical does the filtering: a mention
+    whose title was never cited finds no canonical and gets no edge, so this is safe to run over the
+    whole overlay. A no-op when no titled def/thm mention exists. The mention ``:Entity`` and the
+    ``:Canonical`` vertices are expected to already exist (the entity and reference persisters run
+    first)."""
+    rows = realizes_rows(entities, source)
+    if not rows:
+        return
+    async with driver().session(database=database()) as session:
+        await session.run(
+            f'UNWIND $rows AS row '
+            f'MATCH (m:{ENTITY_LABEL} {{uuid: row.mention}}), '
+            f'(c:{CANONICAL_LABEL} {{uuid: row.canonical}}) '
+            f'MERGE (m)-[:REALIZES]->(c)',
             rows=rows,
         )

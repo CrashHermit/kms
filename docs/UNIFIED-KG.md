@@ -9,10 +9,11 @@ Status: **substrate + math-first edges settled and largely built.** The current 
 `HANDOFF.md`) already persists this substrate: a `:Source`/`:Node` provenance layer, the
 `:Entity:Mention` overlay, the `:Procedure`/`:Event` procedural layer, the `:Concept` layer
 (`:INSTANCE_OF`, from `field`), and the reference layer — `:REFERENCES`/`:USES` edges onto
-`:Entity:Canonical` hubs (the `:GeneralEntity` kind this doc supersedes is gone). **Still unbuilt:**
-richer per-entity concepts + the `:BROADER` taxonomy, the `:DEMONSTRATES`/`:PRACTICES` anchors, the
-`:REALIZES` dedup link + MathVD fusion, and Math-LLM completion (see "Open work"). The migration notes
-at the bottom say what folded into what.
+`:Entity:Canonical` hubs (the `:GeneralEntity` kind this doc supersedes is gone), tied back to the
+in-corpus mentions that realize them via `:REALIZES` (nominal title-match). **Still unbuilt:** richer
+per-entity concepts + the `:BROADER` taxonomy, the `:DEMONSTRATES`/`:PRACTICES` anchors, the
+**semantic** dedup that refines `:REALIZES` (MathVD embedding fusion), and Math-LLM completion (see
+"Open work"). The migration notes at the bottom say what folded into what.
 
 ---
 
@@ -290,7 +291,7 @@ labels). `stance` (supports/contradicts/…) is generalization-era and omitted n
 | `(:Entity)-[:DEMONSTRATES]->(:Canonical\|:Concept)` | worked-example anchor | n→m | new (extraction-time) |
 | `(:Entity)-[:PRACTICES]->(:Concept)` | exercise anchor (practice serving) | n→m | new (later pass) |
 | `(:Concept)-[:BROADER]->(:Concept)` | concept taxonomy / curriculum sequencing | n→m | new |
-| `(:Entity:Mention)-[:REALIZES]->(:Entity:Canonical)` | identity / dedup | n→1 | new |
+| `(:Entity:Mention)-[:REALIZES]->(:Entity:Canonical)` | identity / dedup | n→1 | **built** (nominal title-match; semantic fusion later) |
 
 **Resolved decisions:**
 
@@ -316,8 +317,9 @@ labels). `stance` (supports/contradicts/…) is generalization-era and omitted n
 
 **Build order** (each step usable on its own): reify events + the structural spine
 (`HAS_PROCEDURE`, `FIRST`/`THEN`) ✓ → concepts + `INSTANCE_OF` (from `field`) ✓ / `BROADER` (MSC) →
-retarget `REFERENCES` onto `:Entity:Canonical` ✓ → step-level `USES` ✓ → then richer concepts, the
-`BROADER` taxonomy, and the exercise-anchor (`PRACTICES`) / worked-example (`DEMONSTRATES`) pass.
+retarget `REFERENCES` onto `:Entity:Canonical` ✓ → step-level `USES` ✓ → `REALIZES` tying canonicals
+back to their in-corpus mentions (nominal title-match) ✓ → then richer concepts, the `BROADER`
+taxonomy, and the exercise-anchor (`PRACTICES`) / worked-example (`DEMONSTRATES`) pass.
 (✓ = built and wired into `EntityPersisterNode`.)
 
 ---

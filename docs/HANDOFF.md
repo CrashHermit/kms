@@ -11,21 +11,24 @@ math now). This doc is the pick-up point for the next session.
 refactor slices landed via PR #17: the **procedural layer** (proofs/solutions reified into
 `:Procedure` / `:Event`), the **canonical relabel** (`:GeneralEntity` → `:Entity:Canonical`, plus an
 explicit `:Mention` role), the **concept layer** (`field` → `:Concept` + `:INSTANCE_OF`), and
-**step-level `:USES`** — five built, wired layers in all (see the 2026-07-24 session update). Earlier
-entity-layer + provenance-layer work landed on `claude/graph-dedup-planning-nwj0p7` (PR #12); see the
-2026-07-23 update.
+**step-level `:USES`** (see the 2026-07-24 session update); the **`:REALIZES` identity link**
+(mention → canonical, nominal title-match) landed on top of those. Earlier entity-layer +
+provenance-layer work landed on `claude/graph-dedup-planning-nwj0p7` (PR #12); see the 2026-07-23
+update.
 
 ---
 
 ## TL;DR status
 
 - The pipeline runs **end-to-end, no GPU**: PDF → `document.md`, and (when Neo4j is configured)
-  the persisted graph — **five built, wired layers**: the `:Node` provenance layer, the `:Entity`
+  the persisted graph — **built, wired layers**: the `:Node` provenance layer, the `:Entity`
   overlay (now `:Entity:Mention`), the `:Procedure` / `:Event` **procedural layer** (proofs/solutions),
   the `:Concept` **concept layer** (`:INSTANCE_OF`, sourced from each entity's `field`), and the
-  reference layer — `:REFERENCES {tactic}` edges onto `:Entity:Canonical` targets, plus step-level
-  `:USES {tactic}` edges from proof `:Event`s onto the same canonicals. The graph owns persistence —
-  the old `entities.json`/`nodes.json` artifacts are gone. Validated on real pages (see Validation).
+  reference layer — `:REFERENCES {tactic}` edges onto `:Entity:Canonical` targets, step-level
+  `:USES {tactic}` edges from proof `:Event`s onto the same canonicals, and `:REALIZES` edges tying each
+  canonical back to the in-corpus mention that defines/states it (cross-corpus convergence). The graph
+  owns persistence — the old `entities.json`/`nodes.json` artifacts are gone. Validated on real pages
+  (see Validation).
 - The **extraction front-end is Mistral OCR + a vision correction pass** (Qwen3-VL). Mistral
   does layout/reading-order/figure-extraction server-side; the corrector proofreads each page
   against its image to catch Mistral's occasional subtle math errors and normalizes math
@@ -47,17 +50,20 @@ entity-layer + provenance-layer work landed on `claude/graph-dedup-planning-nwj0
 - **The instruction distributor** (`entity/instruction_distributor.py`) runs at the end of the problem
   chain: a growing-window walk that copies a grouped-exercise lead-in's shared directive onto
   the `Problem.instruction` of the problems it governs (LLM-judged extent, no number matching).
-- **Graph tier — provenance + entity + procedural + concept + reference layers built.** The node
-  stream is a `:Source` per book rooting its `:Node` markdown chain (`:HEAD`/`:NEXT`); the
+- **Graph tier — provenance + entity + procedural + concept + reference (+ `:REALIZES`) layers built.**
+  The node stream is a `:Source` per book rooting its `:Node` markdown chain (`:HEAD`/`:NEXT`); the
   `:Entity:Mention` overlay roots under it (`:HAS_ENTITY`, `:DERIVED_FROM`); proofs/solutions reify into
   `:Procedure` / `:Event` (`:HAS_PROCEDURE`, `:FIRST`, `:THEN`); each entity's `field` mints a global
   born-canonical `:Concept` (`:INSTANCE_OF`); `refs` become `:REFERENCES {tactic}` edges onto global
-  `:Entity:Canonical` targets; and a proof step that names a ref target gets a step-level
-  `:USES {tactic}` edge (`:Event` → `:Canonical`, deterministic name-match). **Still deferred** (see
-  `docs/UNIFIED-KG.md`): richer per-entity concepts + the `:BROADER` concept taxonomy (MSC-anchored),
-  the `:DEMONSTRATES`/`:PRACTICES` anchor edges, the `:REALIZES` dedup link + MathVD fusion, Math-LLM
-  completion, and the whole generalization layer.
-- **147 unit tests pass** (4 skipped); `conftest` stubs the heavy deps so they run anywhere.
+  `:Entity:Canonical` targets; a proof step that names a ref target gets a step-level
+  `:USES {tactic}` edge (`:Event` → `:Canonical`, deterministic name-match); and each canonical is tied
+  **back** to the in-corpus Definition/Theorem mention that realizes it via `:REALIZES` (nominal
+  title-match), so a citation resolves through the shared hub to where the concept is defined
+  (cross-corpus convergence). **Still deferred** (see `docs/UNIFIED-KG.md`): richer per-entity concepts +
+  the `:BROADER` concept taxonomy (MSC-anchored), the `:DEMONSTRATES`/`:PRACTICES` anchor edges, the
+  **semantic** dedup that refines `:REALIZES` (MathVD embedding fusion), Math-LLM completion, and the
+  whole generalization layer.
+- **154 unit tests pass** (5 skipped, incl. the opt-in Neo4j integration test); `conftest` stubs the heavy deps so they run anywhere.
 - **This session (see Session update):** splitter + distributor stress-tested across 6
   committed fixtures (elementary→graduate) — both strong; base-instruction fixes to the splitter
   lead-in test and the attributor `number`; and **ruff** adopted for format + lint
@@ -102,13 +108,21 @@ an `(:Entity)-[:INSTANCE_OF]->(:Concept)` edge — no new extraction (it sources
 attributor already fills); the `:BROADER` taxonomy and richer per-entity concepts are the remaining
 part. And **step 4 (first half) — step-level `:USES`** (`graph/uses.py`, `persist_uses`): a proof step
 whose text names a ref target gets a `(:Event)-[:USES {tactic}]->(:Entity:Canonical)` edge by
-deterministic whole-word match, the finer complement of the entity-level `:REFERENCES` rollup. All five
-graph layers are wired into `EntityPersisterNode` (entity → procedure → concept → reference → uses) and
-have uuid constraints in `schema.py`.
+deterministic whole-word match, the finer complement of the entity-level `:REFERENCES` rollup. And
+**the `:REALIZES` identity link** (`graph/realizes.py`, `persist_realizes`): a Definition/Theorem
+mention whose `title` normalizes to an existing canonical's key gets a
+`(:Entity:Mention)-[:REALIZES]->(:Entity:Canonical)` edge, tying the cited hub back to the in-corpus
+entity that defines/states it — so a citation resolves *through* the shared hub to real knowledge
+(cross-corpus convergence). Match is nominal (same `title`/`target` namespace, same `canonical_uuid`),
+and the writer's `MATCH` filters to canonicals that actually exist (an uncited title draws no edge). All
+graph layers are wired into `EntityPersisterNode` (entity → procedure → concept → reference → uses →
+realizes) and have uuid constraints in `schema.py` (`:REALIZES` needs none — both endpoints are already
+`:Entity`).
 
 **Still to do (build order):** richer per-entity concepts + the `:BROADER` concept taxonomy
 (MSC-anchored, needs a new extraction stage), and the exercise-anchor `:PRACTICES` / worked-example
-`:DEMONSTRATES` pass — then the `:REALIZES` dedup link + MathVD fusion and Math-LLM completion.
+`:DEMONSTRATES` pass — then the **semantic** dedup that refines `:REALIZES` (MathVD embedding fusion)
+and Math-LLM completion.
 
 ---
 
@@ -322,7 +336,8 @@ only: `core ← ingestion ← entity ← graph ← output`.
 | `graph/concepts.py` | `field → Neo4j`: global born-canonical `:Concept:Field` + `:INSTANCE_OF` edge rows (concept sources are a list, so richer concepts slot in later) |
 | `graph/references.py` | `refs → Neo4j`: global `:Entity:Canonical` targets + `:REFERENCES {tactic}` edge rows |
 | `graph/uses.py` | step-level `:USES → Neo4j`: proof `:Event` → `:Entity:Canonical` `:USES {tactic}` rows by deterministic name-match |
-| `graph/persister.py` | `NodePersisterNode` (after splitter) + `EntityPersisterNode` (fan-in): persist entity, procedural, concept, reference + step-level `:USES` layers |
+| `graph/realizes.py` | identity `:REALIZES → Neo4j`: `:Entity:Mention` → `:Entity:Canonical` rows by nominal `title`-match (ties a cited hub to its in-corpus definition/statement) |
+| `graph/persister.py` | `NodePersisterNode` (after splitter) + `EntityPersisterNode` (fan-in): persist entity, procedural, concept, reference, step-level `:USES` + `:REALIZES` layers |
 | `pipeline.py` | graph wiring + `run()`; after the graph, only assembles `document.md` (persistence is the graph tier's) |
 | `cli.py` | `__main__` entry point: `python -m kms.cli book.pdf out/` |
 
@@ -570,7 +585,7 @@ the whole run.
 - `uv sync` — light CPU core.
 - `uv sync --extra mistral` — adds `pypdfium2` + `pillow` (render page images for the corrector).
 
-**Tests:** `PYTHONPATH=src uv run pytest -q` (147 tests). `tests/conftest.py` stubs
+**Tests:** `PYTHONPATH=src uv run pytest -q` (154 tests). `tests/conftest.py` stubs
 dspy/pydantic/langgraph *only if absent*, so the suite runs with or without the real deps.
 
 **Style (ruff):** `uv run ruff format . && uv run ruff check .` — both must be clean before
@@ -615,10 +630,11 @@ Good test PDF: Hefferon Linear Algebra — `https://jheffero.w3.uvm.edu/linearal
 2. **Unified-KG build order (`docs/UNIFIED-KG.md`)** — the graph tier is now the unified-KG substrate,
    math-first. **Done:** entity + procedural (`:Procedure`/`:Event`) + concept (`:Concept` +
    `:INSTANCE_OF`, from `field`) + reference (`:Entity:Canonical`) + step-level `:USES` layers — steps
-   1–4, minus the pieces below. **Next:** richer per-entity concepts + the `:BROADER` concept taxonomy
-   (MSC-anchored; needs a new extraction stage), then the exercise-anchor `:PRACTICES` / worked-example
-   `:DEMONSTRATES` pass. **Deferred:** the `:REALIZES` dedup link + MathVD fusion, Math-LLM completion,
-   and the whole generalization layer (engine/profile, open type/role, other domains).
+   1–4, plus `:REALIZES` (nominal mention→canonical identity), minus the pieces below. **Next:** richer
+   per-entity concepts + the `:BROADER` concept taxonomy (MSC-anchored; needs a new extraction stage),
+   then the exercise-anchor `:PRACTICES` / worked-example `:DEMONSTRATES` pass. **Deferred:** the
+   **semantic** dedup that refines `:REALIZES` (MathVD embedding fusion), Math-LLM completion, and the
+   whole generalization layer (engine/profile, open type/role, other domains).
 3. **Broaden front-end/finder validation** — more books/sections, watching finder boundaries,
    figure over-extraction on front matter, and correction-pass regressions.
 

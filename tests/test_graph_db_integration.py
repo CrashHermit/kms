@@ -258,3 +258,85 @@ def test_persist_references_mints_hubs_and_edges():
             await close_driver()
 
     asyncio.run(scenario())
+
+
+def test_persist_realizes_wires_a_mention_to_the_canonical_it_defines():
+    from kms.core import models
+    from kms.graph.db import close_driver, database, driver
+    from kms.graph.schema import ensure_schema
+    from kms.graph.writer import (
+        persist_entities,
+        persist_nodes,
+        persist_realizes,
+        persist_references,
+    )
+
+    source = 'integration-test-book'
+    stream = [
+        models.ASTNode(
+            type=models.NodeType.PARAGRAPH, content='…', id=0, segment_index=0
+        )
+    ]
+    # A definition of "Vector Space", a theorem that references it, and a definition nobody cites.
+    overlay = [
+        models.Entity(
+            type=models.EntityType.DEFINITION,
+            members=[0],
+            id=0,
+            title='Vector Space',
+        ),
+        models.Entity(
+            type=models.EntityType.THEOREM,
+            members=[0],
+            id=1,
+            title='Basis Theorem',
+            refs=[
+                models.Reference(
+                    target='vector space', kind='definition', tactic='premise'
+                )
+            ],
+        ),
+        models.Entity(
+            type=models.EntityType.DEFINITION,
+            members=[0],
+            id=2,
+            title='Uncited Widget',  # never referenced -> no canonical -> no :REALIZES edge
+        ),
+    ]
+
+    async def one(session, query):
+        return await (await session.run(query)).single()
+
+    async def scenario():
+        try:
+            await ensure_schema()
+            await persist_nodes(stream, source)
+            await persist_entities(overlay, source)
+            await persist_references(overlay, source)
+            await persist_realizes(overlay, source)
+            await persist_realizes(overlay, source)  # idempotent re-run
+            async with driver().session(database=database()) as session:
+                # the "Vector Space" mention realizes the SAME canonical the theorem references,
+                # so the citation resolves through the hub to where the concept is defined.
+                realized = await one(
+                    session,
+                    "MATCH (m:Mention {title: 'Vector Space'})-[:REALIZES]->"
+                    "(c:Canonical {type: 'definition'})"
+                    '<-[:REFERENCES]-(:Theorem) RETURN count(c) AS c',
+                )
+                # exactly one :REALIZES edge total: the uncited definition draws none (its title
+                # matched no canonical), and the re-run did not duplicate.
+                total = await one(
+                    session,
+                    'MATCH (:Mention)-[r:REALIZES]->(:Canonical) RETURN count(r) AS c',
+                )
+                assert realized['c'] == 1
+                assert total['c'] == 1
+        finally:
+            async with driver().session(database=database()) as session:
+                await session.run(
+                    'MATCH (n) DETACH DELETE n'
+                )  # test DB: clear the graph
+            await close_driver()
+
+    asyncio.run(scenario())
