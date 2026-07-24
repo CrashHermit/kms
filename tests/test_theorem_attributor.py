@@ -6,24 +6,29 @@ statement vs proof at proof_start, label peeling, proofs population — without 
 
 import asyncio
 
-from kms.core.models import ASTNode, BodySegment, Entity, EntityType, NodeType
+from kms.core import models
 from kms.entity.attributors.theorem import Identity, attribute_theorem
 
 
 def _nodes():
     return [
-        ASTNode(type=NodeType.HEADER, content="Theorem 3.2", id=0, seg_index=0),
-        ASTNode(
-            type=NodeType.PARAGRAPH,
-            content="Let $n \\ge 3$. Then $Z(S_n)$ is trivial.",
-            id=1,
-            seg_index=0,
+        models.ASTNode(
+            type=models.NodeType.HEADER,
+            content='Theorem 3.2',
+            id=0,
+            segment_index=0,
         ),
-        ASTNode(
-            type=NodeType.PARAGRAPH,
-            content="Proof. Suppose $\\sigma \\in Z(S_n)$ ... hence trivial.",
+        models.ASTNode(
+            type=models.NodeType.PARAGRAPH,
+            content='Let $n \\ge 3$. Then $Z(S_n)$ is trivial.',
+            id=1,
+            segment_index=0,
+        ),
+        models.ASTNode(
+            type=models.NodeType.PARAGRAPH,
+            content='models.Proof. Suppose $\\sigma \\in Z(S_n)$ ... hence trivial.',
             id=2,
-            seg_index=0,
+            segment_index=0,
         ),
     ]
 
@@ -45,48 +50,74 @@ class _ScriptedModule:
 
 
 def _run(entity, nodes, module):
-    return asyncio.run(attribute_theorem(entity, {n.id: n for n in nodes}, module=module))
+    return asyncio.run(
+        attribute_theorem(entity, {n.id: n for n in nodes}, module=module)
+    )
 
 
 def test_split_holds_out_proof_and_peels_label():
     nodes = _nodes()
-    entity = Entity(type=EntityType.THEOREM, members=[0, 1, 2])
+    entity = models.Entity(type=models.EntityType.THEOREM, members=[0, 1, 2])
     ident = Identity(
-        label="Theorem 3.2", number="3.2", title="Center is Trivial", field="algebra", proof_start=2
+        label='Theorem 3.2',
+        number='3.2',
+        title='Center is Trivial',
+        field='algebra',
+        proof_start=2,
     )
     module = _ScriptedModule(
         ident,
-        statement_bl=[BodySegment(description="Let $n \\ge 3$.", action="assumption")],
-        proof_bl=[BodySegment(description="Suppose ...", action="deduction")],
+        statement_bl=[
+            models.BodySegment(
+                description='Let $n \\ge 3$.', action='assumption'
+            )
+        ],
+        proof_bl=[
+            models.BodySegment(description='Suppose ...', action='deduction')
+        ],
     )
     e = _run(entity, nodes, module)
 
-    assert e.label == "Theorem 3.2"
-    assert e.number == "3.2"
-    assert e.field == "algebra"
+    assert e.label == 'Theorem 3.2'
+    assert e.number == '3.2'
+    assert e.field == 'algebra'
     # Statement = members before proof_start, label node dropped; proof held out of contents.
-    assert e.contents == ["Let $n \\ge 3$. Then $Z(S_n)$ is trivial."]
-    assert [s.action for s in e.bodylist] == ["assumption"]
+    assert e.contents == ['Let $n \\ge 3$. Then $Z(S_n)$ is trivial.']
+    assert [s.action for s in e.bodylist] == ['assumption']
     # The proof went into proofs, with its own contents + bodylist.
     assert len(e.proofs) == 1
-    assert e.proofs[0].contents == ["Proof. Suppose $\\sigma \\in Z(S_n)$ ... hence trivial."]
-    assert [s.action for s in e.proofs[0].bodylist] == ["deduction"]
+    assert e.proofs[0].contents == [
+        'models.Proof. Suppose $\\sigma \\in Z(S_n)$ ... hence trivial.'
+    ]
+    assert [s.action for s in e.proofs[0].bodylist] == ['deduction']
 
 
 def test_no_proof_leaves_proofs_empty():
     nodes = _nodes()[:2]  # label + statement only
-    entity = Entity(type=EntityType.THEOREM, members=[0, 1])
-    ident = Identity(label="Theorem 3.2", number="3.2", title="X", field="algebra", proof_start=-1)
+    entity = models.Entity(type=models.EntityType.THEOREM, members=[0, 1])
+    ident = Identity(
+        label='Theorem 3.2',
+        number='3.2',
+        title='X',
+        field='algebra',
+        proof_start=-1,
+    )
     e = _run(entity, nodes, _ScriptedModule(ident))
 
     assert e.proofs == []
-    assert e.contents == ["Let $n \\ge 3$. Then $Z(S_n)$ is trivial."]
+    assert e.contents == ['Let $n \\ge 3$. Then $Z(S_n)$ is trivial.']
 
 
 def test_out_of_range_proof_start_is_treated_as_no_proof():
     nodes = _nodes()
-    entity = Entity(type=EntityType.THEOREM, members=[0, 1, 2])
-    ident = Identity(label="Theorem 3.2", number="3.2", title="X", field="algebra", proof_start=9)
+    entity = models.Entity(type=models.EntityType.THEOREM, members=[0, 1, 2])
+    ident = Identity(
+        label='Theorem 3.2',
+        number='3.2',
+        title='X',
+        field='algebra',
+        proof_start=9,
+    )
     e = _run(entity, nodes, _ScriptedModule(ident))
 
     assert e.proofs == []

@@ -22,7 +22,7 @@ structure isn't reified into events — so a Problem's refs stay entity-level on
 
 import re
 
-from kms.core.models import Entity
+from kms.core import models
 from kms.graph.procedures import proof_events
 from kms.graph.references import canonical_uuid
 
@@ -31,14 +31,14 @@ def _mentions(text: str, target: str) -> bool:
     """True if ``target`` appears in ``text`` as a whole token (case-insensitive), so "Set" matches
     "Set" and "a Set" but not "subset" / "Reset". Whitespace in the target is collapsed; an empty
     target never matches."""
-    needle = " ".join(target.split())
+    needle = ' '.join(target.split())
     if not needle:
         return False
-    pattern = rf"(?<![0-9A-Za-z]){re.escape(needle)}(?![0-9A-Za-z])"
+    pattern = rf'(?<![0-9A-Za-z]){re.escape(needle)}(?![0-9A-Za-z])'
     return re.search(pattern, text, re.IGNORECASE) is not None
 
 
-def uses_rows(entities: list[Entity], source: str) -> list[dict]:
+def uses_rows(entities: list[models.Entity], source: str) -> list[dict]:
     """The ``{event, canonical, tactic}`` rows for the ``:USES`` edges: one per (proof step, reference)
     where the reference's target name is mentioned in the step's text, de-duplicated by (event,
     canonical). The event uuid matches the ``:Event`` the procedural layer wrote; the canonical uuid
@@ -57,5 +57,11 @@ def uses_rows(entities: list[Entity], source: str) -> list[dict]:
                 if key in seen:
                     continue
                 seen.add(key)
-                rows.append({"event": event, "canonical": canonical, "tactic": ref.tactic})
+                rows.append(
+                    {
+                        'event': event,
+                        'canonical': canonical,
+                        'tactic': ref.tactic,
+                    }
+                )
     return rows

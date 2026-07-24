@@ -1,18 +1,27 @@
+"""Structural node extraction — parses OCR markdown into a flat ordered AST.
+
+Each textbook page's markdown is segmented into top-level block nodes (paragraph,
+math, list, header, table, image, caption, code) by a DSPy ChainOfThought module.
+The result is a flat list of structural nodes per page — purely structural, no
+math-semantic typing (that lives in the entity layer).
+"""
+
 import dspy
 from langgraph.types import Send
 from pydantic import BaseModel, Field
 
-from kms.core import tracing
-from kms.core.llm import text_lm
-from kms.core.models import ASTNode, NodeType, Segment, merge_results_into_segments
-from kms.core.state import State
+from kms.core import llm, models, state
 
 
 class DSPyModel(BaseModel):
-    type: NodeType = Field(
-        description="The block type of the node — must be one of the NodeType values."
+    """A single extracted block node from the LLM — type and raw content."""
+
+    type: models.NodeType = Field(
+        description='The block type of the node — must be one of the models.NodeType values.'
     )
-    content: str | None = Field(default=None, description="The content of the node")
+    content: str | None = Field(
+        default=None, description='The content of the node'
+    )
 
 
 class Signature(dspy.Signature):
@@ -33,9 +42,9 @@ class Signature(dspy.Signature):
     - One node per top-level markdown block, as the block appears. A node is the
       outermost structural unit (a paragraph, a display-math block, a list, a table, a
       heading, …); do not break a block's sub-parts into separate nodes, and do not
-      merge distinct blocks into one. Segment on structure (block boundaries) only —
+      merge distinct blocks into one. models.Segment on structure (block boundaries) only —
       never on meaning: do NOT split a block because of what it says (e.g. a paragraph
-      that runs into "Proof." or "Solution." stays one node).
+      that runs into "models.Proof." or "models.Solution." stays one node).
     - If content starts or ends abruptly at the boundary of the given markdown, extract
       it as-is — do not try to complete or trim it.
 
@@ -61,41 +70,40 @@ class Signature(dspy.Signature):
     """
 
     segment_markdown: str = dspy.InputField(
-        description="The raw markdown content of one textbook segment. Emit nodes for this content only."
+        description='The raw markdown content of one textbook segment. Emit nodes for this content only.'
     )
 
     nodes: list[DSPyModel] = dspy.OutputField(
         description=(
-            "Flat list of top-level nodes extracted from segment_markdown. Follow the class docstring for taxonomy and extraction rules."
+            'Flat list of top-level nodes extracted from segment_markdown. Follow the class docstring for taxonomy and extraction rules.'
         )
     )
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None) -> None:
+    """Parses one page's OCR markdown into a flat list of structural block nodes."""
+
+    def __init__(self, language_model: dspy.LM | None = None) -> None:
         super().__init__()
         self.extractor = dspy.ChainOfThought(Signature)
-        self.set_lm(lm or text_lm())
+        self.set_lm(language_model or llm.text_lm())
 
     async def aforward(self, segment_markdown: str) -> list[DSPyModel]:
+        """Returns the top-level structural nodes from a page's markdown."""
         result = await self.extractor.acall(segment_markdown=segment_markdown)
-        nodes = list(result.nodes or [])
-        tracing.record(
-            "extractor",
-            inputs={"segment_markdown": segment_markdown},
-            outputs={"nodes": [n.model_dump() for n in nodes]},
-        )
-        return nodes
+        return list(result.nodes or [])
 
 
 # --- LangGraph node: parse each segment's markdown into AST nodes ---
 
 
 class ExtractorNode:
+    """LangGraph node: fans out per-segment workers and collects the extracted AST."""
+
     def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
-    def dispatch(self, state: State) -> list[Send] | str:
+    def dispatch(self, state: state.State) -> list[Send] | str:
         """Fan out one worker per segment that has OCR'd content.
 
         Each segment is parsed in isolation — no neighbour context. Passing a
@@ -103,20 +111,27 @@ class ExtractorNode:
         segment's node list (a measured ~25% duplicate-entity inflation on dense
         pages). Cross-segment continuations are healed downstream by the seam merger,
         so the extractor needs only its own page."""
-        segments = state.get("segments", [])
-        sends = [Send("extractor_worker", {"segment": seg}) for seg in segments if seg.content]
-        return sends or "extractor_collect"
+        segments = state.get('segments', [])
+        sends = [
+            Send('extractor_worker', {'segment': segment})
+            for segment in segments
+            if segment.content
+        ]
+        return sends or 'extractor_collect'
 
     async def worker(self, state: dict) -> dict:
         """Parse one segment's markdown into a flat list of AST nodes."""
-        segment: Segment = state["segment"]
+        segment: models.Segment = state['segment']
         extracted = await self.module.aforward(segment_markdown=segment.content)
-        nodes = [ASTNode(type=node.type, content=node.content) for node in extracted]
-        return {"extract_results": [(segment.index, nodes)]}
+        nodes = [
+            models.ASTNode(type=node.type, content=node.content)
+            for node in extracted
+        ]
+        return {'extract_results': [(segment.index, nodes)]}
 
-    def collect(self, state: State) -> dict:
+    def collect(self, state: state.State) -> dict:
         """Merge each segment's extracted AST nodes back into the ordered backbone."""
-        segments = merge_results_into_segments(
-            state["segments"], state.get("extract_results", []), "nodes"
+        segments = models.merge_results_into_segments(
+            state['segments'], state.get('extract_results', []), 'nodes'
         )
-        return {"segments": segments}
+        return {'segments': segments}

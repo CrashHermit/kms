@@ -4,14 +4,14 @@ Theorem referencer — the cross-entity pass over an *attributed* Theorem entity
 The finders and attributors build a self-contained Theorem (`contents`, `bodylist`, `proofs`, …).
 This stage adds the one cross-entity attribute AutoMathKG defines: `refs` — the definitions and
 theorems this theorem invokes in its statement or proof, each tagged with the tactic role it plays
-(Table C4's `Refs` + `References_tactics` templates, fused into one `Reference` record). A proof that
+(Table C4's `Refs` + `References_tactics` templates, fused into one `models.Reference` record). A proof that
 applies a prior lemma or cites a definition is the canonical case, and is exactly where the "logical
 or inferential chains" between theorems come from.
 
 ONE LLM CALL over the theorem's statement AND proof text (references appear in both). The output is a
-list of `Reference(target, kind, tactic)`; the graph tier resolves each `target` to a general-entity
+list of `models.Reference(target, kind, tactic)`; the graph tier resolves each `target` to a general-entity
 hub keyed by (kind, normalized name), so references from any book/entity converge on one target. The
-tactic set is the full `ACTIONS_ALL` — a reference can play any role (a `lemma` invoked, a `premise`
+tactic set is the full `models.ACTIONS_ALL` — a reference can play any role (a `lemma` invoked, a `premise`
 taken, a `definition` cited) — with invalid `kind`/`tactic` values dropped.
 
 The entry point is `reference_theorem(entity, module)` (async): it writes `entity.refs` in place and
@@ -22,10 +22,7 @@ import asyncio
 
 import dspy
 
-from kms.core import tracing
-from kms.core.llm import text_lm
-from kms.core.models import ACTIONS_ALL, REFERENCE_KINDS, Entity, Reference
-from kms.core.state import State
+from kms.core import llm, models, state
 
 
 class ExtractReferences(dspy.Signature):
@@ -50,51 +47,52 @@ class ExtractReferences(dspy.Signature):
         description="The theorem's statement followed by its proof (text + LaTeX)."
     )
     kinds: list[str] = dspy.InputField(
-        description="The allowed target kinds; choose one per reference."
+        description='The allowed target kinds; choose one per reference.'
     )
     tactics: list[str] = dspy.InputField(
-        description="The allowed tactic labels; choose one per reference."
+        description='The allowed tactic labels; choose one per reference.'
     )
-    references: list[Reference] = dspy.OutputField(
-        description="The referenced definitions/theorems, each with its kind and tactic."
+    references: list[models.Reference] = dspy.OutputField(
+        description='The referenced definitions/theorems, each with its kind and tactic.'
     )
 
 
 class Module(dspy.Module):
     """Runs the single reference-extraction pass for one theorem."""
 
-    def __init__(self, lm: dspy.LM | None = None) -> None:
+    def __init__(self, language_model: dspy.LM | None = None) -> None:
         super().__init__()
         self.extract = dspy.ChainOfThought(ExtractReferences)
-        self.set_lm(lm or text_lm())
+        self.set_lm(language_model or llm.text_lm())
 
-    async def references(self, content: str) -> list[Reference]:
+    async def references(self, content: str) -> list[models.Reference]:
+        """Extracts the definitions and theorems this entity's content cites."""
         result = await self.extract.acall(
-            content=content, kinds=REFERENCE_KINDS, tactics=ACTIONS_ALL
+            content=content,
+            kinds=models.REFERENCE_KINDS,
+            tactics=models.ACTIONS_ALL,
         )
-        refs = [
+        return [
             r
             for r in (result.references or [])
-            if r.kind in REFERENCE_KINDS and r.tactic in ACTIONS_ALL and r.target.strip()
+            if r.kind in models.REFERENCE_KINDS
+            and r.tactic in models.ACTIONS_ALL
+            and r.target.strip()
         ]
-        tracing.record(
-            "theorem_references",
-            inputs={"content": content, "kinds": REFERENCE_KINDS, "tactics": ACTIONS_ALL},
-            outputs={"references": [r.model_dump() for r in refs]},
-        )
-        return refs
 
 
-def reference_text(entity: Entity) -> str:
+def reference_text(entity: models.Entity) -> str:
     """The text a theorem's references are drawn from: its statement (`contents`) plus every proof's
     content — references live in both. Empty when the theorem has no content yet."""
     parts = list(entity.contents)
     for proof in entity.proofs:
         parts.extend(proof.contents)
-    return "\n\n".join(c for c in parts if c and c.strip())
+    return '\n\n'.join(c for c in parts if c and c.strip())
 
 
-async def reference_theorem(entity: Entity, module: Module | None = None) -> Entity:
+async def reference_theorem(
+    entity: models.Entity, module: Module | None = None
+) -> models.Entity:
     """Fill `entity.refs` on one Theorem, in place, from its statement + proof. A no-op (empty refs)
     when the theorem has no content. Returns the same entity."""
     module = module or Module()
@@ -113,8 +111,11 @@ class TheoremReferencerNode:
     def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
-    async def run(self, state: State) -> dict:
-        entities = state.get("theorem_entities", [])
+    async def run(self, state: state.State) -> dict:
+        """Extracts each Theorem's cross-entity references, in place."""
+        entities = state.get('theorem_entities', [])
         if entities:
-            await asyncio.gather(*(reference_theorem(e, self.module) for e in entities))
-        return {"theorem_entities": entities}
+            await asyncio.gather(
+                *(reference_theorem(entity, self.module) for entity in entities)
+            )
+        return {'theorem_entities': entities}

@@ -53,9 +53,8 @@ work landed on `claude/graph-dedup-planning-nwj0p7` (PR #12); see the 2026-07-23
 - **132 unit tests pass**; `conftest` stubs the heavy deps so they run anywhere.
 - **This session (see Session update):** splitter + distributor stress-tested across 6
   committed fixtures (elementary→graduate) — both strong; base-instruction fixes to the splitter
-  lead-in test and the attributor `number`; a **DSPy training harness** (`training/`, teacher
-  `deepseek-v4-pro`, LLM-judge) built and proven but with no headroom to ship yet; and **ruff**
-  adopted for format + lint (line-length 100).
+  lead-in test and the attributor `number`; and **ruff** adopted for format + lint
+  (line-length 100).
 
 ---
 
@@ -202,24 +201,6 @@ own-numbered-exercise-is-not-a-lead-in case).
 - **Splitter base-instruction fix applied:** its lead-in TAG "decisive test" no longer hinges on
   naming an explicit range (range-less lead-ins are the common real case).
 
-**DSPy training harness (`training/`) — data-driven stage tuning instead of prompt-chasing.**
-Teacher `deepseek-v4-pro` bootstraps traces; a reference-free **LLM-as-judge** (also on the
-teacher) filters them into few-shot demos for the flash student — DSPy *compilation*, not weight
-fine-tuning (DeepSeek's API doesn't expose that). Pieces: `core/tracing.py` (opt-in
-`KMS_TRACE_DIR` capture) and per-stage `training/<stage>/{metric,dataset,compile}.py`; the
-splitter and distributor nodes auto-load `training/<stage>/compiled.json` if present (override
-with `KMS_SPLITTER_PROGRAM` / `KMS_DISTRIBUTOR_PROGRAM`).
-- **Cheap-data source:** distributor examples come from a live-captured `distributor.jsonl`
-  (`KMS_TRACE_DIR` on a run) — `training/distributor/dataset.py::load_traces`. (An earlier
-  reconstruct-from-`out/<fixture>/` path, 41 examples from 5 runs with zero new calls, retired with
-  the `nodes.json`/`entities.json` artifacts when the graph became the store.)
-- **Pilot results:** both stages already judged near-perfect, so naïve `BootstrapFewShot` had no
-  headroom — splitter dev pass-rate 1.00→1.00 (and its demos are ~2.7k-token page-sized windows,
-  a bad fit); distributor 0.90→0.80 (within noise; demos small but non-targeted). **Neither
-  compiled program was shipped** — the bare students are already strong. The harness is the
-  deliverable; the next lever is *targeted* hard-case demos (seed the over-extension cases)
-  and/or MIPROv2 instruction-opt, measured on a larger reconstructed eval set.
-
 **Code conventions — ruff adopted (was: no tooling at all).** `ruff` = the one style tool
 (format + light lint), configured in `pyproject.toml`: line-length **100**, src-layout aware,
 lint set `F/E/I/B/UP` (E501 off — the formatter owns wrapping and long DSPy `description=`
@@ -305,7 +286,6 @@ only: `core ← ingestion ← entity ← graph ← output`.
 | `core/models.py` | data model (`ASTNode`/`Segment`/`Entity`/…, `EntityType`, `FIELDS`), `flatten_segments`, `flatten_entities`, `merge_results_into_segments` — dspy/langgraph-free |
 | `core/state.py` | the LangGraph `State` (channels + reducers); imports `models` |
 | `core/llm.py` | `text_lm` (DeepSeek, text stages), `corrector_lm` (Qwen3-VL via OpenRouter) |
-| `core/tracing.py` | opt-in per-call trace capture (the data→compile loop's raw material) |
 | `ingestion/ocr.py` | **front-end**: Mistral OCR API → `Segment` backbone (markdown + figures + page renders) |
 | `ingestion/corrector.py` | **correction pass**: vision model proofreads each page vs its image; divergence-guarded; delimiter normalization |
 | `ingestion/extractor.py` | markdown → flat **structural** nodes (no math typing) |
@@ -539,8 +519,7 @@ the whole run.
   would need offsets, which the model can't produce over LaTeX (see decision 11).
 - **Instruction distributor — now validated on real lead-in-heavy sections** (see the Session
   update). Correct extent + bounding across OpenStax algebra/calc and Lebl analysis; the one
-  soft failure is a task-kind over-extension (Lebl 2.1.11). The `training/` harness targets
-  exactly this decision if we want to push it further.
+  soft failure is a task-kind over-extension (Lebl 2.1.11).
 - **Problem attributor `number` is format-sensitive** — see Session update (bare multi-column
   numbers, in-text cross-references). Base-instruction fix applied; verify on the next runs.
 - **Front-end drops short interstitial lead-in lines** on dense multi-column exercise pages
@@ -589,9 +568,7 @@ a *rising* count as the signal (a refactor that adds errors), not the absolute n
 
 **Stress-test the governor:** run the pipeline on a fixture and inspect, e.g.
 `PYTHONPATH=src uv run --extra mistral python -m kms.cli
-tests/fixtures/books/ea2e_ch1_review.pdf out/ea2e_ch1_review`. To capture DSPy training traces,
-prefix with `KMS_TRACE_DIR=out/traces`. Compile a stage:
-`PYTHONPATH=src uv run python -m training.distributor.compile out/<run_dir> ...`.
+tests/fixtures/books/ea2e_ch1_review.pdf out/ea2e_ch1_review`.
 
 **Run the pipeline:**
 ```bash
@@ -611,9 +588,8 @@ Good test PDF: Hefferon Linear Algebra — `https://jheffero.w3.uvm.edu/linearal
 1. **Extensive splitter + distributor validation — DONE this session** (see Session update): 6
    fixtures across elementary→graduate styles, both stages strong. Remaining follow-ups from it:
    the front-end lead-in-loss on dense multi-column pages (calc3), and — if we want to push
-   quality past "already strong" — *targeted* hard-case demos or MIPROv2 via the `training/`
-   harness, measured on a larger reconstructed eval set. The optimizer infra is built and proven;
-   it just has little headroom on the current, already-good stages.
+   quality past "already strong" with targeted hard-case demos or instruction optimization,
+   measured on a larger reconstructed eval set.
 2. **Unified-KG build order (`docs/UNIFIED-KG.md`)** — the graph tier is now the unified-KG substrate,
    math-first. **Done:** entity + procedural (`:Procedure`/`:Event`) + reference (`:Entity:Canonical`)
    layers (steps 1 & 3). **Next:** **step 2 — concepts** (`:Concept` + `:INSTANCE_OF`/`:BROADER`,
@@ -642,9 +618,7 @@ Good test PDF: Hefferon Linear Algebra — `https://jheffero.w3.uvm.edu/linearal
   __future__` (runtime is 3.14). The whole repo was reformatted once — that commit is isolated
   for `git blame`.
 - **Reuse the committed fixtures** in `tests/fixtures/books/` for stress tests; don't re-download
-  full books. Distributor training data comes from a live-captured `distributor.jsonl` — set
-  `KMS_TRACE_DIR` on a run to grow the trainset (the old reconstruct-from-`out/<run>/` path retired
-  with the JSON artifacts).
+  full books.
 - **`uv run` re-syncs and drops the `mistral` extra.** A plain `uv run …` (e.g. `pytest`) after
   `uv sync --extra mistral` uninstalls `pypdfium2`/`pillow`, so the next pipeline run dies with
   "No module named 'pypdfium2'". For a full run use `uv run --extra mistral python …` (or re-sync

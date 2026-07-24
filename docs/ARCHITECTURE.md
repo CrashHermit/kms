@@ -42,8 +42,7 @@ src/kms/
     __init__.py
     models.py              # domain data: ASTNode, Segment, Entity, … + flatten/merge helpers (dspy/langgraph-free)
     state.py               # the LangGraph State TypedDict + reducer channels (imports models)
-    llm.py                 # text_lm / teacher_lm / corrector_lm config
-    tracing.py             # opt-in trace capture (the data→compile loop's raw material)
+    llm.py                 # text_lm / corrector_lm config
                            # (deferred: errors.py KmsError hierarchy)
 
   ingestion/               # PHASE 1: PDF → healed per-page nodes    (backbone: segments)
@@ -80,9 +79,7 @@ src/kms/
 
   output/
     __init__.py
-    assembler.py           # entities + nodes → document.md / entities.json / nodes.json
-
-training/                  # compile-time only (DSPy optimize); consumes traces, OUTSIDE the runtime pkg
+    assembler.py           # entities + nodes → document.md
 tests/
 ```
 
@@ -116,7 +113,7 @@ current 46-test suite already relies on.
 ### 2. `core/` is the shared center, and it's plain (not `_core`)
 
 `core/` holds the things that aren't a *stage* but that every stage reaches for: the domain
-models, the orchestration state, LM config, tracing, and the error hierarchy. It's the floor
+models, the orchestration state, and LM config. It's the floor
 nothing is allowed to import upward from. Named `core/` (not `_core/`) because
 `kms/__init__.py` is already the one public door — the underscore would be redundant signal.
 
@@ -166,12 +163,6 @@ build on top, still reading outputs only. `neo4j` imports stay quarantined in `g
 `cli.py` owns `__main__`, argument parsing, and logging setup. Importing the library
 (`kms.run`) must never run logic or configure logging. This is what lets `print()` disappear in
 favor of `logging` cleanly: the CLI configures the root logger, the library only emits.
-
-### 7. `training/` stays outside the runtime package
-
-The DSPy compile/optimize workflow is compile-time only: it consumes the JSONL traces
-`core/tracing.py` emits and produces optimized programs. It depends on the runtime package, not
-the reverse, so it lives as a sibling to `src/`, never imported by any stage.
 
 ---
 

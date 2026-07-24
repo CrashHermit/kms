@@ -29,19 +29,19 @@ def schema_statements() -> list[str]:
     (the procedural layer) and ``:Concept`` (the concept layer), and a ``source`` lookup index on
     ``:Node`` and ``:Entity``."""
     return [
-        f"CREATE CONSTRAINT node_uuid IF NOT EXISTS FOR (n:{NODE_LABEL}) REQUIRE n.uuid IS UNIQUE",
-        f"CREATE CONSTRAINT source_uuid IF NOT EXISTS "
-        f"FOR (s:{SOURCE_LABEL}) REQUIRE s.uuid IS UNIQUE",
-        f"CREATE CONSTRAINT entity_uuid IF NOT EXISTS "
-        f"FOR (e:{ENTITY_LABEL}) REQUIRE e.uuid IS UNIQUE",
-        f"CREATE CONSTRAINT procedure_uuid IF NOT EXISTS "
-        f"FOR (p:{PROCEDURE_LABEL}) REQUIRE p.uuid IS UNIQUE",
-        f"CREATE CONSTRAINT event_uuid IF NOT EXISTS "
-        f"FOR (v:{EVENT_LABEL}) REQUIRE v.uuid IS UNIQUE",
-        f"CREATE CONSTRAINT concept_uuid IF NOT EXISTS "
-        f"FOR (c:{CONCEPT_LABEL}) REQUIRE c.uuid IS UNIQUE",
-        f"CREATE INDEX node_source IF NOT EXISTS FOR (n:{NODE_LABEL}) ON (n.source)",
-        f"CREATE INDEX entity_source IF NOT EXISTS FOR (e:{ENTITY_LABEL}) ON (e.source)",
+        f'CREATE CONSTRAINT node_uuid IF NOT EXISTS FOR (n:{NODE_LABEL}) REQUIRE n.uuid IS UNIQUE',
+        f'CREATE CONSTRAINT source_uuid IF NOT EXISTS '
+        f'FOR (s:{SOURCE_LABEL}) REQUIRE s.uuid IS UNIQUE',
+        f'CREATE CONSTRAINT entity_uuid IF NOT EXISTS '
+        f'FOR (e:{ENTITY_LABEL}) REQUIRE e.uuid IS UNIQUE',
+        f'CREATE CONSTRAINT procedure_uuid IF NOT EXISTS '
+        f'FOR (p:{PROCEDURE_LABEL}) REQUIRE p.uuid IS UNIQUE',
+        f'CREATE CONSTRAINT event_uuid IF NOT EXISTS '
+        f'FOR (v:{EVENT_LABEL}) REQUIRE v.uuid IS UNIQUE',
+        f'CREATE CONSTRAINT concept_uuid IF NOT EXISTS '
+        f'FOR (c:{CONCEPT_LABEL}) REQUIRE c.uuid IS UNIQUE',
+        f'CREATE INDEX node_source IF NOT EXISTS FOR (n:{NODE_LABEL}) ON (n.source)',
+        f'CREATE INDEX entity_source IF NOT EXISTS FOR (e:{ENTITY_LABEL}) ON (e.source)',
     ]
 
 

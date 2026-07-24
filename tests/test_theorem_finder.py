@@ -2,16 +2,40 @@
 
 import asyncio
 
-from kms.core.models import ASTNode, EntityType, NodeType
-from kms.entity.finders.theorem import TheoremFinderNode, TheoremSpan, find_theorems
+from kms.core import models
+from kms.entity.finders.theorem import (
+    TheoremFinderNode,
+    TheoremSpan,
+    find_theorems,
+)
 
 
 def _nodes():
     return [
-        ASTNode(type=NodeType.HEADER, content="Theorem 3.2", id=0, seg_index=0),
-        ASTNode(type=NodeType.PARAGRAPH, content="Every bounded sequence ...", id=1, seg_index=0),
-        ASTNode(type=NodeType.PARAGRAPH, content="Proof. Suppose ...", id=2, seg_index=0),
-        ASTNode(type=NodeType.PARAGRAPH, content="ordinary prose", id=3, seg_index=0),
+        models.ASTNode(
+            type=models.NodeType.HEADER,
+            content='Theorem 3.2',
+            id=0,
+            segment_index=0,
+        ),
+        models.ASTNode(
+            type=models.NodeType.PARAGRAPH,
+            content='Every bounded sequence ...',
+            id=1,
+            segment_index=0,
+        ),
+        models.ASTNode(
+            type=models.NodeType.PARAGRAPH,
+            content='models.Proof. Suppose ...',
+            id=2,
+            segment_index=0,
+        ),
+        models.ASTNode(
+            type=models.NodeType.PARAGRAPH,
+            content='ordinary prose',
+            id=3,
+            segment_index=0,
+        ),
     ]
 
 
@@ -28,12 +52,14 @@ def test_find_theorems_gathers_statement_and_proof_with_the_right_type():
     module = _ScriptedFinder([[TheoremSpan(start=0, end=2)], []])
     theorems = asyncio.run(find_theorems(_nodes(), module=module))
     assert len(theorems) == 1
-    assert theorems[0].type == EntityType.THEOREM
+    assert theorems[0].type == models.EntityType.THEOREM
     assert theorems[0].members == [0, 1, 2]  # statement + proof nodes
 
 
 def test_node_run_writes_the_theorem_channel():
-    node = TheoremFinderNode(module=_ScriptedFinder([[TheoremSpan(start=0, end=2)], []]))
-    out = asyncio.run(node.run({"nodes": _nodes()}))
-    assert list(out.keys()) == ["theorem_entities"]
-    assert [e.members for e in out["theorem_entities"]] == [[0, 1, 2]]
+    node = TheoremFinderNode(
+        module=_ScriptedFinder([[TheoremSpan(start=0, end=2)], []])
+    )
+    out = asyncio.run(node.run({'nodes': _nodes()}))
+    assert list(out.keys()) == ['theorem_entities']
+    assert [e.members for e in out['theorem_entities']] == [[0, 1, 2]]

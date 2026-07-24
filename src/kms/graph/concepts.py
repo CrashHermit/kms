@@ -24,17 +24,17 @@ whitespace, giving cheap exact-name clustering.
 from collections import defaultdict
 from uuid import NAMESPACE_URL, uuid5
 
-from kms.core.models import Entity
+from kms.core import models
 from kms.graph.entities import entity_uuid
 
-CONCEPT_LABEL = "Concept"
-FIELD_CONCEPT = "field"  # the one concept type sourced today (the entity's `field` attribute)
+CONCEPT_LABEL = 'Concept'
+FIELD_CONCEPT = 'field'  # the one concept type sourced today (the entity's `field` attribute)
 
 
 def normalize_concept(name: str) -> str:
     """The clustering key for a concept name: lowercased, whitespace-collapsed. Trivial spacing/case
     variants share a concept; genuine paraphrases stay distinct until a semantic dedup tier merges."""
-    return " ".join(name.split()).lower()
+    return ' '.join(name.split()).lower()
 
 
 def concept_uuid(concept_type: str, name: str) -> str:
@@ -42,7 +42,8 @@ def concept_uuid(concept_type: str, name: str) -> str:
     Global on purpose — NO ``source`` prefix — so the same concept from different books/entities
     resolves to one node. The ``concept#`` segment keeps it disjoint from every other uuid namespace."""
     return uuid5(
-        NAMESPACE_URL, f"concept#{concept_type.strip().lower()}#{normalize_concept(name)}"
+        NAMESPACE_URL,
+        f'concept#{concept_type.strip().lower()}#{normalize_concept(name)}',
     ).hex
 
 
@@ -56,37 +57,40 @@ def concept_properties(concept_type: str, name: str) -> dict:
     """The Neo4j property map for one concept: its global uuid, its ``type`` (field / …), and the
     ``name`` as written. No ``source``: a concept is corpus-level (born canonical), not book-scoped."""
     return {
-        "uuid": concept_uuid(concept_type, name),
-        "type": concept_type.strip().lower(),
-        "name": name.strip(),
+        'uuid': concept_uuid(concept_type, name),
+        'type': concept_type.strip().lower(),
+        'name': name.strip(),
     }
 
 
-def _entity_concepts(entity: Entity) -> list[tuple[str, str]]:
+def _entity_concepts(entity: models.Entity) -> list[tuple[str, str]]:
     """The ``(concept_type, name)`` concepts an entity instantiates. Today just its ``field`` (a
     field-concept), if set; richer concept sources are added here later without touching callers."""
     return [(FIELD_CONCEPT, entity.field)] if entity.field else []
 
 
-def concept_batches(entities: list[Entity]) -> dict[str, list[dict]]:
+def concept_batches(entities: list[models.Entity]) -> dict[str, list[dict]]:
     """The unique concept property maps across the overlay — de-duplicated by uuid and grouped by
     per-type label, so each label is one batched MERGE (mirrors ``canonical_batches``)."""
     seen: dict[str, tuple[str, dict]] = {}
     for entity in entities:
         for concept_type, name in _entity_concepts(entity):
             props = concept_properties(concept_type, name)
-            seen[props["uuid"]] = (concept_type_label(concept_type), props)
+            seen[props['uuid']] = (concept_type_label(concept_type), props)
     batches: dict[str, list[dict]] = defaultdict(list)
     for label, props in seen.values():
         batches[label].append(props)
     return dict(batches)
 
 
-def instance_rows(entities: list[Entity], source: str) -> list[dict]:
+def instance_rows(entities: list[models.Entity], source: str) -> list[dict]:
     """The ``{entity, concept}`` uuid pairs for the ``:INSTANCE_OF`` edges — one per (entity, concept)
     it instantiates. The entity uuid is source-scoped (a mention); the concept uuid is global."""
     return [
-        {"entity": entity_uuid(source, entity.id), "concept": concept_uuid(concept_type, name)}
+        {
+            'entity': entity_uuid(source, entity.id),
+            'concept': concept_uuid(concept_type, name),
+        }
         for entity in entities
         for concept_type, name in _entity_concepts(entity)
     ]

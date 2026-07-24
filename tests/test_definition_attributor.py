@@ -6,17 +6,30 @@ the content (dropping a pure-label node, keeping a fused one) — without dspy o
 
 import asyncio
 
-from kms.core.models import ASTNode, BodySegment, Entity, EntityType, NodeType
+from kms.core import models
 from kms.entity.attributors.definition import Identity, attribute_definition
 
 
 def _nodes():
     return [
-        ASTNode(type=NodeType.HEADER, content="1.2 Definition", id=0, seg_index=0),
-        ASTNode(
-            type=NodeType.PARAGRAPH, content="A vector space is a set $V$ ...", id=1, seg_index=0
+        models.ASTNode(
+            type=models.NodeType.HEADER,
+            content='1.2 Definition',
+            id=0,
+            segment_index=0,
         ),
-        ASTNode(type=NodeType.MATH, content="$$V \\times V \\to V$$", id=2, seg_index=0),
+        models.ASTNode(
+            type=models.NodeType.PARAGRAPH,
+            content='A vector space is a set $V$ ...',
+            id=1,
+            segment_index=0,
+        ),
+        models.ASTNode(
+            type=models.NodeType.MATH,
+            content='$$V \\times V \\to V$$',
+            id=2,
+            segment_index=0,
+        ),
     ]
 
 
@@ -38,49 +51,65 @@ def _run(entity, nodes, module):
 
 def test_flagged_label_node_is_dropped_from_contents():
     nodes = _nodes()
-    entity = Entity(type=EntityType.DEFINITION, members=[0, 1, 2])
-    ident = Identity(label="1.2 Definition", number="1.2", title="Vector Space", field="algebra")
+    entity = models.Entity(type=models.EntityType.DEFINITION, members=[0, 1, 2])
+    ident = Identity(
+        label='1.2 Definition',
+        number='1.2',
+        title='Vector Space',
+        field='algebra',
+    )
     module = _ScriptedModule(
-        ident, [BodySegment(description="A vector space is a set $V$ ...", action="definition")]
+        ident,
+        [
+            models.BodySegment(
+                description='A vector space is a set $V$ ...',
+                action='definition',
+            )
+        ],
     )
     attrs = _run(entity, nodes, module)
 
-    assert attrs.label == "1.2 Definition"
-    assert attrs.number == "1.2"
-    assert attrs.title == "Vector Space"
-    assert attrs.field == "algebra"
+    assert attrs.label == '1.2 Definition'
+    assert attrs.number == '1.2'
+    assert attrs.title == 'Vector Space'
+    assert attrs.field == 'algebra'
     # The pure-label node ("1.2 Definition") strips to empty and is dropped; statement + math remain.
-    assert attrs.contents == ["A vector space is a set $V$ ...", "$$V \\times V \\to V$$"]
-    assert [s.action for s in attrs.bodylist] == ["definition"]
+    assert attrs.contents == [
+        'A vector space is a set $V$ ...',
+        '$$V \\times V \\to V$$',
+    ]
+    assert [s.action for s in attrs.bodylist] == ['definition']
 
 
 def test_fused_label_is_stripped_from_contents():
-    node = ASTNode(
-        type=NodeType.PARAGRAPH,
-        content="Definition 1.2 A group is a set with ...",
+    node = models.ASTNode(
+        type=models.NodeType.PARAGRAPH,
+        content='Definition 1.2 A group is a set with ...',
         id=5,
-        seg_index=0,
+        segment_index=0,
     )
-    entity = Entity(type=EntityType.DEFINITION, members=[5])
+    entity = models.Entity(type=models.EntityType.DEFINITION, members=[5])
     # Fused label: the prefix is peeled off the first content string, the node is kept.
-    ident = Identity(label="Definition 1.2", number="1.2", title="Group", field="algebra")
+    ident = Identity(
+        label='Definition 1.2', number='1.2', title='Group', field='algebra'
+    )
     attrs = _run(entity, [node], _ScriptedModule(ident, []))
 
-    assert attrs.number == "1.2"
-    assert attrs.contents == ["A group is a set with ..."]
+    assert attrs.number == '1.2'
+    assert attrs.contents == ['A group is a set with ...']
 
 
 def test_no_label_leaves_number_none_and_keeps_members():
-    node = ASTNode(
-        type=NodeType.PARAGRAPH,
-        content="A ring is a set with two operations ...",
+    node = models.ASTNode(
+        type=models.NodeType.PARAGRAPH,
+        content='A ring is a set with two operations ...',
         id=7,
-        seg_index=0,
+        segment_index=0,
     )
-    entity = Entity(type=EntityType.DEFINITION, members=[7])
-    ident = Identity(label=None, number=None, title="Ring", field="algebra")
+    entity = models.Entity(type=models.EntityType.DEFINITION, members=[7])
+    ident = Identity(label=None, number=None, title='Ring', field='algebra')
     attrs = _run(entity, [node], _ScriptedModule(ident, []))
 
     assert attrs.label is None
     assert attrs.number is None
-    assert attrs.contents == ["A ring is a set with two operations ..."]
+    assert attrs.contents == ['A ring is a set with two operations ...']

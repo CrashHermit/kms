@@ -45,10 +45,7 @@ is fine, since members are node-id pointers, not copies.
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import tracing
-from kms.core.llm import text_lm
-from kms.core.models import ASTNode, Entity, EntityType
-from kms.core.state import State
+from kms.core import llm, models, state
 
 # Soft look-ahead budget (~4 chars/token). A single node larger than the budget still
 # forms a window (at least one node). When the only problem in a window reaches its edge,
@@ -58,8 +55,8 @@ LOOKAHEAD_BUDGET = 2000
 MAX_LOOKAHEAD_BUDGET = 8000
 
 
-def _est_tokens(node: ASTNode) -> int:
-    return len(node.content or "") // 4 + 1
+def _estimate_tokens(node: models.ASTNode) -> int:
+    return len(node.content or '') // 4 + 1
 
 
 class WindowNode(BaseModel):
@@ -69,14 +66,18 @@ class WindowNode(BaseModel):
     position: int
     type: str
     content: str | None = None
-    role: str = ""
+    role: str = ''
 
 
 class ProblemSpan(BaseModel):
     """A Problem the LLM found, as an inclusive span of local positions in the window."""
 
-    start: int = Field(description="First local position of the problem (inclusive).")
-    end: int = Field(description="Last local position of the problem (inclusive).")
+    start: int = Field(
+        description='First local position of the problem (inclusive).'
+    )
+    end: int = Field(
+        description='Last local position of the problem (inclusive).'
+    )
 
 
 class Signature(dspy.Signature):
@@ -141,50 +142,49 @@ class Signature(dspy.Signature):
     current_nodes: list[WindowNode] = dspy.InputField(
         description="The look-ahead window's nodes, in order, each with a local position and a role "
         '(role "instruction" marks an exercise lead-in — a boundary, never part of a span). '
-        "Emit spans over these only."
+        'Emit spans over these only.'
     )
     problems: list[ProblemSpan] = dspy.OutputField(
-        description="The problems found in current_nodes, as position spans, in document order. Empty list if none."
+        description='The problems found in current_nodes, as position spans, in document order. Empty list if none.'
     )
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None) -> None:
+    """Finds problem (exercise/worked example) spans in the node stream."""
+
+    def __init__(self, language_model: dspy.LM | None = None) -> None:
         super().__init__()
         self.finder = dspy.ChainOfThought(Signature)
-        self.set_lm(lm or text_lm())
+        self.set_lm(language_model or llm.text_lm())
 
-    async def aforward(self, current_nodes: list[WindowNode]) -> list[ProblemSpan]:
+    async def aforward(
+        self, current_nodes: list[WindowNode]
+    ) -> list[ProblemSpan]:
+        """Returns the problem spans found in the given window of nodes."""
         result = await self.finder.acall(current_nodes=current_nodes)
-        problems = list(result.problems or [])
-        tracing.record(
-            "problem_finder",
-            inputs={"current_nodes": [n.model_dump() for n in current_nodes]},
-            outputs={"problems": [p.model_dump() for p in problems]},
-        )
-        return problems
+        return list(result.problems or [])
 
 
-def _window_from(nodes: list[ASTNode], cursor: int, budget: int) -> int:
+def _window_from(nodes: list[models.ASTNode], cursor: int, budget: int) -> int:
     """Return the exclusive end index of a look-ahead window starting at `cursor`:
     whole nodes up to the soft token budget, always at least one node."""
-    i, tokens = cursor, 0
-    n = len(nodes)
-    while i < n:
-        t = _est_tokens(nodes[i])
-        if i > cursor and tokens + t > budget:
+    i, accumulated = cursor, 0
+    node_count = len(nodes)
+    while i < node_count:
+        token_count = _estimate_tokens(nodes[i])
+        if i > cursor and accumulated + token_count > budget:
             break
-        tokens += t
+        accumulated += token_count
         i += 1
     return i
 
 
 async def find_problems(
-    nodes: list[ASTNode],
+    nodes: list[models.ASTNode],
     module: Module | None = None,
     budget: int = LOOKAHEAD_BUDGET,
     max_budget: int = MAX_LOOKAHEAD_BUDGET,
-) -> list[Entity]:
+) -> list[models.Entity]:
     """Cursor-walk the node stream and return Problem entities (sparse overlay).
 
     From the cursor, read a look-ahead window and ask the LLM for the problems in it.
@@ -196,42 +196,42 @@ async def find_problems(
     (or the ``max_budget`` context cap, the one place a rare truncation can remain).
     """
     module = module or Module()
-    problems: list[Entity] = []
-    cursor, n = 0, len(nodes)
+    problems: list[models.Entity] = []
+    cursor, node_count = 0, len(nodes)
 
-    while cursor < n:
+    while cursor < node_count:
         size = budget
         while True:
             end = _window_from(nodes, cursor, size)
             window = nodes[cursor:end]
             last_local = len(window) - 1
-            reached_doc_end = end == n
+            reached_doc_end = end == node_count
 
             spans = await module.aforward(
                 [
                     WindowNode(
                         position=k,
-                        type=(node.type.value if node.type else ""),
+                        type=(node.type.value if node.type else ''),
                         content=node.content,
-                        role=(node.role or ""),
+                        role=(node.role or ''),
                     )
                     for k, node in enumerate(window)
                 ]
             )
             # Clamp to range, drop empties, keep document order.
             clean: list[ProblemSpan] = []
-            for s in spans:
-                start = min(max(s.start, 0), last_local)
-                stop = min(max(s.end, start), last_local)
+            for span in spans:
+                start = min(max(span.start, 0), last_local)
+                stop = min(max(span.end, start), last_local)
                 clean.append(ProblemSpan(start=start, end=stop))
-            clean.sort(key=lambda s: s.start)
+            clean.sort(key=lambda span: span.start)
 
             if not clean:
                 cursor = end  # only prose in this window — skip it
                 break
 
             # A problem is bounded when a node is seen to follow it inside the window.
-            bounded = [s for s in clean if s.end < last_local]
+            bounded = [span for span in clean if span.end < last_local]
 
             if reached_doc_end or size >= max_budget:
                 # Nothing left to gather (document end), or the window hit the context
@@ -246,10 +246,18 @@ async def find_problems(
                 size *= 2
                 continue
 
-            for s in to_bank:
-                ids = [window[k].id for k in range(s.start, s.end + 1) if window[k].id is not None]
+            for span in to_bank:
+                ids = [
+                    window[k].id
+                    for k in range(span.start, span.end + 1)
+                    if window[k].id is not None
+                ]
                 if ids:
-                    problems.append(Entity(type=EntityType.PROBLEM, members=ids))
+                    problems.append(
+                        models.Entity(
+                            type=models.EntityType.PROBLEM, members=ids
+                        )
+                    )
             cursor = advance
             break
 
@@ -270,6 +278,9 @@ class ProblemFinderNode:
     def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
-    async def run(self, state: State) -> dict:
-        problems = await find_problems(state.get("nodes", []), module=self.module)
-        return {"problem_entities": problems}
+    async def run(self, state: state.State) -> dict:
+        """Walks the node stream and writes Problem entities to the channel."""
+        problems = await find_problems(
+            state.get('nodes', []), module=self.module
+        )
+        return {'problem_entities': problems}

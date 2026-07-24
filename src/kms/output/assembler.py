@@ -21,7 +21,7 @@ import re
 import shutil
 from pathlib import Path
 
-from kms.core.models import ASTNode, Picture, Segment
+from kms.core import models
 
 # Tolerant match for an image placeholder: ![N]() with optional surrounding
 # whitespace and an empty link target.
@@ -30,7 +30,7 @@ _PLACEHOLDER = re.compile(r"!\[\s*(\d+)\s*\]\(\s*\)")
 IMAGES_DIRNAME = "images"
 
 
-def _consolidate_picture(picture: Picture, segment_index: int, images_dir: Path) -> str:
+def _consolidate_picture(picture: models.Picture, segment_index: int, images_dir: Path) -> str:
     """Copy one surviving picture into the consolidated images dir and return its
     markdown-relative link (`images/segNNNN_imgYYY.png`)."""
     suffix = Path(picture.image_path).suffix or ".png"
@@ -43,7 +43,7 @@ def _consolidate_picture(picture: Picture, segment_index: int, images_dir: Path)
 def _resolve_content(
     content: str,
     segment_index: int,
-    pictures_by_index: dict[int, Picture],
+    pictures_by_index: dict[int, models.Picture],
     images_dir: Path,
 ) -> str:
     """Rewrite every `![N]()` placeholder in one IMAGE node's content into a
@@ -60,15 +60,15 @@ def _resolve_content(
 
 
 def assemble(
-    nodes: list[ASTNode],
-    segments: list[Segment],
+    nodes: list[models.ASTNode],
+    segments: list[models.Segment],
     output_dir: str | Path = "output",
     filename: str = "document.md",
 ) -> Path:
     """Resolve image links and write the ordered flat node list to a single markdown file.
 
     Walks the global node stream in document order. Each node carries its originating
-    `seg_index`, so an `![N]()` placeholder resolves against that page's pictures — the
+    `segment_index`, so an `![N]()` placeholder resolves against that page's pictures — the
     segments are consulted only for their picture inventories now that the nodes are flat.
     Only pictures actually referenced by a surviving placeholder are copied into
     `<output_dir>/images/`; anything filtered out upstream simply never gets linked.
@@ -78,7 +78,10 @@ def assemble(
     images_dir = output_dir / IMAGES_DIRNAME
     images_dir.mkdir(parents=True, exist_ok=True)
 
-    pictures_by_seg = {seg.index: {p.index: p for p in seg.pictures} for seg in segments}
+    pictures_by_seg = {
+        segment.index: {p.index: p for p in segment.pictures}
+        for segment in segments
+    }
 
     parts: list[str] = []
     for node in nodes:
@@ -87,8 +90,8 @@ def assemble(
         # Resolve image placeholders wherever they appear — not only in image nodes
         # (e.g. a checkpoint problem can embed a ![N]() figure). Nodes with no
         # placeholder pass through unchanged.
-        pictures_by_index = pictures_by_seg.get(node.seg_index, {})
-        parts.append(_resolve_content(node.content, node.seg_index, pictures_by_index, images_dir))
+        pictures_by_index = pictures_by_seg.get(node.segment_index, {})
+        parts.append(_resolve_content(node.content, node.segment_index, pictures_by_index, images_dir))
 
     document = "\n\n".join(parts) + "\n"
     output_path = output_dir / filename

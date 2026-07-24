@@ -3,7 +3,7 @@
 So far — the structural provenance layer, end to end: a ``:Source`` root per book with its
 ``:Node`` stream hanging off it.
 - ``db`` — the quarantined async Neo4j driver (connection, config, lifecycle).
-- ``nodes`` — pure ASTNode→Neo4j mapping (reusing ``core.NodeType``): deterministic uuid identity
+- ``nodes`` — pure models.ASTNode→Neo4j mapping (reusing ``core.models.NodeType``): deterministic uuid identity
   for nodes and sources, property maps, and the per-type label (nodes carry ``:Node`` +
   ``:Math``/``:Paragraph``/…). Each node links back to its ``:Source`` via a ``source`` property.
 - ``schema`` — idempotent bootstrap (uuid constraints on ``:Node``/``:Source`` + a ``source`` index).

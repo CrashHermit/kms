@@ -1,11 +1,17 @@
+"""Seam merger — heals structural nodes split across adjacent page boundaries.
+
+When a single block (paragraph, equation, list item) spans two OCR pages, the
+extractor produces an incomplete tail on the top page and an incomplete head on
+the bottom page. This stage uses a DSPy ChainOfThought module to decide whether
+each cross-page pair is a split block and merges the halves. Workers run in two
+passes (even/odd) to avoid races on shared segments.
+"""
+
 import dspy
 from langgraph.types import Send
 from pydantic import BaseModel
 
-from kms.core import tracing
-from kms.core.llm import text_lm
-from kms.core.models import ASTNode, Segment, flatten_segments, merge_results_into_segments
-from kms.core.state import State
+from kms.core import llm, models, state
 
 
 class SeamNodeDTO(BaseModel):
@@ -42,28 +48,30 @@ class Signature(dspy.Signature):
     """
 
     top_node_context: SeamNodeDTO | None = dspy.InputField(
-        description="The node immediately before the tail of the top element run. Read-only context — do not include its content in the output."
+        description='The node immediately before the tail of the top element run. Read-only context — do not include its content in the output.'
     )
     top_bottom_edge_node: SeamNodeDTO = dspy.InputField(
-        description="The tail node of the top element run — the candidate for merging."
+        description='The tail node of the top element run — the candidate for merging.'
     )
     bottom_top_edge_node: SeamNodeDTO = dspy.InputField(
-        description="The head node of the bottom element run — the other candidate for merging."
+        description='The head node of the bottom element run — the other candidate for merging.'
     )
     bottom_node_context: SeamNodeDTO | None = dspy.InputField(
-        description="The node immediately after the head of the bottom element run. Read-only context — do not include its content in the output."
+        description='The node immediately after the head of the bottom element run. Read-only context — do not include its content in the output.'
     )
 
     node: SeamNodeDTO | None = dspy.OutputField(
-        description="The merged result. If the two edge nodes are split halves of the same node, return a single merged node combining their content. If they are already complete independent nodes, return None."
+        description='The merged result. If the two edge nodes are split halves of the same node, return a single merged node combining their content. If they are already complete independent nodes, return None.'
     )
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None) -> None:
+    """Decides whether two adjacent segments' edge nodes are halves of one split block."""
+
+    def __init__(self, language_model: dspy.LM | None = None) -> None:
         super().__init__()
         self.merger = dspy.ChainOfThought(Signature)
-        self.set_lm(lm or text_lm())
+        self.set_lm(language_model or llm.text_lm())
 
     async def aforward(
         self,
@@ -72,23 +80,12 @@ class Module(dspy.Module):
         top_node_context: SeamNodeDTO | None = None,
         bottom_node_context: SeamNodeDTO | None = None,
     ) -> SeamNodeDTO | None:
+        """Returns the merged node if the pair is a split block, or None."""
         result = await self.merger.acall(
             top_node_context=top_node_context,
             top_bottom_edge_node=top_bottom_edge_node,
             bottom_top_edge_node=bottom_top_edge_node,
             bottom_node_context=bottom_node_context,
-        )
-        tracing.record(
-            "seam_merger",
-            inputs={
-                "top_node_context": top_node_context.model_dump() if top_node_context else None,
-                "top_bottom_edge_node": top_bottom_edge_node.model_dump(),
-                "bottom_top_edge_node": bottom_top_edge_node.model_dump(),
-                "bottom_node_context": bottom_node_context.model_dump()
-                if bottom_node_context
-                else None,
-            },
-            outputs={"node": result.node.model_dump() if result.node else None},
         )
         return result.node
 
@@ -103,23 +100,29 @@ class Module(dspy.Module):
 # and each pass writes its own reducer channel to avoid cross-pass contamination.
 
 
-def _to_dto(node: ASTNode | None) -> SeamNodeDTO:
+def _to_seam_node_dto(node: models.ASTNode | None) -> SeamNodeDTO:
     if node is None:
         return SeamNodeDTO(content=None, types=[])
-    return SeamNodeDTO(content=node.content, types=[node.type] if node.type else [])
+    return SeamNodeDTO(
+        content=node.content, types=[node.type] if node.type else []
+    )
 
 
-def _pairs(segments: list[Segment], parity: int) -> list[tuple[Segment, Segment]]:
+def _pairs(
+    segments: list[models.Segment], parity: int
+) -> list[tuple[models.Segment, models.Segment]]:
     return [
         (segments[i], segments[i + 1])
         for i in range(len(segments) - 1)
-        if segments[i].index % 2 == parity and segments[i].nodes and segments[i + 1].nodes
+        if segments[i].index % 2 == parity
+        and segments[i].nodes
+        and segments[i + 1].nodes
     ]
 
 
 async def _merge_pair(
-    module: Module, top: Segment, bottom: Segment
-) -> list[tuple[int, list[ASTNode]]]:
+    module: Module, top: models.Segment, bottom: models.Segment
+) -> list[tuple[int, list[models.ASTNode]]]:
     """Decide whether the top's tail and the bottom's head are one split node; if so,
     fold the merged content into the tail and drop the head."""
     top_nodes = list(top.nodes)
@@ -131,10 +134,10 @@ async def _merge_pair(
     bottom_context = bottom_nodes[1] if len(bottom_nodes) > 1 else None
 
     merged = await module.aforward(
-        top_bottom_edge_node=_to_dto(tail),
-        bottom_top_edge_node=_to_dto(head),
-        top_node_context=_to_dto(top_context),
-        bottom_node_context=_to_dto(bottom_context),
+        top_bottom_edge_node=_to_seam_node_dto(tail),
+        bottom_top_edge_node=_to_seam_node_dto(head),
+        top_node_context=_to_seam_node_dto(top_context),
+        bottom_node_context=_to_seam_node_dto(bottom_context),
     )
     if merged is not None and merged.content:
         tail.content = merged.content
@@ -144,38 +147,62 @@ async def _merge_pair(
 
 
 class SeamMergerNode:
+    """Heals cross-page structural splits using two parity passes to avoid races."""
+
     def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
-    def dispatch_even(self, state: State) -> list[Send] | str:
-        pairs = _pairs(state.get("segments", []), parity=0)
-        sends = [Send("seam_even_worker", {"top": t, "bottom": b}) for t, b in pairs]
-        return sends or "seam_even_collect"
+    def dispatch_even(self, state: state.State) -> list[Send] | str:
+        """Fans out workers for even-indexed segment pairs (0-1, 2-3, …)."""
+        pairs = _pairs(state.get('segments', []), parity=0)
+        sends = [
+            Send('seam_even_worker', {'top': t, 'bottom': b}) for t, b in pairs
+        ]
+        return sends or 'seam_even_collect'
 
-    def dispatch_odd(self, state: State) -> list[Send] | str:
-        pairs = _pairs(state.get("segments", []), parity=1)
-        sends = [Send("seam_odd_worker", {"top": t, "bottom": b}) for t, b in pairs]
-        return sends or "seam_odd_collect"
+    def dispatch_odd(self, state: state.State) -> list[Send] | str:
+        """Fans out workers for odd-indexed segment pairs (1-2, 3-4, …)."""
+        pairs = _pairs(state.get('segments', []), parity=1)
+        sends = [
+            Send('seam_odd_worker', {'top': t, 'bottom': b}) for t, b in pairs
+        ]
+        return sends or 'seam_odd_collect'
 
     async def even_worker(self, state: dict) -> dict:
-        return {"seam_even_results": await _merge_pair(self.module, state["top"], state["bottom"])}
+        """Merges one even pair and returns the healed segment nodes."""
+        return {
+            'seam_even_results': await _merge_pair(
+                self.module, state['top'], state['bottom']
+            )
+        }
 
     async def odd_worker(self, state: dict) -> dict:
-        return {"seam_odd_results": await _merge_pair(self.module, state["top"], state["bottom"])}
+        """Merges one odd pair and returns the healed segment nodes."""
+        return {
+            'seam_odd_results': await _merge_pair(
+                self.module, state['top'], state['bottom']
+            )
+        }
 
-    def _collect(self, state: State, channel: str) -> dict:
-        segments = merge_results_into_segments(state["segments"], state.get(channel, []), "nodes")
-        return {"segments": segments}
+    def _collect(self, state: state.State, channel: str) -> dict:
+        segments = models.merge_results_into_segments(
+            state['segments'], state.get(channel, []), 'nodes'
+        )
+        return {'segments': segments}
 
-    def even_collect(self, state: State) -> dict:
-        return self._collect(state, "seam_even_results")
+    def even_collect(self, state: state.State) -> dict:
+        """Drains the even-pass results back into the segment backbone."""
+        return self._collect(state, 'seam_even_results')
 
-    def odd_collect(self, state: State) -> dict:
+    def odd_collect(self, state: state.State) -> dict:
         """Drain the odd pass, then birth the flat global node list. The seam merger is
         the last stage that splits/merges nodes structurally, so page-splits are now
         healed and node identity is stable — flatten the per-page backbone into `nodes`,
-        stamping each with its global id and originating seg_index. Every stage after
+        stamping each with its global id and originating segment_index. Every stage after
         this works on `nodes`, not on the per-segment nesting."""
-        result = self._collect(state, "seam_odd_results")
-        segments = result["segments"]
-        return {"segments": segments, "nodes": flatten_segments(segments)}
+        result = self._collect(state, 'seam_odd_results')
+        segments = result['segments']
+        return {
+            'segments': segments,
+            'nodes': models.flatten_segments(segments),
+        }

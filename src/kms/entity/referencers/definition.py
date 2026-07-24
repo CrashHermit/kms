@@ -4,14 +4,14 @@ Definition referencer — the cross-entity pass over an *attributed* Definition 
 The finders and attributors build a self-contained Definition (`contents`, `bodylist`, …). This
 stage adds the one cross-entity attribute AutoMathKG defines: `refs` — the other definitions and
 theorems this definition invokes, each tagged with the tactic role it plays (Table C4's `Refs` +
-`References_tactics` templates, fused into one `Reference` record). A definition referencing a more
+`References_tactics` templates, fused into one `models.Reference` record). A definition referencing a more
 fundamental definition ("a right triangle references the definition of a triangle") is the canonical
 case.
 
-ONE LLM CALL over the definition's own content. The output is a list of `Reference(target, kind,
+ONE LLM CALL over the definition's own content. The output is a list of `models.Reference(target, kind,
 tactic)`; the graph tier resolves each `target` to a general-entity hub keyed by (kind, normalized
 name), so references from any book/entity converge on one target. The tactic set is the full
-`ACTIONS_ALL` — a reference can play any role — with invalid `kind`/`tactic` values dropped, mirroring
+`models.ACTIONS_ALL` — a reference can play any role — with invalid `kind`/`tactic` values dropped, mirroring
 how the attributor filters its bodylist actions.
 
 The entry point is `reference_definition(entity, module)` (async): it writes `entity.refs` in place
@@ -22,10 +22,7 @@ import asyncio
 
 import dspy
 
-from kms.core import tracing
-from kms.core.llm import text_lm
-from kms.core.models import ACTIONS_ALL, REFERENCE_KINDS, Entity, Reference
-from kms.core.state import State
+from kms.core import llm, models, state
 
 
 class ExtractReferences(dspy.Signature):
@@ -44,50 +41,53 @@ class ExtractReferences(dspy.Signature):
     return an empty list. Do NOT invent references, and do NOT list the concept being defined itself.
     """
 
-    content: str = dspy.InputField(description="The definition's full content (text + LaTeX).")
+    content: str = dspy.InputField(
+        description="The definition's full content (text + LaTeX)."
+    )
     kinds: list[str] = dspy.InputField(
-        description="The allowed target kinds; choose one per reference."
+        description='The allowed target kinds; choose one per reference.'
     )
     tactics: list[str] = dspy.InputField(
-        description="The allowed tactic labels; choose one per reference."
+        description='The allowed tactic labels; choose one per reference.'
     )
-    references: list[Reference] = dspy.OutputField(
-        description="The referenced definitions/theorems, each with its kind and tactic."
+    references: list[models.Reference] = dspy.OutputField(
+        description='The referenced definitions/theorems, each with its kind and tactic.'
     )
 
 
 class Module(dspy.Module):
     """Runs the single reference-extraction pass for one definition."""
 
-    def __init__(self, lm: dspy.LM | None = None) -> None:
+    def __init__(self, language_model: dspy.LM | None = None) -> None:
         super().__init__()
         self.extract = dspy.ChainOfThought(ExtractReferences)
-        self.set_lm(lm or text_lm())
+        self.set_lm(language_model or llm.text_lm())
 
-    async def references(self, content: str) -> list[Reference]:
+    async def references(self, content: str) -> list[models.Reference]:
+        """Extracts the definitions and theorems this entity's content cites."""
         result = await self.extract.acall(
-            content=content, kinds=REFERENCE_KINDS, tactics=ACTIONS_ALL
+            content=content,
+            kinds=models.REFERENCE_KINDS,
+            tactics=models.ACTIONS_ALL,
         )
-        refs = [
+        return [
             r
             for r in (result.references or [])
-            if r.kind in REFERENCE_KINDS and r.tactic in ACTIONS_ALL and r.target.strip()
+            if r.kind in models.REFERENCE_KINDS
+            and r.tactic in models.ACTIONS_ALL
+            and r.target.strip()
         ]
-        tracing.record(
-            "definition_references",
-            inputs={"content": content, "kinds": REFERENCE_KINDS, "tactics": ACTIONS_ALL},
-            outputs={"references": [r.model_dump() for r in refs]},
-        )
-        return refs
 
 
-def reference_text(entity: Entity) -> str:
+def reference_text(entity: models.Entity) -> str:
     """The text a definition's references are drawn from: its own content (a definition has no
     proof/solution). Empty when the definition has no content yet."""
-    return "\n\n".join(c for c in entity.contents if c and c.strip())
+    return '\n\n'.join(c for c in entity.contents if c and c.strip())
 
 
-async def reference_definition(entity: Entity, module: Module | None = None) -> Entity:
+async def reference_definition(
+    entity: models.Entity, module: Module | None = None
+) -> models.Entity:
     """Fill `entity.refs` on one Definition, in place, from its content. A no-op (empty refs) when
     the definition has no content. Returns the same entity."""
     module = module or Module()
@@ -106,8 +106,14 @@ class DefinitionReferencerNode:
     def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
-    async def run(self, state: State) -> dict:
-        entities = state.get("definition_entities", [])
+    async def run(self, state: state.State) -> dict:
+        """Extracts each Definition's cross-entity references, in place."""
+        entities = state.get('definition_entities', [])
         if entities:
-            await asyncio.gather(*(reference_definition(e, self.module) for e in entities))
-        return {"definition_entities": entities}
+            await asyncio.gather(
+                *(
+                    reference_definition(entity, self.module)
+                    for entity in entities
+                )
+            )
+        return {'definition_entities': entities}

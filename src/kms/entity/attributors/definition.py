@@ -1,7 +1,7 @@
 r"""
 Definition attributor — the first per-attribute pass over a *found* Definition entity.
 
-The finders produce sparse entities: ``Entity(type=DEFINITION, members=[node ids])`` —
+The finders produce sparse entities: ``models.Entity(type=DEFINITION, members=[node ids])`` —
 just pointers into the flat node stream. This stage takes one such Definition plus its
 member nodes and fills in AutoMathKG's self-contained Definition attributes (Table B3 /
 Appendix C), the ones derivable from the definition's own content with no reference to
@@ -42,17 +42,14 @@ import asyncio
 import dspy
 from pydantic import BaseModel
 
-from kms.core import tracing
-from kms.core.llm import text_lm
-from kms.core.models import FIELDS, ASTNode, BodySegment, Entity
-from kms.core.state import State
+from kms.core import llm, models, state
 
-# The subset of ACTIONS_ALL a DEFINITION actually exercises. The proof-oriented roles
+# The subset of models.ACTIONS_ALL a DEFINITION actually exercises. The proof-oriented roles
 # (lemma, corollary, deduction, calculation, conclusion) never legitimately apply to a
 # definition, so we offer the model only these four. Fewer choices, fewer misfires: with
 # the full nine an early run mislabelled a notation remark `assumption` and inverted
 # premise/definition.
-DEFINITION_ACTIONS = ["premise", "definition", "assumption", "enumeration"]
+DEFINITION_ACTIONS = ['premise', 'definition', 'assumption', 'enumeration']
 
 
 class MemberNode(BaseModel):
@@ -84,14 +81,20 @@ class Identify(dspy.Signature):
         description="The definition's member nodes, in order."
     )
     field_choices: list[str] = dspy.InputField(
-        description="The allowed fields; choose exactly one."
+        description='The allowed fields; choose exactly one.'
     )
-    label: str = dspy.OutputField(description="The definition's label as written, or empty string.")
+    label: str = dspy.OutputField(
+        description="The definition's label as written, or empty string."
+    )
     number: str = dspy.OutputField(
-        description="The reference number in the label, or empty string."
+        description='The reference number in the label, or empty string.'
     )
-    title: str = dspy.OutputField(description="Short noun phrase naming the defined concept.")
-    field: str = dspy.OutputField(description="Exactly one field from the given list.")
+    title: str = dspy.OutputField(
+        description='Short noun phrase naming the defined concept.'
+    )
+    field: str = dspy.OutputField(
+        description='Exactly one field from the given list.'
+    )
 
 
 class Bodylist(dspy.Signature):
@@ -140,12 +143,14 @@ class Bodylist(dspy.Signature):
     exactly as given, changing nothing.
     """
 
-    contents: str = dspy.InputField(description="The definition's full content (text + LaTeX).")
-    actions: list[str] = dspy.InputField(
-        description="The allowed action labels for a definition; choose one per piece."
+    contents: str = dspy.InputField(
+        description="The definition's full content (text + LaTeX)."
     )
-    bodylist: list[BodySegment] = dspy.OutputField(
-        description="Ordered {description, action} pieces; descriptions concatenate back to the content."
+    actions: list[str] = dspy.InputField(
+        description='The allowed action labels for a definition; choose one per piece.'
+    )
+    bodylist: list[models.BodySegment] = dspy.OutputField(
+        description='Ordered {description, action} pieces; descriptions concatenate back to the content.'
     )
 
 
@@ -161,52 +166,50 @@ class Identity(BaseModel):
 class Module(dspy.Module):
     """Runs the two LLM passes (identity, then bodylist) for one definition."""
 
-    def __init__(self, lm: dspy.LM | None = None) -> None:
+    def __init__(self, language_model: dspy.LM | None = None) -> None:
         super().__init__()
         self.identify = dspy.Predict(Identify)
         self.bodylist = dspy.ChainOfThought(Bodylist)
-        self.set_lm(lm or text_lm())
+        self.set_lm(language_model or llm.text_lm())
 
-    async def identity(self, members: list[ASTNode]) -> Identity:
+    async def identity(self, members: list[models.ASTNode]) -> Identity:
+        """Returns the label, number, title, and field for one definition."""
         nodes = [
-            MemberNode(position=k, type=(m.type.value if m.type else ""), content=m.content)
+            MemberNode(
+                position=k,
+                type=(m.type.value if m.type else ''),
+                content=m.content,
+            )
             for k, m in enumerate(members)
         ]
-        r = await self.identify.acall(nodes=nodes, field_choices=FIELDS)
-        tracing.record(
-            "definition_identify",
-            inputs={"nodes": [n.model_dump() for n in nodes], "field_choices": FIELDS},
-            outputs={
-                "label": r.label,
-                "number": r.number,
-                "title": r.title,
-                "field": r.field,
-            },
+        result = await self.identify.acall(
+            nodes=nodes, field_choices=models.FIELDS
         )
         return Identity(
-            label=(r.label or None),
-            number=(r.number or None),
-            title=(r.title or None),
-            field=(r.field if r.field in FIELDS else None),
+            label=(result.label or None),
+            number=(result.number or None),
+            title=(result.title or None),
+            field=(result.field if result.field in models.FIELDS else None),
         )
 
-    async def body(self, contents: str) -> list[BodySegment]:
-        result = await self.bodylist.acall(contents=contents, actions=DEFINITION_ACTIONS)
-        bodylist = [s for s in (result.bodylist or []) if s.action in DEFINITION_ACTIONS]
-        tracing.record(
-            "definition_bodylist",
-            inputs={"contents": contents, "actions": DEFINITION_ACTIONS},
-            outputs={"bodylist": [s.model_dump() for s in bodylist]},
+    async def body(self, contents: str) -> list[models.BodySegment]:
+        """Segments the definition's content into role-labelled logical pieces."""
+        result = await self.bodylist.acall(
+            contents=contents, actions=DEFINITION_ACTIONS
         )
-        return bodylist
+        return [
+            s for s in (result.bodylist or []) if s.action in DEFINITION_ACTIONS
+        ]
 
 
-def _members(entity: Entity, nodes_by_id: dict[int, ASTNode]) -> list[ASTNode]:
+def _members(
+    entity: models.Entity, nodes_by_id: dict[int, models.ASTNode]
+) -> list[models.ASTNode]:
     """The entity's member nodes, in member order, skipping any id not in the stream."""
     return [nodes_by_id[i] for i in entity.members if i in nodes_by_id]
 
 
-def _contents(members: list[ASTNode], label: str | None) -> list[str]:
+def _contents(members: list[models.ASTNode], label: str | None) -> list[str]:
     """The content members as a list of sequence strings (AutoMathKG's `contents`), with the
     label peeled off the front.
 
@@ -216,7 +219,9 @@ def _contents(members: list[ASTNode], label: str | None) -> list[str]:
     kept. Crucially a content-bearing node is never dropped wholesale — that once silently
     lost a defining sentence the identity pass mis-flagged as a label."""
     texts = [m.content for m in members if m.content and m.content.strip()]
-    if texts and label:  # peel the label off the first content piece; drop it if that empties it
+    if (
+        texts and label
+    ):  # peel the label off the first content piece; drop it if that empties it
         head = _strip_label_prefix(texts[0], label)
         texts = ([head] if head.strip() else []) + texts[1:]
     return texts
@@ -232,17 +237,17 @@ def _strip_label_prefix(text: str, label: str | None) -> str:
     if not label or not text:
         return text
     body = text.lstrip()
-    lab = label.strip().rstrip(".")
+    lab = label.strip().rstrip('.')
     if lab and body[: len(lab)].lower() == lab.lower():
-        return body[len(lab) :].lstrip(" .:\t\n")
+        return body[len(lab) :].lstrip(' .:\t\n')
     return text
 
 
 async def attribute_definition(
-    entity: Entity,
-    nodes_by_id: dict[int, ASTNode],
+    entity: models.Entity,
+    nodes_by_id: dict[int, models.ASTNode],
     module: Module | None = None,
-) -> Entity:
+) -> models.Entity:
     """Fill in the self-contained attributes on one Definition entity, in place.
 
     One LLM call identifies label/number/title/field; the content members are assembled
@@ -255,7 +260,7 @@ async def attribute_definition(
     members = _members(entity, nodes_by_id)
     ident = await module.identity(members)
     contents = _contents(members, ident.label)
-    blob = "\n\n".join(contents)
+    blob = '\n\n'.join(contents)
     bodylist = await module.body(blob) if blob else []
 
     entity.label = ident.label
@@ -280,11 +285,17 @@ class DefinitionAttributorNode:
     def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
-    async def run(self, state: State) -> dict:
-        nodes_by_id = {n.id: n for n in state.get("nodes", []) if n.id is not None}
-        entities = state.get("definition_entities", [])
+    async def run(self, state: state.State) -> dict:
+        """Fills in each found Definition's self-contained attributes, in place."""
+        nodes_by_id = {
+            n.id: n for n in state.get('nodes', []) if n.id is not None
+        }
+        entities = state.get('definition_entities', [])
         if entities:
             await asyncio.gather(
-                *(attribute_definition(e, nodes_by_id, self.module) for e in entities)
+                *(
+                    attribute_definition(entity, nodes_by_id, self.module)
+                    for entity in entities
+                )
             )
-        return {"definition_entities": entities}
+        return {'definition_entities': entities}

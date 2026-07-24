@@ -5,15 +5,15 @@ This is the orchestration layer's channel schema — distinct from the domain mo
 carries, which live in ``kms.core.models``. Parallel Send workers never mutate the
 backbone directly: each worker returns a ``(segment_index, result)`` entry into a
 per-stage reducer channel (operator.add, so concurrent writes merge instead of clashing),
-and the stage's ``collect`` step drains that channel back into the matching Segment keyed
-by its index (see ``merge_results_into_segments``). Because the merge keys into the
+and the stage's ``collect`` step drains that channel back into the matching models.Segment keyed
+by its index (see ``models.merge_results_into_segments``). Because the merge keys into the
 already-ordered backbone, document order is preserved without a separate sort.
 """
 
 import operator
 from typing import Annotated, TypedDict
 
-from kms.core.models import ASTNode, Entity, Segment
+from kms.core import models
 
 
 class State(TypedDict, total=False):
@@ -39,16 +39,24 @@ class State(TypedDict, total=False):
     carry an operator.add reducer so concurrent worker writes merge rather than clash.
     """
 
-    segments: list[Segment]
-    nodes: list[ASTNode]
+    segments: list[models.Segment]
+    nodes: list[models.ASTNode]
     source: str  # book identity (the graph persister's Neo4j key); set by run()
-    source_metadata: dict[str, str]  # book attributes (title, author, …) for the :Source node
-    problem_entities: list[Entity]  # written by the problem finder
-    definition_entities: list[Entity]  # written by the definition finder
-    theorem_entities: list[Entity]  # written by the theorem finder
+    source_metadata: dict[
+        str, str
+    ]  # book attributes (title, author, …) for the :Source node
+    problem_entities: list[models.Entity]  # written by the problem finder
+    definition_entities: list[models.Entity]  # written by the definition finder
+    theorem_entities: list[models.Entity]  # written by the theorem finder
     correction_results: Annotated[
         list[tuple[int, str]], operator.add
     ]  # (segment index, corrected markdown)
-    extract_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
-    seam_even_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
-    seam_odd_results: Annotated[list[tuple[int, list[ASTNode]]], operator.add]
+    extract_results: Annotated[
+        list[tuple[int, list[models.ASTNode]]], operator.add
+    ]
+    seam_even_results: Annotated[
+        list[tuple[int, list[models.ASTNode]]], operator.add
+    ]
+    seam_odd_results: Annotated[
+        list[tuple[int, list[models.ASTNode]]], operator.add
+    ]

@@ -12,7 +12,7 @@ import types
 
 # `pyproject` sets package=false and the code imports itself as `kms.*`, so the
 # package root is `src/`. Put it on the path for the tests.
-SRC = pathlib.Path(__file__).resolve().parent.parent / "src"
+SRC = pathlib.Path(__file__).resolve().parent.parent / 'src'
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
@@ -26,7 +26,7 @@ def _install_if_missing(name: str, build) -> None:
 
 
 def _dspy():
-    m = types.ModuleType("dspy")
+    m = types.ModuleType('dspy')
 
     class Image:
         def __init__(self, *a, **k):
@@ -51,7 +51,7 @@ def _dspy():
             self.__dict__.update(k)
 
         def with_inputs(self, *keys):
-            self.__dict__["_input_keys"] = set(keys)
+            self.__dict__['_input_keys'] = set(keys)
             return self
 
     class LM:
@@ -68,11 +68,11 @@ def _dspy():
     m.OutputField = lambda *a, **k: None
     m.ChainOfThought = lambda *a, **k: None
     m.Predict = lambda *a, **k: None
-    return {"dspy": m}
+    return {'dspy': m}
 
 
 def _pydantic():
-    m = types.ModuleType("pydantic")
+    m = types.ModuleType('pydantic')
 
     class BaseModel:
         def __init__(self, **k):
@@ -80,13 +80,13 @@ def _pydantic():
 
     m.BaseModel = BaseModel
     m.Field = lambda default=None, **k: default
-    return {"pydantic": m}
+    return {'pydantic': m}
 
 
 def _langgraph_types():
-    pkg = types.ModuleType("langgraph")
+    pkg = types.ModuleType('langgraph')
     pkg.__path__ = []  # mark as a package so `langgraph.types` can attach
-    sub = types.ModuleType("langgraph.types")
+    sub = types.ModuleType('langgraph.types')
 
     class Send:
         def __init__(self, node, arg):
@@ -94,7 +94,7 @@ def _langgraph_types():
             self.arg = arg
 
     sub.Send = Send
-    return {"langgraph": pkg, "langgraph.types": sub}
+    return {'langgraph': pkg, 'langgraph.types': sub}
 
 
 def _neo4j():
@@ -102,7 +102,7 @@ def _neo4j():
     # helpers (schema_statements, vector_dim) to be unit-tested with no server. Anything
     # that actually talks to a database is exercised only by the opt-in integration test,
     # which skips unless NEO4J_URI is set.
-    m = types.ModuleType("neo4j")
+    m = types.ModuleType('neo4j')
 
     class AsyncDriver:
         async def close(self):
@@ -112,7 +112,7 @@ def _neo4j():
             pass
 
         def session(self, **k):
-            raise RuntimeError("stub neo4j driver has no live session")
+            raise RuntimeError('stub neo4j driver has no live session')
 
     class AsyncGraphDatabase:
         @staticmethod
@@ -121,10 +121,10 @@ def _neo4j():
 
     m.AsyncDriver = AsyncDriver
     m.AsyncGraphDatabase = AsyncGraphDatabase
-    return {"neo4j": m}
+    return {'neo4j': m}
 
 
-_install_if_missing("dspy", _dspy)
-_install_if_missing("pydantic", _pydantic)
-_install_if_missing("langgraph.types", _langgraph_types)
-_install_if_missing("neo4j", _neo4j)
+_install_if_missing('dspy', _dspy)
+_install_if_missing('pydantic', _pydantic)
+_install_if_missing('langgraph.types', _langgraph_types)
+_install_if_missing('neo4j', _neo4j)

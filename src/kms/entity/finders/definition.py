@@ -34,10 +34,7 @@ channel, in parallel with the Problem and Theorem finders.
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import tracing
-from kms.core.llm import text_lm
-from kms.core.models import ASTNode, Entity, EntityType
-from kms.core.state import State
+from kms.core import llm, models, state
 
 # Soft look-ahead budget (~4 chars/token). A single node larger than the budget still
 # forms a window (at least one node). When the only definition in a window reaches its
@@ -47,8 +44,8 @@ LOOKAHEAD_BUDGET = 2000
 MAX_LOOKAHEAD_BUDGET = 8000
 
 
-def _est_tokens(node: ASTNode) -> int:
-    return len(node.content or "") // 4 + 1
+def _estimate_tokens(node: models.ASTNode) -> int:
+    return len(node.content or '') // 4 + 1
 
 
 class WindowNode(BaseModel):
@@ -62,8 +59,12 @@ class WindowNode(BaseModel):
 class DefinitionSpan(BaseModel):
     """A Definition the LLM found, as an inclusive span of local positions in the window."""
 
-    start: int = Field(description="First local position of the definition (inclusive).")
-    end: int = Field(description="Last local position of the definition (inclusive).")
+    start: int = Field(
+        description='First local position of the definition (inclusive).'
+    )
+    end: int = Field(
+        description='Last local position of the definition (inclusive).'
+    )
 
 
 class Signature(dspy.Signature):
@@ -113,47 +114,46 @@ class Signature(dspy.Signature):
         description="The look-ahead window's nodes, in order, each with a local position. Emit spans over these only."
     )
     definitions: list[DefinitionSpan] = dspy.OutputField(
-        description="The definitions found in current_nodes, as position spans, in document order. Empty list if none."
+        description='The definitions found in current_nodes, as position spans, in document order. Empty list if none.'
     )
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None) -> None:
+    """Finds definition spans in the node stream."""
+
+    def __init__(self, language_model: dspy.LM | None = None) -> None:
         super().__init__()
         self.finder = dspy.ChainOfThought(Signature)
-        self.set_lm(lm or text_lm())
+        self.set_lm(language_model or llm.text_lm())
 
-    async def aforward(self, current_nodes: list[WindowNode]) -> list[DefinitionSpan]:
+    async def aforward(
+        self, current_nodes: list[WindowNode]
+    ) -> list[DefinitionSpan]:
+        """Returns the definition spans found in the given window of nodes."""
         result = await self.finder.acall(current_nodes=current_nodes)
-        definitions = list(result.definitions or [])
-        tracing.record(
-            "definition_finder",
-            inputs={"current_nodes": [n.model_dump() for n in current_nodes]},
-            outputs={"definitions": [d.model_dump() for d in definitions]},
-        )
-        return definitions
+        return list(result.definitions or [])
 
 
-def _window_from(nodes: list[ASTNode], cursor: int, budget: int) -> int:
+def _window_from(nodes: list[models.ASTNode], cursor: int, budget: int) -> int:
     """Return the exclusive end index of a look-ahead window starting at `cursor`:
     whole nodes up to the soft token budget, always at least one node."""
-    i, tokens = cursor, 0
-    n = len(nodes)
-    while i < n:
-        t = _est_tokens(nodes[i])
-        if i > cursor and tokens + t > budget:
+    i, accumulated = cursor, 0
+    node_count = len(nodes)
+    while i < node_count:
+        token_count = _estimate_tokens(nodes[i])
+        if i > cursor and accumulated + token_count > budget:
             break
-        tokens += t
+        accumulated += token_count
         i += 1
     return i
 
 
 async def find_definitions(
-    nodes: list[ASTNode],
+    nodes: list[models.ASTNode],
     module: Module | None = None,
     budget: int = LOOKAHEAD_BUDGET,
     max_budget: int = MAX_LOOKAHEAD_BUDGET,
-) -> list[Entity]:
+) -> list[models.Entity]:
     """Cursor-walk the node stream and return Definition entities (sparse overlay).
 
     From the cursor, read a look-ahead window and ask the LLM for the definitions in it.
@@ -162,22 +162,22 @@ async def find_definitions(
     re-read from the same cursor until a node follows it (bounded) or the document ends.
     """
     module = module or Module()
-    definitions: list[Entity] = []
-    cursor, n = 0, len(nodes)
+    definitions: list[models.Entity] = []
+    cursor, node_count = 0, len(nodes)
 
-    while cursor < n:
+    while cursor < node_count:
         size = budget
         while True:
             end = _window_from(nodes, cursor, size)
             window = nodes[cursor:end]
             last_local = len(window) - 1
-            reached_doc_end = end == n
+            reached_doc_end = end == node_count
 
             spans = await module.aforward(
                 [
                     WindowNode(
                         position=k,
-                        type=(node.type.value if node.type else ""),
+                        type=(node.type.value if node.type else ''),
                         content=node.content,
                     )
                     for k, node in enumerate(window)
@@ -185,18 +185,18 @@ async def find_definitions(
             )
             # Clamp to range, drop empties, keep document order.
             clean: list[DefinitionSpan] = []
-            for s in spans:
-                start = min(max(s.start, 0), last_local)
-                stop = min(max(s.end, start), last_local)
+            for span in spans:
+                start = min(max(span.start, 0), last_local)
+                stop = min(max(span.end, start), last_local)
                 clean.append(DefinitionSpan(start=start, end=stop))
-            clean.sort(key=lambda s: s.start)
+            clean.sort(key=lambda span: span.start)
 
             if not clean:
                 cursor = end  # only prose in this window — skip it
                 break
 
             # A definition is bounded when a node is seen to follow it inside the window.
-            bounded = [s for s in clean if s.end < last_local]
+            bounded = [span for span in clean if span.end < last_local]
 
             if reached_doc_end or size >= max_budget:
                 # Nothing left to gather (document end), or the window hit the context
@@ -211,10 +211,18 @@ async def find_definitions(
                 size *= 2
                 continue
 
-            for s in to_bank:
-                ids = [window[k].id for k in range(s.start, s.end + 1) if window[k].id is not None]
+            for span in to_bank:
+                ids = [
+                    window[k].id
+                    for k in range(span.start, span.end + 1)
+                    if window[k].id is not None
+                ]
                 if ids:
-                    definitions.append(Entity(type=EntityType.DEFINITION, members=ids))
+                    definitions.append(
+                        models.Entity(
+                            type=models.EntityType.DEFINITION, members=ids
+                        )
+                    )
             cursor = advance
             break
 
@@ -235,6 +243,9 @@ class DefinitionFinderNode:
     def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
-    async def run(self, state: State) -> dict:
-        definitions = await find_definitions(state.get("nodes", []), module=self.module)
-        return {"definition_entities": definitions}
+    async def run(self, state: state.State) -> dict:
+        """Walks the node stream and writes Definition entities to the channel."""
+        definitions = await find_definitions(
+            state.get('nodes', []), module=self.module
+        )
+        return {'definition_entities': definitions}

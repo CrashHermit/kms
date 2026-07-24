@@ -5,20 +5,30 @@ module, so these tests exercise the real split/assembly logic without dspy."""
 
 import asyncio
 
-from kms.core.models import ASTNode, Entity, EntityType, NodeType
+from kms.core import models
 from kms.entity.attributors.problem import Identity, attribute_problem
 
 
 def _nodes():
     return [
-        ASTNode(type=NodeType.HEADER, content="Example 4.1", id=0, seg_index=0),
-        ASTNode(
-            type=NodeType.PARAGRAPH,
-            content="Find the derivative of $f(x) = x^2$.",
-            id=1,
-            seg_index=0,
+        models.ASTNode(
+            type=models.NodeType.HEADER,
+            content='Example 4.1',
+            id=0,
+            segment_index=0,
         ),
-        ASTNode(type=NodeType.PARAGRAPH, content="Solution. $f'(x) = 2x$.", id=2, seg_index=0),
+        models.ASTNode(
+            type=models.NodeType.PARAGRAPH,
+            content='Find the derivative of $f(x) = x^2$.',
+            id=1,
+            segment_index=0,
+        ),
+        models.ASTNode(
+            type=models.NodeType.PARAGRAPH,
+            content="models.Solution. $f'(x) = 2x$.",
+            id=2,
+            segment_index=0,
+        ),
     ]
 
 
@@ -31,48 +41,58 @@ class _ScriptedModule:
 
 
 def _run(entity, nodes, module):
-    return asyncio.run(attribute_problem(entity, {n.id: n for n in nodes}, module=module))
+    return asyncio.run(
+        attribute_problem(entity, {n.id: n for n in nodes}, module=module)
+    )
 
 
 def test_split_holds_out_solution_and_peels_label():
     nodes = _nodes()
-    entity = Entity(type=EntityType.PROBLEM, members=[0, 1, 2])
+    entity = models.Entity(type=models.EntityType.PROBLEM, members=[0, 1, 2])
     ident = Identity(
-        label="Example 4.1",
-        number="4.1",
-        title="Derivative of a monomial",
-        field="analysis",
+        label='Example 4.1',
+        number='4.1',
+        title='Derivative of a monomial',
+        field='analysis',
         solution_start=2,
     )
     e = _run(entity, nodes, _ScriptedModule(ident))
 
-    assert e.label == "Example 4.1"
-    assert e.number == "4.1"
-    assert e.field == "analysis"
+    assert e.label == 'Example 4.1'
+    assert e.number == '4.1'
+    assert e.field == 'analysis'
     # Statement = members before solution_start, label node dropped; solution held out.
-    assert e.contents == ["Find the derivative of $f(x) = x^2$."]
+    assert e.contents == ['Find the derivative of $f(x) = x^2$.']
     assert e.bodylist == []  # a Problem never has a bodylist
     assert len(e.solutions) == 1
-    assert e.solutions[0].contents == ["Solution. $f'(x) = 2x$."]
+    assert e.solutions[0].contents == ["models.Solution. $f'(x) = 2x$."]
 
 
 def test_exercise_with_no_solution_leaves_solutions_empty():
     nodes = _nodes()[:2]  # label + statement, no solution
-    entity = Entity(type=EntityType.PROBLEM, members=[0, 1])
+    entity = models.Entity(type=models.EntityType.PROBLEM, members=[0, 1])
     ident = Identity(
-        label="Example 4.1", number="4.1", title="X", field="algebra", solution_start=-1
+        label='Example 4.1',
+        number='4.1',
+        title='X',
+        field='algebra',
+        solution_start=-1,
     )
     e = _run(entity, nodes, _ScriptedModule(ident))
 
     assert e.solutions == []
-    assert e.contents == ["Find the derivative of $f(x) = x^2$."]
+    assert e.contents == ['Find the derivative of $f(x) = x^2$.']
 
 
 def test_out_of_range_solution_start_is_treated_as_no_solution():
     nodes = _nodes()
-    entity = Entity(type=EntityType.PROBLEM, members=[0, 1, 2])
+    entity = models.Entity(type=models.EntityType.PROBLEM, members=[0, 1, 2])
     ident = Identity(
-        label="Example 4.1", number="4.1", title="X", field="analysis", solution_start=9
+        label='Example 4.1',
+        number='4.1',
+        title='X',
+        field='analysis',
+        solution_start=9,
     )
     e = _run(entity, nodes, _ScriptedModule(ident))
 

@@ -5,7 +5,7 @@ shared AutoMathKG vocabularies, and the pure helpers that operate on them.
 These are the vocabulary the whole system is *about*. They depend only on the standard
 library and pydantic — deliberately free of the orchestration framework (LangGraph) and
 the LLM stack (dspy), so a test, the graph tier, or a future non-LangGraph runner can use
-them in isolation. The LangGraph ``State`` that carries these through the graph lives in
+them in isolation. The LangGraph ``state.State`` that carries these through the graph lives in
 its sibling ``kms.core.state``.
 
 The pipeline assembles an ordered AST in memory: a list of Segments (one per page, in
@@ -32,23 +32,23 @@ class NodeType(StrEnum):
     structure only. Math-semantic typing (Definition/Theorem/Problem) lives entirely at
     the entity layer — the per-type finders — not here."""
 
-    PARAGRAPH = "paragraph"
-    MATH = "math"  # standalone display math block
-    CODE = "code"  # fenced code block
-    LIST = "list"
-    TABLE = "table"
-    IMAGE = "image"
-    CAPTION = "caption"
-    HEADER = "header"
+    PARAGRAPH = 'paragraph'
+    MATH = 'math'  # standalone display math block
+    CODE = 'code'  # fenced code block
+    LIST = 'list'
+    TABLE = 'table'
+    IMAGE = 'image'
+    CAPTION = 'caption'
+    HEADER = 'header'
 
 
 class EntityType(StrEnum):
     """The three math-semantic entity categories the entity finders produce
     (AutoMathKG's taxonomy). Distinct from NodeType, which is document structure."""
 
-    DEFINITION = "definition"
-    THEOREM = "theorem"  # subsumes proposition, corollary, lemma
-    PROBLEM = "problem"  # worked examples and exercises
+    DEFINITION = 'definition'
+    THEOREM = 'theorem'  # subsumes proposition, corollary, lemma
+    PROBLEM = 'problem'  # worked examples and exercises
 
 
 class ProcedureType(StrEnum):
@@ -60,8 +60,8 @@ class ProcedureType(StrEnum):
     Their step decomposition (a proof's ``bodylist``) reifies into ``:Event`` nodes; the derivation
     is thus the procedural half of the graph, distinct from the declarative ``:Entity`` it hangs off."""
 
-    PROOF = "proof"
-    SOLUTION = "solution"
+    PROOF = 'proof'
+    SOLUTION = 'solution'
 
 
 # --- Shared AutoMathKG vocabularies (Table C4) ---
@@ -70,33 +70,33 @@ class ProcedureType(StrEnum):
 
 # The fixed mathematical-field taxonomy ("field" template).
 FIELDS = [
-    "algebra",
-    "geometry",
-    "analysis",
-    "logic",
-    "probability and statistics",
-    "applied mathematics",
-    "foundations of mathematics",
+    'algebra',
+    'geometry',
+    'analysis',
+    'logic',
+    'probability and statistics',
+    'applied mathematics',
+    'foundations of mathematics',
 ]
 
 # The nine role/tactic labels ("bodylist" template), the full taxonomy across all types.
 # Each attributor offers the model only the subset a given context actually exercises
 # (e.g. a definition never uses proof-only roles; a theorem statement never `deduction`s).
 ACTIONS_ALL = [
-    "premise",
-    "assumption",
-    "lemma",
-    "corollary",
-    "definition",
-    "conclusion",
-    "deduction",
-    "calculation",
-    "enumeration",
+    'premise',
+    'assumption',
+    'lemma',
+    'corollary',
+    'definition',
+    'conclusion',
+    'deduction',
+    'calculation',
+    'enumeration',
 ]
 
 # The entity kinds a cross-entity reference may target (AutoMathKG's `definition:`/`theorem:`
 # prefixes). Shared by the per-type referencers so the allowed set lives in one place.
-REFERENCE_KINDS = ["definition", "theorem"]
+REFERENCE_KINDS = ['definition', 'theorem']
 
 
 class BodySegment(BaseModel):
@@ -159,7 +159,9 @@ class Entity:
     general-entity hubs) by the entity persister; it stays empty until the referencer runs."""
 
     type: EntityType
-    members: list[int] = field(default_factory=list)  # member node ids, document order
+    members: list[int] = field(
+        default_factory=list
+    )  # member node ids, document order
     id: int | None = None  # assigned when overlays are flattened
     # Self-contained attributes (per-type attributor output). NOTE: the `field` attribute
     # (AutoMathKG's mathematical-field name) shadows `dataclasses.field` inside this class
@@ -167,15 +169,25 @@ class Entity:
     label: str | None = None  # the entity's own label, as written
     number: str | None = None  # the reference number in that label
     title: str | None = None  # short descriptive name of the concept
-    contents: list[str] = field(default_factory=list)  # member markdown, a list of strings
-    bodylist: list[BodySegment] = field(default_factory=list)  # role-labelled segmentation
-    proofs: list[Proof] = field(default_factory=list)  # Theorem-only: its proof(s)
-    solutions: list[Solution] = field(default_factory=list)  # Problem-only: its solution(s)
+    contents: list[str] = field(
+        default_factory=list
+    )  # member markdown, a list of strings
+    bodylist: list[BodySegment] = field(
+        default_factory=list
+    )  # role-labelled segmentation
+    proofs: list[Proof] = field(
+        default_factory=list
+    )  # Theorem-only: its proof(s)
+    solutions: list[Solution] = field(
+        default_factory=list
+    )  # Problem-only: its solution(s)
     refs: list[Reference] = field(
         default_factory=list
     )  # cross-entity references (referencer output)
     field: str | None = None  # mathematical field (fixed taxonomy)
-    instruction: str | None = None  # Problem-only: shared exercise-group directive
+    instruction: str | None = (
+        None  # Problem-only: shared exercise-group directive
+    )
 
 
 @dataclass(slots=True)
@@ -194,9 +206,9 @@ class ASTNode:
     Through the per-page ingestion phase (ocr, extractor, seam) a node lives inside
     its Segment. The seam merger then flattens all segments into one global ordered
     node list (see `flatten_segments`), stamping each node with a stable `id` and the
-    `seg_index` of the page it came from. From that point the flat list is the single
+    `segment_index` of the page it came from. From that point the flat list is the single
     source of truth; `id` is how every later stage and the entity overlay reference a
-    node, and `seg_index` is retained only so the assembler can resolve `![N]()`
+    node, and `segment_index` is retained only so the assembler can resolve `![N]()`
     picture placeholders against the right page's pictures.
 
     `role` is a non-structural annotation the splitter may set (currently only "instruction",
@@ -206,8 +218,12 @@ class ASTNode:
 
     type: NodeType | None = None
     content: str | None = None
-    id: int | None = None  # stable global id, assigned once when the flat list is born
-    seg_index: int | None = None  # originating page, for picture resolution after flattening
+    id: int | None = (
+        None  # stable global id, assigned once when the flat list is born
+    )
+    segment_index: int | None = (
+        None  # originating page, for picture resolution after flattening
+    )
     role: str | None = (
         None  # non-structural annotation (e.g. "instruction" lead-in), set by the splitter
     )
@@ -221,7 +237,9 @@ class Segment:
     image_path: str
     pictures: list[Picture] = field(default_factory=list)
     content: str | None = None  # markdown, filled by the OCR stage
-    nodes: list[ASTNode] = field(default_factory=list)  # filled by the extractor stage
+    nodes: list[ASTNode] = field(
+        default_factory=list
+    )  # filled by the extractor stage
 
 
 # --- Helpers (pure functions over the models above) ---
@@ -245,11 +263,11 @@ def merge_results_into_segments(
 
 
 def flatten_entities(
-    problem: list["Entity"],
-    definition: list["Entity"],
-    theorem: list["Entity"],
+    problem: list['Entity'],
+    definition: list['Entity'],
+    theorem: list['Entity'],
     nodes: list[ASTNode],
-) -> list["Entity"]:
+) -> list['Entity']:
     """Concatenate the three per-type finder overlays into one flat, document-ordered entity list
     and assign each a global id.
 
@@ -264,7 +282,9 @@ def flatten_entities(
     entities = list(problem) + list(definition) + list(theorem)
     order = {node.id: i for i, node in enumerate(nodes)}
     big = len(order)
-    entities.sort(key=lambda e: order.get(e.members[0], big) if e.members else big)
+    entities.sort(
+        key=lambda e: order.get(e.members[0], big) if e.members else big
+    )
     for i, entity in enumerate(entities):
         entity.id = i
     return entities
@@ -275,17 +295,17 @@ def flatten_segments(segments: list[Segment]) -> list[ASTNode]:
 
     Called once, by the seam merger, after page-splits are healed. Walks segments in
     document order and each segment's nodes in order, stamping every node with a stable
-    monotonic `id` and its originating `seg_index`. The nodes are the same objects the
+    monotonic `id` and its originating `segment_index`. The nodes are the same objects the
     segments hold — this assigns identity in place and returns the flat ordering. After
     this the flat list is the single source of truth; `segments[].nodes` is left as-is
-    but is no longer read (picture resolution uses `seg_index`, not the node nesting).
+    but is no longer read (picture resolution uses `segment_index`, not the node nesting).
     """
     flat: list[ASTNode] = []
     next_id = 0
     for segment in segments:
         for node in segment.nodes:
             node.id = next_id
-            node.seg_index = segment.index
+            node.segment_index = segment.index
             next_id += 1
             flat.append(node)
     return flat

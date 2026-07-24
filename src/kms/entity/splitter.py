@@ -21,23 +21,17 @@ right after this one, over the already-atomic stream.
 Because the decision is per-node (a node either is or isn't a composite list) and a node's
 content is always wholly inside some window, there is no cross-window banking to get right: the
 walk gathers every split keyed by the original node id, then rebuilds the stream once and
-re-assigns ids. `seg_index` is inherited by each split piece, so picture resolution at assembly
+re-assigns ids. `segment_index` is inherited by each split piece, so picture resolution at assembly
 is unaffected.
 
 Wired in by ``SplitterNode`` (bottom of file): it runs right after the seam merger and before
 the instruction finder, overwriting the `nodes` channel with the normalized stream.
 """
 
-import os
-from pathlib import Path
-
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import tracing
-from kms.core.llm import text_lm
-from kms.core.models import ASTNode
-from kms.core.state import State
+from kms.core import llm, models, state
 
 # Same look-ahead budget shape as the finders (~4 chars/token). A packed exercise list is one
 # node and always fits whole (min-one-node), so the budget only needs to be large enough to
@@ -45,8 +39,8 @@ from kms.core.state import State
 LOOKAHEAD_BUDGET = 2000
 
 
-def _est_tokens(node: ASTNode) -> int:
-    return len(node.content or "") // 4 + 1
+def _estimate_tokens(node: models.ASTNode) -> int:
+    return len(node.content or '') // 4 + 1
 
 
 class WindowNode(BaseModel):
@@ -73,9 +67,11 @@ class SplitExercise(BaseModel):
 class NodeSplit(BaseModel):
     """A single node that packs two or more numbered exercises, and its split pieces."""
 
-    position: int = Field(description="The window position of the node that packs the exercises.")
+    position: int = Field(
+        description='The window position of the node that packs the exercises.'
+    )
     exercises: list[SplitExercise] = Field(
-        description="The individual exercises it holds, in order (two or more)."
+        description='The individual exercises it holds, in order (two or more).'
     )
 
 
@@ -112,108 +108,112 @@ class Signature(dspy.Signature):
         description="The look-ahead window's nodes, in order, each with a local position."
     )
     splits: list[NodeSplit] = dspy.OutputField(
-        description="Nodes that pack two or more exercises, each split into its individual exercises."
+        description='Nodes that pack two or more exercises, each split into its individual exercises.'
     )
 
 
 class Decision(BaseModel):
     """The splitter's per-window verdict, positions already resolved to real node ids."""
 
-    splits: dict[int, list[SplitExercise]] = {}  # node id -> its exercise pieces
-
-
-# Compiled few-shot program produced by `training/splitter/compile.py`. Loaded at serve
-# time if present so the data-optimized demonstrations ship with the pipeline; override the
-# path with KMS_SPLITTER_PROGRAM, or delete the file to fall back to the bare student.
-_COMPILED_PATH = os.environ.get("KMS_SPLITTER_PROGRAM", "training/splitter/compiled.json")
+    splits: dict[
+        int, list[SplitExercise]
+    ] = {}  # node id -> its exercise pieces
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None, compiled: bool = True) -> None:
+    """Splits nodes that pack multiple numbered exercises into per-exercise nodes."""
+
+    def __init__(self, language_model: dspy.LM | None = None) -> None:
         super().__init__()
         self.splitter = dspy.ChainOfThought(Signature)
-        self.set_lm(lm or text_lm())
-        if compiled and Path(_COMPILED_PATH).exists():
-            self.load(_COMPILED_PATH)
+        self.set_lm(language_model or llm.text_lm())
 
-    def forward(self, current_nodes: list[WindowNode]) -> dspy.Prediction:
-        """Synchronous predictor pass — used at DSPy compile/eval time (optimizers and the
-        judge run modules synchronously). Serving uses ``aforward``; both share the one
-        ``self.splitter`` predictor, so demonstrations compiled here transfer to serving."""
-        return self.splitter(current_nodes=current_nodes)
-
-    async def aforward(self, current_nodes: list[WindowNode]) -> list[NodeSplit]:
+    async def aforward(
+        self, current_nodes: list[WindowNode]
+    ) -> list[NodeSplit]:
+        """Returns the split decisions for the given window of nodes."""
         result = await self.splitter.acall(current_nodes=current_nodes)
-        splits = list(result.splits or [])
-        tracing.record(
-            "splitter",
-            inputs={"current_nodes": [n.model_dump() for n in current_nodes]},
-            outputs={"splits": [s.model_dump() for s in splits]},
-        )
-        return splits
+        return list(result.splits or [])
 
 
-def _window_from(nodes: list[ASTNode], cursor: int, budget: int) -> int:
-    """Return the exclusive end index of a look-ahead window starting at `cursor`:
+def _window_from(nodes: list[models.ASTNode], cursor: int, budget: int) -> int:
+    """Returns the exclusive end index of a look-ahead window starting at `cursor`:
     whole nodes up to the soft token budget, always at least one node."""
-    i, tokens = cursor, 0
-    n = len(nodes)
-    while i < n:
-        t = _est_tokens(nodes[i])
-        if i > cursor and tokens + t > budget:
+    i, accumulated = cursor, 0
+    node_count = len(nodes)
+    while i < node_count:
+        token_count = _estimate_tokens(nodes[i])
+        if i > cursor and accumulated + token_count > budget:
             break
-        tokens += t
+        accumulated += token_count
         i += 1
     return i
 
 
-async def _gather_decisions(nodes: list[ASTNode], module: Module, budget: int) -> Decision:
+async def _gather_decisions(
+    nodes: list[models.ASTNode], module: Module, budget: int
+) -> Decision:
     """Walk the stream in windows and collect every split, keyed by node id.
 
     A split is per-node (a node's content is wholly inside one window), so the cursor simply
     advances by the whole window — no banking, no growth."""
     decision = Decision()
-    cursor, n = 0, len(nodes)
-    while cursor < n:
+    cursor, node_count = 0, len(nodes)
+    while cursor < node_count:
         end = _window_from(nodes, cursor, budget)
         window = nodes[cursor:end]
         last_local = len(window) - 1
         splits = await module.aforward(
             [
                 WindowNode(
-                    position=k, type=(node.type.value if node.type else ""), content=node.content
+                    position=k,
+                    type=(node.type.value if node.type else ''),
+                    content=node.content,
                 )
                 for k, node in enumerate(window)
             ]
         )
-        for s in splits:
-            p = min(max(s.position, 0), last_local)
-            nid = window[p].id
+        for split_result in splits:
+            clamped = min(max(split_result.position, 0), last_local)
+            node_id = window[clamped].id
             items = [
-                e for e in s.exercises if (e.content or "").strip() or (e.number or "").strip()
+                exercise
+                for exercise in split_result.exercises
+                if (exercise.content or '').strip()
+                or (exercise.number or '').strip()
             ]
-            if nid is not None and len(items) >= 2:  # only a genuine group is a split
-                decision.splits[nid] = items
+            if (
+                node_id is not None and len(items) >= 2
+            ):  # only a genuine group is a split
+                decision.splits[node_id] = items
         cursor = end
     return decision
 
 
-def _rebuild(nodes: list[ASTNode], decision: Decision) -> list[ASTNode]:
+def _rebuild(
+    nodes: list[models.ASTNode], decision: Decision
+) -> list[models.ASTNode]:
     """Materialise the normalised stream: replace each split node with one node per piece,
     pass everything else through, and re-assign ids.
 
-    A split piece inherits its parent's `type` and `seg_index`; its content is the reference
+    A split piece inherits its parent's `type` and `segment_index`; its content is the reference
     number as literal leading text followed by the exercise body, so the number survives and
     assembly stays faithful."""
-    out: list[ASTNode] = []
+    out: list[models.ASTNode] = []
     for node in nodes:
         pieces = decision.splits.get(node.id)
         if pieces:
             for item in pieces:
-                number = (item.number or "").strip()
-                body = (item.content or "").strip()
-                content = f"{number} {body}".strip() if number else body
-                out.append(ASTNode(type=node.type, content=content, seg_index=node.seg_index))
+                number = (item.number or '').strip()
+                body = (item.content or '').strip()
+                content = f'{number} {body}'.strip() if number else body
+                out.append(
+                    models.ASTNode(
+                        type=node.type,
+                        content=content,
+                        segment_index=node.segment_index,
+                    )
+                )
         else:
             out.append(node)
     for i, node in enumerate(out):
@@ -222,10 +222,10 @@ def _rebuild(nodes: list[ASTNode], decision: Decision) -> list[ASTNode]:
 
 
 async def split_exercises(
-    nodes: list[ASTNode],
+    nodes: list[models.ASTNode],
     module: Module | None = None,
     budget: int = LOOKAHEAD_BUDGET,
-) -> list[ASTNode]:
+) -> list[models.ASTNode]:
     """Normalise the flat node stream: split packed exercise nodes into per-exercise nodes.
     Returns a new, re-id'd node list (the canonical stream is mutated)."""
     module = module or Module()
@@ -249,6 +249,9 @@ class SplitterNode:
     def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
-    async def run(self, state: State) -> dict:
-        nodes = await split_exercises(state.get("nodes", []), module=self.module)
-        return {"nodes": nodes}
+    async def run(self, state: state.State) -> dict:
+        """Normalises the node stream so each exercise is its own node."""
+        nodes = await split_exercises(
+            state.get('nodes', []), module=self.module
+        )
+        return {'nodes': nodes}

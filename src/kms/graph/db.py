@@ -45,15 +45,15 @@ try:
 except ImportError:
     pass
 
-URI_ENV = "NEO4J_URI"
-USERNAME_ENV = "NEO4J_USERNAME"
-PASSWORD_ENV = "NEO4J_PASSWORD"
-DATABASE_ENV = "NEO4J_DATABASE"
-TRANSPORT_ENV = "NEO4J_TRANSPORT"
+URI_ENV = 'NEO4J_URI'
+USERNAME_ENV = 'NEO4J_USERNAME'
+PASSWORD_ENV = 'NEO4J_PASSWORD'
+DATABASE_ENV = 'NEO4J_DATABASE'
+TRANSPORT_ENV = 'NEO4J_TRANSPORT'
 
 # The shared client is either the native Bolt driver or the HTTP Query-API shim below; both
 # expose the same ``session``/``verify_connectivity``/``close`` slice the tier consumes.
-_driver: "AsyncDriver | HttpQueryDriver | None" = None
+_driver: 'AsyncDriver | HttpQueryDriver | None' = None
 
 
 def _require(env_key: str, example: str) -> str:
@@ -63,8 +63,8 @@ def _require(env_key: str, example: str) -> str:
     value = os.environ.get(env_key)
     if not value:
         raise RuntimeError(
-            f"{env_key} is not set. Export it (e.g. `export {env_key}={example}`) "
-            f"before running the graph tier."
+            f'{env_key} is not set. Export it (e.g. `export {env_key}={example}`) '
+            f'before running the graph tier.'
         )
     return value
 
@@ -78,7 +78,7 @@ def is_configured() -> bool:
 
 def database() -> str:
     """The target database name. Neo4j's default is ``neo4j``; Aura Free has exactly one."""
-    return os.environ.get(DATABASE_ENV) or "neo4j"
+    return os.environ.get(DATABASE_ENV) or 'neo4j'
 
 
 # Internal alias so ``HttpQuerySession``/``HttpQueryDriver`` can resolve the default database
@@ -93,9 +93,13 @@ def _use_http() -> bool:
     ``neo4j+s://…`` / ``bolt://…`` stays on Bolt."""
     transport = os.environ.get(TRANSPORT_ENV)
     if transport:
-        return transport.strip().lower() in {"http", "https"}
-    scheme = _require(URI_ENV, "neo4j+s://xxxx.databases.neo4j.io").split("://", 1)[0].lower()
-    return scheme in {"http", "https"}
+        return transport.strip().lower() in {'http', 'https'}
+    scheme = (
+        _require(URI_ENV, 'neo4j+s://xxxx.databases.neo4j.io')
+        .split('://', 1)[0]
+        .lower()
+    )
+    return scheme in {'http', 'https'}
 
 
 def _http_base_url() -> str:
@@ -103,13 +107,15 @@ def _http_base_url() -> str:
     one host across Bolt and HTTP, so a ``neo4j+s://<host>`` URI yields ``https://<host>`` — the
     Query API is TLS on 443 — with no separate endpoint to configure. A ``http://…`` URI (a
     self-hosted HTTP endpoint) keeps its scheme and explicit port."""
-    uri = _require(URI_ENV, "https://xxxx.databases.neo4j.io")
-    scheme, _, rest = uri.partition("://")
+    uri = _require(URI_ENV, 'https://xxxx.databases.neo4j.io')
+    scheme, _, rest = uri.partition('://')
     if not rest:  # no scheme in the URI — treat the whole thing as the host
-        scheme, rest = "https", uri
-    authority = rest.split("/", 1)[0].split("@")[-1]  # drop any path and inline credentials
-    out_scheme = "http" if scheme.lower() == "http" else "https"
-    return f"{out_scheme}://{authority}"
+        scheme, rest = 'https', uri
+    authority = rest.split('/', 1)[0].split('@')[
+        -1
+    ]  # drop any path and inline credentials
+    out_scheme = 'http' if scheme.lower() == 'http' else 'https'
+    return f'{out_scheme}://{authority}'
 
 
 class HttpQueryError(RuntimeError):
@@ -118,7 +124,7 @@ class HttpQueryError(RuntimeError):
 
     def __init__(self, code: str, message: str):
         self.code = code
-        super().__init__(f"{code}: {message}")
+        super().__init__(f'{code}: {message}')
 
 
 class HttpQueryResult:
@@ -130,6 +136,7 @@ class HttpQueryResult:
         self._records = records
 
     async def single(self) -> dict | None:
+        """Returns the first record, or None if the result set is empty."""
         return self._records[0] if self._records else None
 
     def __aiter__(self):
@@ -148,30 +155,37 @@ class HttpQuerySession:
 
     def __init__(self, client: httpx.AsyncClient, base_url: str, db: str):
         self._client = client
-        self._url = f"{base_url}/db/{db}/query/v2"
+        self._url = f'{base_url}/db/{db}/query/v2'
 
-    async def __aenter__(self) -> "HttpQuerySession":
+    async def __aenter__(self) -> 'HttpQuerySession':
         return self
 
     async def __aexit__(self, *exc) -> bool:
         return False
 
     async def run(self, query: str, **params) -> HttpQueryResult:
-        resp = await self._client.post(self._url, json={"statement": query, "parameters": params})
+        """Executes a Cypher statement via the HTTP Query API."""
+        resp = await self._client.post(
+            self._url, json={'statement': query, 'parameters': params}
+        )
         try:
             body = resp.json()
         except ValueError:
             resp.raise_for_status()
             raise
-        errors = body.get("errors")
+        errors = body.get('errors')
         if errors:
             first = errors[0]
-            raise HttpQueryError(first.get("code", "Neo.Error"), first.get("message", resp.text))
+            raise HttpQueryError(
+                first.get('code', 'Neo.Error'), first.get('message', resp.text)
+            )
         resp.raise_for_status()
-        data = body.get("data") or {}
-        fields = data.get("fields", [])
-        values = data.get("values", [])
-        return HttpQueryResult([dict(zip(fields, row, strict=False)) for row in values])
+        data = body.get('data') or {}
+        fields = data.get('fields', [])
+        values = data.get('values', [])
+        return HttpQueryResult(
+            [dict(zip(fields, row, strict=False)) for row in values]
+        )
 
 
 class HttpQueryDriver:
@@ -185,31 +199,38 @@ class HttpQueryDriver:
         self._client = httpx.AsyncClient(
             auth=auth,
             timeout=httpx.Timeout(60.0, connect=15.0),
-            headers={"Content-Type": "application/json"},
+            headers={'Content-Type': 'application/json'},
         )
 
     def session(self, database: str | None = None, **_) -> HttpQuerySession:
-        return HttpQuerySession(self._client, self._base_url, database or _default_database())
+        """Returns a new HTTP session for the given database."""
+        return HttpQuerySession(
+            self._client, self._base_url, database or _default_database()
+        )
 
     async def verify_connectivity(self) -> None:
-        async with self.session() as s:
-            await s.run("RETURN 1 AS ok")
+        """Pings the database with a trivial query to confirm the connection."""
+        async with self.session() as session:
+            await session.run('RETURN 1 AS ok')
 
     async def close(self) -> None:
+        """Closes the underlying HTTP client."""
         await self._client.aclose()
 
 
-def driver() -> "AsyncDriver | HttpQueryDriver":
+def driver() -> 'AsyncDriver | HttpQueryDriver':
     """The shared client (Bolt driver or HTTP Query-API facade), created once and reused. Neither
     opens a socket at construction — Bolt connects lazily, the HTTP client on first request — so
     importing this module and calling ``driver()`` is safe without a live server; use
     ``verify_connectivity`` to force an actual handshake."""
     global _driver
     if _driver is None:
-        uri = _require(URI_ENV, "neo4j+s://xxxx.databases.neo4j.io")  # required first
+        uri = _require(
+            URI_ENV, 'neo4j+s://xxxx.databases.neo4j.io'
+        )  # required first
         auth = (
-            _require(USERNAME_ENV, "neo4j"),
-            _require(PASSWORD_ENV, "password"),
+            _require(USERNAME_ENV, 'neo4j'),
+            _require(PASSWORD_ENV, 'password'),
         )
         if _use_http():
             _driver = HttpQueryDriver(_http_base_url(), auth)

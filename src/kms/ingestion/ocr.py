@@ -8,7 +8,7 @@ reading-order transcription, and figure extraction server-side and returns, per 
     referenced inline as ``![<id>](<id>)`` at the spot it appears;
   - ``images``: each detected figure as a cropped image (base64) plus its bounding box.
 
-This module turns that response into the ``Segment`` backbone the rest of the pipeline
+This module turns that response into the ``models.Segment`` backbone the rest of the pipeline
 consumes — ``content`` (markdown) + ``pictures`` (cropped figures on disk) — so every
 downstream stage (corrector → extractor → seam → … → entity) runs on it directly. It
 needs only ``MISTRAL_API_KEY`` and outbound HTTPS; no GPU, no torch.
@@ -29,11 +29,11 @@ from pathlib import Path
 
 import httpx
 
-from kms.core.models import Picture, Segment
+from kms.core import models
 
-MISTRAL_OCR_URL = "https://api.mistral.ai/v1/ocr"
-MISTRAL_OCR_MODEL = "mistral-ocr-latest"
-MISTRAL_ENV_KEY = "MISTRAL_API_KEY"
+MISTRAL_OCR_URL = 'https://api.mistral.ai/v1/ocr'
+MISTRAL_OCR_MODEL = 'mistral-ocr-latest'
+MISTRAL_ENV_KEY = 'MISTRAL_API_KEY'
 
 # Page-render resolution for the correction pass — the scale the corrector was validated
 # on (see corrector.py). Higher is sharper but heavier; 2.5 was sufficient.
@@ -53,11 +53,11 @@ def _require_key() -> str:
     # Prefer MISTRAL_API_KEY (the documented name in .env.example); fall back to
     # MISTRAL_OCR_API, the name this project's hosted environment injects the secret
     # under, so the front-end runs out-of-the-box in either place.
-    key = os.environ.get(MISTRAL_ENV_KEY) or os.environ.get("MISTRAL_OCR_API")
+    key = os.environ.get(MISTRAL_ENV_KEY) or os.environ.get('MISTRAL_OCR_API')
     if not key:
         raise MistralOCRError(
-            f"{MISTRAL_ENV_KEY} is not set. Export your Mistral API key "
-            f"(e.g. `export {MISTRAL_ENV_KEY}=...`) before running the Mistral front-end."
+            f'{MISTRAL_ENV_KEY} is not set. Export your Mistral API key '
+            f'(e.g. `export {MISTRAL_ENV_KEY}=...`) before running the Mistral front-end.'
         )
     return key
 
@@ -68,41 +68,45 @@ def ocr_pdf(pdf_bytes: bytes, pages: list[int] | None = None) -> dict:
     ``pages`` is an optional list of 0-based page numbers to limit the request;
     ``None`` processes the whole document.
     """
-    data_url = "data:application/pdf;base64," + base64.b64encode(pdf_bytes).decode("ascii")
+    data_url = 'data:application/pdf;base64,' + base64.b64encode(
+        pdf_bytes
+    ).decode('ascii')
     payload: dict = {
-        "model": MISTRAL_OCR_MODEL,
-        "document": {"type": "document_url", "document_url": data_url},
-        "include_image_base64": True,
+        'model': MISTRAL_OCR_MODEL,
+        'document': {'type': 'document_url', 'document_url': data_url},
+        'include_image_base64': True,
         # Split running heads / footers (page numbers, chapter running titles) into the
         # response's separate `header`/`footer` fields instead of leaving them inline in
         # the page markdown. We only read `markdown`, so this drops page chrome from the
         # node stream — otherwise a running head can land mid-entity and split it. Needs
         # OCR 2512+ (mistral-ocr-latest resolves to that).
-        "extract_header": True,
-        "extract_footer": True,
+        'extract_header': True,
+        'extract_footer': True,
     }
     if pages is not None:
-        payload["pages"] = pages
+        payload['pages'] = pages
     headers = {
-        "Authorization": f"Bearer {_require_key()}",
-        "Content-Type": "application/json",
+        'Authorization': f'Bearer {_require_key()}',
+        'Content-Type': 'application/json',
     }
     try:
-        response = httpx.post(MISTRAL_OCR_URL, json=payload, headers=headers, timeout=_TIMEOUT)
+        response = httpx.post(
+            MISTRAL_OCR_URL, json=payload, headers=headers, timeout=_TIMEOUT
+        )
         response.raise_for_status()
     except httpx.HTTPStatusError as exc:
         body = exc.response.text[:500]
         raise MistralOCRError(
-            f"Mistral OCR returned HTTP {exc.response.status_code}: {body}"
+            f'Mistral OCR returned HTTP {exc.response.status_code}: {body}'
         ) from exc
     except httpx.HTTPError as exc:
-        raise MistralOCRError(f"Mistral OCR request failed: {exc}") from exc
+        raise MistralOCRError(f'Mistral OCR request failed: {exc}') from exc
     return response.json()
 
 
 # A markdown image reference: ![alt](target). Mistral sets `target` to a returned
 # image id (e.g. `img-0.jpeg`); non-figure links are left untouched.
-_IMG_REF = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
+_IMG_REF = re.compile(r'!\[[^\]]*\]\(([^)]+)\)')
 
 
 def _write_image(data: str, path: Path) -> None:
@@ -110,8 +114,8 @@ def _write_image(data: str, path: Path) -> None:
     a malformed figure must not abort the whole document."""
     if not data:
         return
-    if data.startswith("data:"):
-        data = data.split(",", 1)[-1]
+    if data.startswith('data:'):
+        data = data.split(',', 1)[-1]
     try:
         path.write_bytes(base64.b64decode(data))
     except (ValueError, OSError):
@@ -120,7 +124,9 @@ def _write_image(data: str, path: Path) -> None:
         pass
 
 
-def _rewrite_page(markdown: str, images: list[dict], seg_dir: Path) -> tuple[str, list[Picture]]:
+def _rewrite_page(
+    markdown: str, images: list[dict], seg_dir: Path
+) -> tuple[str, list[models.Picture]]:
     """Save a page's figures to disk and rewrite its markdown refs to ``![N]()``.
 
     Each figure is assigned a 1-based index by the order its ref first appears in the
@@ -130,11 +136,13 @@ def _rewrite_page(markdown: str, images: list[dict], seg_dir: Path) -> tuple[str
     extracted figure is silently dropped. Returns the rewritten markdown and the
     ordered pictures.
     """
-    by_id = {img.get("id"): img for img in images if img.get("id")}
-    pictures_dir = seg_dir / "Images"
+    by_id = {img.get('id'): img for img in images if img.get('id')}
+    pictures_dir = seg_dir / 'Images'
     pictures_dir.mkdir(parents=True, exist_ok=True)
 
-    order: list[str] = []  # image ids in reading order; position + 1 == placeholder index
+    order: list[
+        str
+    ] = []  # image ids in reading order; position + 1 == placeholder index
 
     def index_of(image_id: str) -> int:
         if image_id not in order:
@@ -144,8 +152,10 @@ def _rewrite_page(markdown: str, images: list[dict], seg_dir: Path) -> tuple[str
     def repl(match: re.Match) -> str:
         target = match.group(1)
         if target not in by_id:
-            return match.group(0)  # not a figure we extracted — leave the link as-is
-        return f"![{index_of(target)}]()"
+            return match.group(
+                0
+            )  # not a figure we extracted — leave the link as-is
+        return f'![{index_of(target)}]()'
 
     rewritten = _IMG_REF.sub(repl, markdown)
 
@@ -153,35 +163,39 @@ def _rewrite_page(markdown: str, images: list[dict], seg_dir: Path) -> tuple[str
     for image_id in by_id:
         index_of(image_id)
 
-    pictures: list[Picture] = []
+    pictures: list[models.Picture] = []
     for position, image_id in enumerate(order, start=1):
-        path = pictures_dir / f"Image_{position - 1:03d}.png"
-        _write_image(by_id[image_id].get("image_base64", ""), path)
-        pictures.append(Picture(index=position, image_path=str(path)))
+        path = pictures_dir / f'Image_{position - 1:03d}.png'
+        _write_image(by_id[image_id].get('image_base64', ''), path)
+        pictures.append(models.Picture(index=position, image_path=str(path)))
     return rewritten, pictures
 
 
-def build_segments(response: dict, output_dir: str | Path) -> list[Segment]:
-    """Turn a Mistral OCR response into the pipeline's Segment backbone.
+def build_segments(
+    response: dict, output_dir: str | Path
+) -> list[models.Segment]:
+    """Turn a Mistral OCR response into the pipeline's models.Segment backbone.
 
     Segments are indexed densely by the order pages appear in the response (so a
     contiguous request stays adjacent for the seam merger), with ``content`` and
     ``pictures`` already filled. Figures are written under
-    ``<output_dir>/Segments/Segment_XXXX/Images/``. ``Segment.image_path`` points at a
+    ``<output_dir>/Segments/Segment_XXXX/Images/``. ``models.Segment.image_path`` points at a
     page render that Mistral does not produce; it is unused after OCR (the assembler
-    resolves pictures via ``seg_index`` + ``pictures``), so it is only a nominal path.
+    resolves pictures via ``segment_index`` + ``pictures``), so it is only a nominal path.
     """
     output_dir = Path(output_dir)
-    segments: list[Segment] = []
-    for order_index, page in enumerate(response.get("pages", [])):
-        seg_dir = output_dir / "Segments" / f"Segment_{order_index:04d}"
+    segments: list[models.Segment] = []
+    for order_index, page in enumerate(response.get('pages', [])):
+        seg_dir = output_dir / 'Segments' / f'Segment_{order_index:04d}'
         markdown, pictures = _rewrite_page(
-            page.get("markdown", "") or "", page.get("images", []) or [], seg_dir
+            page.get('markdown', '') or '',
+            page.get('images', []) or [],
+            seg_dir,
         )
         segments.append(
-            Segment(
+            models.Segment(
                 index=order_index,
-                image_path=str(seg_dir / "Segment.png"),
+                image_path=str(seg_dir / 'models.Segment.png'),
                 pictures=pictures,
                 content=markdown,
             )
@@ -190,9 +204,11 @@ def build_segments(response: dict, output_dir: str | Path) -> list[Segment]:
 
 
 def _render_page_images(
-    pdf_path: str | Path, segments: list[Segment], pages: list[int] | None
+    pdf_path: str | Path,
+    segments: list[models.Segment],
+    pages: list[int] | None,
 ) -> None:
-    """Rasterize each segment's source page to its ``Segment.png`` with pypdfium2.
+    """Rasterize each segment's source page to its ``models.Segment.png`` with pypdfium2.
 
     Mistral does not return a full-page render (only figure crops), but the downstream
     correction pass needs the page image to check the transcription against. Render it
@@ -205,8 +221,8 @@ def _render_page_images(
         import pypdfium2 as pdfium
     except ImportError as exc:
         raise MistralOCRError(
-            "pypdfium2 is required to render page images for the correction pass. "
-            "Install the Mistral front-end deps:  uv sync --extra mistral"
+            'pypdfium2 is required to render page images for the correction pass. '
+            'Install the Mistral front-end deps:  uv sync --extra mistral'
         ) from exc
 
     pdf = pdfium.PdfDocument(str(pdf_path))
@@ -222,14 +238,14 @@ def _render_page_images(
 
 def extract(
     pdf_path: str | Path,
-    output_dir: str | Path = "output",
+    output_dir: str | Path = 'output',
     pages: list[int] | None = None,
     render_pages: bool = True,
-) -> list[Segment]:
+) -> list[models.Segment]:
     """PDF → Mistral OCR → Segments with content + pictures. No GPU, no docling.
 
     When ``render_pages`` is True (default) each page is also rasterized to its
-    ``Segment.png`` so the correction pass has an image to proofread against; pass False
+    ``models.Segment.png`` so the correction pass has an image to proofread against; pass False
     to skip rendering (e.g. text-only runs with no correction pass).
     """
     pdf_bytes = Path(pdf_path).read_bytes()

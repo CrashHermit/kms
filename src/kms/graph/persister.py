@@ -8,7 +8,7 @@ graph before any entity work builds on top of them. The node ids it persists are
 entity overlay's ``members`` reference, which is why it sits after the splitter, not after the seam
 merger. ``EntityPersisterNode`` runs at the very end, once all three per-type chains (and the problem
 chain's instruction distributor) have finished, so it sees the fully attributed overlay; it flattens
-the three finder channels into one document-ordered, globally-id'd list (``flatten_entities``) and
+the three finder channels into one document-ordered, globally-id'd list (``models.flatten_entities``) and
 upserts them as ``:Entity`` vertices linked back to the ``:Node`` chunks.
 
 Both are gated on configuration: if no Neo4j target is wired (``NEO4J_URI`` unset) or the run carries
@@ -17,8 +17,7 @@ just don't persist. The schema bootstrap is idempotent, so running it per book (
 stage) is safe.
 """
 
-from kms.core.models import flatten_entities
-from kms.core.state import State
+from kms.core import models, state
 from kms.graph.db import is_configured
 from kms.graph.schema import ensure_schema
 from kms.graph.writer import (
@@ -34,12 +33,16 @@ from kms.graph.writer import (
 class NodePersisterNode:
     """Sequential stage: upsert the run's node stream as the graph's provenance layer."""
 
-    async def run(self, state: State) -> dict:
-        source = state.get("source")
+    async def run(self, state: state.State) -> dict:
+        """Flattens the three per-type overlays and upserts as the :Entity layer."""
+        """Upserts the run's node stream as the graph's provenance layer."""
+        source = state.get('source')
         if not is_configured() or not source:
             return {}
         await ensure_schema()
-        await persist_nodes(state.get("nodes", []), source, state.get("source_metadata"))
+        await persist_nodes(
+            state.get('nodes', []), source, state.get('source_metadata')
+        )
         return {}
 
 
@@ -52,16 +55,18 @@ class EntityPersisterNode:
     ``:Event`` and ``:Canonical`` vertices, so they run last). Everything after the entities is written
     on top of them, so the citing vertices exist to attach to."""
 
-    async def run(self, state: State) -> dict:
-        source = state.get("source")
+    async def run(self, state: state.State) -> dict:
+        """Flattens the three per-type overlays and upserts as the :Entity layer."""
+        """Upserts the run's node stream as the graph's provenance layer."""
+        source = state.get('source')
         if not is_configured() or not source:
             return {}
         await ensure_schema()
-        entities = flatten_entities(
-            state.get("problem_entities", []),
-            state.get("definition_entities", []),
-            state.get("theorem_entities", []),
-            state.get("nodes", []),
+        entities = models.flatten_entities(
+            state.get('problem_entities', []),
+            state.get('definition_entities', []),
+            state.get('theorem_entities', []),
+            state.get('nodes', []),
         )
         await persist_entities(entities, source)
         await persist_procedures(entities, source)

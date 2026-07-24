@@ -27,18 +27,15 @@ the tagged stream, between the splitter and the node persister.
 import dspy
 from pydantic import BaseModel
 
-from kms.core import tracing
-from kms.core.llm import text_lm
-from kms.core.models import ASTNode
-from kms.core.state import State
+from kms.core import llm, models, state
 
 # Same look-ahead budget shape as the finders (~4 chars/token). A lead-in and the exercise it
 # introduces are small; the budget only needs enough context to tell a lead-in from an exercise.
 LOOKAHEAD_BUDGET = 2000
 
 
-def _est_tokens(node: ASTNode) -> int:
-    return len(node.content or "") // 4 + 1
+def _estimate_tokens(node: models.ASTNode) -> int:
+    return len(node.content or '') // 4 + 1
 
 
 class WindowNode(BaseModel):
@@ -76,67 +73,66 @@ class Signature(dspy.Signature):
         description="The look-ahead window's nodes, in order, each with a local position."
     )
     instruction_positions: list[int] = dspy.OutputField(
-        description="Positions of exercise lead-in nodes (shared-instruction directives)."
+        description='Positions of exercise lead-in nodes (shared-instruction directives).'
     )
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None) -> None:
+    """Tags exercise lead-in nodes `role='instruction'` in the structural stream."""
+
+    def __init__(self, language_model: dspy.LM | None = None) -> None:
         super().__init__()
         self.finder = dspy.ChainOfThought(Signature)
-        self.set_lm(lm or text_lm())
+        self.set_lm(language_model or llm.text_lm())
 
     async def aforward(self, current_nodes: list[WindowNode]) -> list[int]:
+        """Returns the positions of lead-in nodes in the given window."""
         result = await self.finder.acall(current_nodes=current_nodes)
-        positions = list(result.instruction_positions or [])
-        tracing.record(
-            "instruction_finder",
-            inputs={"current_nodes": [n.model_dump() for n in current_nodes]},
-            outputs={"instruction_positions": positions},
-        )
-        return positions
+        return list(result.instruction_positions or [])
 
 
-def _window_from(nodes: list[ASTNode], cursor: int, budget: int) -> int:
+def _window_from(nodes: list[models.ASTNode], cursor: int, budget: int) -> int:
     """Return the exclusive end index of a look-ahead window starting at `cursor`:
     whole nodes up to the soft token budget, always at least one node."""
-    i, tokens = cursor, 0
-    n = len(nodes)
-    while i < n:
-        t = _est_tokens(nodes[i])
-        if i > cursor and tokens + t > budget:
+    i, accumulated = cursor, 0
+    node_count = len(nodes)
+    while i < node_count:
+        token_count = _estimate_tokens(nodes[i])
+        if i > cursor and accumulated + token_count > budget:
             break
-        tokens += t
+        accumulated += token_count
         i += 1
     return i
 
 
 async def tag_instructions(
-    nodes: list[ASTNode],
+    nodes: list[models.ASTNode],
     module: Module | None = None,
     budget: int = LOOKAHEAD_BUDGET,
-) -> list[ASTNode]:
+) -> list[models.ASTNode]:
     """Walk the stream in windows and stamp `role="instruction"` on every lead-in node, in
     place. Returns the same node list (mutated)."""
     module = module or Module()
     if not nodes:
         return nodes
-    cursor, n = 0, len(nodes)
-    while cursor < n:
+    cursor, node_count = 0, len(nodes)
+    while cursor < node_count:
         end = _window_from(nodes, cursor, budget)
         window = nodes[cursor:end]
         last_local = len(window) - 1
         positions = await module.aforward(
             [
                 WindowNode(
-                    position=k, type=(node.type.value if node.type else ""), content=node.content
+                    position=k,
+                    type=(node.type.value if node.type else ''),
+                    content=node.content,
                 )
                 for k, node in enumerate(window)
             ]
         )
         for pos in positions:
-            p = min(max(pos, 0), last_local)
-            window[p].role = "instruction"
+            clamped = min(max(pos, 0), last_local)
+            window[clamped].role = 'instruction'
         cursor = end
     return nodes
 
@@ -154,6 +150,9 @@ class InstructionFinderNode:
     def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
-    async def run(self, state: State) -> dict:
-        nodes = await tag_instructions(state.get("nodes", []), module=self.module)
-        return {"nodes": nodes}
+    async def run(self, state: state.State) -> dict:
+        """Tags exercise lead-in nodes with `role='instruction'`."""
+        nodes = await tag_instructions(
+            state.get('nodes', []), module=self.module
+        )
+        return {'nodes': nodes}

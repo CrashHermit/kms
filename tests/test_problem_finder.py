@@ -2,16 +2,40 @@
 
 import asyncio
 
-from kms.core.models import ASTNode, EntityType, NodeType
-from kms.entity.finders.problem import ProblemFinderNode, ProblemSpan, find_problems
+from kms.core import models
+from kms.entity.finders.problem import (
+    ProblemFinderNode,
+    ProblemSpan,
+    find_problems,
+)
 
 
 def _nodes():
     return [
-        ASTNode(type=NodeType.PARAGRAPH, content="intro prose", id=0, seg_index=0),
-        ASTNode(type=NodeType.HEADER, content="Example 1", id=1, seg_index=0),
-        ASTNode(type=NodeType.PARAGRAPH, content="solve this", id=2, seg_index=0),
-        ASTNode(type=NodeType.PARAGRAPH, content="more prose", id=3, seg_index=0),
+        models.ASTNode(
+            type=models.NodeType.PARAGRAPH,
+            content='intro prose',
+            id=0,
+            segment_index=0,
+        ),
+        models.ASTNode(
+            type=models.NodeType.HEADER,
+            content='Example 1',
+            id=1,
+            segment_index=0,
+        ),
+        models.ASTNode(
+            type=models.NodeType.PARAGRAPH,
+            content='solve this',
+            id=2,
+            segment_index=0,
+        ),
+        models.ASTNode(
+            type=models.NodeType.PARAGRAPH,
+            content='more prose',
+            id=3,
+            segment_index=0,
+        ),
     ]
 
 
@@ -31,8 +55,11 @@ def test_find_problems_banks_a_bounded_problem_and_emits_member_ids():
     module = _ScriptedFinder([[ProblemSpan(start=1, end=2)], []])
     problems = asyncio.run(find_problems(_nodes(), module=module))
     assert len(problems) == 1
-    assert problems[0].type == EntityType.PROBLEM
-    assert problems[0].members == [1, 2]  # stable global ids, not window positions
+    assert problems[0].type == models.EntityType.PROBLEM
+    assert problems[0].members == [
+        1,
+        2,
+    ]  # stable global ids, not window positions
 
 
 def test_find_problems_on_prose_only_stream_returns_nothing():
@@ -41,12 +68,14 @@ def test_find_problems_on_prose_only_stream_returns_nothing():
 
 
 def test_node_run_writes_the_problem_channel():
-    node = ProblemFinderNode(module=_ScriptedFinder([[ProblemSpan(start=1, end=2)], []]))
-    out = asyncio.run(node.run({"nodes": _nodes()}))
-    assert list(out.keys()) == ["problem_entities"]
-    assert [e.members for e in out["problem_entities"]] == [[1, 2]]
+    node = ProblemFinderNode(
+        module=_ScriptedFinder([[ProblemSpan(start=1, end=2)], []])
+    )
+    out = asyncio.run(node.run({'nodes': _nodes()}))
+    assert list(out.keys()) == ['problem_entities']
+    assert [e.members for e in out['problem_entities']] == [[1, 2]]
 
 
 def test_node_run_on_empty_stream_yields_empty_channel():
     node = ProblemFinderNode(module=_ScriptedFinder([]))
-    assert asyncio.run(node.run({"nodes": []})) == {"problem_entities": []}
+    assert asyncio.run(node.run({'nodes': []})) == {'problem_entities': []}

@@ -8,7 +8,7 @@ AutoMathKG's self-contained header attributes plus its solution(s):
 
 Notably a Problem has **no bodylist** anywhere — Table B3 restricts `bodylist` to Thm/Def,
 and even a Problem's `solution` stores an empty bodylist. So, unlike the Theorem attributor,
-there are no bodylist passes at all: a Solution reduces to just its `contents` (its
+there are no bodylist passes at all: a models.Solution reduces to just its `contents` (its
 cross-entity `refs`/`references_tactics` are deferred to the graph tier). That leaves a
 single LLM call (identity) plus deterministic assembly.
 
@@ -34,10 +34,7 @@ import asyncio
 import dspy
 from pydantic import BaseModel
 
-from kms.core import tracing
-from kms.core.llm import text_lm
-from kms.core.models import FIELDS, ASTNode, Entity, Solution
-from kms.core.state import State
+from kms.core import llm, models, state
 
 
 class MemberNode(BaseModel):
@@ -67,23 +64,31 @@ class Identify(dspy.Signature):
         of a Matrix", "Derivative of a Polynomial"). Not the word "Example" or "Exercise".
       * field — the single most relevant mathematical field, chosen ONLY from the given list.
       * solution_start — the `position` of the member node where the SOLUTION/answer begins
-        (often a node that is or starts with "Solution"). The problem statement is every
+        (often a node that is or starts with "models.Solution"). The problem statement is every
         member before it; the solution is that node and everything after. Use -1 if NO
         solution is shown (all members are the statement — the typical exercise).
     """
 
-    nodes: list[MemberNode] = dspy.InputField(description="The problem's member nodes, in order.")
-    field_choices: list[str] = dspy.InputField(
-        description="The allowed fields; choose exactly one."
+    nodes: list[MemberNode] = dspy.InputField(
+        description="The problem's member nodes, in order."
     )
-    label: str = dspy.OutputField(description="The problem's label as written, or empty string.")
+    field_choices: list[str] = dspy.InputField(
+        description='The allowed fields; choose exactly one.'
+    )
+    label: str = dspy.OutputField(
+        description="The problem's label as written, or empty string."
+    )
     number: str = dspy.OutputField(
         description="The problem's own LEADING reference number (never an in-text cross-reference), or empty string."
     )
-    title: str = dspy.OutputField(description="Short noun phrase naming what the problem is about.")
-    field: str = dspy.OutputField(description="Exactly one field from the given list.")
+    title: str = dspy.OutputField(
+        description='Short noun phrase naming what the problem is about.'
+    )
+    field: str = dspy.OutputField(
+        description='Exactly one field from the given list.'
+    )
     solution_start: int = dspy.OutputField(
-        description="Member position where the solution begins, or -1 if none shown."
+        description='Member position where the solution begins, or -1 if none shown.'
     )
 
 
@@ -100,50 +105,54 @@ class Identity(BaseModel):
 class Module(dspy.Module):
     """Runs the single identity pass for one problem (no bodylist passes)."""
 
-    def __init__(self, lm: dspy.LM | None = None) -> None:
+    def __init__(self, language_model: dspy.LM | None = None) -> None:
         super().__init__()
         self.identify = dspy.Predict(Identify)
-        self.set_lm(lm or text_lm())
+        self.set_lm(language_model or llm.text_lm())
 
-    async def identity(self, members: list[ASTNode]) -> Identity:
+    async def identity(self, members: list[models.ASTNode]) -> Identity:
+        """Returns label, number, title, field, and solution boundary for one problem."""
         nodes = [
-            MemberNode(position=k, type=(m.type.value if m.type else ""), content=m.content)
+            MemberNode(
+                position=k,
+                type=(m.type.value if m.type else ''),
+                content=m.content,
+            )
             for k, m in enumerate(members)
         ]
-        r = await self.identify.acall(nodes=nodes, field_choices=FIELDS)
-        tracing.record(
-            "problem_identify",
-            inputs={"nodes": [n.model_dump() for n in nodes], "field_choices": FIELDS},
-            outputs={
-                "label": r.label,
-                "number": r.number,
-                "title": r.title,
-                "field": r.field,
-                "solution_start": r.solution_start,
-            },
+        result = await self.identify.acall(
+            nodes=nodes, field_choices=models.FIELDS
         )
         return Identity(
-            label=(r.label or None),
-            number=(r.number or None),
-            title=(r.title or None),
-            field=(r.field if r.field in FIELDS else None),
-            solution_start=(r.solution_start if isinstance(r.solution_start, int) else -1),
+            label=(result.label or None),
+            number=(result.number or None),
+            title=(result.title or None),
+            field=(result.field if result.field in models.FIELDS else None),
+            solution_start=(
+                result.solution_start
+                if isinstance(result.solution_start, int)
+                else -1
+            ),
         )
 
 
-def _members(entity: Entity, nodes_by_id: dict[int, ASTNode]) -> list[ASTNode]:
+def _members(
+    entity: models.Entity, nodes_by_id: dict[int, models.ASTNode]
+) -> list[models.ASTNode]:
     """The entity's member nodes, in member order, skipping any id not in the stream."""
     return [nodes_by_id[i] for i in entity.members if i in nodes_by_id]
 
 
-def _contents(members: list[ASTNode], label: str | None) -> list[str]:
+def _contents(members: list[models.ASTNode], label: str | None) -> list[str]:
     """The content members as a list of sequence strings, with `label` peeled off the front.
 
     A standalone label node ("Example 4.1") strips to empty and is dropped; a fused label
     ("Example 4.1. Find ...") leaves its statement, which is kept; a content-bearing node is
     never dropped wholesale. Passing ``label=None`` (as for the solution half) peels nothing."""
     texts = [m.content for m in members if m.content and m.content.strip()]
-    if texts and label:  # peel the label off the first content piece; drop it if that empties it
+    if (
+        texts and label
+    ):  # peel the label off the first content piece; drop it if that empties it
         head = _strip_label_prefix(texts[0], label)
         texts = ([head] if head.strip() else []) + texts[1:]
     return texts
@@ -156,17 +165,17 @@ def _strip_label_prefix(text: str, label: str | None) -> str:
     if not label or not text:
         return text
     body = text.lstrip()
-    lab = label.strip().rstrip(".")
+    lab = label.strip().rstrip('.')
     if lab and body[: len(lab)].lower() == lab.lower():
-        return body[len(lab) :].lstrip(" .:\t\n")
+        return body[len(lab) :].lstrip(' .:\t\n')
     return text
 
 
 async def attribute_problem(
-    entity: Entity,
-    nodes_by_id: dict[int, ASTNode],
+    entity: models.Entity,
+    nodes_by_id: dict[int, models.ASTNode],
     module: Module | None = None,
-) -> Entity:
+) -> models.Entity:
     """Fill in the self-contained attributes on one Problem entity, in place.
 
     A single identity pass gives label/number/title/field and the ``solution_start``
@@ -179,14 +188,20 @@ async def attribute_problem(
     members = _members(entity, nodes_by_id)
     ident = await module.identity(members)
 
-    ss = ident.solution_start
-    has_solution = 0 < ss < len(members)
-    statement_members = members[:ss] if has_solution else members
-    solution_members = members[ss:] if has_solution else []
+    boundary = ident.solution_start
+    has_solution = 0 < boundary < len(members)
+    statement_members = members[:boundary] if has_solution else members
+    solution_members = members[boundary:] if has_solution else []
 
     contents = _contents(statement_members, ident.label)
-    solution_contents = _contents(solution_members, None) if solution_members else []
-    solutions = [Solution(contents=solution_contents)] if solution_contents else []
+    solution_contents = (
+        _contents(solution_members, None) if solution_members else []
+    )
+    solutions = (
+        [models.Solution(contents=solution_contents)]
+        if solution_contents
+        else []
+    )
 
     entity.label = ident.label
     entity.number = ident.number
@@ -210,11 +225,17 @@ class ProblemAttributorNode:
     def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
-    async def run(self, state: State) -> dict:
-        nodes_by_id = {n.id: n for n in state.get("nodes", []) if n.id is not None}
-        entities = state.get("problem_entities", [])
+    async def run(self, state: state.State) -> dict:
+        """Fills in each found Problem's self-contained attributes, in place."""
+        nodes_by_id = {
+            n.id: n for n in state.get('nodes', []) if n.id is not None
+        }
+        entities = state.get('problem_entities', [])
         if entities:
             await asyncio.gather(
-                *(attribute_problem(e, nodes_by_id, self.module) for e in entities)
+                *(
+                    attribute_problem(entity, nodes_by_id, self.module)
+                    for entity in entities
+                )
             )
-        return {"problem_entities": entities}
+        return {'problem_entities': entities}

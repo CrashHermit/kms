@@ -26,21 +26,10 @@ governance). Entry point ``distribute_instructions(nodes, problems, module)`` mu
 problems in place; ``InstructionDistributorNode`` wires it onto the ``problem_entities`` channel.
 """
 
-import os
-from pathlib import Path
-
 import dspy
 from pydantic import BaseModel
 
-from kms.core import tracing
-from kms.core.llm import text_lm
-from kms.core.models import ASTNode, Entity
-from kms.core.state import State
-
-# Compiled few-shot program from `training/distributor/compile.py`, loaded at serve time
-# if present so the data-optimized governance demos ship with the pipeline; override with
-# KMS_DISTRIBUTOR_PROGRAM, or delete the file to fall back to the bare student.
-_COMPILED_PATH = os.environ.get("KMS_DISTRIBUTOR_PROGRAM", "training/distributor/compiled.json")
+from kms.core import llm, models, state
 
 # Same growing look-ahead shape as the finders/splitter (~4 chars/token).
 LOOKAHEAD_BUDGET = 2000
@@ -77,65 +66,66 @@ class GovernExtent(dspy.Signature):
 
     lead_in: str = dspy.InputField(description="The lead-in node's text.")
     following_problems: list[WindowProblem] = dspy.InputField(
-        description="The problems that follow the lead-in, in order, each with a local position."
+        description='The problems that follow the lead-in, in order, each with a local position.'
     )
     instruction: str = dspy.OutputField(
-        description="The shared imperative to apply, without range framing, or empty string."
+        description='The shared imperative to apply, without range framing, or empty string.'
     )
     governed_positions: list[int] = dspy.OutputField(
-        description="Positions of the governed problems, a run from the first; empty if none."
+        description='Positions of the governed problems, a run from the first; empty if none.'
     )
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None, compiled: bool = True) -> None:
+    """Determines which following problems a lead-in's shared instruction governs."""
+
+    def __init__(self, language_model: dspy.LM | None = None) -> None:
         super().__init__()
         self.judge = dspy.ChainOfThought(GovernExtent)
-        self.set_lm(lm or text_lm())
-        if compiled and Path(_COMPILED_PATH).exists():
-            self.load(_COMPILED_PATH)
+        self.set_lm(language_model or llm.text_lm())
 
-    def forward(self, lead_in: str, following_problems: list[WindowProblem]) -> dspy.Prediction:
-        """Synchronous governance pass — used at DSPy compile/eval time (optimizers and the
-        judge run modules synchronously). Serving uses ``govern``; both share the one
-        ``self.judge`` predictor, so demonstrations compiled here transfer to serving."""
-        return self.judge(lead_in=lead_in, following_problems=following_problems)
-
-    async def govern(self, lead_in: str, following: list[WindowProblem]) -> tuple[str, list[int]]:
-        r = await self.judge.acall(lead_in=lead_in, following_problems=following)
-        instruction, positions = (r.instruction or "").strip(), list(r.governed_positions or [])
-        tracing.record(
-            "distributor",
-            inputs={"lead_in": lead_in, "following_problems": [p.model_dump() for p in following]},
-            outputs={"instruction": instruction, "governed_positions": positions},
+    async def govern(
+        self, lead_in: str, following: list[WindowProblem]
+    ) -> tuple[str, list[int]]:
+        """Returns the shared instruction and the positions it governs."""
+        result = await self.judge.acall(
+            lead_in=lead_in, following_problems=following
+        )
+        instruction, positions = (
+            (result.instruction or '').strip(),
+            list(result.governed_positions or []),
         )
         return instruction, positions
 
 
-def _est_tokens(problem: Entity) -> int:
+def _estimate_tokens(problem: models.Entity) -> int:
     return len(_problem_text(problem)) // 4 + 1
 
 
-def _problem_text(problem: Entity) -> str:
+def _problem_text(problem: models.Entity) -> str:
     """The problem's statement as the LLM should see it — its attributed contents, or its
     number as a last resort."""
-    body = " ".join(c for c in (problem.contents or []) if c)
-    return body or (problem.number or "")
+    body = ' '.join(c for c in (problem.contents or []) if c)
+    return body or (problem.number or '')
 
 
-def _window(candidates: list[Entity], budget: int) -> list[Entity]:
+def _window(
+    candidates: list[models.Entity], budget: int
+) -> list[models.Entity]:
     """Whole following problems up to the soft token budget, always at least one."""
-    window, tokens = [], 0
+    window, accumulated = [], 0
     for problem in candidates:
-        t = _est_tokens(problem)
-        if window and tokens + t > budget:
+        token_count = _estimate_tokens(problem)
+        if window and accumulated + token_count > budget:
             break
         window.append(problem)
-        tokens += t
+        accumulated += token_count
     return window
 
 
-async def _govern_one(node: ASTNode, candidates: list[Entity], module: Module) -> None:
+async def _govern_one(
+    node: models.ASTNode, candidates: list[models.Entity], module: Module
+) -> None:
     """Growing-window walk for one lead-in: find the governed run among its following problems
     and stamp the instruction on them. Grows the window while the run reaches its edge."""
     if not candidates:
@@ -147,9 +137,13 @@ async def _govern_one(node: ASTNode, candidates: list[Entity], module: Module) -
         exhausted = len(window) == len(candidates)
 
         instruction, positions = await module.govern(
-            node.content or "",
+            node.content or '',
             [
-                WindowProblem(position=k, number=window[k].number, text=_problem_text(window[k]))
+                WindowProblem(
+                    position=k,
+                    number=window[k].number,
+                    text=_problem_text(window[k]),
+                )
                 for k in range(len(window))
             ],
         )
@@ -169,20 +163,20 @@ async def _govern_one(node: ASTNode, candidates: list[Entity], module: Module) -
 
 
 async def distribute_instructions(
-    nodes: list[ASTNode],
-    problems: list[Entity],
+    nodes: list[models.ASTNode],
+    problems: list[models.Entity],
     module: Module | None = None,
-) -> list[Entity]:
+) -> list[models.Entity]:
     """Stamp each governed Problem's `instruction` from the tagged lead-in nodes (in place),
     judging the governed run per lead-in with a growing-window LLM walk (no number matching)."""
-    lead_ins = [n for n in nodes if n.role == "instruction"]
+    lead_ins = [n for n in nodes if n.role == 'instruction']
     if not lead_ins or not problems:
         return problems
     module = module or Module()
     order = {n.id: i for i, n in enumerate(nodes)}
     far = len(order)
 
-    def pos(entity: Entity) -> int:
+    def pos(entity: models.Entity) -> int:
         return order.get(entity.members[0], far) if entity.members else far
 
     ordered = sorted(problems, key=pos)
@@ -208,7 +202,10 @@ class InstructionDistributorNode:
     def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
-    async def run(self, state: State) -> dict:
-        problems = state.get("problem_entities", [])
-        await distribute_instructions(state.get("nodes", []), problems, module=self.module)
-        return {"problem_entities": problems}
+    async def run(self, state: state.State) -> dict:
+        """Distributes each lead-in's shared instruction onto governed Problems."""
+        problems = state.get('problem_entities', [])
+        await distribute_instructions(
+            state.get('nodes', []), problems, module=self.module
+        )
+        return {'problem_entities': problems}

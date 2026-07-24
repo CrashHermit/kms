@@ -44,8 +44,8 @@ try:
 except ImportError:
     pass
 
-DEEPSEEK_ENV_KEY = "DEEPSEEK_API_KEY"
-OPENROUTER_ENV_KEY = "OPENROUTER_API_KEY"
+DEEPSEEK_ENV_KEY = 'DEEPSEEK_API_KEY'
+OPENROUTER_ENV_KEY = 'OPENROUTER_API_KEY'
 
 
 def _require_key(env_key: str, example: str) -> str:
@@ -57,8 +57,8 @@ def _require_key(env_key: str, example: str) -> str:
     key = os.environ.get(env_key)
     if not key:
         raise RuntimeError(
-            f"{env_key} is not set. Export your API key "
-            f"(e.g. `export {env_key}={example}`) before running the pipeline."
+            f'{env_key} is not set. Export your API key '
+            f'(e.g. `export {env_key}={example}`) before running the pipeline.'
         )
     return key
 
@@ -72,8 +72,8 @@ def _provider_routing(provider: str | None) -> dict:
     if not provider:
         return {}
     return {
-        "extra_body": {
-            "provider": {"order": [provider], "allow_fallbacks": False},
+        'extra_body': {
+            'provider': {'order': [provider], 'allow_fallbacks': False},
         }
     }
 
@@ -94,33 +94,11 @@ def text_lm() -> dspy.LM:
     reliable and cheaper.
     """
     return dspy.LM(
-        os.environ.get("TEXT_MODEL", "deepseek/deepseek-v4-flash"),
-        api_key=_require_key(DEEPSEEK_ENV_KEY, "sk-..."),
+        os.environ.get('TEXT_MODEL', 'deepseek/deepseek-v4-flash'),
+        api_key=_require_key(DEEPSEEK_ENV_KEY, 'sk-...'),
         temperature=0.0,
         max_tokens=128000,
-        extra_body={"thinking": {"type": "disabled"}},
-    )
-
-
-@lru_cache(maxsize=1)
-def teacher_lm() -> dspy.LM:
-    """DeepSeek V4 (full, non-flash) — the TEACHER for DSPy optimization.
-
-    Used only at *compile* time, never at inference: a stronger model bootstraps
-    high-quality reasoning traces that, once filtered by a stage's metric, become
-    the few-shot demonstrations the flash ``text_lm`` student runs with. This lets
-    us drive stage quality from data + a metric instead of hand-tuning prompts.
-
-    Same DeepSeek API/key as the student; override TEACHER_MODEL to swap it. ``deepseek-v4-pro``
-    is a reasoning model (returns a ``reasoning_content`` channel) — we leave that thinking on,
-    since richer teacher traces are worth it and the parse-fragility trade-off that made us
-    disable thinking on the flash student doesn't matter for a compile-time-only model.
-    """
-    return dspy.LM(
-        os.environ.get("TEACHER_MODEL", "deepseek/deepseek-v4-pro"),
-        api_key=_require_key(DEEPSEEK_ENV_KEY, "sk-..."),
-        temperature=0.0,
-        max_tokens=128000,
+        extra_body={'thinking': {'type': 'disabled'}},
     )
 
 
@@ -136,9 +114,11 @@ def corrector_lm() -> dspy.LM:
     warm (default DeepInfra; empty to unpin).
     """
     return dspy.LM(
-        os.environ.get("CORRECTOR_MODEL", "openrouter/qwen/qwen3-vl-235b-a22b-instruct"),
-        api_key=_require_key(OPENROUTER_ENV_KEY, "sk-or-..."),
+        os.environ.get(
+            'CORRECTOR_MODEL', 'openrouter/qwen/qwen3-vl-235b-a22b-instruct'
+        ),
+        api_key=_require_key(OPENROUTER_ENV_KEY, 'sk-or-...'),
         temperature=0.0,
         max_tokens=128000,
-        **_provider_routing(os.environ.get("CORRECTOR_PROVIDER", "DeepInfra")),
+        **_provider_routing(os.environ.get('CORRECTOR_PROVIDER', 'DeepInfra')),
     )

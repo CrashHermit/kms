@@ -40,10 +40,7 @@ from pathlib import Path
 import dspy
 from langgraph.types import Send
 
-from kms.core import tracing
-from kms.core.llm import corrector_lm
-from kms.core.models import Segment, merge_results_into_segments
-from kms.core.state import State
+from kms.core import llm, models, state
 
 # A correction should be a light edit; reject anything outside this band of the
 # original length as a runaway rewrite or a truncation.
@@ -57,8 +54,8 @@ def _load_dspy_image(path: str | None) -> dspy.Image | None:
     dspy-specific helper lives here rather than in the (dspy-free) core models."""
     if not path:
         return None
-    encoded = base64.b64encode(Path(path).read_bytes()).decode("utf-8")
-    return dspy.Image(url=f"data:image/png;base64,{encoded}")
+    encoded = base64.b64encode(Path(path).read_bytes()).decode('utf-8')
+    return dspy.Image(url=f'data:image/png;base64,{encoded}')
 
 
 def _within_tolerance(original: str, corrected: str) -> bool:
@@ -74,7 +71,7 @@ def _within_tolerance(original: str, corrected: str) -> bool:
 # LaTeX math-delimiter escape sequences → the pipeline's dollar convention. `\[`/`\]` and
 # `\(`/`\)` are unambiguous math delimiters (they do not occur in prose), so a straight,
 # whitespace-preserving token swap is safe and deterministic.
-_DELIMITER_SWAPS = ((r"\[", "$$"), (r"\]", "$$"), (r"\(", "$"), (r"\)", "$"))
+_DELIMITER_SWAPS = ((r'\[', '$$'), (r'\]', '$$'), (r'\(', '$'), (r'\)', '$'))
 
 
 def _normalize_math_delimiters(text: str) -> str:
@@ -119,73 +116,75 @@ class Signature(dspy.Signature):
     """
 
     page_image: dspy.Image = dspy.InputField(
-        description="The image of the textbook page — the ground truth to check the transcription against."
+        description='The image of the textbook page — the ground truth to check the transcription against.'
     )
     transcription: str = dspy.InputField(
-        description="The OCR markdown transcription of the page to proofread."
+        description='The OCR markdown transcription of the page to proofread.'
     )
     corrected: str = dspy.OutputField(
-        description="The full corrected markdown transcription of the page, with only genuine errors fixed."
+        description='The full corrected markdown transcription of the page, with only genuine errors fixed.'
     )
 
 
 class Module(dspy.Module):
-    def __init__(self, lm: dspy.LM | None = None) -> None:
+    """Proofreads a transcribed page against its source image and fixes OCR errors."""
+
+    def __init__(self, language_model: dspy.LM | None = None) -> None:
         super().__init__()
         self.proofreader = dspy.Predict(Signature)
-        self.set_lm(lm or corrector_lm())
+        self.set_lm(language_model or llm.corrector_lm())
 
     async def aforward(self, page_image: dspy.Image, transcription: str) -> str:
-        result = await self.proofreader.acall(page_image=page_image, transcription=transcription)
-        corrected = result.corrected or ""
-        # The page image is intentionally not captured (large base64, and it is
-        # reconstructable from the input PDF); the trainable text signal is the
-        # transcription -> corrected pair.
-        tracing.record(
-            "corrector",
-            inputs={"transcription": transcription, "page_image": "<omitted: page render>"},
-            outputs={"corrected": corrected},
+        """Returns the proofread transcription with genuine errors corrected."""
+        result = await self.proofreader.acall(
+            page_image=page_image, transcription=transcription
         )
-        return corrected
+        return result.corrected or ''
 
 
 # --- LangGraph node: proofread each Mistral-transcribed page against its image ---
 
 
 class CorrectorNode:
+    """LangGraph node: fans out per-page proofreaders and collects the corrected text."""
+
     def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
-    def dispatch(self, state: State) -> list[Send] | str:
+    def dispatch(self, state: state.State) -> list[Send] | str:
         """Fan out one worker per transcribed segment. Every page is proofread; a segment
         with no content or no page image to check against is skipped, and if none qualify
         the stage is a no-op."""
-        segments = state.get("segments", [])
+        segments = state.get('segments', [])
         sends = [
-            Send("corrector_worker", {"segment": seg})
-            for seg in segments
-            if seg.content and seg.image_path
+            Send('corrector_worker', {'segment': segment})
+            for segment in segments
+            if segment.content and segment.image_path
         ]
-        return sends or "corrector_collect"
+        return sends or 'corrector_collect'
 
     async def worker(self, state: dict) -> dict:
         """Proofread one page's transcription against its image, keeping the original if
         the correction diverges too far (runaway rewrite / truncation)."""
-        segment: Segment = state["segment"]
+        segment: models.Segment = state['segment']
         corrected = await self.module.aforward(
             page_image=_load_dspy_image(segment.image_path),
             transcription=segment.content,
         )
-        final = corrected if _within_tolerance(segment.content, corrected) else segment.content
+        final = (
+            corrected
+            if _within_tolerance(segment.content, corrected)
+            else segment.content
+        )
         # Normalize math delimiters on the chosen text — even when the correction was
         # rejected, so a kept-original page still gets uniform `$$`/`$` delimiters.
         final = _normalize_math_delimiters(final)
-        return {"correction_results": [(segment.index, final)]}
+        return {'correction_results': [(segment.index, final)]}
 
-    def collect(self, state: State) -> dict:
+    def collect(self, state: state.State) -> dict:
         """Write each corrected transcription back into its segment. Segments that were
         not dispatched keep their original content untouched."""
-        segments = merge_results_into_segments(
-            state["segments"], state.get("correction_results", []), "content"
+        segments = models.merge_results_into_segments(
+            state['segments'], state.get('correction_results', []), 'content'
         )
-        return {"segments": segments}
+        return {'segments': segments}

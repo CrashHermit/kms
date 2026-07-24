@@ -35,7 +35,7 @@ testpaths = ["tests"]
 [tool.ruff]
 # One tool for format + lint + import order. src-layout aware so `module`/`training`
 # resolve as first-party. Target the minimum supported interpreter.
-line-length = 100
+line-length = 80
 target-version = "py312"
 src = ["src", "."]
 
@@ -48,7 +48,11 @@ select = ["E", "F", "I", "B", "UP"]
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["kms", "training"]
+known-first-party = ["kms"]
+
+[tool.ruff.format]
+quote-style = "single"
+docstring-code-format = true
 
 [tool.pyright]
 venvPath = "."
