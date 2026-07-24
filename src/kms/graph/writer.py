@@ -14,7 +14,8 @@ entity via ``:HAS_PROCEDURE``, and one ``:Event`` per proof step threaded ``:FIR
 concept and a ``(:Entity)-[:INSTANCE_OF]->(:Concept)`` edge per entity concept (see ``graph.concepts``).
 ``persist_references`` writes the cross-entity layer: a global ``:Entity:Canonical``
 per distinct reference target, and a ``(:Entity)-[:REFERENCES {tactic}]->(:Canonical)`` edge per reference
-(see ``graph.references`` for why references route through canonicals).
+(see ``graph.references`` for why references route through canonicals). ``persist_uses`` adds the
+step-level ``(:Event)-[:USES {tactic}]->(:Canonical)`` edges on top (see ``graph.uses``).
 
 Writes are batched: Cypher can't parameterize a label, but the label comes from a closed enum
 (``NodeType`` / ``EntityType``), so grouping by label and interpolating it is safe and turns the
@@ -56,6 +57,7 @@ from kms.graph.procedures import (
     then_pairs,
 )
 from kms.graph.references import canonical_batches, reference_rows
+from kms.graph.uses import uses_rows
 
 
 def node_batches(nodes: list[ASTNode], source: str) -> dict[str | None, list[dict]]:
@@ -285,5 +287,24 @@ async def persist_references(entities: list[Entity], source: str) -> None:
             f"MATCH (e:{ENTITY_LABEL} {{uuid: row.entity}}), "
             f"(c:{CANONICAL_LABEL} {{uuid: row.canonical}}) "
             f"MERGE (e)-[ref:REFERENCES]->(c) SET ref.tactic = row.tactic",
+            rows=rows,
+        )
+
+
+async def persist_uses(entities: list[Entity], source: str) -> None:
+    """Upsert the step-level ``:USES`` layer: for each proof step that mentions a reference target, draw
+    a ``(:Event)-[:USES {tactic}]->(:Entity:Canonical)`` edge (the finer complement of the entity-level
+    ``:REFERENCES`` rollup; see ``graph.uses``). Idempotent — edges MERGE on the (event, canonical) pair,
+    tactic set on the relationship. A no-op when nothing matches. The ``:Event`` and ``:Canonical``
+    vertices are expected to already exist (the procedure and reference persisters run first)."""
+    rows = uses_rows(entities, source)
+    if not rows:
+        return
+    async with driver().session(database=database()) as session:
+        await session.run(
+            f"UNWIND $rows AS row "
+            f"MATCH (v:{EVENT_LABEL} {{uuid: row.event}}), "
+            f"(c:{CANONICAL_LABEL} {{uuid: row.canonical}}) "
+            f"MERGE (v)-[u:USES]->(c) SET u.tactic = row.tactic",
             rows=rows,
         )
