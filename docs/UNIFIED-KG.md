@@ -254,23 +254,71 @@ property) plus reframing the math-specific finders as the *math profile* rather 
 
 ---
 
+## Edges (math-first)
+
+Edges exist to serve **capabilities**, not to complete the graph. The capabilities driving them:
+traceability, bi-modal traversal, prerequisite/dependency reasoning (curriculum), practice serving,
+retrieval bridging, identity.
+
+**Governing principle — local/structural vs global/semantic:**
+
+> Structural edges stay **local** — they bind a mention to its own parts and never cross between
+> books. Semantic edges route through **canonicals / concepts** so citations converge across the
+> whole corpus instead of fragmenting.
+
+The label/property split from the substrate carries over: the **relationship type is a label**
+(closed: `:HAS_PROCEDURE`, `:REFERENCES`, …); the **tactic is a property** on the edge (math's 9
+labels). `stance` (supports/contradicts/…) is generalization-era and omitted now.
+
+| Edge | Purpose | Direction · cardinality | Status |
+|---|---|---|---|
+| **Local / structural** | | | |
+| `(:Source)-[:HEAD/:NEXT]->(:Node)` | reading order / provenance | chain | built |
+| `(:Source)-[:HAS_ENTITY]->(:Entity)` | roots entities under the book | 1→n | built |
+| `(:Entity\|:Event)-[:DERIVED_FROM]->(:Node)` | traceability / citation | n→m | built (entity); extend to events |
+| `(:Entity)-[:HAS_PROCEDURE]->(:Procedure)` | **the bi-modal hinge** (declarative→procedural) | Def 0, Thm 1..n, Prob 0..1 | new |
+| `(:Procedure)-[:FIRST]->(:Event)`, `(:Event)-[:THEN]->(:Event)` | step sequence / replay | chain | new |
+| **Global / semantic** (target = canonical / concept) | | | |
+| `(:Entity)-[:REFERENCES {tactic}]->(:Entity:Canonical)` | entity-level dependency (curriculum) | n→m | built (retarget hub→canonical) |
+| `(:Event)-[:USES {tactic}]->(:Entity:Canonical)` | step-level grounding | n→m | new (refinement of REFERENCES) |
+| `(:Entity)-[:DEMONSTRATES]->(:Canonical\|:Concept)` | worked-example anchor | n→m | new (extraction-time) |
+| `(:Entity)-[:PRACTICES]->(:Concept)` | exercise anchor (practice serving) | n→m | new (later pass) |
+| `(:Entity\|:Event)-[:INSTANCE_OF]->(:Concept)` | conceptualization `φ`, retrieval bridging | n→m | new |
+| `(:Concept)-[:BROADER]->(:Concept)` | concept taxonomy / curriculum sequencing | n→m | new |
+| `(:Entity:Mention)-[:REALIZES]->(:Entity:Canonical)` | identity / dedup | n→1 | new |
+
+**Resolved decisions:**
+
+1. **Semantic edges target canonicals, never mentions** — this is what keeps citations from
+   fragmenting across books, and the whole reason `:Entity:Canonical` exists. Math-first, canonicals
+   are cheap **name-normalized hubs** (exactly today's `:GeneralEntity` clustering), so the target
+   exists without any embedding — the embedding-based fusion mechanism stays deferred.
+2. **`REFERENCES` (entity-level) and `USES` (step-level) are one relation at two granularities.**
+   Entity-level is the *rollup* of step-level and remains the floor (today's accuracy, already
+   produced by the `referencer`s). `USES` is populated when the referencer goes per-event; entity-
+   level `REFERENCES` alone already serves curriculum/dependency, so step-level is upside with a
+   recoverable failure mode.
+3. **Concept taxonomy (`BROADER`) is included.** MSC is hierarchical, so anchoring concepts to it
+   yields the taxonomy nearly free, and it directly powers curriculum sequencing (prerequisite
+   subfields). Flat concepts would lose that.
+4. **Anchor binding differs by difficulty** (this is the one seam where structure meets semantics):
+   a **proof** anchors to its own theorem structurally via `HAS_PROCEDURE` (trivial, positional); a
+   **worked example** anchors to a specific statement (`DEMONSTRATES`) — positional, bind at
+   extraction; an **exercise** anchors *up* to a concept (`PRACTICES`) — thematic, needs the concept
+   layer to exist first, so bind in a **later pass**, the same shape as `instruction_distributor` and
+   the `referencer`s already use for cross-entity edges.
+5. **`stance` omitted** — generalization-era.
+
+**Build order** (each step usable on its own): reify events + the structural spine
+(`HAS_PROCEDURE`, `FIRST`/`THEN`) → concepts + `INSTANCE_OF`/`BROADER` (MSC) → retarget the built
+`REFERENCES` onto `:Entity:Canonical` → then step-level `USES` and the exercise-anchor (`PRACTICES`)
+pass.
+
+---
+
 ## Open work (not yet designed)
 
-**Edges — the next session's focus.** The relationships fall into families, sketched but not
-settled:
-- **Containment** (structural, easy): `(:Entity)-[:HAS_PROCEDURE]->(:Procedure)-[:FIRST]->(:Event)-[:THEN]->…`
-- **Aboutness / the "anchor"** (semantic, hard): a worked example `:DEMONSTRATES` a theorem; an
-  exercise `:PRACTICES` a concept. Difficulty tracks where it points — a **proof** anchors to its
-  own theorem (trivial, positional); an **example** anchors to a specific statement (medium,
-  positional); an **exercise** anchors *up* to a concept (hard, thematic, needs the concept layer
-  to exist first → a later linking pass, consistent with how `instruction_distributor` and the
-  `referencer`s already draw cross-entity edges).
-- **Step-use / references** (medium): `(:Event)-[:USES {tactic}]->(:Entity)`. AutoMathKG attaches
-  refs at the *entity* level; the unified model refines them to the *step* level (which step
-  invoked which prior result), with the entity-level ref recoverable as a rollup. Open question:
-  push the `referencer` stage down to per-step, or keep it entity-level and defer.
-- **Conceptualization** (`φ`): `(:node)-[:INSTANCE_OF]->(:Concept)`.
-- **Dedup / identity**: `(:Entity:Mention)-[:REALIZES]->(:Entity:Canonical)`.
+Edges are designed above. Remaining:
 
 **Other deferred decisions:**
 - **Procedure ownership.** Assume `:Procedure` hangs off its owning `:Entity` via `:HAS_PROCEDURE`;
