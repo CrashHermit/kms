@@ -12,9 +12,10 @@ Representation: every entity carries the shared ``:Entity`` label AND its per-ty
 labels), so ``MATCH (e:Theorem)`` is a native label scan with no property index. It roots under its
 book via ``(:Source)-[:HAS_ENTITY]->(:Entity)`` and points back at the structural chunks it was built
 from via ``(:Entity)-[:DERIVED_FROM]->(:Node)`` (the entity's ``members`` are node ids, resolved to the
-same deterministic node uuids the ``:Node`` layer wrote). Cross-entity reference edges
-(refs / references_tactics) and the step-level event layer are later graph-tier work; this layer is
-entity-grain only.
+same deterministic node uuids the ``:Node`` layer wrote). Its derivations reify into the procedural
+layer (``graph.procedures``) and its ``refs`` into reference edges onto canonicals
+(``graph.references``); an entity also carries the ``:Mention`` role label (a book-specific entity),
+distinct from a reference ``:Entity:Canonical``.
 
 Identity: the stable vertex key is a DETERMINISTIC uuid5 over ``(source, entity id)`` — the id is the
 entity's document-order position, assigned when the three overlays are flattened (see
@@ -23,10 +24,11 @@ duplicating them, and ``source`` disambiguates the same id across different book
 segment keeps these uuids disjoint from the node uuids (which key on ``source#index``).
 
 Structured attributes: the scalar attributes (label, number, title, field, instruction) and
-``contents`` (a string array) map onto native Neo4j properties. The nested attributes — ``bodylist``,
-``proofs``, ``solutions`` — hold the step-level material that the (not-yet-built) event layer will
-reify into its own nodes and edges; until then they are preserved losslessly as JSON-string
-properties on the anchor rather than modeled as graph structure, so no attributor work is dropped.
+``contents`` (a string array) map onto native Neo4j properties. The entity's own ``bodylist`` — its
+*statement* structure — stays here as a JSON-string property (declarative: it belongs to the claim).
+The *derivations* — ``proofs`` and ``solutions`` — do NOT: they are the procedural half of the graph
+and are reified into ``:Procedure`` + ``:Event`` structure by ``graph.procedures`` (see
+``docs/UNIFIED-KG.md``), so they are absent from the entity's own property map.
 """
 
 import json
@@ -36,6 +38,13 @@ from kms.core.models import BodySegment, Entity
 from kms.graph.nodes import source_uuid
 
 ENTITY_LABEL = "Entity"
+# Role labels, applied ALONGSIDE the base :Entity label (see docs/UNIFIED-KG.md). A book-specific
+# mention and a corpus-level canonical are both :Entity — the role label distinguishes them (and
+# keeps `MATCH (:Entity {type: …})` seeing both), with no implicit "absence of label ⇒ mention" rule.
+MENTION_LABEL = "Mention"  # a book-specific entity (carries :DERIVED_FROM provenance)
+CANONICAL_LABEL = (
+    "Canonical"  # a corpus-level identity hub (minted from refs; see graph.references)
+)
 
 
 def entity_uuid(source: str, entity_id: int) -> str:
@@ -61,10 +70,12 @@ def _segment(segment: BodySegment) -> dict:
 
 def entity_properties(entity: Entity, source: str) -> dict:
     """The Neo4j property map for one entity: its stable uuid, the source link, the math type, the
-    self-contained scalar attributes, ``contents`` as a native string array, and the nested
-    ``bodylist`` / ``proofs`` / ``solutions`` as JSON strings (see the module docstring). None and
-    empty attributes are omitted rather than written as nulls, mirroring how the finder/attributor
-    layer leaves them unset. Precondition: ``entity.id`` is set (true post-flatten)."""
+    self-contained scalar attributes, ``contents`` as a native string array, and the entity's own
+    (statement) ``bodylist`` as a JSON string (see the module docstring). Derivations (``proofs`` /
+    ``solutions``) are NOT here — they reify into ``:Procedure`` / ``:Event`` structure via
+    ``graph.procedures``. None and empty attributes are omitted rather than written as nulls, mirroring
+    how the finder/attributor layer leaves them unset. Precondition: ``entity.id`` is set
+    (true post-flatten)."""
     props = {
         "uuid": entity_uuid(source, entity.id),
         "source": source_uuid(source),  # links back to the :Source node
@@ -78,22 +89,6 @@ def entity_properties(entity: Entity, source: str) -> dict:
         "bodylist": (
             json.dumps([_segment(s) for s in entity.bodylist], ensure_ascii=False)
             if entity.bodylist
-            else None
-        ),
-        "proofs": (
-            json.dumps(
-                [
-                    {"contents": p.contents, "bodylist": [_segment(s) for s in p.bodylist]}
-                    for p in entity.proofs
-                ],
-                ensure_ascii=False,
-            )
-            if entity.proofs
-            else None
-        ),
-        "solutions": (
-            json.dumps([{"contents": s.contents} for s in entity.solutions], ensure_ascii=False)
-            if entity.solutions
             else None
         ),
     }

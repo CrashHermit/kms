@@ -8,9 +8,14 @@ re-running a book is idempotent, then wires them up — ``(:Source)-[:HEAD]->`` 
 walkable in Cypher. ``persist_entities`` writes the ``:Entity`` overlay on top: one vertex per
 Definition / Theorem / Problem (base ``:Entity`` label + its per-type label), rooted under the book
 via ``:HAS_ENTITY`` and linked back to the structural chunks it was built from via ``:DERIVED_FROM``.
-``persist_references`` writes the cross-entity layer: a global ``:GeneralEntity`` hub per distinct
-reference target, and a ``(:Entity)-[:REFERENCES {tactic}]->(:GeneralEntity)`` edge per reference (see
-``graph.references`` for why references route through hubs).
+``persist_procedures`` writes the procedural layer: one ``:Procedure`` per proof/solution hung off its
+entity via ``:HAS_PROCEDURE``, and one ``:Event`` per proof step threaded ``:FIRST``/``:THEN`` (see
+``graph.procedures``). ``persist_concepts`` writes the concept layer: a global ``:Concept`` per distinct
+concept and a ``(:Entity)-[:INSTANCE_OF]->(:Concept)`` edge per entity concept (see ``graph.concepts``).
+``persist_references`` writes the cross-entity layer: a global ``:Entity:Canonical``
+per distinct reference target, and a ``(:Entity)-[:REFERENCES {tactic}]->(:Canonical)`` edge per reference
+(see ``graph.references`` for why references route through canonicals). ``persist_uses`` adds the
+step-level ``(:Event)-[:USES {tactic}]->(:Canonical)`` edges on top (see ``graph.uses``).
 
 Writes are batched: Cypher can't parameterize a label, but the label comes from a closed enum
 (``NodeType`` / ``EntityType``), so grouping by label and interpolating it is safe and turns the
@@ -23,9 +28,12 @@ from collections import defaultdict
 from typing import Any
 
 from kms.core.models import ASTNode, Entity
+from kms.graph.concepts import CONCEPT_LABEL, concept_batches, instance_rows
 from kms.graph.db import database, driver
 from kms.graph.entities import (
+    CANONICAL_LABEL,
     ENTITY_LABEL,
+    MENTION_LABEL,
     entity_label,
     entity_properties,
     entity_uuid,
@@ -39,7 +47,17 @@ from kms.graph.nodes import (
     source_properties,
     source_uuid,
 )
-from kms.graph.references import GENERAL_ENTITY_LABEL, hub_batch, reference_rows
+from kms.graph.procedures import (
+    EVENT_LABEL,
+    PROCEDURE_LABEL,
+    event_rows,
+    first_pairs,
+    has_procedure_pairs,
+    procedure_batches,
+    then_pairs,
+)
+from kms.graph.references import canonical_batches, reference_rows
+from kms.graph.uses import uses_rows
 
 
 def node_batches(nodes: list[ASTNode], source: str) -> dict[str | None, list[dict]]:
@@ -146,7 +164,7 @@ async def persist_entities(entities: list[Entity], source: str) -> None:
         for label, rows in batches.items():
             await session.run(
                 f"UNWIND $rows AS row MERGE (e:{ENTITY_LABEL} {{uuid: row.uuid}}) "
-                f"SET e += row SET e:{label}",
+                f"SET e += row SET e:{label} SET e:{MENTION_LABEL}",
                 rows=rows,
             )
         await session.run(
@@ -166,27 +184,127 @@ async def persist_entities(entities: list[Entity], source: str) -> None:
             )
 
 
-async def persist_references(entities: list[Entity], source: str) -> None:
-    """Upsert the cross-entity reference layer: mint a global ``:GeneralEntity`` hub per distinct
-    reference target, then draw a ``(:Entity)-[:REFERENCES {tactic}]->(:GeneralEntity)`` edge for each
-    reference. Idempotent — hubs MERGE on their deterministic global uuid and edges MERGE on the
-    (entity, hub) pair (the tactic is set on the relationship, so a re-run updates it in place). A
-    no-op when no entity carries references. The citing ``:Entity`` vertices are expected to already
-    exist (the entity persister writes them first); the MATCH attaches to them."""
-    rows = reference_rows(entities, source)
-    if not rows:
+async def persist_procedures(entities: list[Entity], source: str) -> None:
+    """Upsert the procedural layer: one ``:Procedure`` per proof/solution (base ``:Procedure`` label +
+    its per-kind label), hung off its entity via ``:HAS_PROCEDURE``; one ``:Event`` per proof step,
+    threaded ``:FIRST`` from the procedure and ``:THEN`` along the steps. Idempotent — every MERGE keys
+    on a deterministic uuid. A no-op when no entity carries a derivation. The citing ``:Entity`` vertices
+    are expected to already exist (the entity persister writes them first); the ``:HAS_PROCEDURE`` MATCH
+    attaches to them. Every entity's id must be assigned (post-flatten)."""
+    proc_batches = procedure_batches(entities, source)
+    if not proc_batches:
         return
-    hubs = hub_batch(entities)
+    events = event_rows(entities, source)
+    haspairs = has_procedure_pairs(entities, source)
+    firsts = first_pairs(entities, source)
+    thens = then_pairs(entities, source)
 
     async with driver().session(database=database()) as session:
+        for label, rows in proc_batches.items():
+            await session.run(
+                f"UNWIND $rows AS row MERGE (p:{PROCEDURE_LABEL} {{uuid: row.uuid}}) "
+                f"SET p += row SET p:{label}",
+                rows=rows,
+            )
+        if events:
+            await session.run(
+                f"UNWIND $rows AS row MERGE (e:{EVENT_LABEL} {{uuid: row.uuid}}) SET e += row",
+                rows=events,
+            )
         await session.run(
-            f"UNWIND $hubs AS h MERGE (g:{GENERAL_ENTITY_LABEL} {{uuid: h.uuid}}) SET g += h",
-            hubs=hubs,
+            f"UNWIND $pairs AS pair "
+            f"MATCH (e:{ENTITY_LABEL} {{uuid: pair.entity}}), "
+            f"(p:{PROCEDURE_LABEL} {{uuid: pair.procedure}}) "
+            f"MERGE (e)-[:HAS_PROCEDURE]->(p)",
+            pairs=haspairs,
         )
+        if firsts:
+            await session.run(
+                f"UNWIND $pairs AS pair "
+                f"MATCH (p:{PROCEDURE_LABEL} {{uuid: pair.procedure}}), "
+                f"(e:{EVENT_LABEL} {{uuid: pair.event}}) "
+                f"MERGE (p)-[:FIRST]->(e)",
+                pairs=firsts,
+            )
+        if thens:
+            await session.run(
+                f"UNWIND $pairs AS pair "
+                f"MATCH (a:{EVENT_LABEL} {{uuid: pair.from}}), (b:{EVENT_LABEL} {{uuid: pair.to}}) "
+                f"MERGE (a)-[:THEN]->(b)",
+                pairs=thens,
+            )
+
+
+async def persist_concepts(entities: list[Entity], source: str) -> None:
+    """Upsert the concept layer: mint a global ``:Concept`` per distinct concept (base ``:Concept``
+    label + its per-type label), then draw a ``(:Entity)-[:INSTANCE_OF]->(:Concept)`` edge per entity
+    concept. Idempotent — concepts MERGE on their deterministic global uuid and edges on the (entity,
+    concept) pair. A no-op when no entity instantiates a concept. The citing mention ``:Entity``
+    vertices are expected to already exist (the entity persister writes them first)."""
+    rows = instance_rows(entities, source)
+    if not rows:
+        return
+    batches = concept_batches(entities)
+
+    async with driver().session(database=database()) as session:
+        for label, concepts in batches.items():
+            await session.run(
+                f"UNWIND $rows AS row MERGE (c:{CONCEPT_LABEL} {{uuid: row.uuid}}) "
+                f"SET c += row SET c:{label}",
+                rows=concepts,
+            )
         await session.run(
             f"UNWIND $rows AS row "
             f"MATCH (e:{ENTITY_LABEL} {{uuid: row.entity}}), "
-            f"(g:{GENERAL_ENTITY_LABEL} {{uuid: row.hub}}) "
-            f"MERGE (e)-[ref:REFERENCES]->(g) SET ref.tactic = row.tactic",
+            f"(c:{CONCEPT_LABEL} {{uuid: row.concept}}) "
+            f"MERGE (e)-[:INSTANCE_OF]->(c)",
+            rows=rows,
+        )
+
+
+async def persist_references(entities: list[Entity], source: str) -> None:
+    """Upsert the cross-entity reference layer: mint a global ``:Entity:Canonical`` per distinct
+    reference target (base ``:Entity`` label + the ``:Canonical`` role label + its per-type label),
+    then draw a ``(:Entity)-[:REFERENCES {tactic}]->(:Canonical)`` edge for each reference. Idempotent —
+    canonicals MERGE on their deterministic global uuid and edges MERGE on the (entity, canonical) pair
+    (the tactic is set on the relationship, so a re-run updates it in place). A no-op when no entity
+    carries references. The citing mention ``:Entity`` vertices are expected to already exist (the entity
+    persister writes them first); the MATCH attaches to them."""
+    rows = reference_rows(entities, source)
+    if not rows:
+        return
+    batches = canonical_batches(entities)
+
+    async with driver().session(database=database()) as session:
+        for label, canonicals in batches.items():
+            await session.run(
+                f"UNWIND $rows AS row MERGE (c:{ENTITY_LABEL} {{uuid: row.uuid}}) "
+                f"SET c += row SET c:{CANONICAL_LABEL} SET c:{label}",
+                rows=canonicals,
+            )
+        await session.run(
+            f"UNWIND $rows AS row "
+            f"MATCH (e:{ENTITY_LABEL} {{uuid: row.entity}}), "
+            f"(c:{CANONICAL_LABEL} {{uuid: row.canonical}}) "
+            f"MERGE (e)-[ref:REFERENCES]->(c) SET ref.tactic = row.tactic",
+            rows=rows,
+        )
+
+
+async def persist_uses(entities: list[Entity], source: str) -> None:
+    """Upsert the step-level ``:USES`` layer: for each proof step that mentions a reference target, draw
+    a ``(:Event)-[:USES {tactic}]->(:Entity:Canonical)`` edge (the finer complement of the entity-level
+    ``:REFERENCES`` rollup; see ``graph.uses``). Idempotent — edges MERGE on the (event, canonical) pair,
+    tactic set on the relationship. A no-op when nothing matches. The ``:Event`` and ``:Canonical``
+    vertices are expected to already exist (the procedure and reference persisters run first)."""
+    rows = uses_rows(entities, source)
+    if not rows:
+        return
+    async with driver().session(database=database()) as session:
+        await session.run(
+            f"UNWIND $rows AS row "
+            f"MATCH (v:{EVENT_LABEL} {{uuid: row.event}}), "
+            f"(c:{CANONICAL_LABEL} {{uuid: row.canonical}}) "
+            f"MERGE (v)-[u:USES]->(c) SET u.tactic = row.tactic",
             rows=rows,
         )

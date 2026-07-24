@@ -180,20 +180,20 @@ def test_persist_references_mints_hubs_and_edges():
             await persist_references(overlay, source)
             await persist_references(overlay, source)  # idempotent re-run
             async with driver().session(database=database()) as session:
-                # "Set" and "set" collapse to a single hub
+                # "Set" and "set" collapse to a single canonical
                 hubs = await one(
-                    session, "MATCH (g:GeneralEntity {kind: 'definition'}) RETURN count(g) AS c"
+                    session, "MATCH (c:Canonical {type: 'definition'}) RETURN count(c) AS c"
                 )
-                # both entities reference that one hub -> two :REFERENCES edges into it
+                # both entities reference that one canonical -> two :REFERENCES edges into it
                 edges = await one(
                     session,
-                    "MATCH (:Entity)-[r:REFERENCES]->(:GeneralEntity {name: 'Set'}) "
+                    "MATCH (:Entity)-[r:REFERENCES]->(:Canonical {name: 'Set'}) "
                     "RETURN count(r) AS c",
                 )
                 # the tactic rides on the relationship
                 tactic = await one(
                     session,
-                    "MATCH (:Theorem)-[r:REFERENCES]->(:GeneralEntity) RETURN r.tactic AS t",
+                    "MATCH (:Theorem)-[r:REFERENCES]->(:Canonical) RETURN r.tactic AS t",
                 )
                 assert hubs["c"] == 1  # converged, and re-run did not duplicate
                 assert edges["c"] == 2
