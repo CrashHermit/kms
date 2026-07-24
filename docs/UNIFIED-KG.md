@@ -11,7 +11,32 @@ the migration notes at the bottom say what folds into what.
 
 ---
 
-## Thesis: AutoSchemaKG is the *engine*, AutoMathKG is a *profile*
+## Scope — math-first; generalization deferred
+
+Decided after the initial design: **adopt the entity/event/concept substrate now, concretely for
+mathematics; defer the general engine.** The two are separable, and only one is a large change:
+
+- **Adopted now — this is just a better *math* graph.** The `:Entity` / `:Event` / `:Concept`
+  model, the generic `:Procedure` container, MSC-anchored concepts, and a canonical hub (the
+  refactor of today's `:GeneralEntity`). None of this needs the engine — it is the concrete
+  AutoMathKG + AutoSchemaKG **content** merge for math, and it is the actual answer to the original
+  question: concepts give the multi-hop / curriculum win, events give step-level reasoning. Math
+  types and tactics are **hardcoded** (labels, as the current code already does — `:Entity:Theorem`),
+  not open properties.
+- **Deferred — the "huge change," kept below as the north star, not the next build.** The
+  engine/profile split, open `type` / `role` properties *for schema induction*, the explicit
+  genre/domain layering, `stance`, any second domain, and the heavyweight update loop (MathVD
+  embedding-fusion + Math-LLM completion). Building a plug-in engine with exactly one plug is
+  premature abstraction; adopt it only when a second domain is real (rule of three). Because the
+  substrate is identical either way, that later step is a **refactor, not a rewrite** — the math
+  build extracts cleanly into a profile if and when it's warranted.
+
+Everything below describes the full/general design so the north star is on record. Sub-sections
+tagged **_(generalization-era)_** are deferred; the plain substrate is what's in scope now.
+
+---
+
+## Thesis _(generalization-era)_: AutoSchemaKG is the *engine*, AutoMathKG is a *profile*
 
 The two papers are not peers to fuse symmetrically. They contribute different things, and the
 clean way to state the merge is one sentence:
@@ -113,6 +138,12 @@ vertex level:
 **Kind and role are labels; type is a property.** Typing-as-labels is exactly what would stop the
 LLM from inducing types, so type must be a property. Roles are a closed 2-set, so both get labels
 (no implicit "absence of label ⇒ mention" rule).
+
+> **Math-first note.** Open-property typing exists to serve *induction*, so it travels with the
+> deferred generalization. Since math's type set is closed and known, the near-term math build
+> keeps types as concrete **labels** (`:Entity:Theorem`, as the current code does) — simpler, and it
+> buys nothing to make them open until a second domain is on the table. The *kinds* (`:Entity` /
+> `:Event` / `:Concept` / `:Procedure`) are labels in both worlds; only the type facet differs.
 
 ### Vertex inventory
 
@@ -252,6 +283,19 @@ settled:
   Neo4j "Existing KG".
 - **The completion mechanism** (AutoMathKG): Math-LLM synthesizes a missing `:Procedure` (event
   chain) for a statement that has none — reframed as *procedural-layer generation*.
-- **Profile interface.** Formalize what a domain profile supplies: entity/procedure `type`
-  vocabularies, per-type extractors, the action/tactic vocabulary, the concept ontology. Math is
-  the first profile; the procedure extractor is shared across all profiles.
+**Deferred to the generalization era (not the next build):**
+- **The engine/profile split and profile interface** — what a domain profile supplies
+  (entity/procedure `type` vocabularies, per-type extractors, action/tactic vocabulary, concept
+  ontology). Math is the first profile; the procedure extractor is shared across profiles.
+- **Open `type` / `role` properties and `stance`** — the schema-induction machinery. Math-first
+  uses concrete labels instead.
+- **The heavyweight update loop** — MathVD embedding-fusion and Math-LLM completion (above). The
+  canonical *hub* stays in scope as a cheap name-normalized cluster (as today's `:GeneralEntity`);
+  the embedding-based fusion *mechanism* is deferred.
+
+**Accuracy gate (whenever fusion/canonicalization lands).** Hold a math validation set and require
+the unified pipeline's extraction precision/recall to *match today's math-only numbers* before
+migrating; benchmark fusion with a false-merge rate on known-collision terms ("normal", "regular",
+"kernel", …). Bias the fusion judge toward *not* merging — a duplicate hub is cheap, a wrong merge
+corrupts every reference routing through it. Canonicals are non-destructive (mentions preserved via
+`:REALIZES`), so a bad merge is recoverable.
