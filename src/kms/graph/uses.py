@@ -22,8 +22,8 @@ structure isn't reified into events — so a Problem's refs stay entity-level on
 
 import re
 
-from kms.core.models import Entity, ProcedureType
-from kms.graph.procedures import event_uuid
+from kms.core.models import Entity
+from kms.graph.procedures import proof_events
 from kms.graph.references import canonical_uuid
 
 
@@ -48,18 +48,14 @@ def uses_rows(entities: list[Entity], source: str) -> list[dict]:
     for entity in entities:
         if not entity.refs:
             continue
-        for proc_index, proof in enumerate(entity.proofs):
-            for step_index, step in enumerate(proof.bodylist):
-                for ref in entity.refs:
-                    if not _mentions(step.description, ref.target):
-                        continue
-                    event = event_uuid(
-                        source, entity.id, ProcedureType.PROOF.value, proc_index, step_index
-                    )
-                    canonical = canonical_uuid(ref.kind, ref.target)
-                    key = (event, canonical)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    rows.append({"event": event, "canonical": canonical, "tactic": ref.tactic})
+        for event, step in proof_events(entity, source):
+            for ref in entity.refs:
+                if not _mentions(step.description, ref.target):
+                    continue
+                canonical = canonical_uuid(ref.kind, ref.target)
+                key = (event, canonical)
+                if key in seen:
+                    continue
+                seen.add(key)
+                rows.append({"event": event, "canonical": canonical, "tactic": ref.tactic})
     return rows

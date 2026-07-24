@@ -27,6 +27,7 @@ Event provenance: a ``bodylist`` step is a content slice, not tied to a specific
 (event → procedure → entity → its member ``:Node`` s). A precise step→node link is later work.
 """
 
+from collections.abc import Iterator
 from uuid import NAMESPACE_URL, uuid5
 
 from kms.core.models import BodySegment, Entity, ProcedureType
@@ -55,6 +56,19 @@ def procedure_label(kind: str) -> str:
     the base ``:Procedure`` label. The ProcedureType values are single lowercase words, so capitalizing
     yields a valid Neo4j label."""
     return kind.capitalize()
+
+
+def proof_events(entity: Entity, source: str) -> Iterator[tuple[str, BodySegment]]:
+    """Yield ``(event_uuid, step)`` for every step of every proof of the entity — the reified
+    ``:Event`` identities. The single place the ``:Event`` key is derived from the (proof index, step
+    index) scheme, so a consumer (e.g. the step-level ``:USES`` builder) reuses it instead of
+    reconstructing the same uuid."""
+    for proc_index, proof in enumerate(entity.proofs):
+        for step_index, step in enumerate(proof.bodylist):
+            yield (
+                event_uuid(source, entity.id, ProcedureType.PROOF.value, proc_index, step_index),
+                step,
+            )
 
 
 def _derivations(entity: Entity) -> list[tuple[str, int, list[str], list[BodySegment]]]:
