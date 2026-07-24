@@ -34,8 +34,7 @@ class NodePersisterNode:
     """Sequential stage: upsert the run's node stream as the graph's provenance layer."""
 
     async def run(self, state: state.State) -> dict:
-        """Flattens the three per-type overlays and upserts as the :Entity layer."""
-        """Upserts the run's node stream as the graph's provenance layer."""
+        """Upsert the run's node stream as the graph's provenance layer."""
         source = state.get('source')
         if not is_configured() or not source:
             return {}
@@ -56,8 +55,8 @@ class EntityPersisterNode:
     on top of them, so the citing vertices exist to attach to."""
 
     async def run(self, state: state.State) -> dict:
-        """Flattens the three per-type overlays and upserts as the :Entity layer."""
-        """Upserts the run's node stream as the graph's provenance layer."""
+        """Flatten the three per-type overlays and upsert them as the :Entity
+        layer, then the procedural, concept, reference, and :USES layers."""
         source = state.get('source')
         if not is_configured() or not source:
             return {}

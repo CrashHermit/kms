@@ -541,14 +541,13 @@ the whole run.
 - `OPENROUTER_API_KEY` — the correction pass (Qwen3-VL-235B; `CORRECTOR_MODEL` /
   `CORRECTOR_PROVIDER` override).
 - `DEEPSEEK_API_KEY` — all text stages: extractor, seam, splitter, the three finders +
-  attributors, and the distributor (`deepseek-v4-flash`). Also powers the DSPy **teacher**
-  (`deepseek-v4-pro`, compile-time only; `TEACHER_MODEL` overrides) — same key.
+  attributors, and the distributor (`deepseek-v4-flash`).
 
 **Deps** (uv) — **no GPU anywhere**:
 - `uv sync` — light CPU core.
 - `uv sync --extra mistral` — adds `pypdfium2` + `pillow` (render page images for the corrector).
 
-**Tests:** `PYTHONPATH=src uv run pytest -q` (124 tests). `tests/conftest.py` stubs
+**Tests:** `PYTHONPATH=src uv run pytest -q` (147 tests). `tests/conftest.py` stubs
 dspy/pydantic/langgraph *only if absent*, so the suite runs with or without the real deps.
 
 **Style (ruff):** `uv run ruff format . && uv run ruff check .` — both must be clean before
