@@ -16,6 +16,7 @@ No index on the structural ``type`` or the entity ``type`` — both also carry p
 embeddings belong to the (undecided) semantic tiers above this layer, not to these vertices.
 """
 
+from kms.graph.concepts import CONCEPT_LABEL
 from kms.graph.db import database, driver
 from kms.graph.entities import ENTITY_LABEL
 from kms.graph.nodes import NODE_LABEL, SOURCE_LABEL
@@ -25,7 +26,8 @@ from kms.graph.procedures import EVENT_LABEL, PROCEDURE_LABEL
 def schema_statements() -> list[str]:
     """The idempotent DDL for the graph: uuid uniqueness keys on ``:Node``, ``:Source``, ``:Entity``
     (which also covers the reference canonicals — they are ``:Entity``), ``:Procedure`` and ``:Event``
-    (the procedural layer), and a ``source`` lookup index on ``:Node`` and ``:Entity``."""
+    (the procedural layer) and ``:Concept`` (the concept layer), and a ``source`` lookup index on
+    ``:Node`` and ``:Entity``."""
     return [
         f"CREATE CONSTRAINT node_uuid IF NOT EXISTS FOR (n:{NODE_LABEL}) REQUIRE n.uuid IS UNIQUE",
         f"CREATE CONSTRAINT source_uuid IF NOT EXISTS "
@@ -36,6 +38,8 @@ def schema_statements() -> list[str]:
         f"FOR (p:{PROCEDURE_LABEL}) REQUIRE p.uuid IS UNIQUE",
         f"CREATE CONSTRAINT event_uuid IF NOT EXISTS "
         f"FOR (v:{EVENT_LABEL}) REQUIRE v.uuid IS UNIQUE",
+        f"CREATE CONSTRAINT concept_uuid IF NOT EXISTS "
+        f"FOR (c:{CONCEPT_LABEL}) REQUIRE c.uuid IS UNIQUE",
         f"CREATE INDEX node_source IF NOT EXISTS FOR (n:{NODE_LABEL}) ON (n.source)",
         f"CREATE INDEX entity_source IF NOT EXISTS FOR (e:{ENTITY_LABEL}) ON (e.source)",
     ]

@@ -36,9 +36,10 @@ label. On the problem chain one further stage, the instruction distributor, then
 grouped-exercise run). The three chains fan into the entity persister, the terminal stage: it flattens
 the overlays into one document-ordered, globally-id'd list and upserts them as the graph's `:Entity`
 layer (rooted under the `:Source`, linked back to their member `:Node` chunks), then the procedural
-layer (`:Procedure` / `:Event` reified from proofs and solutions) and the reference layer —
-`:REFERENCES` edges onto `:Entity:Canonical` targets, so citations from any entity converge on one
-target (a no-op when Neo4j isn't configured).
+layer (`:Procedure` / `:Event` reified from proofs and solutions), the concept layer (`:Concept` +
+`:INSTANCE_OF`, from each entity's field), and the reference layer — `:REFERENCES` edges onto
+`:Entity:Canonical` targets, so citations from any entity converge on one target (a no-op when Neo4j
+isn't configured).
 After the graph returns, `run()` only assembles the markdown document: assembly walks `nodes`,
 consulting `segments` only for picture inventories.
 """

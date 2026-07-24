@@ -16,10 +16,11 @@ def test_no_separate_canonical_constraint_since_entity_covers_it():
     assert not any("Canonical" in s or "GeneralEntity" in s for s in schema_statements())
 
 
-def test_declares_uuid_constraints_for_the_procedural_layer():
+def test_declares_uuid_constraints_for_the_procedural_and_concept_layers():
     stmts = schema_statements()
     assert any("(p:Procedure)" in s and "IS UNIQUE" in s for s in stmts)
     assert any("(v:Event)" in s and "IS UNIQUE" in s for s in stmts)
+    assert any("(c:Concept)" in s and "IS UNIQUE" in s for s in stmts)
 
 
 def test_indexes_node_and_entity_source_for_book_scoped_lookups():

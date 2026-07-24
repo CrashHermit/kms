@@ -22,6 +22,7 @@ from kms.core.state import State
 from kms.graph.db import is_configured
 from kms.graph.schema import ensure_schema
 from kms.graph.writer import (
+    persist_concepts,
     persist_entities,
     persist_nodes,
     persist_procedures,
@@ -44,9 +45,10 @@ class NodePersisterNode:
 class EntityPersisterNode:
     """Sequential fan-in stage: flatten the three per-type overlays and upsert them as the graph's
     ``:Entity`` layer (rooted under the book's ``:Source``, linked to their member ``:Node`` s), then
-    the procedural layer (``:Procedure`` / ``:Event`` for proofs and solutions), then the cross-entity
-    reference layer (``:REFERENCES`` edges onto ``:Entity:Canonical`` targets). Procedures and references
-    are written after the entities so the citing vertices exist to attach to."""
+    the procedural layer (``:Procedure`` / ``:Event`` for proofs and solutions), the concept layer
+    (``:Concept`` + ``:INSTANCE_OF``), then the cross-entity reference layer (``:REFERENCES`` edges onto
+    ``:Entity:Canonical`` targets). Procedures, concepts and references are written after the entities so
+    the citing vertices exist to attach to."""
 
     async def run(self, state: State) -> dict:
         source = state.get("source")
@@ -61,5 +63,6 @@ class EntityPersisterNode:
         )
         await persist_entities(entities, source)
         await persist_procedures(entities, source)
+        await persist_concepts(entities, source)
         await persist_references(entities, source)
         return {}

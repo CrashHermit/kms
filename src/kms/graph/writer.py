@@ -10,7 +10,9 @@ Definition / Theorem / Problem (base ``:Entity`` label + its per-type label), ro
 via ``:HAS_ENTITY`` and linked back to the structural chunks it was built from via ``:DERIVED_FROM``.
 ``persist_procedures`` writes the procedural layer: one ``:Procedure`` per proof/solution hung off its
 entity via ``:HAS_PROCEDURE``, and one ``:Event`` per proof step threaded ``:FIRST``/``:THEN`` (see
-``graph.procedures``). ``persist_references`` writes the cross-entity layer: a global ``:Entity:Canonical``
+``graph.procedures``). ``persist_concepts`` writes the concept layer: a global ``:Concept`` per distinct
+concept and a ``(:Entity)-[:INSTANCE_OF]->(:Concept)`` edge per entity concept (see ``graph.concepts``).
+``persist_references`` writes the cross-entity layer: a global ``:Entity:Canonical``
 per distinct reference target, and a ``(:Entity)-[:REFERENCES {tactic}]->(:Canonical)`` edge per reference
 (see ``graph.references`` for why references route through canonicals).
 
@@ -25,6 +27,7 @@ from collections import defaultdict
 from typing import Any
 
 from kms.core.models import ASTNode, Entity
+from kms.graph.concepts import CONCEPT_LABEL, concept_batches, instance_rows
 from kms.graph.db import database, driver
 from kms.graph.entities import (
     CANONICAL_LABEL,
@@ -228,6 +231,33 @@ async def persist_procedures(entities: list[Entity], source: str) -> None:
                 f"MERGE (a)-[:THEN]->(b)",
                 pairs=thens,
             )
+
+
+async def persist_concepts(entities: list[Entity], source: str) -> None:
+    """Upsert the concept layer: mint a global ``:Concept`` per distinct concept (base ``:Concept``
+    label + its per-type label), then draw a ``(:Entity)-[:INSTANCE_OF]->(:Concept)`` edge per entity
+    concept. Idempotent — concepts MERGE on their deterministic global uuid and edges on the (entity,
+    concept) pair. A no-op when no entity instantiates a concept. The citing mention ``:Entity``
+    vertices are expected to already exist (the entity persister writes them first)."""
+    rows = instance_rows(entities, source)
+    if not rows:
+        return
+    batches = concept_batches(entities)
+
+    async with driver().session(database=database()) as session:
+        for label, concepts in batches.items():
+            await session.run(
+                f"UNWIND $rows AS row MERGE (c:{CONCEPT_LABEL} {{uuid: row.uuid}}) "
+                f"SET c += row SET c:{label}",
+                rows=concepts,
+            )
+        await session.run(
+            f"UNWIND $rows AS row "
+            f"MATCH (e:{ENTITY_LABEL} {{uuid: row.entity}}), "
+            f"(c:{CONCEPT_LABEL} {{uuid: row.concept}}) "
+            f"MERGE (e)-[:INSTANCE_OF]->(c)",
+            rows=rows,
+        )
 
 
 async def persist_references(entities: list[Entity], source: str) -> None:
