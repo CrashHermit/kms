@@ -25,7 +25,7 @@ proceed to the next part until all three commands are clean.
 
 ---
 
-## Part A — FIX FIRST: broken docstrings in `persister.py` (a real defect, not style)
+## Part A — DONE (fixed in commit on branch; skip). Broken docstrings in `persister.py`
 
 The refactor left **two stacked triple-quoted strings** on both `run` methods.
 The first is the docstring; the second is dead code (a no-op string expression).
