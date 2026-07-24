@@ -1,24 +1,27 @@
 # KMS — Handoff
 
 Knowledge-management pipeline that turns a math textbook PDF into a structured
-**knowledge graph of math entities** (Definitions, Theorems, Problems), following
-AutoMathKG's model (arXiv:2505.13406). This doc is the pick-up point for the next
-session.
+**knowledge graph of math entities** (Definitions, Theorems, Problems). Originally an AutoMathKG
+implementation (arXiv:2505.13406); now reframed as an **AutoMathKG + AutoSchemaKG unified graph,
+math-first** — see **`docs/UNIFIED-KG.md`** for the substrate/edge design and the "general engine,
+math is the first profile" framing (generalization itself is deferred; the substrate is adopted for
+math now). This doc is the pick-up point for the next session.
 
-**Working branch:** `claude/graph-dedup-planning-nwj0p7` (PR #12). The entity layer (pure-structural
-extractor + three per-type finders + per-type attributors + the exercise **splitter** and the
-**instruction distributor**) plus the **graph tier's structural provenance layer** (Neo4j `:Source`
-+ `:Node` stream) are committed and pushed there, validated end-to-end. See the 2026-07-23 session
-update for the graph work.
+**Working branch:** `claude/merge-autoschemakg-automath-kq9uny` (PR #17). Carries the unified-KG design
+doc plus the first refactor slices: the **procedural layer** (proofs/solutions reified into
+`:Procedure` / `:Event`) and the **canonical relabel** (`:GeneralEntity` → `:Entity:Canonical`, plus an
+explicit `:Mention` role). See the 2026-07-24 session update. Earlier entity-layer + provenance-layer
+work landed on `claude/graph-dedup-planning-nwj0p7` (PR #12); see the 2026-07-23 update.
 
 ---
 
 ## TL;DR status
 
 - The pipeline runs **end-to-end, no GPU**: PDF → `document.md`, and (when Neo4j is configured)
-  the persisted `:Node` provenance layer + `:Entity` overlay in the graph. The graph now owns
-  persistence — the old `entities.json`/`nodes.json` artifacts are gone. Validated on real pages
-  (see Validation).
+  the persisted graph: `:Node` provenance layer, `:Entity` overlay (now `:Entity:Mention`), the
+  `:Procedure` / `:Event` **procedural layer** (proofs/solutions), and the `:REFERENCES` edges onto
+  `:Entity:Canonical` targets. The graph owns persistence — the old `entities.json`/`nodes.json`
+  artifacts are gone. Validated on real pages (see Validation).
 - The **extraction front-end is Mistral OCR + a vision correction pass** (Qwen3-VL). Mistral
   does layout/reading-order/figure-extraction server-side; the corrector proofreads each page
   against its image to catch Mistral's occasional subtle math errors and normalizes math
@@ -40,17 +43,56 @@ update for the graph work.
 - **The instruction distributor** (`entity/instruction_distributor.py`) runs at the end of the problem
   chain: a growing-window walk that copies a grouped-exercise lead-in's shared directive onto
   the `Problem.instruction` of the problems it governs (LLM-judged extent, no number matching).
-- **Graph tier — structural provenance layer built** (this session): the flat node stream is
-  persisted to Neo4j as a `:Source` node per book rooting its `:Node` markdown chain
-  (`:HEAD`/`:NEXT`), reusing `core.NodeType`, wired in after the splitter, validated against a
-  real Neo4j. **Still deferred:** the semantic tiers (dedup canonicals, general entities,
-  concepts), cross-entity `refs`/`references_tactics`, MathVD fusion, and Math-LLM completion.
-- **46 unit tests pass**; `conftest` stubs the heavy deps so they run anywhere.
+- **Graph tier — provenance + entity + procedural + reference layers built.** The node stream is a
+  `:Source` per book rooting its `:Node` markdown chain (`:HEAD`/`:NEXT`); the `:Entity:Mention`
+  overlay roots under it (`:HAS_ENTITY`, `:DERIVED_FROM`); proofs/solutions reify into
+  `:Procedure` / `:Event` (`:HAS_PROCEDURE`, `:FIRST`, `:THEN`); and `refs` become `:REFERENCES {tactic}`
+  edges onto global `:Entity:Canonical` targets. **Still deferred** (see `docs/UNIFIED-KG.md`): concepts
+  (`:Concept` + `:INSTANCE_OF`/`:BROADER`, MSC), step-level `:USES` + the exercise-anchor pass, the
+  `:REALIZES` dedup link + MathVD fusion, Math-LLM completion, and the whole generalization layer.
+- **132 unit tests pass**; `conftest` stubs the heavy deps so they run anywhere.
 - **This session (see Session update):** splitter + distributor stress-tested across 6
   committed fixtures (elementary→graduate) — both strong; base-instruction fixes to the splitter
   lead-in test and the attributor `number`; a **DSPy training harness** (`training/`, teacher
   `deepseek-v4-pro`, LLM-judge) built and proven but with no headroom to ship yet; and **ruff**
   adopted for format + lint (line-length 100).
+
+---
+
+## Session update — unified-KG design + first refactor slices (2026-07-24)
+
+**Design (`docs/UNIFIED-KG.md`, PR #17).** Worked through merging AutoMathKG and AutoSchemaKG. Landing
+point: **AutoSchemaKG is the engine, AutoMathKG is a profile** — a general Entity/Event/Concept graph
+that induces a schema by default but takes a hand-authored profile for domains you care about; math is
+the first profile. **Decided to defer the generalization** (engine/profile split, open type/role
+properties, other domains, MathVD fusion + completion) and **adopt the substrate now, concretely for
+math** — it's just a better math graph. Key settled pieces:
+- **Bi-modal spine:** declarative `:Entity` (definition / theorem stmt / problem stmt) vs procedural
+  `:Event` (proof/solution steps). Rule: *statement structure = entity attributes; derivation steps =
+  events*.
+- **Labels vs properties:** kind (`:Entity`/`:Event`/`:Concept`/`:Procedure`) and role
+  (`:Mention`/`:Canonical`) are **labels** (closed, structural); `type` (theorem/proof/…) is an open
+  **property** so it stays LLM-inducible — but math-first keeps types as concrete labels
+  (`:Entity:Theorem`), since the type set is closed and there's no induction yet.
+- **Edges:** local/structural (stay within a document) vs global/semantic (route through
+  canonicals/concepts). Full edge table + a build order in the doc.
+
+**Refactor slices shipped this session (build order in the doc):**
+- **Step 1 — procedural layer** (`graph/procedures.py`, new). A Theorem's `proofs` and a Problem's
+  `solutions` reify out of JSON-string blobs on the entity into `:Procedure` nodes (base +
+  `:Proof`/`:Solution` label), each proof step a `:Event`; wired `(:Entity)-[:HAS_PROCEDURE]->
+  (:Procedure)-[:FIRST]->(:Event)-[:THEN]->…`. The entity keeps only its **statement** `bodylist`.
+  Solutions have no step decomposition, so a `:Procedure:Solution` carries `contents` but no events;
+  per-step `:Event`→`:Node` provenance is deferred (reachable transitively).
+- **Step 3 — canonical relabel.** The reference hub is now `:Entity:Canonical` (base `:Entity` + the
+  `:Canonical` role + its per-type label) instead of a disjoint `:GeneralEntity` kind, so a canonical
+  is typed like the mentions it stands for and both are queryable together; every book entity now
+  carries an explicit `:Mention` role. The `:GeneralEntity` uuid constraint is gone (the `:Entity`
+  one covers canonicals). `references.py`: `hub_*` → `canonical_*`.
+
+**Still to do (build order):** **Step 2 — concepts** (`:Concept` + `:INSTANCE_OF`/`:BROADER`,
+MSC-anchored — needs a new extraction stage, more design-heavy than the graph-tier remaps above) and
+**step 4 — step-level `:USES` + the exercise-anchor `:PRACTICES` pass**.
 
 ---
 
@@ -278,9 +320,10 @@ only: `core ← ingestion ← entity ← graph ← output`.
 | `entity/referencers/{problem,definition,theorem}.py` | **referencer**: extract each entity's cross-entity `refs` (target + kind + tactic) |
 | `entity/instruction_distributor.py` | **distributor**: growing-window; stamp `Problem.instruction` from tagged lead-ins |
 | `output/assembler.py` | walk `nodes` → `document.md`, resolving `![N]()` via `seg_index` |
-| `graph/entities.py` | `Entity → Neo4j` mapping (deterministic uuids, multi-label, nested attrs as JSON strings) |
-| `graph/references.py` | `refs → Neo4j`: global `:GeneralEntity` hubs + `:REFERENCES {tactic}` edge rows |
-| `graph/persister.py` | `NodePersisterNode` (after splitter) + `EntityPersisterNode` (fan-in): persist all three graph layers |
+| `graph/entities.py` | `Entity → Neo4j` mapping (deterministic uuids, `:Entity:Mention` + per-type label, statement `bodylist` as JSON) |
+| `graph/procedures.py` | `proofs`/`solutions → Neo4j`: `:Procedure` (+ `:Proof`/`:Solution`) and `:Event` steps; `HAS_PROCEDURE`/`FIRST`/`THEN` spine |
+| `graph/references.py` | `refs → Neo4j`: global `:Entity:Canonical` targets + `:REFERENCES {tactic}` edge rows |
+| `graph/persister.py` | `NodePersisterNode` (after splitter) + `EntityPersisterNode` (fan-in): persist entity, procedural + reference layers |
 | `pipeline.py` | graph wiring + `run()`; after the graph, only assembles `document.md` (persistence is the graph tier's) |
 | `cli.py` | `__main__` entry point: `python -m kms.cli book.pdf out/` |
 
@@ -571,16 +614,13 @@ Good test PDF: Hefferon Linear Algebra — `https://jheffero.w3.uvm.edu/linearal
    quality past "already strong" — *targeted* hard-case demos or MIPROv2 via the `training/`
    harness, measured on a larger reconstructed eval set. The optimizer infra is built and proven;
    it just has little headroom on the current, already-good stages.
-2. **Cross-entity attributes** — `refs` / `references_tactics` (AutoMathKG's 9 tactic labels
-   between entities). These are inherently graph-tier (they relate entities), so they fold into
-   the next item rather than being per-entity passes.
-3. **Graph tier** (the big piece) — **structural provenance layer DONE this session** (`:Source`
-   + `:Node` stream in Neo4j; see the 2026-07-23 session update). Remaining: the **semantic tiers**
-   on top — dedup canonicals, general entities, concepts (the AutoMathKG + AutoSchemaKG hybrid),
-   relationship/edge discovery with `refs`/`references_tactics`, then MathVD (embeddings/vector DB)
-   for fusion and the Math-LLM completion step. Node UUIDs are already minted (see Deferred
-   decisions); entities/canonicals need theirs when they land.
-4. **Broaden front-end/finder validation** — more books/sections, watching finder boundaries,
+2. **Unified-KG build order (`docs/UNIFIED-KG.md`)** — the graph tier is now the unified-KG substrate,
+   math-first. **Done:** entity + procedural (`:Procedure`/`:Event`) + reference (`:Entity:Canonical`)
+   layers (steps 1 & 3). **Next:** **step 2 — concepts** (`:Concept` + `:INSTANCE_OF`/`:BROADER`,
+   MSC-anchored; needs a new extraction stage) and **step 4 — step-level `:USES` + the exercise-anchor
+   `:PRACTICES` pass**. **Deferred:** the `:REALIZES` dedup link + MathVD fusion, Math-LLM completion,
+   and the whole generalization layer (engine/profile, open type/role, other domains).
+3. **Broaden front-end/finder validation** — more books/sections, watching finder boundaries,
    figure over-extraction on front matter, and correction-pass regressions.
 
 ---
