@@ -1,13 +1,19 @@
 # Unified KG — the graph substrate
 
 Design for merging **AutoMathKG** (arXiv:2505.13406) and **AutoSchemaKG** (arXiv:2505.23628)
-into one knowledge-graph model. This doc records the **vertex substrate** (settled) and the
-reasoning behind it; edges and the semantic mechanisms are scoped at the end as open work.
+into one knowledge-graph model. This doc records the **vertex substrate** and the **math-first edge
+set** (both settled) and the reasoning behind them; the semantic mechanisms (fusion, completion) and
+the generalization layer remain open work, scoped at the end.
 
-Status: **substrate settled, edges not yet designed.** Nothing here is built yet — the current
-pipeline (see `HANDOFF.md`) persists a `:Source`/`:Node` provenance layer, a math-specific
-`:Entity` overlay, and `:GeneralEntity` reference hubs. This doc supersedes that graph schema;
-the migration notes at the bottom say what folds into what.
+Status: **substrate + math-first edges settled and largely built.** The current pipeline (see
+`HANDOFF.md`) already persists this substrate: a `:Source`/`:Node` provenance layer, the
+`:Entity:Mention` overlay, the `:Procedure`/`:Event` procedural layer, the `:Concept` layer
+(`:INSTANCE_OF`, from `field`), and the reference layer — `:REFERENCES`/`:USES` edges onto
+`:Entity:Canonical` hubs (the `:GeneralEntity` kind this doc supersedes is gone), tied back to the
+in-corpus mentions that realize them via `:REALIZES` (nominal title-match). **Still unbuilt:** richer
+per-entity concepts + the `:BROADER` taxonomy, the `:DEMONSTRATES`/`:PRACTICES` anchors, the
+**semantic** dedup that refines `:REALIZES` (MathVD embedding fusion), and Math-LLM completion (see
+"Open work"). The migration notes at the bottom say what folded into what.
 
 ---
 
@@ -276,16 +282,16 @@ labels). `stance` (supports/contradicts/…) is generalization-era and omitted n
 | `(:Source)-[:HEAD/:NEXT]->(:Node)` | reading order / provenance | chain | built |
 | `(:Source)-[:HAS_ENTITY]->(:Entity)` | roots entities under the book | 1→n | built |
 | `(:Entity\|:Event)-[:DERIVED_FROM]->(:Node)` | traceability / citation | n→m | built (entity); extend to events |
-| `(:Entity)-[:HAS_PROCEDURE]->(:Procedure)` | **the bi-modal hinge** (declarative→procedural) | Def 0, Thm 1..n, Prob 0..1 | new |
-| `(:Procedure)-[:FIRST]->(:Event)`, `(:Event)-[:THEN]->(:Event)` | step sequence / replay | chain | new |
+| `(:Entity)-[:HAS_PROCEDURE]->(:Procedure)` | **the bi-modal hinge** (declarative→procedural) | Def 0, Thm 1..n, Prob 0..1 | **built** |
+| `(:Procedure)-[:FIRST]->(:Event)`, `(:Event)-[:THEN]->(:Event)` | step sequence / replay | chain | **built** |
 | **Global / semantic** (target = canonical / concept) | | | |
-| `(:Entity)-[:REFERENCES {tactic}]->(:Entity:Canonical)` | entity-level dependency (curriculum) | n→m | built (retarget hub→canonical) |
-| `(:Event)-[:USES {tactic}]->(:Entity:Canonical)` | step-level grounding | n→m | new (refinement of REFERENCES) |
+| `(:Entity)-[:REFERENCES {tactic}]->(:Entity:Canonical)` | entity-level dependency (curriculum) | n→m | **built** (onto canonical) |
+| `(:Event)-[:USES {tactic}]->(:Entity:Canonical)` | step-level grounding | n→m | **built** (proof-step name-match; per-event extraction is later) |
+| `(:Entity\|:Event)-[:INSTANCE_OF]->(:Concept)` | conceptualization `φ`, retrieval bridging | n→m | **built** (entity, from `field`; richer concepts later) |
 | `(:Entity)-[:DEMONSTRATES]->(:Canonical\|:Concept)` | worked-example anchor | n→m | new (extraction-time) |
 | `(:Entity)-[:PRACTICES]->(:Concept)` | exercise anchor (practice serving) | n→m | new (later pass) |
-| `(:Entity\|:Event)-[:INSTANCE_OF]->(:Concept)` | conceptualization `φ`, retrieval bridging | n→m | new |
 | `(:Concept)-[:BROADER]->(:Concept)` | concept taxonomy / curriculum sequencing | n→m | new |
-| `(:Entity:Mention)-[:REALIZES]->(:Entity:Canonical)` | identity / dedup | n→1 | new |
+| `(:Entity:Mention)-[:REALIZES]->(:Entity:Canonical)` | identity / dedup | n→1 | **built** (nominal title-match; semantic fusion later) |
 
 **Resolved decisions:**
 
@@ -310,9 +316,11 @@ labels). `stance` (supports/contradicts/…) is generalization-era and omitted n
 5. **`stance` omitted** — generalization-era.
 
 **Build order** (each step usable on its own): reify events + the structural spine
-(`HAS_PROCEDURE`, `FIRST`/`THEN`) → concepts + `INSTANCE_OF`/`BROADER` (MSC) → retarget the built
-`REFERENCES` onto `:Entity:Canonical` → then step-level `USES` and the exercise-anchor (`PRACTICES`)
-pass.
+(`HAS_PROCEDURE`, `FIRST`/`THEN`) ✓ → concepts + `INSTANCE_OF` (from `field`) ✓ / `BROADER` (MSC) →
+retarget `REFERENCES` onto `:Entity:Canonical` ✓ → step-level `USES` ✓ → `REALIZES` tying canonicals
+back to their in-corpus mentions (nominal title-match) ✓ → then richer concepts, the `BROADER`
+taxonomy, and the exercise-anchor (`PRACTICES`) / worked-example (`DEMONSTRATES`) pass.
+(✓ = built and wired into `EntityPersisterNode`.)
 
 ---
 

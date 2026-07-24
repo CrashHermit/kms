@@ -25,6 +25,7 @@ from kms.graph.writer import (
     persist_entities,
     persist_nodes,
     persist_procedures,
+    persist_realizes,
     persist_references,
     persist_uses,
 )
@@ -50,13 +51,14 @@ class EntityPersisterNode:
     ``:Entity`` layer (rooted under the book's ``:Source``, linked to their member ``:Node`` s), then
     the procedural layer (``:Procedure`` / ``:Event`` for proofs and solutions), the concept layer
     (``:Concept`` + ``:INSTANCE_OF``), the cross-entity reference layer (``:REFERENCES`` edges onto
-    ``:Entity:Canonical`` targets), and finally the step-level ``:USES`` edges (which need both the
-    ``:Event`` and ``:Canonical`` vertices, so they run last). Everything after the entities is written
-    on top of them, so the citing vertices exist to attach to."""
+    ``:Entity:Canonical`` targets), the step-level ``:USES`` edges (which need both the ``:Event`` and
+    ``:Canonical`` vertices), and finally the ``:REALIZES`` identity edges tying each canonical back to
+    the in-corpus mention that defines/states it (which need the canonicals, so they run last).
+    Everything after the entities is written on top of them, so the citing vertices exist to attach to."""
 
     async def run(self, state: state.State) -> dict:
-        """Flatten the three per-type overlays and upsert them as the :Entity
-        layer, then the procedural, concept, reference, and :USES layers."""
+        """Flatten the three per-type overlays and upsert them as the :Entity layer, then the
+        procedural, concept, reference, :USES, and :REALIZES layers."""
         source = state.get('source')
         if not is_configured() or not source:
             return {}
@@ -72,4 +74,5 @@ class EntityPersisterNode:
         await persist_concepts(entities, source)
         await persist_references(entities, source)
         await persist_uses(entities, source)
+        await persist_realizes(entities, source)
         return {}
