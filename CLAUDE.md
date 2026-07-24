@@ -76,7 +76,7 @@ step-level event layer, MathVD fusion, and Math-LLM completion.
 
 - Deps: `uv sync` (light CPU core) · `uv sync --extra mistral` (adds `pypdfium2` + `pillow`,
   used to render page images for the correction pass). **No GPU anywhere.**
-- Tests: `PYTHONPATH=src uv run pytest -q` (124 tests) — `conftest` stubs the heavy deps, so it
+- Tests: `PYTHONPATH=src uv run pytest -q` (147 tests) — `conftest` stubs the heavy deps, so it
   runs anywhere, no keys needed.
 - Run (full pipeline): `PYTHONPATH=src uv run --extra mistral python -m kms.cli book.pdf out/`,
   or from Python `from kms import run; run(pdf, output_dir="out/", pages=[...])` to limit pages
