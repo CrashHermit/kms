@@ -16,19 +16,24 @@ embeddings belong to the (undecided) semantic tiers above this layer, not to the
 from kms.graph.db import database, driver
 from kms.graph.entities import ENTITY_LABEL
 from kms.graph.nodes import NODE_LABEL, SOURCE_LABEL
+from kms.graph.procedures import EVENT_LABEL, PROCEDURE_LABEL
 from kms.graph.references import GENERAL_ENTITY_LABEL
 
 
 def schema_statements() -> list[str]:
-    """The idempotent DDL for the graph: uuid uniqueness keys on ``:Node``, ``:Source``, ``:Entity``
-    and ``:GeneralEntity`` (the reference hub), and a ``source`` lookup index on ``:Node`` and
-    ``:Entity``."""
+    """The idempotent DDL for the graph: uuid uniqueness keys on ``:Node``, ``:Source``, ``:Entity``,
+    ``:Procedure`` and ``:Event`` (the procedural layer) and ``:GeneralEntity`` (the reference hub),
+    and a ``source`` lookup index on ``:Node`` and ``:Entity``."""
     return [
         f"CREATE CONSTRAINT node_uuid IF NOT EXISTS FOR (n:{NODE_LABEL}) REQUIRE n.uuid IS UNIQUE",
         f"CREATE CONSTRAINT source_uuid IF NOT EXISTS "
         f"FOR (s:{SOURCE_LABEL}) REQUIRE s.uuid IS UNIQUE",
         f"CREATE CONSTRAINT entity_uuid IF NOT EXISTS "
         f"FOR (e:{ENTITY_LABEL}) REQUIRE e.uuid IS UNIQUE",
+        f"CREATE CONSTRAINT procedure_uuid IF NOT EXISTS "
+        f"FOR (p:{PROCEDURE_LABEL}) REQUIRE p.uuid IS UNIQUE",
+        f"CREATE CONSTRAINT event_uuid IF NOT EXISTS "
+        f"FOR (v:{EVENT_LABEL}) REQUIRE v.uuid IS UNIQUE",
         f"CREATE CONSTRAINT general_entity_uuid IF NOT EXISTS "
         f"FOR (g:{GENERAL_ENTITY_LABEL}) REQUIRE g.uuid IS UNIQUE",
         f"CREATE INDEX node_source IF NOT EXISTS FOR (n:{NODE_LABEL}) ON (n.source)",

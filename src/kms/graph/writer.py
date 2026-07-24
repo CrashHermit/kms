@@ -8,7 +8,9 @@ re-running a book is idempotent, then wires them up — ``(:Source)-[:HEAD]->`` 
 walkable in Cypher. ``persist_entities`` writes the ``:Entity`` overlay on top: one vertex per
 Definition / Theorem / Problem (base ``:Entity`` label + its per-type label), rooted under the book
 via ``:HAS_ENTITY`` and linked back to the structural chunks it was built from via ``:DERIVED_FROM``.
-``persist_references`` writes the cross-entity layer: a global ``:GeneralEntity`` hub per distinct
+``persist_procedures`` writes the procedural layer: one ``:Procedure`` per proof/solution hung off its
+entity via ``:HAS_PROCEDURE``, and one ``:Event`` per proof step threaded ``:FIRST``/``:THEN`` (see
+``graph.procedures``). ``persist_references`` writes the cross-entity layer: a global ``:GeneralEntity`` hub per distinct
 reference target, and a ``(:Entity)-[:REFERENCES {tactic}]->(:GeneralEntity)`` edge per reference (see
 ``graph.references`` for why references route through hubs).
 
@@ -38,6 +40,15 @@ from kms.graph.nodes import (
     node_uuid,
     source_properties,
     source_uuid,
+)
+from kms.graph.procedures import (
+    EVENT_LABEL,
+    PROCEDURE_LABEL,
+    event_rows,
+    first_pairs,
+    has_procedure_pairs,
+    procedure_batches,
+    then_pairs,
 )
 from kms.graph.references import GENERAL_ENTITY_LABEL, hub_batch, reference_rows
 
@@ -163,6 +174,57 @@ async def persist_entities(entities: list[Entity], source: str) -> None:
                 f"MATCH (e:{ENTITY_LABEL} {{uuid: pair.entity}}), (n:{NODE_LABEL} {{uuid: pair.node}}) "
                 f"MERGE (e)-[:DERIVED_FROM]->(n)",
                 pairs=pairs,
+            )
+
+
+async def persist_procedures(entities: list[Entity], source: str) -> None:
+    """Upsert the procedural layer: one ``:Procedure`` per proof/solution (base ``:Procedure`` label +
+    its per-kind label), hung off its entity via ``:HAS_PROCEDURE``; one ``:Event`` per proof step,
+    threaded ``:FIRST`` from the procedure and ``:THEN`` along the steps. Idempotent — every MERGE keys
+    on a deterministic uuid. A no-op when no entity carries a derivation. The citing ``:Entity`` vertices
+    are expected to already exist (the entity persister writes them first); the ``:HAS_PROCEDURE`` MATCH
+    attaches to them. Every entity's id must be assigned (post-flatten)."""
+    proc_batches = procedure_batches(entities, source)
+    if not proc_batches:
+        return
+    events = event_rows(entities, source)
+    haspairs = has_procedure_pairs(entities, source)
+    firsts = first_pairs(entities, source)
+    thens = then_pairs(entities, source)
+
+    async with driver().session(database=database()) as session:
+        for label, rows in proc_batches.items():
+            await session.run(
+                f"UNWIND $rows AS row MERGE (p:{PROCEDURE_LABEL} {{uuid: row.uuid}}) "
+                f"SET p += row SET p:{label}",
+                rows=rows,
+            )
+        if events:
+            await session.run(
+                f"UNWIND $rows AS row MERGE (e:{EVENT_LABEL} {{uuid: row.uuid}}) SET e += row",
+                rows=events,
+            )
+        await session.run(
+            f"UNWIND $pairs AS pair "
+            f"MATCH (e:{ENTITY_LABEL} {{uuid: pair.entity}}), "
+            f"(p:{PROCEDURE_LABEL} {{uuid: pair.procedure}}) "
+            f"MERGE (e)-[:HAS_PROCEDURE]->(p)",
+            pairs=haspairs,
+        )
+        if firsts:
+            await session.run(
+                f"UNWIND $pairs AS pair "
+                f"MATCH (p:{PROCEDURE_LABEL} {{uuid: pair.procedure}}), "
+                f"(e:{EVENT_LABEL} {{uuid: pair.event}}) "
+                f"MERGE (p)-[:FIRST]->(e)",
+                pairs=firsts,
+            )
+        if thens:
+            await session.run(
+                f"UNWIND $pairs AS pair "
+                f"MATCH (a:{EVENT_LABEL} {{uuid: pair.from}}), (b:{EVENT_LABEL} {{uuid: pair.to}}) "
+                f"MERGE (a)-[:THEN]->(b)",
+                pairs=thens,
             )
 
 

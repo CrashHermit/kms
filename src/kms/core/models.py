@@ -51,6 +51,19 @@ class EntityType(StrEnum):
     PROBLEM = "problem"  # worked examples and exercises
 
 
+class ProcedureType(StrEnum):
+    """The kinds of procedure — a named, ordered derivation attached to an entity (see
+    ``docs/UNIFIED-KG.md``). A Theorem's ``proofs`` reify into ``proof`` procedures, a Problem's
+    ``solutions`` into ``solution`` procedures. Generic on purpose (a physics ``derivation`` or CS
+    ``algorithm`` would be more values of the same kind), but math-first the set is these two.
+
+    Their step decomposition (a proof's ``bodylist``) reifies into ``:Event`` nodes; the derivation
+    is thus the procedural half of the graph, distinct from the declarative ``:Entity`` it hangs off."""
+
+    PROOF = "proof"
+    SOLUTION = "solution"
+
+
 # --- Shared AutoMathKG vocabularies (Table C4) ---
 # Kept here, not in a single attributor, so every per-type attributor draws the field and
 # role taxonomies from one source of truth instead of copying the lists.

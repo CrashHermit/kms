@@ -62,34 +62,38 @@ def test_entity_properties_keep_id_zero():
     assert props["uuid"] == entity_uuid("book.pdf", 0)  # a falsy-but-valid id is not dropped
 
 
-def test_contents_is_a_native_array_but_nested_attributes_are_json_strings():
+def test_contents_is_native_and_statement_bodylist_is_a_json_string():
     entity = Entity(
         type=EntityType.THEOREM,
         members=[1],
         id=1,
         contents=["Let n be prime."],
         bodylist=[BodySegment(description="Let n be prime.", action="premise")],
+    )
+    props = entity_properties(entity, "book.pdf")
+    assert props["contents"] == ["Let n be prime."]  # native string array
+    assert json.loads(props["bodylist"]) == [  # statement structure stays on the entity
+        {"description": "Let n be prime.", "action": "premise"}
+    ]
+
+
+def test_derivations_are_not_on_the_entity_they_reify_into_procedures():
+    # proofs/solutions are the procedural layer (graph.procedures), so they never land as entity props
+    entity = Entity(
+        type=EntityType.THEOREM,
+        members=[1],
+        id=1,
         proofs=[
             Proof(
                 contents=["Clear."],
                 bodylist=[BodySegment(description="Clear.", action="conclusion")],
             )
         ],
+        solutions=[Solution(contents=["x = 2"])],
     )
     props = entity_properties(entity, "book.pdf")
-    assert props["contents"] == ["Let n be prime."]  # native string array
-    assert json.loads(props["bodylist"]) == [
-        {"description": "Let n be prime.", "action": "premise"}
-    ]
-    assert json.loads(props["proofs"])[0]["bodylist"][0]["action"] == "conclusion"
-
-
-def test_solution_nested_attribute_is_a_json_string():
-    entity = Entity(
-        type=EntityType.PROBLEM, members=[3], id=2, solutions=[Solution(contents=["x = 2"])]
-    )
-    props = entity_properties(entity, "book.pdf")
-    assert json.loads(props["solutions"]) == [{"contents": ["x = 2"]}]
+    assert "proofs" not in props
+    assert "solutions" not in props
 
 
 # --- writer planning ---

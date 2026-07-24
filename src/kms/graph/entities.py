@@ -23,10 +23,11 @@ duplicating them, and ``source`` disambiguates the same id across different book
 segment keeps these uuids disjoint from the node uuids (which key on ``source#index``).
 
 Structured attributes: the scalar attributes (label, number, title, field, instruction) and
-``contents`` (a string array) map onto native Neo4j properties. The nested attributes — ``bodylist``,
-``proofs``, ``solutions`` — hold the step-level material that the (not-yet-built) event layer will
-reify into its own nodes and edges; until then they are preserved losslessly as JSON-string
-properties on the anchor rather than modeled as graph structure, so no attributor work is dropped.
+``contents`` (a string array) map onto native Neo4j properties. The entity's own ``bodylist`` — its
+*statement* structure — stays here as a JSON-string property (declarative: it belongs to the claim).
+The *derivations* — ``proofs`` and ``solutions`` — do NOT: they are the procedural half of the graph
+and are reified into ``:Procedure`` + ``:Event`` structure by ``graph.procedures`` (see
+``docs/UNIFIED-KG.md``), so they are absent from the entity's own property map.
 """
 
 import json
@@ -61,10 +62,12 @@ def _segment(segment: BodySegment) -> dict:
 
 def entity_properties(entity: Entity, source: str) -> dict:
     """The Neo4j property map for one entity: its stable uuid, the source link, the math type, the
-    self-contained scalar attributes, ``contents`` as a native string array, and the nested
-    ``bodylist`` / ``proofs`` / ``solutions`` as JSON strings (see the module docstring). None and
-    empty attributes are omitted rather than written as nulls, mirroring how the finder/attributor
-    layer leaves them unset. Precondition: ``entity.id`` is set (true post-flatten)."""
+    self-contained scalar attributes, ``contents`` as a native string array, and the entity's own
+    (statement) ``bodylist`` as a JSON string (see the module docstring). Derivations (``proofs`` /
+    ``solutions``) are NOT here — they reify into ``:Procedure`` / ``:Event`` structure via
+    ``graph.procedures``. None and empty attributes are omitted rather than written as nulls, mirroring
+    how the finder/attributor layer leaves them unset. Precondition: ``entity.id`` is set
+    (true post-flatten)."""
     props = {
         "uuid": entity_uuid(source, entity.id),
         "source": source_uuid(source),  # links back to the :Source node
@@ -78,22 +81,6 @@ def entity_properties(entity: Entity, source: str) -> dict:
         "bodylist": (
             json.dumps([_segment(s) for s in entity.bodylist], ensure_ascii=False)
             if entity.bodylist
-            else None
-        ),
-        "proofs": (
-            json.dumps(
-                [
-                    {"contents": p.contents, "bodylist": [_segment(s) for s in p.bodylist]}
-                    for p in entity.proofs
-                ],
-                ensure_ascii=False,
-            )
-            if entity.proofs
-            else None
-        ),
-        "solutions": (
-            json.dumps([{"contents": s.contents} for s in entity.solutions], ensure_ascii=False)
-            if entity.solutions
             else None
         ),
     }
