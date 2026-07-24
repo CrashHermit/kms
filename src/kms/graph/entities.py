@@ -12,9 +12,10 @@ Representation: every entity carries the shared ``:Entity`` label AND its per-ty
 labels), so ``MATCH (e:Theorem)`` is a native label scan with no property index. It roots under its
 book via ``(:Source)-[:HAS_ENTITY]->(:Entity)`` and points back at the structural chunks it was built
 from via ``(:Entity)-[:DERIVED_FROM]->(:Node)`` (the entity's ``members`` are node ids, resolved to the
-same deterministic node uuids the ``:Node`` layer wrote). Cross-entity reference edges
-(refs / references_tactics) and the step-level event layer are later graph-tier work; this layer is
-entity-grain only.
+same deterministic node uuids the ``:Node`` layer wrote). Its derivations reify into the procedural
+layer (``graph.procedures``) and its ``refs`` into reference edges onto canonicals
+(``graph.references``); an entity also carries the ``:Mention`` role label (a book-specific entity),
+distinct from a reference ``:Entity:Canonical``.
 
 Identity: the stable vertex key is a DETERMINISTIC uuid5 over ``(source, entity id)`` — the id is the
 entity's document-order position, assigned when the three overlays are flattened (see
@@ -37,6 +38,13 @@ from kms.core.models import BodySegment, Entity
 from kms.graph.nodes import source_uuid
 
 ENTITY_LABEL = "Entity"
+# Role labels, applied ALONGSIDE the base :Entity label (see docs/UNIFIED-KG.md). A book-specific
+# mention and a corpus-level canonical are both :Entity — the role label distinguishes them (and
+# keeps `MATCH (:Entity {type: …})` seeing both), with no implicit "absence of label ⇒ mention" rule.
+MENTION_LABEL = "Mention"  # a book-specific entity (carries :DERIVED_FROM provenance)
+CANONICAL_LABEL = (
+    "Canonical"  # a corpus-level identity hub (minted from refs; see graph.references)
+)
 
 
 def entity_uuid(source: str, entity_id: int) -> str:

@@ -143,8 +143,9 @@ def test_persist_entities_writes_vertices_root_and_members(monkeypatch):
     asyncio.run(persist_entities(_OVERLAY, "book.pdf"))
 
     queries = [q for q, _ in calls]
-    # each entity MERGE applies its per-type label
+    # each entity MERGE applies its per-type label AND the :Mention role label
     assert any("SET e:Theorem" in q for q in queries)
+    assert any("SET e:Mention" in q for q in queries)
     # entities are rooted under their :Source via :HAS_ENTITY
     root = next(c for c in calls if ":HAS_ENTITY" in c[0])
     assert root[1]["src"] == source_uuid("book.pdf")

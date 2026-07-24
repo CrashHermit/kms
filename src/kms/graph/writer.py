@@ -10,9 +10,9 @@ Definition / Theorem / Problem (base ``:Entity`` label + its per-type label), ro
 via ``:HAS_ENTITY`` and linked back to the structural chunks it was built from via ``:DERIVED_FROM``.
 ``persist_procedures`` writes the procedural layer: one ``:Procedure`` per proof/solution hung off its
 entity via ``:HAS_PROCEDURE``, and one ``:Event`` per proof step threaded ``:FIRST``/``:THEN`` (see
-``graph.procedures``). ``persist_references`` writes the cross-entity layer: a global ``:GeneralEntity`` hub per distinct
-reference target, and a ``(:Entity)-[:REFERENCES {tactic}]->(:GeneralEntity)`` edge per reference (see
-``graph.references`` for why references route through hubs).
+``graph.procedures``). ``persist_references`` writes the cross-entity layer: a global ``:Entity:Canonical``
+per distinct reference target, and a ``(:Entity)-[:REFERENCES {tactic}]->(:Canonical)`` edge per reference
+(see ``graph.references`` for why references route through canonicals).
 
 Writes are batched: Cypher can't parameterize a label, but the label comes from a closed enum
 (``NodeType`` / ``EntityType``), so grouping by label and interpolating it is safe and turns the
@@ -27,7 +27,9 @@ from typing import Any
 from kms.core.models import ASTNode, Entity
 from kms.graph.db import database, driver
 from kms.graph.entities import (
+    CANONICAL_LABEL,
     ENTITY_LABEL,
+    MENTION_LABEL,
     entity_label,
     entity_properties,
     entity_uuid,
@@ -50,7 +52,7 @@ from kms.graph.procedures import (
     procedure_batches,
     then_pairs,
 )
-from kms.graph.references import GENERAL_ENTITY_LABEL, hub_batch, reference_rows
+from kms.graph.references import canonical_batches, reference_rows
 
 
 def node_batches(nodes: list[ASTNode], source: str) -> dict[str | None, list[dict]]:
@@ -157,7 +159,7 @@ async def persist_entities(entities: list[Entity], source: str) -> None:
         for label, rows in batches.items():
             await session.run(
                 f"UNWIND $rows AS row MERGE (e:{ENTITY_LABEL} {{uuid: row.uuid}}) "
-                f"SET e += row SET e:{label}",
+                f"SET e += row SET e:{label} SET e:{MENTION_LABEL}",
                 rows=rows,
             )
         await session.run(
@@ -229,26 +231,29 @@ async def persist_procedures(entities: list[Entity], source: str) -> None:
 
 
 async def persist_references(entities: list[Entity], source: str) -> None:
-    """Upsert the cross-entity reference layer: mint a global ``:GeneralEntity`` hub per distinct
-    reference target, then draw a ``(:Entity)-[:REFERENCES {tactic}]->(:GeneralEntity)`` edge for each
-    reference. Idempotent — hubs MERGE on their deterministic global uuid and edges MERGE on the
-    (entity, hub) pair (the tactic is set on the relationship, so a re-run updates it in place). A
-    no-op when no entity carries references. The citing ``:Entity`` vertices are expected to already
-    exist (the entity persister writes them first); the MATCH attaches to them."""
+    """Upsert the cross-entity reference layer: mint a global ``:Entity:Canonical`` per distinct
+    reference target (base ``:Entity`` label + the ``:Canonical`` role label + its per-type label),
+    then draw a ``(:Entity)-[:REFERENCES {tactic}]->(:Canonical)`` edge for each reference. Idempotent —
+    canonicals MERGE on their deterministic global uuid and edges MERGE on the (entity, canonical) pair
+    (the tactic is set on the relationship, so a re-run updates it in place). A no-op when no entity
+    carries references. The citing mention ``:Entity`` vertices are expected to already exist (the entity
+    persister writes them first); the MATCH attaches to them."""
     rows = reference_rows(entities, source)
     if not rows:
         return
-    hubs = hub_batch(entities)
+    batches = canonical_batches(entities)
 
     async with driver().session(database=database()) as session:
-        await session.run(
-            f"UNWIND $hubs AS h MERGE (g:{GENERAL_ENTITY_LABEL} {{uuid: h.uuid}}) SET g += h",
-            hubs=hubs,
-        )
+        for label, canonicals in batches.items():
+            await session.run(
+                f"UNWIND $rows AS row MERGE (c:{ENTITY_LABEL} {{uuid: row.uuid}}) "
+                f"SET c += row SET c:{CANONICAL_LABEL} SET c:{label}",
+                rows=canonicals,
+            )
         await session.run(
             f"UNWIND $rows AS row "
             f"MATCH (e:{ENTITY_LABEL} {{uuid: row.entity}}), "
-            f"(g:{GENERAL_ENTITY_LABEL} {{uuid: row.hub}}) "
-            f"MERGE (e)-[ref:REFERENCES]->(g) SET ref.tactic = row.tactic",
+            f"(c:{CANONICAL_LABEL} {{uuid: row.canonical}}) "
+            f"MERGE (e)-[ref:REFERENCES]->(c) SET ref.tactic = row.tactic",
             rows=rows,
         )
