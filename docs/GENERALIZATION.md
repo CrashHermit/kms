@@ -67,6 +67,37 @@ procedural spine, and the provenance layer are **not** on the chopping block.
 
 ---
 
+## Entity layer: one type-agnostic block finder (decided)
+
+The per-type finders collapse into **one type-agnostic "block finder"** — literally the current
+finder's cursor-walk with only the "what is a block" clause of its Signature generalized (from "a
+posed math task" to "any labeled pedagogical block"), plus a rough `type` + `mode` (asserts/poses) on
+the output. Detection and typing unify: a physics `law` or an induced `key concept` is found the same
+way as a `definition`.
+
+- **One finder, not per-type.** Detecting a block and typing it are different jobs; only typing
+  differs across definition/theorem/example/exercise/law. **Validated by probe:** one prompt found +
+  typed every block kind across math/physics/biology (incl. a non-math `law` and an induced
+  `key concept`) and excluded prose/headers/remarks. Span/boundary is the finder's *existing*
+  machinery (growing-window structural banking; "start at own label, stop at next label") — keep it
+  verbatim. A second boundary probe confirmed those rules cleanly separate adjacent blocks that a
+  naive one-shot prompt overlapped (theorem+proof resolved to its own span; 8/9 spans correct, the
+  lone miss being start-of-stream over-reach the full machinery covers).
+- **Separate classify step.** The fine `type` (definition/theorem/law/…) is assigned *after*
+  detection — a classification/induction pass, a **property** on the entity, not a per-type finder.
+  `kind = label, type = property` applied at the genre layer.
+- **No attributor for now.** The per-type attributors are dropped. An entity is just its
+  `{type, mode, members-span}` — no `label`/`number`/`title`/`contents`, and **no solution/proof
+  split**, so the procedural `:Procedure`/`:Event` layer pauses with the attributor (it was fed by
+  it). Detection + typing only.
+- **Attribution forks by type when it returns.** Detection is unified; *extraction* (what you pull
+  from a block) legitimately differs by type — a task's solution vs a theorem's proof vs a
+  definition's body — so a later attribution step forks by type over the unified detection.
+
+**This supersedes** the "rename `problem`→`task` + keep the task attributor" shape in
+`REMOVAL-def-thm-rename-task.md`: the finder becomes `block` (not `task`), and the attributors are
+removed rather than kept. Reconcile that spec before implementing.
+
 ## Concept layer redesign (the validated core)
 
 Replace the closed `FIELDS` taxonomy with AutoSchemaKG-style **conceptualization**, plus a
