@@ -72,16 +72,20 @@ collapse into **three general stages**: **detect → attribute → procedure-fin
 produces is an **`:Entity`**; a procedure is *extracted from within* an entity, never a
 separately-detected block. **There is no separate task/statement classify stage** — see below.
 
-**1. Block finder (detect + type tag).** Literally the current finder's cursor-walk with only the
-"what is a block" clause of its Signature generalized (from "a posed math task" to "any labeled
-pedagogical block"), emitting each block as a span plus a rough `type` (definition / theorem / example
-/ law / …) as **metadata**. Span/boundary is the finder's *existing* machinery (growing-window
-structural banking; "start at own label, stop at next label") — kept **verbatim**.
-- *Validated by probe:* one prompt found + typed every block kind across math/physics/biology (incl. a
-  non-math `law` and an induced `key concept`) and excluded prose/headers/remarks. A second boundary
-  probe confirmed the finder's boundary rules cleanly separate adjacent blocks a naive one-shot prompt
-  overlapped (theorem+proof to its own span; 8/9 spans correct, the lone miss a start-of-stream
-  over-reach the full machinery covers).
+**1. Block finder (detect).** Literally the current finder's cursor-walk with only the "what is a
+block" clause of its Signature generalized (from "a posed math task" to "any labeled pedagogical
+block"), emitting each block as a **span only** — **no type, no classification**. (The original
+per-type finders emit only spans too: `problem.py`'s output is `list[ProblemSpan]` of `{start, end}`;
+the entity's type was hardcoded by *which* finder ran — `Entity(type=PROBLEM)` — never classified. A
+single block finder would have to *newly* classify to emit a type, and we don't do that now.)
+Span/boundary is the finder's *existing* machinery (growing-window structural banking; "start at own
+label, stop at next label") — kept **verbatim**.
+- *Validated by probe:* one prompt found every block kind across math/physics/biology and excluded
+  prose/headers/remarks; when *asked*, it also typed them correctly (incl. a non-math `law` and an
+  induced `key concept`) — so a type tag is available **later** if retrieval wants one, but it is not
+  emitted now. A second boundary probe confirmed the finder's boundary rules cleanly separate adjacent
+  blocks a naive one-shot prompt overlapped (theorem+proof to its own span; 8/9 spans correct, the
+  lone miss a start-of-stream over-reach the full machinery covers).
 
 **2. Universal attributor.** One pass (not per-type) fills the genre-universal fields only: **label,
 number, title, content**. Every labeled block has these regardless of subject.
@@ -101,11 +105,12 @@ absent?* — rather than deriving it from the type. Routing:
 This is the generalized `solution_start`/proof split the old attributor did per-type — one pass over
 any entity, proven machinery.
 
-**No separate task/statement classify stage.** The task-vs-statement distinction only ever drove
-procedure routing (task → create, statement → defer). The procedure finder decides that routing
-**directly** (posed-problem-to-solve vs asserted-claim, inside its create/defer branch), so the
-judgment lives *inside* it — a standalone classify step would be redundant. The finder's rough `type`
-tag is kept as metadata (retrieval, concepts); nothing else needs a task/statement label.
+**No classification at all, for now.** The task-vs-statement distinction only ever drove procedure
+routing (task → create, statement → defer), and the procedure finder decides that routing **directly**
+(posed-problem-to-solve vs asserted-claim, inside its create/defer branch) — so the judgment lives
+*inside* it. And a `type` tag is not emitted either: nothing needs it (the procedure finder self-
+decides; the concept layer works from content). A type can be added later if retrieval wants one — the
+probe shows the finder can produce it reliably — but the entity layer ships with **zero** classify.
 
 **The same "kind general, type a property" pattern at every level:**
 

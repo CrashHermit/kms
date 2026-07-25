@@ -13,7 +13,9 @@ Replace the three per-type finders + attributors + referencers with **three gene
 
 1. **Block finder** — the current finder's cursor-walk (`entity/finders/problem.py` is the base — it
    already has the generalized "posed task in any textbook" prompt) with only the "what is a block"
-   clause widened to "any labeled pedagogical block", emitting a span + a rough `type` tag.
+   clause widened to "any labeled pedagogical block", emitting a **span only** (no type — the per-type
+   finders emit only spans too; the type was hardcoded by which finder ran, never classified). No
+   classify step: the procedure finder self-decides routing; a type tag can be added later if needed.
 2. **Universal attributor** — one pass filling `label / number / title / content` (genre-universal).
 3. **Procedure finder** — one pass over all entities: *is there something to work out, shown or
    absent?* → extract shown steps / create for a posed problem / defer a proofless statement / skip.
@@ -52,9 +54,11 @@ the block finder + universal attributor + procedure finder.
 
 ## Cascade to handle (`src/kms/core/models.py`)
 
-- **`EntityType`**: the closed enum (DEFINITION/THEOREM/PROBLEM) gives way to an **open `type`
-  property** the finder tags (`graph/entities.py` already writes `type` as a property, so the graph
-  side is forward-compatible). Keep a permissive representation rather than three fixed labels.
+- **`EntityType` / entity `type`**: entities carry **no `type` for now** (the block finder emits spans
+  only). Note the graph side currently *requires* a type — `graph/entities.py` `entity_label` does
+  `entity.type.value.capitalize()` → `:Entity:<Type>`. So give entities a single generic kind (a bare
+  `:Entity`, no per-type sub-label) or make the per-type label optional. A finder-tagged `type`
+  property can be reintroduced later if retrieval wants it.
 - **`Entity`**: `field` → moves to the concept layer (drop once conceptualization lands, not before —
   `concepts.py` still reads it). The two narrow fields **`solutions` + `proofs` unify into one
   `procedures` list** (each `{type, steps}`) that the procedure finder fills and `procedures.py`
