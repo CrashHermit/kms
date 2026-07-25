@@ -24,8 +24,13 @@ single forward walk:
     problem to the model's context (banked as-is at the cap); that is a resource limit
     at the edge of the system, not part of the core rule.
 
+A "Problem" here is a *genre* object, not a math-specific one: a posed task set for the
+reader (worked example or exercise) is a pedagogical universal — a physics, CS, or math
+textbook all carry them structurally — so this finder is domain-neutral and works on any
+textbook. Only the later attribution (``field``, ``tactic``) is math-specific; the finding is not.
+
 Design commitments:
-  * A Problem is any posed mathematical task — worked example or exercise — regardless
+  * A Problem is any posed task — worked example or exercise — regardless
     of whether a solution is shown. The finder is *solution-agnostic*: it captures the
     problem's whole extent (statement, subparts, and a solution if one happens to be
     present) but does NOT label statement-vs-solution. Roles, number, instruction, and
@@ -82,12 +87,13 @@ class ProblemSpan(BaseModel):
 
 class Signature(dspy.Signature):
     r"""
-    Find the mathematical PROBLEMS in a run of textbook nodes and return each as a
+    Find the PROBLEMS in a run of textbook nodes and return each as a
     span of node positions. Anchor on the node that opens a problem, gather the run of
-    nodes that belongs to it, stop at its boundary.
+    nodes that belongs to it, stop at its boundary. This is domain-neutral — a problem is
+    a posed task in ANY textbook (math, physics, CS, …), not a math-only object.
 
     WHAT IS A PROBLEM:
-    A Problem is any posed mathematical task — this covers BOTH:
+    A Problem is any posed task set for the reader — this covers BOTH:
     - a worked EXAMPLE from the exposition (labelled "Example ...", a posed question,
       usually with a shown solution), and
     - an EXERCISE from a problem set (labelled by a number, usually with NO solution —
@@ -95,9 +101,9 @@ class Signature(dspy.Signature):
     Treat both the same: they are Problems. Do NOT require a solution to be present — a
     problem whose solution is left to the reader is still a Problem.
 
-    Definitions, theorems, propositions, lemmas, corollaries, and their proofs are NOT
-    problems — ignore them. Ordinary narrative prose, figures, and section headers are
-    not problems either.
+    Declarative statements — definitions, theorems, propositions, lemmas, corollaries (or a
+    domain's laws, models, rules) — and their proofs or derivations are NOT problems; ignore
+    them. Ordinary narrative prose, figures, and section headers are not problems either.
 
     EXERCISE LEAD-INS ARE BOUNDARIES, NEVER MEMBERS. A grouped-exercise LEAD-IN — a directive
     that introduces a run of exercises and states a shared instruction ("For the following
