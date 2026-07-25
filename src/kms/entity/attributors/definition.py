@@ -7,7 +7,7 @@ member nodes and fills in AutoMathKG's self-contained Definition attributes (Tab
 Appendix C), the ones derivable from the definition's own content with no reference to
 any other entity:
 
-    label · number · title · field · contents · bodylist
+    label · number · title · contents · bodylist
 
 The cross-entity attributes (``refs`` / ``references_tactics``) are deliberately NOT here:
 they are edges between entities and belong to the later graph tier, which resolves them
@@ -15,7 +15,7 @@ against the whole populated entity set (and shares the same tactic-label machine
 
 Two LLM calls plus a deterministic assembly step:
 
-  * ONE LLM CALL — ``label`` + ``number`` + ``title`` + ``field`` (the "identity" pass).
+  * ONE LLM CALL — ``label`` + ``number`` + ``title`` (the "identity" pass).
     All four identify the definition's header, so they share one round-trip. Label reading
     is left to the LLM on purpose — a regex over "Definition 2.1" vs Hefferon's "1.2
     Definition" vs an unlabelled definition is brittle and breaks on the next book's
@@ -73,15 +73,10 @@ class Identify(dspy.Signature):
       * title — a short noun phrase naming the concept being defined ("Symmetric Group",
         "Vector Space", "Positive Definite Matrix"). The NAME of the thing, not a sentence
         and not the word "Definition".
-      * field — the single most relevant mathematical field, chosen ONLY from the given
-        list. Pick exactly one.
     """
 
     nodes: list[MemberNode] = dspy.InputField(
         description="The definition's member nodes, in order."
-    )
-    field_choices: list[str] = dspy.InputField(
-        description='The allowed fields; choose exactly one.'
     )
     label: str = dspy.OutputField(
         description="The definition's label as written, or empty string."
@@ -91,9 +86,6 @@ class Identify(dspy.Signature):
     )
     title: str = dspy.OutputField(
         description='Short noun phrase naming the defined concept.'
-    )
-    field: str = dspy.OutputField(
-        description='Exactly one field from the given list.'
     )
 
 
@@ -160,7 +152,6 @@ class Identity(BaseModel):
     label: str | None = None
     number: str | None = None
     title: str | None = None
-    field: str | None = None
 
 
 class Module(dspy.Module):
@@ -173,7 +164,7 @@ class Module(dspy.Module):
         self.set_lm(language_model or llm.text_lm())
 
     async def identity(self, members: list[models.ASTNode]) -> Identity:
-        """Returns the label, number, title, and field for one definition."""
+        """Returns the label, number, and title for one definition."""
         nodes = [
             MemberNode(
                 position=k,
@@ -182,14 +173,11 @@ class Module(dspy.Module):
             )
             for k, m in enumerate(members)
         ]
-        result = await self.identify.acall(
-            nodes=nodes, field_choices=models.FIELDS
-        )
+        result = await self.identify.acall(nodes=nodes)
         return Identity(
             label=(result.label or None),
             number=(result.number or None),
             title=(result.title or None),
-            field=(result.field if result.field in models.FIELDS else None),
         )
 
     async def body(self, contents: str) -> list[models.BodySegment]:
@@ -250,7 +238,7 @@ async def attribute_definition(
 ) -> models.Entity:
     """Fill in the self-contained attributes on one Definition entity, in place.
 
-    One LLM call identifies label/number/title/field; the content members are assembled
+    One LLM call identifies label/number/title; the content members are assembled
     deterministically with the label peeled off; a second LLM call builds the bodylist,
     writing each description verbatim. The attributes are written onto the passed entity
     (the same entity the finder produced) and it is returned. Persistence-agnostic: how the
@@ -266,7 +254,6 @@ async def attribute_definition(
     entity.label = ident.label
     entity.number = ident.number
     entity.title = ident.title
-    entity.field = ident.field
     entity.contents = contents
     entity.bodylist = bodylist
     return entity

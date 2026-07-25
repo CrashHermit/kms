@@ -1,6 +1,6 @@
 """Problem attributor: the statement/solution split around the single identity pass.
 
-The identity pass (label/number/title/field/solution_start) is injected via a scripted
+The identity pass (label/number/title/solution_start) is injected via a scripted
 module, so these tests exercise the real split/assembly logic without dspy."""
 
 import asyncio
@@ -25,7 +25,7 @@ def _nodes():
         ),
         models.ASTNode(
             type=models.NodeType.PARAGRAPH,
-            content="models.Solution. $f'(x) = 2x$.",
+            content="Solution. $f'(x) = 2x$.",
             id=2,
             segment_index=0,
         ),
@@ -48,53 +48,50 @@ def _run(entity, nodes, module):
 
 def test_split_holds_out_solution_and_peels_label():
     nodes = _nodes()
-    entity = models.Entity(type=models.EntityType.PROBLEM, members=[0, 1, 2])
+    entity = models.Entity(type='problem', members=[0, 1, 2])
     ident = Identity(
         label='Example 4.1',
         number='4.1',
         title='Derivative of a monomial',
-        field='analysis',
         solution_start=2,
     )
     e = _run(entity, nodes, _ScriptedModule(ident))
 
     assert e.label == 'Example 4.1'
     assert e.number == '4.1'
-    assert e.field == 'analysis'
     # Statement = members before solution_start, label node dropped; solution held out.
     assert e.contents == ['Find the derivative of $f(x) = x^2$.']
     assert e.bodylist == []  # a Problem never has a bodylist
-    assert len(e.solutions) == 1
-    assert e.solutions[0].contents == ["models.Solution. $f'(x) = 2x$."]
+    assert len(e.procedures) == 1
+    assert e.procedures[0].type == 'solution'
+    assert e.procedures[0].contents == ["Solution. $f'(x) = 2x$."]
 
 
-def test_exercise_with_no_solution_leaves_solutions_empty():
+def test_exercise_with_no_solution_leaves_procedures_empty():
     nodes = _nodes()[:2]  # label + statement, no solution
-    entity = models.Entity(type=models.EntityType.PROBLEM, members=[0, 1])
+    entity = models.Entity(type='problem', members=[0, 1])
     ident = Identity(
         label='Example 4.1',
         number='4.1',
         title='X',
-        field='algebra',
         solution_start=-1,
     )
     e = _run(entity, nodes, _ScriptedModule(ident))
 
-    assert e.solutions == []
+    assert e.procedures == []
     assert e.contents == ['Find the derivative of $f(x) = x^2$.']
 
 
 def test_out_of_range_solution_start_is_treated_as_no_solution():
     nodes = _nodes()
-    entity = models.Entity(type=models.EntityType.PROBLEM, members=[0, 1, 2])
+    entity = models.Entity(type='problem', members=[0, 1, 2])
     ident = Identity(
         label='Example 4.1',
         number='4.1',
         title='X',
-        field='analysis',
         solution_start=9,
     )
     e = _run(entity, nodes, _ScriptedModule(ident))
 
-    assert e.solutions == []
+    assert e.procedures == []
     assert len(e.contents) == 2

@@ -1,6 +1,6 @@
 """Procedural-layer graph mapping and writer planning — pure, no database (neo4j is stubbed in
 conftest). Verifies procedure/event identity is stable, deterministic and disjoint from the other
-uuid namespaces, that proofs/solutions map onto the expected :Procedure/:Event rows, and that
+uuid namespaces, that an entity's procedures map onto the expected :Procedure/:Event rows, and that
 persist_procedures issues the right queries/params via a fake session."""
 
 import asyncio
@@ -13,8 +13,7 @@ from kms.graph.procedures import (
     event_uuid,
     first_pairs,
     has_procedure_pairs,
-    procedure_batches,
-    procedure_label,
+    procedure_rows,
     procedure_uuid,
     then_pairs,
 )
@@ -22,13 +21,14 @@ from kms.graph.writer import persist_procedures
 
 # A theorem with a two-step proof, and a problem with a (stepless) solution.
 _THEOREM = models.Entity(
-    type=models.EntityType.THEOREM,
+    type='theorem',
     members=[1],
     id=1,
-    proofs=[
-        models.Proof(
+    procedures=[
+        models.Procedure(
+            type='proof',
             contents=['Assume n≥3.', 'Then Z(Sn) is trivial.'],
-            bodylist=[
+            steps=[
                 models.BodySegment(
                     description='Assume n≥3.', action='assumption'
                 ),
@@ -40,10 +40,10 @@ _THEOREM = models.Entity(
     ],
 )
 _PROBLEM = models.Entity(
-    type=models.EntityType.PROBLEM,
+    type='problem',
     members=[3],
     id=2,
-    solutions=[models.Solution(contents=['x = 2'])],
+    procedures=[models.Procedure(type='solution', contents=['x = 2'])],
 )
 _OVERLAY = [_THEOREM, _PROBLEM]
 
@@ -84,33 +84,36 @@ def test_uuids_are_disjoint_from_node_and_entity_namespaces():
     )
 
 
-# --- labels ---
-
-
-def test_procedure_label_is_the_capitalized_kind():
-    assert procedure_label('proof') == 'Proof'
-    assert procedure_label('solution') == 'Solution'
-
-
 # --- planning ---
 
 
-def test_procedure_batches_group_by_per_kind_label_with_contents():
-    batches = procedure_batches(_OVERLAY, 'book.pdf')
-    assert set(batches) == {'Proof', 'Solution'}
-    assert batches['Proof'][0]['uuid'] == procedure_uuid(
-        'book.pdf', 1, 'proof', 0
+def test_procedure_rows_are_one_flat_batch_carrying_type_and_contents():
+    rows = procedure_rows(_OVERLAY, 'book.pdf')
+    assert [row['type'] for row in rows] == ['proof', 'solution']
+    assert rows[0]['uuid'] == procedure_uuid('book.pdf', 1, 'proof', 0)
+    assert rows[0]['contents'] == ['Assume n≥3.', 'Then Z(Sn) is trivial.']
+    assert rows[1]['contents'] == ['x = 2']
+
+
+def test_a_generated_procedure_is_marked_and_an_extracted_one_is_not():
+    # completion output must stay distinguishable from what the page actually showed
+    created = models.Entity(
+        type='exercise',
+        members=[0],
+        id=0,
+        procedures=[
+            models.Procedure(
+                type='solution', contents=['x = 2'], generated=True
+            )
+        ],
     )
-    assert batches['Proof'][0]['contents'] == [
-        'Assume n≥3.',
-        'Then Z(Sn) is trivial.',
-    ]
-    assert batches['Solution'][0]['contents'] == ['x = 2']
+    assert procedure_rows([created], 'b')[0]['generated'] is True
+    assert 'generated' not in procedure_rows(_OVERLAY, 'b')[0]
 
 
-def test_event_rows_are_one_per_proof_step_with_action_and_text():
+def test_event_rows_are_one_per_step_with_action_and_text():
     rows = event_rows(_OVERLAY, 'book.pdf')
-    assert len(rows) == 2  # the solution contributes no steps (no bodylist)
+    assert len(rows) == 2  # the stepless solution contributes none
     assert rows[0]['action'] == 'assumption' and rows[0]['index'] == 0
     assert rows[1]['text'] == 'Then Z(Sn) is trivial.'
     assert rows[0]['uuid'] == event_uuid('book.pdf', 1, 'proof', 0, 0)
@@ -173,8 +176,9 @@ def test_persist_procedures_writes_procedures_events_and_spine(monkeypatch):
     asyncio.run(persist_procedures(_OVERLAY, 'book.pdf'))
 
     queries = [q for q, _ in calls]
-    assert any('SET p:Proof' in q for q in queries)  # per-kind label applied
-    assert any('SET p:Solution' in q for q in queries)
+    # one batched MERGE of bare :Procedure vertices — the kind is a property, not a label
+    assert any('MERGE (p:Procedure' in q for q in queries)
+    assert not any('SET p:Proof' in q for q in queries)
     haspair = next(c for c in calls if ':HAS_PROCEDURE' in c[0])
     assert len(haspair[1]['pairs']) == 2  # entity -> each derivation
     first = next(c for c in calls if ':FIRST' in c[0])
@@ -188,14 +192,9 @@ def test_persist_procedures_is_a_noop_without_derivations(monkeypatch):
     monkeypatch.setattr('kms.graph.writer.driver', lambda: _FakeDriver(calls))
     asyncio.run(
         persist_procedures(
-            [
-                models.Entity(
-                    type=models.EntityType.DEFINITION, members=[0], id=0
-                )
-            ],
-            'b',
+            [models.Entity(type='definition', members=[0], id=0)], 'b'
         )
     )
     assert (
         calls == []
-    )  # a definition has no proof/solution, so nothing is opened or written
+    )  # a definition has no derivation, so nothing is opened or written

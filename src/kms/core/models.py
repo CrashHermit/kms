@@ -29,8 +29,8 @@ class NodeType(StrEnum):
     structure (bold, inline math, links) stays inside a node's markdown content.
 
     The extractor is purely STRUCTURAL and domain-agnostic: it emits general document
-    structure only. Math-semantic typing (Definition/Theorem/Problem) lives entirely at
-    the entity layer — the per-type finders — not here."""
+    structure only. Semantic typing (definition / theorem / law / …) lives entirely at the
+    entity layer, where it is induced per book, not here."""
 
     PARAGRAPH = 'paragraph'
     MATH = 'math'  # standalone display math block
@@ -43,8 +43,14 @@ class NodeType(StrEnum):
 
 
 class EntityType(StrEnum):
-    """The three math-semantic entity categories the entity finders produce
-    (AutoMathKG's taxonomy). Distinct from NodeType, which is document structure."""
+    """The math profile's entity types — the values the per-type finders stamp on the entities
+    they emit (AutoMathKG's taxonomy). Distinct from NodeType, which is document structure.
+
+    An entity's ``type`` is an OPEN property, not this closed set (see ``docs/GENERALIZATION.md``,
+    "kind = label, type = property"): the universal attributor induces whatever a textbook calls its
+    blocks — a physics ``law``, a biology ``mechanism``, a CS ``algorithm``. This enum survives as
+    the *math profile's* vocabulary, used by the per-type chains that hardcode one type each; it
+    constrains nothing downstream, which reads ``Entity.type`` as a plain string."""
 
     DEFINITION = 'definition'
     THEOREM = 'theorem'  # subsumes proposition, corollary, lemma
@@ -52,36 +58,31 @@ class EntityType(StrEnum):
 
 
 class ProcedureType(StrEnum):
-    """The kinds of procedure — a named, ordered derivation attached to an entity (see
-    ``docs/UNIFIED-KG.md``). A Theorem's ``proofs`` reify into ``proof`` procedures, a Problem's
-    ``solutions`` into ``solution`` procedures. Generic on purpose (a physics ``derivation`` or CS
-    ``algorithm`` would be more values of the same kind), but math-first the set is these two.
+    """The math profile's procedure types — a procedure being a named, ordered derivation
+    extracted from an entity (see ``docs/UNIFIED-KG.md``). A theorem's proof and a problem's
+    solution are these two values.
 
-    Their step decomposition (a proof's ``bodylist``) reifies into ``:Event`` nodes; the derivation
-    is thus the procedural half of the graph, distinct from the declarative ``:Entity`` it hangs off."""
+    Like ``EntityType`` this is a *profile* vocabulary, not a closed set: ``Procedure.type`` is an
+    open string, so a physics ``derivation`` or a CS ``algorithm`` is simply another value the
+    procedure finder may induce.
+
+    A procedure's step decomposition reifies into ``:Event`` nodes; the derivation is thus the
+    procedural half of the graph, distinct from the declarative ``:Entity`` it hangs off."""
 
     PROOF = 'proof'
     SOLUTION = 'solution'
 
 
 # --- Shared AutoMathKG vocabularies (Table C4) ---
-# Kept here, not in a single attributor, so every per-type attributor draws the field and
-# role taxonomies from one source of truth instead of copying the lists.
+# Kept here, not in a single attributor, so every per-type attributor draws the role taxonomy
+# from one source of truth instead of copying the list.
 
-# The fixed mathematical-field taxonomy ("field" template).
-FIELDS = [
-    'algebra',
-    'geometry',
-    'analysis',
-    'logic',
-    'probability and statistics',
-    'applied mathematics',
-    'foundations of mathematics',
-]
-
-# The nine role/tactic labels ("bodylist" template), the full taxonomy across all types.
-# Each attributor offers the model only the subset a given context actually exercises
-# (e.g. a definition never uses proof-only roles; a theorem statement never `deduction`s).
+# The nine role labels ("bodylist" template), the full taxonomy across all types. Each
+# attributor offers the model only the subset a given context actually exercises (e.g. a
+# definition never uses proof-only roles; a theorem statement never `deduction`s). This stays
+# CLOSED on purpose: it labels the internal structure of one derivation, which the AutoMathKG
+# taxonomy covers well. The cross-entity relation vocabulary — once the same list — is now open
+# and LLM-named (see `Reference.relation`, docs/GENERALIZATION.md step 2).
 ACTIONS_ALL = [
     'premise',
     'assumption',
@@ -94,78 +95,113 @@ ACTIONS_ALL = [
     'enumeration',
 ]
 
-# The entity kinds a cross-entity reference may target (AutoMathKG's `definition:`/`theorem:`
-# prefixes). Shared by the per-type referencers so the allowed set lives in one place.
-REFERENCE_KINDS = ['definition', 'theorem']
-
 
 class BodySegment(BaseModel):
     """One `bodylist` piece: a contiguous slice of an entity's content and the role it
     plays (AutoMathKG's action label — see the per-type attributor for the allowed set).
     A pydantic model because it doubles as a DSPy structured-output type at the LLM
-    boundary; stored as-is on the entity."""
+    boundary; stored as-is on the entity.
+
+    `concepts` is the event-conceptualization axis (AutoSchemaKG's φ over events): when a segment
+    is a *procedure step* it reifies into an `:Event`, and the conceptualizer tags it with flat
+    concept phrases spanning specific → general. Empty until that stage runs (and always empty for
+    a statement bodylist, which is not reified into events)."""
 
     description: str
     action: str
+    concepts: list[str] = []
 
 
-class Proof(BaseModel):
-    """One proof of a Theorem: its own content and role-labelled decomposition (AutoMathKG's
-    Thm-only `proofs`, each element `{contents, bodylist, ...}`). refs/references_tactics are
-    deferred to the graph tier, so a proof reduces to contents + bodylist here. A pydantic
-    model like BodySegment — it doubles as a DSPy structured type and is stored on the entity."""
+class Procedure(BaseModel):
+    """One worked derivation of an entity — a proof, a solution, a physics derivation — reified by
+    the graph tier into a `:Procedure` container rooting an `:Event` step chain.
 
+    This is the unification of AutoMathKG's Thm-only `proofs` and Prob-only `solutions` (each
+    `{contents, bodylist}`): one list on the entity, the flavour carried by an OPEN `type` (proof /
+    solution / derivation / algorithm / …) instead of by which field it sits in — the same
+    "kind general, type a property" pattern as the entity itself, one level down
+    (`docs/GENERALIZATION.md`, "Entity layer").
+
+    `contents` is the derivation's own markdown; `steps` its role-labelled decomposition (the
+    paper's `bodylist`), which reifies into the `:Event` chain — a procedure with no steps is
+    persisted as a bare container. `generated` marks a procedure the procedure *creator* wrote for
+    a task that showed none, as opposed to one extracted from the page; refs/references_tactics
+    are deferred to the graph tier, as for every derivation."""
+
+    type: str
     contents: list[str] = []
-    bodylist: list[BodySegment] = []
-
-
-class Solution(BaseModel):
-    """One solution of a Problem (AutoMathKG's Prob-only `solutions`, each element
-    `{contents, ...}`). A Problem carries no bodylist — even in the paper a solution's
-    bodylist is empty — so a solution reduces to just its contents here."""
-
-    contents: list[str] = []
+    steps: list[BodySegment] = []
+    generated: bool = False
 
 
 class Reference(BaseModel):
     """One outgoing cross-entity reference — AutoMathKG's `refs` + `references_tactics` fused into a
     single record (the graph tier keeps them as one edge). `target` is the referenced entity's name
-    as written ("Set", "positive definite matrix"); `kind` is its type prefix (`"definition"` /
-    `"theorem"`, the paper's `definition:`/`theorem:` convention); `tactic` is the role the reference
-    plays, one of `ACTIONS_ALL`. Resolved to a graph edge onto a general-entity hub keyed by
-    (kind, normalized target), so references from different books/entities converge on one target.
+    as written ("Set", "positive definite matrix"); `kind` is what sort of thing the target is
+    ("definition", "theorem", and — outside math — "law", "model", …); `relation` is how this entity
+    relates to it, an OPEN, LLM-named label ("depends on", "applies", "generalizes"). Resolved to a
+    graph edge onto a canonical hub keyed by (kind, normalized target), so references from different
+    books/entities converge on one target.
+
+    Both `kind` and `relation` were closed math vocabularies (`REFERENCE_KINDS`, `ACTIONS_ALL`);
+    opening them is AutoSchemaKG's open-relation model, which is what lets a physics or biology book
+    name its own relations instead of being forced into nine math tactics
+    (`docs/GENERALIZATION.md`, step 2).
+
     A pydantic model like BodySegment — it doubles as a DSPy structured type at the referencer's LLM
     boundary and is carried on the entity until the graph tier turns it into an edge."""
 
     target: str
-    kind: str  # "definition" | "theorem"
-    tactic: str  # one of ACTIONS_ALL
+    kind: str  # what the target is: definition / theorem / law / model / …
+    relation: str  # open, LLM-named: how this entity relates to the target
+
+
+class Dependency(BaseModel):
+    """One concept-level prerequisite: "you need `prerequisite` to define/prove/understand
+    `dependent`" — the `(:Concept)-[:DEPENDS_ON]->(:Concept)` edge (`docs/GENERALIZATION.md`,
+    "Drop :BROADER / MSC; add :DEPENDS_ON").
+
+    It replaces the taxonomic `:BROADER` edge an MSC hierarchy would have given: a prerequisite
+    answers the curriculum question a taxonomy only approximates, and unlike a taxonomy it is
+    *groundable* — it is the concept-level rollup of the entity-level `:REFERENCES` graph the
+    referencer already extracts. `support` is how many reference pairs grounded it, kept so the
+    cycle guard can prefer the better-evidenced edge of a co-defined pair (a prerequisite graph
+    must stay a DAG)."""
+
+    dependent: str
+    prerequisite: str
+    support: int = 1
 
 
 @dataclass(slots=True)
 class Entity:
-    """A math-semantic entity: a typed grouping of member nodes — a sparse overlay on the
-    flat node stream (most nodes belong to no entity). `members` are node ids in document
-    order: pointers back to the source nodes (persisted for provenance), so the later graph
-    phase can draw edges from an entity to the chunks it came from. `id` is assigned when
-    the three per-type overlays are flattened into the single emitted entity list.
+    """One pedagogical block lifted out of the node stream — a definition, a theorem, a worked
+    example, a physics law — as a sparse overlay on the flat node stream (most nodes belong to no
+    entity). `members` are node ids in document order: pointers back to the source nodes (persisted
+    for provenance), so the later graph phase can draw edges from an entity to the chunks it came
+    from. `id` is assigned when the finder overlays are flattened into the single emitted list.
 
     The overlays are independent and may reference the same node (members are pointers), so
     they are concatenated, not merged.
 
-    The self-contained AutoMathKG attributes below are filled in by the per-type attributor
-    passes; they stay unset (None / empty) until then. `refs` is the one cross-entity attribute —
-    filled by the per-type referencer pass (after the attributor) and turned into graph edges (onto
-    general-entity hubs) by the entity persister; it stays empty until the referencer runs."""
+    `type` is an OPEN property, not a closed enum and not a graph label: the universal attributor
+    induces it from the block's own content (definition / theorem / law / mechanism / …), so a new
+    domain needs no new vocabulary (`docs/GENERALIZATION.md`). It is None until an attributor fills
+    it — the block finder emits pure spans, and the per-type chains stamp their own `EntityType`.
 
-    type: EntityType
+    The self-contained AutoMathKG attributes below are filled in by the attributor pass; they stay
+    unset (None / empty) until then. Three attributes come from later stages: `procedures` (the
+    procedure finder's extracted/created derivations), `refs` (the referencer's cross-entity
+    citations, turned into graph edges by the entity persister), and `concepts` (the
+    conceptualizer's flat multi-tag conceptualization, which replaced AutoMathKG's fixed `field`)."""
+
+    type: str | None = (
+        None  # open, induced block type (definition/theorem/law/…)
+    )
     members: list[int] = field(
         default_factory=list
     )  # member node ids, document order
     id: int | None = None  # assigned when overlays are flattened
-    # Self-contained attributes (per-type attributor output). NOTE: the `field` attribute
-    # (AutoMathKG's mathematical-field name) shadows `dataclasses.field` inside this class
-    # body, so any attribute using `field(default_factory=...)` must be declared ABOVE it.
     label: str | None = None  # the entity's own label, as written
     number: str | None = None  # the reference number in that label
     title: str | None = None  # short descriptive name of the concept
@@ -175,19 +211,16 @@ class Entity:
     bodylist: list[BodySegment] = field(
         default_factory=list
     )  # role-labelled segmentation
-    proofs: list[Proof] = field(
+    procedures: list[Procedure] = field(
         default_factory=list
-    )  # Theorem-only: its proof(s)
-    solutions: list[Solution] = field(
-        default_factory=list
-    )  # Problem-only: its solution(s)
+    )  # extracted/created derivations
     refs: list[Reference] = field(
         default_factory=list
     )  # cross-entity references (referencer output)
-    field: str | None = None  # mathematical field (fixed taxonomy)
-    instruction: str | None = (
-        None  # Problem-only: shared exercise-group directive
-    )
+    concepts: list[str] = field(
+        default_factory=list
+    )  # induced concept tags (conceptualizer output)
+    instruction: str | None = None  # task-only: shared exercise-group directive
 
 
 @dataclass(slots=True)
@@ -263,23 +296,24 @@ def merge_results_into_segments(
 
 
 def flatten_entities(
-    problem: list['Entity'],
-    definition: list['Entity'],
-    theorem: list['Entity'],
+    overlays: list[list['Entity']],
     nodes: list[ASTNode],
 ) -> list['Entity']:
-    """Concatenate the three per-type finder overlays into one flat, document-ordered entity list
-    and assign each a global id.
+    """Concatenate the finder overlays into one flat, document-ordered entity list and assign each
+    a global id.
 
-    The overlays are independent and may reference the same node more than once (members are
-    node-id pointers) — they are concatenated, not merged. Ordering is by each entity's first
-    member's position in the flat node stream; an entity with no members sorts to the end. Because
-    the splitter made exercise nodes atomic upstream, the problem finder already emits one entity
-    per exercise with distinct members, so no coarse-vs-fine reconciliation is needed. The assigned
-    `id` is the entity's stable document-order position — the key the graph tier's entity vertex
-    uuid is derived from — so a re-run maps onto the same vertices.
+    Takes a list of overlays rather than three named channels because how many there are is a
+    wiring choice: the per-type entity layer contributes three (problem / definition / theorem),
+    the block-finder layer contributes one. The overlays are independent and may reference the same
+    node more than once (members are node-id pointers) — they are concatenated, not merged.
+    Ordering is by each entity's first member's position in the flat node stream; an entity with no
+    members sorts to the end. Because the splitter made exercise nodes atomic upstream, a finder
+    already emits one entity per exercise with distinct members, so no coarse-vs-fine
+    reconciliation is needed. The assigned `id` is the entity's stable document-order position —
+    the key the graph tier's entity vertex uuid is derived from — so a re-run maps onto the same
+    vertices.
     """
-    entities = list(problem) + list(definition) + list(theorem)
+    entities = [entity for overlay in overlays for entity in overlay]
     order = {node.id: i for i, node in enumerate(nodes)}
     big = len(order)
     entities.sort(

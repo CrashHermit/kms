@@ -5,8 +5,8 @@ Graph representation of step-level references — the ``:USES`` edges (see ``doc
 A reference is, physically, invoked at a *step*: "By the Mean Value Theorem, …" happens in one line
 of a proof. AutoMathKG (and this pipeline's referencer) records references at the *entity* level, and
 the entity-level ``(:Entity)-[:REFERENCES]->(:Canonical)`` edge stays as the **rollup / floor**. This
-module adds the finer ``(:Event)-[:USES {tactic}]->(:Entity:Canonical)`` edge on top, locating which
-proof step invoked which reference.
+module adds the finer ``(:Event)-[:USES {relation}]->(:Entity:Canonical)`` edge on top, locating which
+procedure step invoked which reference.
 
 How (math-first v1): a **deterministic name match**. For each of the entity's refs, wherever the
 target name appears (as a whole word, case-insensitive) in a proof step's text, a ``:USES`` edge is
@@ -16,14 +16,15 @@ in any step simply has no ``:USES`` edge and is still covered by the entity-leve
 rollup. A later stage can replace the match with a proper per-step extraction (the referencer running
 per-event); the edge shape doesn't change, only how the rows are produced.
 
-Only *proof* steps are considered — solutions have no ``bodylist``/events in the model, and statement
-structure isn't reified into events — so a Problem's refs stay entity-level only for now.
+Every reified step is considered — any procedure's, not just a proof's — since the unified
+``procedures`` list gave solutions and derivations the same event chain. Statement structure is not
+reified into events, so an entity's refs that appear only in its statement stay entity-level.
 """
 
 import re
 
 from kms.core import models
-from kms.graph.procedures import proof_events
+from kms.graph.procedures import procedure_events
 from kms.graph.references import canonical_uuid
 
 
@@ -39,7 +40,7 @@ def _mentions(text: str, target: str) -> bool:
 
 
 def uses_rows(entities: list[models.Entity], source: str) -> list[dict]:
-    """The ``{event, canonical, tactic}`` rows for the ``:USES`` edges: one per (proof step, reference)
+    """The ``{event, canonical, relation}`` rows for the ``:USES`` edges: one per (step, reference)
     where the reference's target name is mentioned in the step's text, de-duplicated by (event,
     canonical). The event uuid matches the ``:Event`` the procedural layer wrote; the canonical uuid
     matches the ``:Entity:Canonical`` the reference layer wrote."""
@@ -48,7 +49,7 @@ def uses_rows(entities: list[models.Entity], source: str) -> list[dict]:
     for entity in entities:
         if not entity.refs:
             continue
-        for event, step in proof_events(entity, source):
+        for event, step in procedure_events(entity, source):
             for ref in entity.refs:
                 if not _mentions(step.description, ref.target):
                     continue
@@ -61,7 +62,7 @@ def uses_rows(entities: list[models.Entity], source: str) -> list[dict]:
                     {
                         'event': event,
                         'canonical': canonical,
-                        'tactic': ref.tactic,
+                        'relation': ref.relation,
                     }
                 )
     return rows

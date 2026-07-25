@@ -1,34 +1,45 @@
 """
 Graph representation of the concept layer — the ``:Concept`` nodes and their ``:INSTANCE_OF`` edges
-(the ``φ`` conceptualization axis; see ``docs/UNIFIED-KG.md``).
+(the ``φ`` conceptualization axis; see ``docs/UNIFIED-KG.md`` and ``docs/GENERALIZATION.md``).
 
-A concept is an abstract category an entity instantiates. This module maps them onto Neo4j, mirroring
+A concept is an abstract category an element instantiates. This module maps them onto Neo4j, mirroring
 ``graph.nodes``/``graph.entities``: pure mapping (no neo4j driver — that lives in ``graph.db``, the
 writes in ``graph.writer``). A concept is its OWN kind (``:Concept``), not an ``:Entity``, and it is
-**born canonical** — a corpus-level hub with a **global** (not source-scoped) uuid, so an entity's
-field in book A and the same field in book B converge on ONE concept node. That convergence is the
-whole point: it is the connective tissue the retrieval/curriculum queries traverse.
+**born canonical** — a corpus-level hub with a **global** (not source-scoped) uuid, so a concept in
+book A and the same concept in book B converge on ONE concept node. That convergence is the whole
+point: it is the connective tissue the retrieval/curriculum queries traverse.
 
-Scope (math-first, step 2 substrate): the only concept source today is the entity's ``field``
-attribute — a *field*-concept (algebra / analysis / …). It reifies into a ``:Concept:Field`` node with
-an ``(:Entity)-[:INSTANCE_OF]->(:Concept)`` edge, no new extraction needed. Richer per-entity concepts
-(the specific mathematical concept a definition is *about*) and the ``:BROADER`` concept taxonomy
-(MSC-anchored) are a later stage that adds concept *sources* here without changing this substrate —
-``_entity_concepts`` returns a list precisely so more sources slot in.
+Sources (AutoSchemaKG-style conceptualization, ``docs/GENERALIZATION.md``, "Concept layer redesign"):
+
+* **Entities** — the conceptualizer tags each entity with several flat concept phrases spanning
+  specific → general ("normal subgroup", "group theory", "abstract algebra"). Multi-granularity comes
+  from attaching several flat tags of differing generality, NOT from a concept tree: a coarse tag is
+  shared by many entities, a fine tag by few, and the generality gradient falls out of the sharing.
+  This replaced AutoMathKG's fixed seven-value ``field`` taxonomy, which could not survive contact
+  with a physics or biology textbook.
+* **Events** — a procedure's steps reify into ``:Event`` s, and the same conceptualization runs over
+  them ("proof by contradiction", "algebraic manipulation"), giving the procedural half of the graph
+  the same concept handles as the declarative half.
+
+Both use ONE concept type (``topic``) on purpose: an entity concept and an event concept that name
+the same idea must land on the same vertex, which a per-axis type would prevent.
 
 Identity: deterministic uuid5 over ``(concept type, normalized name)``, ``concept#`` segment, GLOBAL
 (no source) — like the reference ``canonical`` but its own kind. Normalization lowercases and collapses
-whitespace, giving cheap exact-name clustering.
+whitespace, giving cheap exact-name clustering; genuine paraphrases ("linear algebra" vs "vector
+spaces") stay distinct until the embedding/fusion tier merges them.
 """
 
-from collections import defaultdict
 from uuid import NAMESPACE_URL, uuid5
 
 from kms.core import models
 from kms.graph.entities import entity_uuid
+from kms.graph.procedures import procedure_events
 
 CONCEPT_LABEL = 'Concept'
-FIELD_CONCEPT = 'field'  # the one concept type sourced today (the entity's `field` attribute)
+# The one concept type minted today: an induced topic tag (from an entity or an event). Kept as a
+# named constant because the uuid folds it in — a second type would be a second concept space.
+TOPIC_CONCEPT = 'topic'
 
 
 def normalize_concept(name: str) -> str:
@@ -47,15 +58,9 @@ def concept_uuid(concept_type: str, name: str) -> str:
     ).hex
 
 
-def concept_type_label(concept_type: str) -> str:
-    """The per-type label for a concept (``"field"`` -> ``"Field"``), applied alongside the base
-    ``:Concept`` label. Concept types are single lowercase words, so capitalizing is a valid label."""
-    return concept_type.strip().lower().capitalize()
-
-
 def concept_properties(concept_type: str, name: str) -> dict:
-    """The Neo4j property map for one concept: its global uuid, its ``type`` (field / …), and the
-    ``name`` as written. No ``source``: a concept is corpus-level (born canonical), not book-scoped."""
+    """The Neo4j property map for one concept: its global uuid, its ``type``, and the ``name`` as
+    written. No ``source``: a concept is corpus-level (born canonical), not book-scoped."""
     return {
         'uuid': concept_uuid(concept_type, name),
         'type': concept_type.strip().lower(),
@@ -63,34 +68,78 @@ def concept_properties(concept_type: str, name: str) -> dict:
     }
 
 
-def _entity_concepts(entity: models.Entity) -> list[tuple[str, str]]:
-    """The ``(concept_type, name)`` concepts an entity instantiates. Today just its ``field`` (a
-    field-concept), if set; richer concept sources are added here later without touching callers."""
-    return [(FIELD_CONCEPT, entity.field)] if entity.field else []
+def _names(names: list[str]) -> list[str]:
+    """The usable concept phrases in a raw tag list: non-empty, de-duplicated on the normalized key,
+    first spelling wins. Guards the conceptualizer's output, which is free text from a model."""
+    kept: dict[str, str] = {}
+    for name in names:
+        key = normalize_concept(name or '')
+        if key and key not in kept:
+            kept[key] = name.strip()
+    return list(kept.values())
 
 
-def concept_batches(entities: list[models.Entity]) -> dict[str, list[dict]]:
-    """The unique concept property maps across the overlay — de-duplicated by uuid and grouped by
-    per-type label, so each label is one batched MERGE (mirrors ``canonical_batches``)."""
-    seen: dict[str, tuple[str, dict]] = {}
-    for entity in entities:
-        for concept_type, name in _entity_concepts(entity):
-            props = concept_properties(concept_type, name)
-            seen[props['uuid']] = (concept_type_label(concept_type), props)
-    batches: dict[str, list[dict]] = defaultdict(list)
-    for label, props in seen.values():
-        batches[label].append(props)
-    return dict(batches)
+def concept_rows(entities: list[models.Entity], source: str) -> list[dict]:
+    """The unique concept property maps across the overlay — every entity tag and every event tag,
+    de-duplicated by uuid. One flat list: concepts carry a single ``:Concept`` label (their ``type``
+    is a property), so one batched MERGE writes them all."""
+    seen: dict[str, dict] = {}
+    for _, name in _entity_concepts(entities):
+        props = concept_properties(TOPIC_CONCEPT, name)
+        seen.setdefault(props['uuid'], props)
+    for _, name in _event_concepts(entities, source):
+        props = concept_properties(TOPIC_CONCEPT, name)
+        seen.setdefault(props['uuid'], props)
+    return list(seen.values())
 
 
-def instance_rows(entities: list[models.Entity], source: str) -> list[dict]:
-    """The ``{entity, concept}`` uuid pairs for the ``:INSTANCE_OF`` edges — one per (entity, concept)
-    it instantiates. The entity uuid is source-scoped (a mention); the concept uuid is global."""
+def _entity_concepts(
+    entities: list[models.Entity],
+) -> list[tuple[models.Entity, str]]:
+    """The ``(entity, concept name)`` pairs the overlay's entities instantiate, tags cleaned."""
+    return [
+        (entity, name)
+        for entity in entities
+        for name in _names(entity.concepts)
+    ]
+
+
+def _event_concepts(
+    entities: list[models.Entity], source: str
+) -> list[tuple[str, str]]:
+    """The ``(event uuid, concept name)`` pairs the overlay's procedure steps instantiate. The event
+    uuid comes from ``procedures.procedure_events``, so it matches the ``:Event`` the procedural
+    layer wrote."""
+    return [
+        (event, name)
+        for entity in entities
+        for event, step in procedure_events(entity, source)
+        for name in _names(step.concepts)
+    ]
+
+
+def entity_instance_rows(
+    entities: list[models.Entity], source: str
+) -> list[dict]:
+    """The ``{entity, concept}`` uuid pairs for the entity ``:INSTANCE_OF`` edges — one per (entity,
+    concept) it instantiates. The entity uuid is source-scoped (a mention); the concept uuid is
+    global, which is what makes two books' mentions of the same idea meet on one vertex."""
     return [
         {
             'entity': entity_uuid(source, entity.id),
-            'concept': concept_uuid(concept_type, name),
+            'concept': concept_uuid(TOPIC_CONCEPT, name),
         }
-        for entity in entities
-        for concept_type, name in _entity_concepts(entity)
+        for entity, name in _entity_concepts(entities)
+    ]
+
+
+def event_instance_rows(
+    entities: list[models.Entity], source: str
+) -> list[dict]:
+    """The ``{event, concept}`` uuid pairs for the step-level ``:INSTANCE_OF`` edges — the procedural
+    half of the same conceptualization. Kept apart from the entity rows so each write MATCHes on its
+    own label rather than scanning both kinds."""
+    return [
+        {'event': event, 'concept': concept_uuid(TOPIC_CONCEPT, name)}
+        for event, name in _event_concepts(entities, source)
     ]

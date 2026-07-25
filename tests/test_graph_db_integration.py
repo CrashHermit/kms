@@ -126,14 +126,12 @@ def test_persist_entities_upserts_labels_root_and_members():
     ]
     overlay = [
         models.Entity(
-            type=models.EntityType.DEFINITION,
+            type='definition',
             members=[1],
             id=0,
             title='Right triangle',
         ),
-        models.Entity(
-            type=models.EntityType.THEOREM, members=[2], id=1, number='1.1'
-        ),
+        models.Entity(type='theorem', members=[2], id=1, number='1.1'),
     ]
 
     async def one(session, query):
@@ -148,10 +146,11 @@ def test_persist_entities_upserts_labels_root_and_members():
             await persist_entities(overlay, source)
             await persist_entities(overlay, source)  # idempotent re-run
             async with driver().session(database=database()) as session:
-                # multi-label: the theorem is reachable as :Theorem and carries base :Entity too
+                # the type is a property on the base :Entity label, not a per-type label
                 thm = await one(
                     session,
-                    "MATCH (e:Theorem:Entity {number: '1.1'}) RETURN count(e) AS c",
+                    "MATCH (e:Entity {type: 'theorem', number: '1.1'}) "
+                    'RETURN count(e) AS c',
                 )
                 # both entities are rooted under the book's :Source via :HAS_ENTITY
                 rooted = await one(
@@ -199,22 +198,22 @@ def test_persist_references_mints_hubs_and_edges():
     # Two entities that both reference "Set" — they must converge on ONE hub.
     overlay = [
         models.Entity(
-            type=models.EntityType.THEOREM,
+            type='theorem',
             members=[0],
             id=0,
             refs=[
                 models.Reference(
-                    target='Set', kind='definition', tactic='premise'
+                    target='Set', kind='definition', relation='assumes'
                 )
             ],
         ),
         models.Entity(
-            type=models.EntityType.PROBLEM,
+            type='problem',
             members=[0],
             id=1,
             refs=[
                 models.Reference(
-                    target='set', kind='definition', tactic='deduction'
+                    target='set', kind='definition', relation='applies'
                 )
             ],
         ),
@@ -242,14 +241,15 @@ def test_persist_references_mints_hubs_and_edges():
                     "MATCH (:Entity)-[r:REFERENCES]->(:Canonical {name: 'Set'}) "
                     'RETURN count(r) AS c',
                 )
-                # the tactic rides on the relationship
-                tactic = await one(
+                # the open relation rides on the relationship
+                relation = await one(
                     session,
-                    'MATCH (:Theorem)-[r:REFERENCES]->(:Canonical) RETURN r.tactic AS t',
+                    "MATCH (:Entity {type: 'theorem'})-[r:REFERENCES]->(:Canonical) "
+                    'RETURN r.relation AS t',
                 )
                 assert hubs['c'] == 1  # converged, and re-run did not duplicate
                 assert edges['c'] == 2
-                assert tactic['t'] == 'premise'
+                assert relation['t'] == 'assumes'
         finally:
             async with driver().session(database=database()) as session:
                 await session.run(
@@ -280,24 +280,24 @@ def test_persist_realizes_wires_a_mention_to_the_canonical_it_defines():
     # A definition of "Vector Space", a theorem that references it, and a definition nobody cites.
     overlay = [
         models.Entity(
-            type=models.EntityType.DEFINITION,
+            type='definition',
             members=[0],
             id=0,
             title='Vector Space',
         ),
         models.Entity(
-            type=models.EntityType.THEOREM,
+            type='theorem',
             members=[0],
             id=1,
             title='Basis Theorem',
             refs=[
                 models.Reference(
-                    target='vector space', kind='definition', tactic='premise'
+                    target='vector space', kind='definition', relation='assumes'
                 )
             ],
         ),
         models.Entity(
-            type=models.EntityType.DEFINITION,
+            type='definition',
             members=[0],
             id=2,
             title='Uncited Widget',  # never referenced -> no canonical -> no :REALIZES edge
@@ -322,7 +322,7 @@ def test_persist_realizes_wires_a_mention_to_the_canonical_it_defines():
                     session,
                     "MATCH (m:Mention {title: 'Vector Space'})-[:REALIZES]->"
                     "(c:Canonical {type: 'definition'})"
-                    '<-[:REFERENCES]-(:Theorem) RETURN count(c) AS c',
+                    "<-[:REFERENCES]-(:Entity {type: 'theorem'}) RETURN count(c) AS c",
                 )
                 # exactly one :REALIZES edge total: the uncited definition draws none (its title
                 # matched no canonical), and the re-run did not duplicate.
@@ -332,6 +332,110 @@ def test_persist_realizes_wires_a_mention_to_the_canonical_it_defines():
                 )
                 assert realized['c'] == 1
                 assert total['c'] == 1
+        finally:
+            async with driver().session(database=database()) as session:
+                await session.run(
+                    'MATCH (n) DETACH DELETE n'
+                )  # test DB: clear the graph
+            await close_driver()
+
+    asyncio.run(scenario())
+
+
+def test_persist_concepts_and_dependencies_build_the_prerequisite_graph():
+    from kms.core import models
+    from kms.graph.db import close_driver, database, driver
+    from kms.graph.schema import ensure_schema
+    from kms.graph.writer import (
+        persist_concepts,
+        persist_dependencies,
+        persist_entities,
+        persist_nodes,
+        persist_procedures,
+    )
+
+    source = 'integration-test-book'
+    stream = [
+        models.ASTNode(
+            type=models.NodeType.PARAGRAPH, content='…', id=0, segment_index=0
+        )
+    ]
+    # A definition tagged "vector space", an eigenvalue definition whose proof step is tagged too,
+    # and the prerequisite between their concepts.
+    overlay = [
+        models.Entity(
+            type='definition',
+            members=[0],
+            id=0,
+            title='Vector Space',
+            concepts=['vector space', 'linear algebra'],
+        ),
+        models.Entity(
+            type='definition',
+            members=[0],
+            id=1,
+            title='Eigenvalue',
+            concepts=['eigenvalue', 'linear algebra'],
+            procedures=[
+                models.Procedure(
+                    type='proof',
+                    contents=['Clear.'],
+                    steps=[
+                        models.BodySegment(
+                            description='Assume not.',
+                            action='assumption',
+                            concepts=['proof by contradiction'],
+                        )
+                    ],
+                )
+            ],
+        ),
+    ]
+    dependencies = [
+        models.Dependency(
+            dependent='eigenvalue', prerequisite='vector space', support=2
+        ),
+        # names a concept nothing instantiates -> MATCHed, never minted -> no edge
+        models.Dependency(dependent='eigenvalue', prerequisite='sheaf'),
+    ]
+
+    async def one(session, query):
+        return await (await session.run(query)).single()
+
+    async def scenario():
+        try:
+            await ensure_schema()
+            await persist_nodes(stream, source)
+            await persist_entities(overlay, source)
+            await persist_procedures(overlay, source)
+            await persist_concepts(overlay, source)
+            await persist_concepts(overlay, source)  # idempotent re-run
+            await persist_dependencies(dependencies)
+            await persist_dependencies(dependencies)  # idempotent re-run
+            async with driver().session(database=database()) as session:
+                # the shared "linear algebra" tag converges on ONE concept both entities instance
+                shared = await one(
+                    session,
+                    "MATCH (:Entity)-[:INSTANCE_OF]->(c:Concept {name: 'linear algebra'}) "
+                    'RETURN count(c) AS c',
+                )
+                # a procedure step instances its own concept, the procedural half of the same axis
+                stepwise = await one(
+                    session,
+                    "MATCH (:Event)-[:INSTANCE_OF]->(:Concept {name: 'proof by contradiction'}) "
+                    'RETURN count(*) AS c',
+                )
+                # exactly one prerequisite edge: the sheaf dependency found no concept to attach to
+                edges = await one(
+                    session,
+                    'MATCH (:Concept)-[d:DEPENDS_ON]->(:Concept) '
+                    'RETURN count(d) AS c, collect(d.support)[0] AS s',
+                )
+                assert (
+                    shared['c'] == 2
+                )  # converged, and the re-run did not duplicate
+                assert stepwise['c'] == 1
+                assert edges['c'] == 1 and edges['s'] == 2
         finally:
             async with driver().session(database=database()) as session:
                 await session.run(

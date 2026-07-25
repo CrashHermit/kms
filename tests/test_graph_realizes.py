@@ -1,6 +1,6 @@
 """:REALIZES identity mapping — pure, no database (neo4j is stubbed in conftest). Verifies a titled
-Definition/Theorem mention keys to the SAME global canonical its citations target (so the wire lands on
-the shared hub), that problems and titleless mentions are skipped, and that persist_realizes issues the
+mention keys to the SAME global canonical its citations target (so the wire lands on the shared
+hub), that untyped and titleless mentions are skipped, and that persist_realizes issues the
 mention->canonical edge query. The MATCH-based existence filter (a title nobody cited draws no edge) is
 a server behaviour, covered by the Neo4j integration test."""
 
@@ -15,19 +15,16 @@ from kms.graph.writer import persist_realizes
 # A definition of "Vector Space" and a theorem that references it: the definition's title must key to
 # the SAME canonical the reference mints, so :REALIZES lands on the shared hub.
 _DEFINITION = models.Entity(
-    type=models.EntityType.DEFINITION,
-    members=[0],
-    id=0,
-    title='Vector Space',
+    type='definition', members=[0], id=0, title='Vector Space'
 )
 _THEOREM = models.Entity(
-    type=models.EntityType.THEOREM,
+    type='theorem',
     members=[1],
     id=1,
     title='Basis Theorem',
     refs=[
         models.Reference(
-            target='vector space', kind='definition', tactic='premise'
+            target='vector space', kind='definition', relation='assumes'
         )
     ],
 )
@@ -67,19 +64,25 @@ def test_realizes_canonical_is_global_across_books():
     assert book_a == book_b
 
 
-def test_realizes_rows_skip_problems_and_titleless_mentions():
+def test_realizes_rows_skip_untyped_and_titleless_mentions():
     overlay = [
-        models.Entity(
-            type=models.EntityType.PROBLEM,
-            members=[0],
-            id=0,
-            title='Exercise 1',
-        ),  # a problem is never a reference target
-        models.Entity(
-            type=models.EntityType.DEFINITION, members=[1], id=1
-        ),  # no title -> nothing to key on
+        models.Entity(members=[0], id=0, title='Vector Space'),  # untyped
+        models.Entity(type='definition', members=[1], id=1),  # untitled
     ]
     assert realizes_rows(overlay, 'book.pdf') == []
+
+
+def test_a_physics_law_realizes_its_canonical_like_a_math_definition():
+    # nothing filters on a closed set of realizing types — the open type keys the hub directly
+    law = models.Entity(
+        type='law', members=[0], id=0, title='Conservation of Momentum'
+    )
+    assert realizes_rows([law], 'book.pdf') == [
+        {
+            'mention': entity_uuid('book.pdf', 0),
+            'canonical': canonical_uuid('law', 'Conservation of Momentum'),
+        }
+    ]
 
 
 def test_realizes_rows_dedupe_by_mention_and_canonical():
@@ -123,13 +126,12 @@ def test_persist_realizes_writes_mention_to_canonical_edges(monkeypatch):
     assert len(edge[1]['rows']) == 2
 
 
-def test_persist_realizes_is_a_noop_without_titled_def_or_thm(monkeypatch):
+def test_persist_realizes_is_a_noop_without_a_titled_mention(monkeypatch):
     calls: list[tuple[str, dict]] = []
     monkeypatch.setattr('kms.graph.writer.driver', lambda: _FakeDriver(calls))
     asyncio.run(
         persist_realizes(
-            [models.Entity(type=models.EntityType.PROBLEM, members=[0], id=0)],
-            'b',
+            [models.Entity(type='problem', members=[0], id=0)], 'b'
         )
     )
-    assert calls == []  # no titled def/thm -> nothing opened, nothing written
+    assert calls == []  # nothing titled -> nothing opened, nothing written

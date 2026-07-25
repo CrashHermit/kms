@@ -26,7 +26,7 @@ def _nodes():
         ),
         models.ASTNode(
             type=models.NodeType.PARAGRAPH,
-            content='models.Proof. Suppose ...',
+            content='Proof. Suppose ...',
             id=2,
             segment_index=0,
         ),
@@ -52,7 +52,7 @@ def test_find_theorems_gathers_statement_and_proof_with_the_right_type():
     module = _ScriptedFinder([[TheoremSpan(start=0, end=2)], []])
     theorems = asyncio.run(find_theorems(_nodes(), module=module))
     assert len(theorems) == 1
-    assert theorems[0].type == models.EntityType.THEOREM
+    assert theorems[0].type == 'theorem'
     assert theorems[0].members == [0, 1, 2]  # statement + proof nodes
 
 

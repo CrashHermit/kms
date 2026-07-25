@@ -1,34 +1,37 @@
 # KMS — Handoff
 
-Knowledge-management pipeline that turns a math textbook PDF into a structured
-**knowledge graph of math entities** (Definitions, Theorems, Problems). Originally an AutoMathKG
-implementation (arXiv:2505.13406); now reframed as an **AutoMathKG + AutoSchemaKG unified graph,
-math-first** — see **`docs/UNIFIED-KG.md`** for the substrate/edge design and the "general engine,
-math is the first profile" framing (generalization itself is deferred; the substrate is adopted for
-math now). This doc is the pick-up point for the next session.
+Knowledge-management pipeline that turns a textbook PDF into a structured **knowledge graph**.
+Originally an AutoMathKG implementation (arXiv:2505.13406), then reframed as an **AutoMathKG +
+AutoSchemaKG unified graph, math-first** (`docs/UNIFIED-KG.md`) — and now **generalized to any
+textbook**: the domain vocabularies are induced rather than drawn from math taxonomies, so a physics
+or biology book ingests with no new vocabulary (`docs/GENERALIZATION.md`). This doc is the pick-up
+point for the next session.
 
-**Graph tier is now the unified-KG substrate, math-first.** The unified-KG design doc plus the graph
-refactor slices landed via PR #17: the **procedural layer** (proofs/solutions reified into
-`:Procedure` / `:Event`), the **canonical relabel** (`:GeneralEntity` → `:Entity:Canonical`, plus an
-explicit `:Mention` role), the **concept layer** (`field` → `:Concept` + `:INSTANCE_OF`), and
-**step-level `:USES`** (see the 2026-07-24 session update); the **`:REALIZES` identity link**
-(mention → canonical, nominal title-match) landed on top of those. Earlier entity-layer +
-provenance-layer work landed on `claude/graph-dedup-planning-nwj0p7` (PR #12); see the 2026-07-23
-update.
+**The generalization is built** (see the 2026-07-25 session update): the concept layer replaced
+AutoMathKG's fixed `field` with induced multi-tag conceptualization plus concept-level
+`:DEPENDS_ON` prerequisites; relations and entity/procedure types became open properties instead of
+closed enums and per-type labels; and the general **block-finder entity layer** (detect → attribute →
+procedure-find) was built alongside the three per-type math chains, selectable per run. The per-type
+chains remain the default until the block layer is measured at parity on real math books — the one
+gate the design insists on.
+
+Earlier: the unified-KG substrate landed via PR #17 (procedural layer, canonical relabel, concept
+layer, step-level `:USES`) with `:REALIZES` on top; entity-layer + provenance-layer work landed via
+PR #12 (see the 2026-07-23 update).
 
 ---
 
 ## TL;DR status
 
 - The pipeline runs **end-to-end, no GPU**: PDF → `document.md`, and (when Neo4j is configured)
-  the persisted graph — **built, wired layers**: the `:Node` provenance layer, the `:Entity`
-  overlay (now `:Entity:Mention`), the `:Procedure` / `:Event` **procedural layer** (proofs/solutions),
-  the `:Concept` **concept layer** (`:INSTANCE_OF`, sourced from each entity's `field`), and the
-  reference layer — `:REFERENCES {tactic}` edges onto `:Entity:Canonical` targets, step-level
-  `:USES {tactic}` edges from proof `:Event`s onto the same canonicals, and `:REALIZES` edges tying each
-  canonical back to the in-corpus mention that defines/states it (cross-corpus convergence). The graph
-  owns persistence — the old `entities.json`/`nodes.json` artifacts are gone. Validated on real pages
-  (see Validation).
+  the persisted graph — **built, wired layers**: the `:Node` provenance layer, the `:Entity:Mention`
+  overlay, the `:Procedure` / `:Event` **procedural layer**, the `:Concept` **concept layer**
+  (`:INSTANCE_OF` from entities *and* procedure steps, sourced from induced concept tags) with
+  concept-level `:DEPENDS_ON` prerequisites, and the reference layer — `:REFERENCES {relation}` edges
+  onto `:Entity:Canonical` targets, step-level `:USES {relation}` edges from `:Event`s onto the same
+  canonicals, and `:REALIZES` edges tying each canonical back to the in-corpus mention that
+  defines/states it (cross-corpus convergence). The graph owns persistence — the old
+  `entities.json`/`nodes.json` artifacts are gone. Validated on real pages (see Validation).
 - The **extraction front-end is Mistral OCR + a vision correction pass** (Qwen3-VL). Mistral
   does layout/reading-order/figure-extraction server-side; the corrector proofreads each page
   against its image to catch Mistral's occasional subtle math errors and normalizes math
@@ -41,33 +44,107 @@ update.
 - **The instruction finder** (`entity/instruction_finder.py`) runs immediately after the splitter
   and tags every exercise lead-in node `role="instruction"` — one uniform pass over the now-atomic
   stream (standalone and formerly-embedded lead-ins alike), consumed later by the distributor.
-- The **entity layer is three independent per-type finders** (`problem_finder`,
-  `definition_finder`, `theorem_finder`), each a self-contained copy of the same cursor-walk,
-  running in parallel and emitting a sparse overlay of its type.
-- **Per-type attributors are built and wired** (`entity/attributors/{problem,definition,theorem}.py`).
-  Each enriches its finder's entities with the self-contained AutoMathKG attributes: label,
-  number, title, field, contents, bodylist (Def/Thm), proofs (Thm), solutions (Prob).
+- **Two interchangeable entity layers**, selected per run (`KMS_ENTITY_LAYER`, default `per-type`):
+  - **`per-type`** (the validated math path, default): three independent finders (`problem_finder`,
+    `definition_finder`, `theorem_finder`), each a self-contained copy of the same cursor-walk,
+    running in parallel and emitting a sparse overlay of its type, each followed by its attributor
+    (label, number, title, contents, bodylist, and a proof/solution `Procedure`).
+  - **`block`** (the general path): one type-agnostic `block_finder` emitting **spans only**, a
+    `universal_attributor` that induces the block's **open `type`** (definition / theorem / law /
+    mechanism / …) alongside label/number/title/contents, and a `procedure_finder` that asks one
+    direct question per entity — *is there something to work out, shown or absent?* — and routes
+    extract / create / defer / skip.
+  - Both end at the single open-relation referencer, then the shared collector → conceptualizer →
+    dependency finder → persister tail.
+- **The conceptualizer** (`entity/conceptualizer.py`) tags every entity and every procedure step with
+  several induced concepts spanning specific → general, graph-context enhanced (AutoSchemaKG's φ).
+  This **replaced** AutoMathKG's fixed seven-value `field`.
+- **The dependency finder** (`entity/dependency_finder.py`) rolls those concepts up along the
+  reference graph into `(:Concept)-[:DEPENDS_ON]->(:Concept)` prerequisites — reference-grounded
+  candidates, pairwise-judged, cycle-guarded into a DAG.
 - **The instruction distributor** (`entity/instruction_distributor.py`) runs at the end of the problem
   chain: a growing-window walk that copies a grouped-exercise lead-in's shared directive onto
   the `Problem.instruction` of the problems it governs (LLM-judged extent, no number matching).
-- **Graph tier — provenance + entity + procedural + concept + reference (+ `:REALIZES`) layers built.**
-  The node stream is a `:Source` per book rooting its `:Node` markdown chain (`:HEAD`/`:NEXT`); the
-  `:Entity:Mention` overlay roots under it (`:HAS_ENTITY`, `:DERIVED_FROM`); proofs/solutions reify into
-  `:Procedure` / `:Event` (`:HAS_PROCEDURE`, `:FIRST`, `:THEN`); each entity's `field` mints a global
-  born-canonical `:Concept` (`:INSTANCE_OF`); `refs` become `:REFERENCES {tactic}` edges onto global
-  `:Entity:Canonical` targets; a proof step that names a ref target gets a step-level
-  `:USES {tactic}` edge (`:Event` → `:Canonical`, deterministic name-match); and each canonical is tied
-  **back** to the in-corpus Definition/Theorem mention that realizes it via `:REALIZES` (nominal
-  title-match), so a citation resolves through the shared hub to where the concept is defined
-  (cross-corpus convergence). **Still deferred** (see `docs/UNIFIED-KG.md`): richer per-entity concepts +
-  the `:BROADER` concept taxonomy (MSC-anchored), the `:DEMONSTRATES`/`:PRACTICES` anchor edges, the
-  **semantic** dedup that refines `:REALIZES` (MathVD embedding fusion), Math-LLM completion, and the
-  whole generalization layer.
-- **154 unit tests pass** (5 skipped, incl. the opt-in Neo4j integration test); `conftest` stubs the heavy deps so they run anywhere.
-- **This session (see Session update):** splitter + distributor stress-tested across 6
-  committed fixtures (elementary→graduate) — both strong; base-instruction fixes to the splitter
-  lead-in test and the attributor `number`; and **ruff** adopted for format + lint
-  (line-length 100).
+- **Graph tier — provenance + entity + procedural + concept + prerequisite + reference (+ `:REALIZES`)
+  layers built.** The node stream is a `:Source` per book rooting its `:Node` markdown chain
+  (`:HEAD`/`:NEXT`); the `:Entity:Mention` overlay roots under it (`:HAS_ENTITY`, `:DERIVED_FROM`);
+  each entity's derivations reify into `:Procedure` / `:Event` (`:HAS_PROCEDURE`, `:FIRST`, `:THEN`);
+  induced concept tags mint global born-canonical `:Concept` vertices (`:INSTANCE_OF`, from entities
+  and steps alike), joined by `:DEPENDS_ON` prerequisites; `refs` become `:REFERENCES {relation}`
+  edges onto global `:Entity:Canonical` targets; a step that names a ref target gets a step-level
+  `:USES {relation}` edge (deterministic name-match); and each canonical is tied **back** to the
+  in-corpus mention that realizes it via `:REALIZES` (nominal title-match), so a citation resolves
+  through the shared hub to where the concept is defined (cross-corpus convergence).
+  **One rule throughout the semantic layers: kind is the label, type is a property** — an open,
+  induced type cannot be a Neo4j label without the label set growing unbounded, so `:Entity`,
+  `:Procedure`, `:Concept` and the canonicals carry indexed `type` properties instead.
+  **Still deferred** (`docs/UNIFIED-KG.md`, `docs/GENERALIZATION.md`): the
+  `:DEMONSTRATES`/`:PRACTICES` anchor edges, and the **semantic** dedup tier (embedding fusion) that
+  refines `:REALIZES` and merges concept paraphrases — an independent track that starts with a
+  model-agnostic embedder bake-off on our own book.
+- **193 unit tests pass** (6 skipped, incl. the opt-in Neo4j integration tests); `conftest` stubs the
+  heavy deps so they run anywhere.
+- **This session (see Session update):** the generalization built — concept layer + `:DEPENDS_ON`,
+  open relations, type-as-property, and the block-finder entity layer alongside the per-type chains.
+
+---
+
+## Session update — the generalization, built (2026-07-25)
+
+`docs/GENERALIZATION.md` went from design to code. Build-sequence steps 1–4 are implemented; step 5
+(deleting the per-type chains) is deliberately **not** done, and step 6 (embedding/fusion) is an
+independent track that has not started.
+
+**1. Concept layer (`entity/conceptualizer.py`, `graph/concepts.py`).** AutoMathKG's closed
+seven-value `field` is **gone**. In its place, AutoSchemaKG-style conceptualization: each entity gets
+several induced concept tags spanning specific → general, with graph-context enhancement (its type,
+title, and reference targets go into the prompt, which is what disambiguates a polysemous "kernel").
+The same pass runs over **procedure steps**, so `:Event`s get concept handles too. Multi-granularity
+comes from the tag list, not a tree — a coarse tag ends up shared by many entities, a fine one by
+few. Concepts stay born-canonical (global uuid over the normalized name); merging paraphrases is the
+fusion tier's job, not this one.
+
+**2. `:DEPENDS_ON` (`entity/dependency_finder.py`, `graph/dependencies.py`).** `:BROADER`/MSC was
+never built and is now formally dropped. The prerequisite edge that replaced it is built exactly the
+way the probes said to: candidates are **reference-grounded** (entity A cites entity B ⇒ A's concepts
+are candidate dependents of B's), each pair is **judged individually** against a strict definitional-
+prerequisite definition, and the survivors are admitted best-evidenced-first through a **cycle
+guard** so co-defined pairs (eigenvalue ↔ eigenvector) can't loop. Both endpoints are MATCHed, never
+minted: a prerequisite naming a concept the corpus never instantiates draws no edge.
+
+**3. Open relations (`entity/referencers/open.py`).** The three per-type referencers **collapsed into
+one**. That is a consequence, not a coincidence: they differed only in the noun their prompt used and
+in the two closed lists they enforced (`REFERENCE_KINDS`, the nine `ACTIONS_ALL` tactics). With the
+target kind and the relation both open and LLM-named, nothing is type-specific, so one pass serves
+every channel — it takes the channel name as a constructor argument. `Reference.tactic` →
+`Reference.relation` throughout; the edge property follows.
+
+**4. Type as a property, not a label.** `EntityType` survives only as the *math profile's* vocabulary;
+`Entity.type` and `Procedure.type` are open strings. The graph tier stopped minting `:Entity:Theorem`
+/ `:Procedure:Proof` labels and now carries indexed `type` properties — an induced vocabulary would
+otherwise grow the label set without bound, and every query would have to know it in advance.
+`Proof` + `Solution` unified into one `Procedure` model (`{type, contents, steps, generated}`) on a
+single `entity.procedures` list.
+
+**5. The block-finder entity layer** (`entity/finders/block.py`, `attributors/universal.py`,
+`procedure_finder.py`) — built **alongside** the per-type chains, not replacing them. The finder is
+the existing cursor-walk with only its "what is a block" clause widened, emitting **spans only**; the
+universal attributor induces the open `type` while reading the content it already reads; the
+procedure finder asks one direct question per entity and routes shown → extract, absent-and-posed →
+create (marked `generated`, so model output is never confused with page truth), absent-and-asserted →
+defer, nothing → skip.
+
+**6. Pipeline reorganization.** A `collector` fan-in now flattens whichever overlays ran into one
+`entities` channel, so the number of overlays is a wiring detail and the semantic stages work on the
+same ids the graph is keyed on whether or not Neo4j is configured. `build_graph(layer)` (or
+`KMS_ENTITY_LAYER`) swaps the entity layer between the two paths; everything downstream is identical,
+which is what makes them comparable on the same book.
+
+**What is deliberately NOT done.** The per-type chains are still the default and still present. The
+probes validated *concepts*, not general *extraction quality* — so the block layer has to be measured
+against the per-type layer on real math books before anything is deleted. Run the same book both ways
+(`KMS_ENTITY_LAYER=block`) and compare entity counts, boundaries, and attribute quality; that
+measurement is the next session's first job.
 
 ---
 
@@ -291,19 +368,29 @@ Phase 2 — flat node stream (backbone = `nodes`, global ordered list)
   cursor-walk that tags every exercise lead-in node `role="instruction"`. Because the splitter has
   already made every lead-in a standalone node, this is one uniform per-node decision (no
   split/segment work). Its output is tiny (a list of positions), so it can't truncate.
-- **The three finders** each cursor-walk `nodes` and emit a sparse overlay of one entity type
-  (see Entity layer below). They run in parallel and each writes its own state channel.
-- **The three attributors** (`{problem,definition,theorem}_attributor.py`) each run after their
-  finder, enriching that overlay's entities with the self-contained AutoMathKG attributes in
-  place. See "The attributors" below.
-- **`instruction_distributor`** runs after the problem attributor: a growing-window walk that
-  stamps `Problem.instruction` from the instruction finder's tagged lead-in nodes. See "The
+- **The entity layer** is one of two interchangeable paths (`KMS_ENTITY_LAYER`, default
+  `per-type`), both bounded by the node persister upstream and the collector downstream:
+  - `per-type` — **the three finders** each cursor-walk `nodes` and emit a sparse overlay of one
+    entity type (see Entity layer below), running in parallel, each followed by **its attributor**,
+    which enriches that overlay in place.
+  - `block` — **one `block_finder`** emits spans only, the **`universal_attributor`** induces the
+    open `type` with the rest of the attributes, and the **`procedure_finder`** extracts (or creates)
+    the worked derivation.
+- **`instruction_distributor`** runs after the attributor on the task-bearing chain: a growing-window
+  walk that stamps `instruction` from the instruction finder's tagged lead-in nodes. See "The
   instruction distributor" below.
-- **`entity_persister`** is the fan-in of all three chains (the pipeline's terminal stage): it
-  flattens the three overlays into one flat, document-ordered list (assigning global ids), then
-  upserts them as the `:Entity` graph layer — each rooted under the book's `:Source` via
-  `:HAS_ENTITY` and linked to its member `:Node` chunks via `:DERIVED_FROM`. A no-op when Neo4j isn't
-  configured. See the graph tier section.
+- **The referencer** (`entity/referencers/open.py`) closes each chain, extracting every entity's
+  cross-entity `refs` with an **open** target kind and an **open**, LLM-named relation. One pass
+  serves every channel; it takes the channel name as a constructor argument.
+- **`collector`** is the fan-in: it flattens whichever overlays ran into one document-ordered,
+  globally-id'd `entities` list — the single list every later stage reads, DB-configured or not.
+- **`conceptualizer`** then tags each entity and each procedure step with induced concepts, and
+  **`dependency_finder`** rolls those up along the reference graph into concept-level `:DEPENDS_ON`
+  prerequisites (pairwise-judged, cycle-guarded).
+- **`entity_persister`** is the terminal stage: it upserts the finished overlay as the `:Entity`
+  graph layer — each entity rooted under the book's `:Source` via `:HAS_ENTITY` and linked to its
+  member `:Node` chunks via `:DERIVED_FROM` — then every layer above it, in dependency order. A
+  no-op when Neo4j isn't configured. See the graph tier section.
 - **After the graph:** `run()` only assembles — `assemble` walks `nodes` → `document.md`, resolving
   `![N]()` via `seg_index`. All persistence happens inside the graph (node + entity persisters).
 
@@ -314,7 +401,7 @@ only: `core ← ingestion ← entity ← graph ← output`.
 
 | file | role |
 |---|---|
-| `core/models.py` | data model (`ASTNode`/`Segment`/`Entity`/…, `EntityType`, `FIELDS`), `flatten_segments`, `flatten_entities`, `merge_results_into_segments` — dspy/langgraph-free |
+| `core/models.py` | data model (`ASTNode`/`Segment`/`Entity`/`Procedure`/`Reference`/`Dependency`, `ACTIONS_ALL`), `flatten_segments`, `flatten_entities`, `merge_results_into_segments` — dspy/langgraph-free |
 | `core/state.py` | the LangGraph `State` (channels + reducers); imports `models` |
 | `core/llm.py` | `text_lm` (DeepSeek, text stages), `corrector_lm` (Qwen3-VL via OpenRouter) |
 | `ingestion/ocr.py` | **front-end**: Mistral OCR API → `Segment` backbone (markdown + figures + page renders) |
@@ -322,39 +409,50 @@ only: `core ← ingestion ← entity ← graph ← output`.
 | `ingestion/extractor.py` | markdown → flat **structural** nodes (no math typing) |
 | `ingestion/seam_merger.py` | heal page-split nodes (structural); **birth the flat `nodes` list** |
 | `entity/splitter.py` | **splitter**: split packed exercise nodes → one node per exercise; tag lead-ins `role="instruction"` |
+| `entity/finders/block.py` | **finder (general)**: cursor-walk → untyped block spans, any textbook |
 | `entity/finders/problem.py` | **finder**: cursor-walk → Problem entities (worked examples AND exercises) |
 | `entity/finders/definition.py` | **finder**: cursor-walk → Definition entities |
 | `entity/finders/theorem.py` | **finder**: cursor-walk → Theorem entities (subsumes prop/cor/lemma; includes proof) |
-| `entity/attributors/problem.py` | **attributor**: label/number/title/field/contents + solution split |
-| `entity/attributors/definition.py` | **attributor**: label/number/title/field/contents + bodylist (4 roles) |
-| `entity/attributors/theorem.py` | **attributor**: label/number/title/field/contents + bodylist + proofs |
-| `entity/referencers/{problem,definition,theorem}.py` | **referencer**: extract each entity's cross-entity `refs` (target + kind + tactic) |
-| `entity/instruction_distributor.py` | **distributor**: growing-window; stamp `Problem.instruction` from tagged lead-ins |
+| `entity/attributors/universal.py` | **attributor (general)**: label/number/title/contents + the induced open `type` |
+| `entity/attributors/problem.py` | **attributor**: label/number/title/contents + solution split |
+| `entity/attributors/definition.py` | **attributor**: label/number/title/contents + bodylist (4 roles) |
+| `entity/attributors/theorem.py` | **attributor**: label/number/title/contents + bodylist + proof procedure |
+| `entity/procedure_finder.py` | **procedure finder**: per entity, is there work — shown, absent, none? → extract / create / defer / skip |
+| `entity/referencers/open.py` | **referencer**: each entity's cross-entity `refs` (target + open kind + open relation), one pass for every channel |
+| `entity/instruction_distributor.py` | **distributor**: growing-window; stamp `instruction` from tagged lead-ins |
+| `entity/collector.py` | **fan-in**: flatten whichever overlays ran into the one `entities` list |
+| `entity/conceptualizer.py` | **conceptualizer**: induced concept tags per entity and per procedure step (φ), context-enhanced |
+| `entity/dependency_finder.py` | **dependency finder**: reference-grounded, pairwise-judged, cycle-guarded concept prerequisites |
 | `output/assembler.py` | walk `nodes` → `document.md`, resolving `![N]()` via `seg_index` |
-| `graph/entities.py` | `Entity → Neo4j` mapping (deterministic uuids, `:Entity:Mention` + per-type label, statement `bodylist` as JSON) |
-| `graph/procedures.py` | `proofs`/`solutions → Neo4j`: `:Procedure` (+ `:Proof`/`:Solution`) and `:Event` steps; `HAS_PROCEDURE`/`FIRST`/`THEN` spine |
-| `graph/concepts.py` | `field → Neo4j`: global born-canonical `:Concept:Field` + `:INSTANCE_OF` edge rows (concept sources are a list, so richer concepts slot in later) |
-| `graph/references.py` | `refs → Neo4j`: global `:Entity:Canonical` targets + `:REFERENCES {tactic}` edge rows |
-| `graph/uses.py` | step-level `:USES → Neo4j`: proof `:Event` → `:Entity:Canonical` `:USES {tactic}` rows by deterministic name-match |
+| `graph/entities.py` | `Entity → Neo4j` mapping (deterministic uuids, `:Entity:Mention` with the type as a property, statement `bodylist` as JSON) |
+| `graph/procedures.py` | `procedures → Neo4j`: `:Procedure` (type a property) and `:Event` steps; `HAS_PROCEDURE`/`FIRST`/`THEN` spine |
+| `graph/concepts.py` | `concepts → Neo4j`: global born-canonical `:Concept` + `:INSTANCE_OF` rows from entities and from procedure steps |
+| `graph/dependencies.py` | `concept_dependencies → Neo4j`: `(:Concept)-[:DEPENDS_ON {support}]->(:Concept)` rows; both ends MATCHed, never minted |
+| `graph/references.py` | `refs → Neo4j`: global `:Entity:Canonical` targets + `:REFERENCES {relation}` edge rows |
+| `graph/uses.py` | step-level `:USES → Neo4j`: `:Event` → `:Entity:Canonical` `:USES {relation}` rows by deterministic name-match |
 | `graph/realizes.py` | identity `:REALIZES → Neo4j`: `:Entity:Mention` → `:Entity:Canonical` rows by nominal `title`-match (ties a cited hub to its in-corpus definition/statement) |
-| `graph/persister.py` | `NodePersisterNode` (after splitter) + `EntityPersisterNode` (fan-in): persist entity, procedural, concept, reference, step-level `:USES` + `:REALIZES` layers |
+| `graph/persister.py` | `NodePersisterNode` (after splitter) + `EntityPersisterNode` (terminal): persist the entity, procedural, concept, `:DEPENDS_ON`, reference, step-level `:USES` and `:REALIZES` layers |
 | `pipeline.py` | graph wiring + `run()`; after the graph, only assembles `document.md` (persistence is the graph tier's) |
 | `cli.py` | `__main__` entry point: `python -m kms.cli book.pdf out/` |
 
 ### Entity data model (`core/models.py`)
 
-- **3 types** (`EntityType`): `Definition`, `Theorem` (**subsumes** proposition/corollary/
-  lemma), `Problem` (worked examples **and** exercises — AutoMathKG's model: same type,
-  different place in the text).
+- **The type is an OPEN property**, not a closed enum: whatever the book calls its blocks
+  (definition, theorem — subsuming proposition/corollary/lemma — example, exercise, and outside
+  mathematics law, principle, mechanism). `EntityType` survives only as the *math profile's*
+  vocabulary, the values the three per-type finders stamp; the block finder emits entities with no
+  type at all and the universal attributor induces one.
 - `Entity = {id, type, members, …attributes}`. `members` is a `list[int]` of node ids (pointers
-  back to the source nodes); a finder emits just `{type, members}` and the type's attributor
-  fills the rest: `label`, `number`, `title`, `field`, `contents`, `bodylist` (Def/Thm),
-  `proofs` (Thm), `solutions` (Prob), plus `instruction` (Prob, filled by the distributor, not
-  the attributor), plus `refs` (the cross-entity references — a `list[Reference]` of {target, kind,
-  tactic} — filled by the type's referencer, after the attributor). Unset attributes are omitted when
-  persisted, so a bare entity is just `{id, type, members}` → a minimal `:Entity` vertex. `refs` don't
-  land as entity properties — the entity persister turns them into `:REFERENCES` edges onto
-  `:Entity:Canonical` hubs.
+  back to the source nodes); a finder emits just `{members}` (plus a type, on the per-type path) and
+  the attributor fills the rest: `label`, `number`, `title`, `contents`, `bodylist`, plus
+  `procedures` (the unified derivation list — each `{type, contents, steps, generated}`, filled by
+  the attributor or the procedure finder), `instruction` (filled by the distributor, not the
+  attributor), `concepts` (the conceptualizer's induced tags), and `refs` (the cross-entity
+  references — a `list[Reference]` of {target, kind, relation} — filled by the referencer, after the
+  attributor). Unset attributes are omitted when persisted, so a bare entity is just
+  `{id, type, members}` → a minimal `:Entity` vertex. Three attributes don't land as entity
+  properties: `procedures` reify into `:Procedure`/`:Event`, `concepts` into `:Concept` +
+  `:INSTANCE_OF`, and `refs` into `:REFERENCES` edges onto `:Entity:Canonical` hubs.
 - `ASTNode` now carries a `role` field — a non-structural annotation kept **off** the structural
   `NodeType`. The splitter sets `role="instruction"` on exercise lead-ins; the distributor reads
   it. It is written onto the `:Node` vertex only when set.
@@ -414,19 +512,34 @@ positives on Hefferon, where the section has *zero* true lead-ins); range-less l
 following exercises, …") are the common real case and are tagged too. Output is a tiny list of
 positions, so — unlike the splitter's verbatim output — it can't hit output-token truncation.
 
-### The attributors (`{problem,definition,theorem}_attributor.py`)
+### The attributors
 
-Each runs after its finder and fills the **self-contained** AutoMathKG attributes on that type's
-entities, in place, reading only the entity's own member nodes (drawing `FIELDS`/`ACTIONS`
-taxonomies from `core/models.py`):
+Each runs after its finder and fills the **self-contained** AutoMathKG attributes on that channel's
+entities, in place, reading only the entity's own member nodes (drawing the `ACTIONS_ALL` role
+taxonomy from `core/models.py`):
 
-- **Problem** — one identity pass (label/number/title/field + a `solution_start` boundary);
-  members split into statement vs shown solution, both halves always kept. No bodylist (Table B3
-  restricts it to Def/Thm). Deliberately does **not** fill `instruction` (that's the distributor).
+- **Universal** (`attributors/universal.py`, the general path) — one identity pass filling
+  label/number/title/contents **and the induced open `type`**. It reads the content anyway, so
+  typing is one more field, not a separate classify stage — and not the finder's job, which stays
+  pure detection. It does **not** split the worked part out; that is the procedure finder's pass.
+- **Problem** — one identity pass (label/number/title + a `solution_start` boundary); members split
+  into statement vs shown solution, both halves always kept, the solution becoming a `solution`
+  procedure. No bodylist (Table B3 restricts it to Def/Thm). Deliberately does **not** fill
+  `instruction` (that's the distributor).
 - **Definition** — identity pass + a contents pass (label peeled off) + a bodylist pass over
   only the four roles a definition uses (premise/assumption/definition/enumeration).
 - **Theorem** — identity + statement bodylist + a per-proof pass (each proof gets contents +
-  bodylist); statement vs proof split on a boundary, like the problem's solution split.
+  steps, as a `proof` procedure); statement vs proof split on a boundary, like the problem's.
+
+### The procedure finder (`entity/procedure_finder.py`, general path)
+
+The generalization of the two boundary passes above into one. Instead of deriving "is there a proof
+here?" from the fact that a theorem finder produced the entity, it asks directly, per entity: *is
+there something to work out — shown, or absent?* Then it routes: **shown** → extract (split the
+statement from the worked part, decompose it into role-labelled steps, attach a `Procedure`);
+**absent + poses a task** → create (generate the solution, marked `generated=True` so the graph never
+confuses model output with page truth); **absent + asserts a claim** → defer (proof generation is a
+different and much harder problem, and the gap stays visible); **nothing to work out** → skip.
 
 ### The instruction distributor (`entity/instruction_distributor.py`)
 
@@ -578,14 +691,15 @@ the whole run.
   `MISTRAL_API_KEY` first and **falls back to `MISTRAL_OCR_API`**).
 - `OPENROUTER_API_KEY` — the correction pass (Qwen3-VL-235B; `CORRECTOR_MODEL` /
   `CORRECTOR_PROVIDER` override).
-- `DEEPSEEK_API_KEY` — all text stages: extractor, seam, splitter, the three finders +
-  attributors, and the distributor (`deepseek-v4-flash`).
+- `DEEPSEEK_API_KEY` — all text stages: extractor, seam, splitter, the finders, attributors,
+  procedure finder, referencer, distributor, conceptualizer and dependency finder
+  (`deepseek-v4-flash`).
 
 **Deps** (uv) — **no GPU anywhere**:
 - `uv sync` — light CPU core.
 - `uv sync --extra mistral` — adds `pypdfium2` + `pillow` (render page images for the corrector).
 
-**Tests:** `PYTHONPATH=src uv run pytest -q` (154 tests). `tests/conftest.py` stubs
+**Tests:** `PYTHONPATH=src uv run pytest -q` (193 tests). `tests/conftest.py` stubs
 dspy/pydantic/langgraph *only if absent*, so the suite runs with or without the real deps.
 
 **Style (ruff):** `uv run ruff format . && uv run ruff check .` — both must be clean before
@@ -613,7 +727,9 @@ PYTHONPATH=src uv run python -m kms.cli book.pdf out/
 # or, from Python, to limit pages (0-based):
 PYTHONPATH=src uv run python -c "import asyncio; from kms import run; \
     asyncio.run(run('book.pdf', output_dir='out/', pages=[223,224,225]))"
-# -> out/document.md; with NEO4J_* set, also the persisted :Node + :Entity graph
+# -> out/document.md; with NEO4J_* set, also the persisted graph
+# run the general (block-finder) entity layer instead of the validated per-type one:
+KMS_ENTITY_LAYER=block PYTHONPATH=src uv run python -m kms.cli book.pdf out/
 ```
 Good test PDF: Hefferon Linear Algebra — `https://jheffero.w3.uvm.edu/linearalgebra/book.pdf`
 (525 pp; §III.1 exposition ≈ 0-based pages 223–227, exercises ≈ 228–230).
@@ -627,15 +743,24 @@ Good test PDF: Hefferon Linear Algebra — `https://jheffero.w3.uvm.edu/linearal
    the front-end lead-in-loss on dense multi-column pages (calc3), and — if we want to push
    quality past "already strong" with targeted hard-case demos or instruction optimization,
    measured on a larger reconstructed eval set.
-2. **Unified-KG build order (`docs/UNIFIED-KG.md`)** — the graph tier is now the unified-KG substrate,
-   math-first. **Done:** entity + procedural (`:Procedure`/`:Event`) + concept (`:Concept` +
-   `:INSTANCE_OF`, from `field`) + reference (`:Entity:Canonical`) + step-level `:USES` layers — steps
-   1–4, plus `:REALIZES` (nominal mention→canonical identity), minus the pieces below. **Next:** richer
-   per-entity concepts + the `:BROADER` concept taxonomy (MSC-anchored; needs a new extraction stage),
-   then the exercise-anchor `:PRACTICES` / worked-example `:DEMONSTRATES` pass. **Deferred:** the
-   **semantic** dedup that refines `:REALIZES` (MathVD embedding fusion), Math-LLM completion, and the
-   whole generalization layer (engine/profile, open type/role, other domains).
-3. **Broaden front-end/finder validation** — more books/sections, watching finder boundaries,
+2. **Measure the block layer against the per-type layer — the gate on everything else.** Run the
+   same math book both ways (`KMS_ENTITY_LAYER=block` vs the default) and compare entity counts,
+   span boundaries, induced types, and attribute quality. The probes validated *concepts*, not
+   general *extraction*; this is the one thing standing between the current state and deleting the
+   per-type chains (`docs/GENERALIZATION.md` step 5, `docs/ENTITY-LAYER-REBUILD.md`). Only after
+   parity: remove `finders/{problem,definition,theorem}.py`, `attributors/{…}.py`, `EntityType`, and
+   the three channels.
+3. **Validate the concept layer live** — the conceptualizer and `:DEPENDS_ON` are built and
+   unit-tested but have not run against a real book end to end. Check tag quality (especially the
+   probe's one blemish: a definition conceptualized by its *parts* rather than what it is about),
+   `:DEPENDS_ON` precision, and how many prerequisite candidates a single book actually grounds.
+4. **Ingest a physics or biology book** — the whole point of the generalization, and the fastest way
+   to find where math assumptions still hide.
+5. **Unified-KG remainder (`docs/UNIFIED-KG.md`)** — the exercise-anchor `:PRACTICES` /
+   worked-example `:DEMONSTRATES` pass, then the **semantic** dedup tier (embedding fusion) that
+   refines `:REALIZES` and merges concept paraphrases. Start that one with the model-agnostic
+   embedder bake-off on our own book (`docs/GENERALIZATION.md`, "Concept convergence").
+6. **Broaden front-end/finder validation** — more books/sections, watching finder boundaries,
    figure over-extraction on front matter, and correction-pass regressions.
 
 ---
@@ -652,7 +777,9 @@ Good test PDF: Hefferon Linear Algebra — `https://jheffero.w3.uvm.edu/linearal
 - **No GPU is needed anywhere** — the whole front-end is API-based.
 - **DeepSeek prompt caching** makes re-runs with unchanged prompts fast; changing a stage's
   prompt invalidates that stage's cache (slower first re-run).
-- **The three finders (and three attributors) are copies on purpose** — fix walk bugs in all.
+- **The finders are copies of one walk on purpose** — the block finder and the three per-type
+  finders share the growing-window cursor-walk verbatim, so a walk bug must be fixed in all four
+  until the per-type chains are removed.
 - **Run ruff before committing** (`uv run ruff format . && uv run ruff check .`); no `from
   __future__` (runtime is 3.14). The whole repo was reformatted once — that commit is isolated
   for `git blame`.

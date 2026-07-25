@@ -44,7 +44,7 @@ class Signature(dspy.Signature):
       heading, …); do not break a block's sub-parts into separate nodes, and do not
       merge distinct blocks into one. models.Segment on structure (block boundaries) only —
       never on meaning: do NOT split a block because of what it says (e.g. a paragraph
-      that runs into "models.Proof." or "models.Solution." stays one node).
+      that runs into "Proof." or "Solution." stays one node).
     - If content starts or ends abruptly at the boundary of the given markdown, extract
       it as-is — do not try to complete or trim it.
 

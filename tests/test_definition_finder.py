@@ -45,7 +45,7 @@ def test_find_definitions_banks_a_bounded_definition_with_the_right_type():
     module = _ScriptedFinder([[DefinitionSpan(start=0, end=1)], []])
     definitions = asyncio.run(find_definitions(_nodes(), module=module))
     assert len(definitions) == 1
-    assert definitions[0].type == models.EntityType.DEFINITION
+    assert definitions[0].type == 'definition'
     assert definitions[0].members == [0, 1]
 
 

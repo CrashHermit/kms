@@ -6,24 +6,14 @@ import asyncio
 import json
 
 from kms.core import models
-from kms.graph.entities import entity_label, entity_properties, entity_uuid
+from kms.graph.entities import entity_properties, entity_uuid
 from kms.graph.nodes import node_uuid, source_uuid
-from kms.graph.writer import entity_batches, member_pairs, persist_entities
+from kms.graph.writer import entity_rows, member_pairs, persist_entities
 
 _OVERLAY = [
-    models.Entity(
-        type=models.EntityType.DEFINITION,
-        members=[0],
-        id=0,
-        title='Group',
-        field='algebra',
-    ),
-    models.Entity(
-        type=models.EntityType.THEOREM, members=[1, 2], id=1, number='2.1'
-    ),
-    models.Entity(
-        type=models.EntityType.PROBLEM, members=[3], id=2, instruction='compute'
-    ),
+    models.Entity(type='definition', members=[0], id=0, title='Group'),
+    models.Entity(type='theorem', members=[1, 2], id=1, number='2.1'),
+    models.Entity(type='problem', members=[3], id=2, instruction='compute'),
 ]
 
 
@@ -41,22 +31,6 @@ def test_entity_uuid_is_disjoint_from_node_uuid_for_the_same_index():
     assert entity_uuid('book.pdf', 3) != node_uuid('book.pdf', 3)
 
 
-# --- labels ---
-
-
-def test_entity_label_is_the_capitalized_type():
-    assert (
-        entity_label(models.Entity(type=models.EntityType.THEOREM)) == 'Theorem'
-    )
-    assert (
-        entity_label(models.Entity(type=models.EntityType.PROBLEM)) == 'Problem'
-    )
-    assert (
-        entity_label(models.Entity(type=models.EntityType.DEFINITION))
-        == 'Definition'
-    )
-
-
 # --- properties ---
 
 
@@ -65,19 +39,27 @@ def test_entity_properties_map_identity_source_and_scalars():
     assert props['uuid'] == entity_uuid('book.pdf', 0)
     assert props['source'] == source_uuid('book.pdf')
     assert props['type'] == 'definition'
-    assert props['title'] == 'Group' and props['field'] == 'algebra'
+    assert props['title'] == 'Group'
+
+
+def test_entity_type_is_an_open_property_not_a_closed_enum():
+    # a physics block types itself; nothing validates it against a math vocabulary
+    props = entity_properties(
+        models.Entity(type='law', members=[0], id=0), 'book.pdf'
+    )
+    assert props['type'] == 'law'
 
 
 def test_entity_properties_omit_unset_attributes():
     props = entity_properties(
-        models.Entity(type=models.EntityType.PROBLEM, members=[3], id=2),
+        models.Entity(members=[3], id=2),  # untyped, as the block finder emits
         'book.pdf',
     )
     for absent in (
+        'type',
         'label',
         'number',
         'title',
-        'field',
         'instruction',
         'contents',
         'bodylist',
@@ -87,8 +69,7 @@ def test_entity_properties_omit_unset_attributes():
 
 def test_entity_properties_keep_id_zero():
     props = entity_properties(
-        models.Entity(type=models.EntityType.DEFINITION, members=[0], id=0),
-        'book.pdf',
+        models.Entity(type='definition', members=[0], id=0), 'book.pdf'
     )
     assert props['uuid'] == entity_uuid(
         'book.pdf', 0
@@ -97,7 +78,7 @@ def test_entity_properties_keep_id_zero():
 
 def test_contents_is_native_and_statement_bodylist_is_a_json_string():
     entity = models.Entity(
-        type=models.EntityType.THEOREM,
+        type='theorem',
         members=[1],
         id=1,
         contents=['Let n be prime.'],
@@ -114,36 +95,28 @@ def test_contents_is_native_and_statement_bodylist_is_a_json_string():
     ]
 
 
-def test_derivations_are_not_on_the_entity_they_reify_into_procedures():
-    # proofs/solutions are the procedural layer (graph.procedures), so they never land as entity props
+def test_derivations_and_concepts_are_not_entity_properties():
+    # procedures reify into :Procedure/:Event and concepts into :Concept, so neither is a property
     entity = models.Entity(
-        type=models.EntityType.THEOREM,
+        type='theorem',
         members=[1],
         id=1,
-        proofs=[
-            models.Proof(
-                contents=['Clear.'],
-                bodylist=[
-                    models.BodySegment(
-                        description='Clear.', action='conclusion'
-                    )
-                ],
-            )
-        ],
-        solutions=[models.Solution(contents=['x = 2'])],
+        procedures=[models.Procedure(type='proof', contents=['Clear.'])],
+        concepts=['group theory'],
     )
     props = entity_properties(entity, 'book.pdf')
-    assert 'proofs' not in props
-    assert 'solutions' not in props
+    assert 'procedures' not in props
+    assert 'concepts' not in props
 
 
 # --- writer planning ---
 
 
-def test_entity_batches_group_by_per_type_label():
-    batches = entity_batches(_OVERLAY, 'book.pdf')
-    assert set(batches) == {'Definition', 'Theorem', 'Problem'}
-    assert batches['Theorem'][0]['number'] == '2.1'
+def test_entity_rows_are_one_flat_batch_carrying_the_type_as_a_property():
+    rows = entity_rows(_OVERLAY, 'book.pdf')
+    assert len(rows) == 3  # no grouping by label — the type is a property
+    assert [row['type'] for row in rows] == ['definition', 'theorem', 'problem']
+    assert rows[1]['number'] == '2.1'
 
 
 def test_member_pairs_are_one_per_entity_member():
@@ -190,9 +163,9 @@ def test_persist_entities_writes_vertices_root_and_members(monkeypatch):
     asyncio.run(persist_entities(_OVERLAY, 'book.pdf'))
 
     queries = [q for q, _ in calls]
-    # each entity MERGE applies its per-type label AND the :Mention role label
-    assert any('SET e:Theorem' in q for q in queries)
+    # one batched MERGE applying the :Mention role label — and NO per-type label
     assert any('SET e:Mention' in q for q in queries)
+    assert not any('SET e:Theorem' in q for q in queries)
     # entities are rooted under their :Source via :HAS_ENTITY
     root = next(c for c in calls if ':HAS_ENTITY' in c[0])
     assert root[1]['src'] == source_uuid('book.pdf')

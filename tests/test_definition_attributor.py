@@ -1,6 +1,6 @@
 """Definition attributor: deterministic content assembly around the two LLM passes.
 
-The identity pass (label/number/title/field) and the bodylist pass are injected via a
+The identity pass (label/number/title) and the bodylist pass are injected via a
 scripted module, so these tests exercise the real assembly logic — peeling the label off
 the content (dropping a pure-label node, keeping a fused one) — without dspy or network."""
 
@@ -51,12 +51,11 @@ def _run(entity, nodes, module):
 
 def test_flagged_label_node_is_dropped_from_contents():
     nodes = _nodes()
-    entity = models.Entity(type=models.EntityType.DEFINITION, members=[0, 1, 2])
+    entity = models.Entity(type='definition', members=[0, 1, 2])
     ident = Identity(
         label='1.2 Definition',
         number='1.2',
         title='Vector Space',
-        field='algebra',
     )
     module = _ScriptedModule(
         ident,
@@ -72,7 +71,6 @@ def test_flagged_label_node_is_dropped_from_contents():
     assert attrs.label == '1.2 Definition'
     assert attrs.number == '1.2'
     assert attrs.title == 'Vector Space'
-    assert attrs.field == 'algebra'
     # The pure-label node ("1.2 Definition") strips to empty and is dropped; statement + math remain.
     assert attrs.contents == [
         'A vector space is a set $V$ ...',
@@ -88,11 +86,9 @@ def test_fused_label_is_stripped_from_contents():
         id=5,
         segment_index=0,
     )
-    entity = models.Entity(type=models.EntityType.DEFINITION, members=[5])
+    entity = models.Entity(type='definition', members=[5])
     # Fused label: the prefix is peeled off the first content string, the node is kept.
-    ident = Identity(
-        label='Definition 1.2', number='1.2', title='Group', field='algebra'
-    )
+    ident = Identity(label='Definition 1.2', number='1.2', title='Group')
     attrs = _run(entity, [node], _ScriptedModule(ident, []))
 
     assert attrs.number == '1.2'
@@ -106,8 +102,8 @@ def test_no_label_leaves_number_none_and_keeps_members():
         id=7,
         segment_index=0,
     )
-    entity = models.Entity(type=models.EntityType.DEFINITION, members=[7])
-    ident = Identity(label=None, number=None, title='Ring', field='algebra')
+    entity = models.Entity(type='definition', members=[7])
+    ident = Identity(label=None, number=None, title='Ring')
     attrs = _run(entity, [node], _ScriptedModule(ident, []))
 
     assert attrs.label is None

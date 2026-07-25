@@ -4,13 +4,13 @@ Problem attributor — the per-attribute pass over a *found* Problem entity.
 The simplest of the three attributors. A Problem (worked example or exercise) carries only
 AutoMathKG's self-contained header attributes plus its solution(s):
 
-    label · number · title · field · contents · solutions
+    label · number · title · contents · procedures
 
 Notably a Problem has **no bodylist** anywhere — Table B3 restricts `bodylist` to Thm/Def,
-and even a Problem's `solution` stores an empty bodylist. So, unlike the Theorem attributor,
-there are no bodylist passes at all: a models.Solution reduces to just its `contents` (its
-cross-entity `refs`/`references_tactics` are deferred to the graph tier). That leaves a
-single LLM call (identity) plus deterministic assembly.
+and even a Problem's solution stores an empty one. So, unlike the Theorem attributor, there
+are no bodylist passes at all: its solution procedure reduces to just its `contents` (its
+cross-entity refs are deferred to the graph tier). That leaves a single LLM call (identity)
+plus deterministic assembly.
 
 The Problem finder captures a worked example's whole extent — its statement AND a shown
 solution — as one flat member list. As for the Theorem's proof, we split statement vs
@@ -18,10 +18,11 @@ solution with an LLM ``solution_start`` boundary (member position, ``-1`` if no 
 shown — the typical exercise). Both halves are always kept, so a wrong boundary shifts a
 node but never loses content.
 
-Deliberately NOT here: `instruction`. AutoMathKG has no such attribute, and the imperative
+Deliberately NOT here: `field` — AutoMathKG's closed seven-value taxonomy is gone, replaced by
+the conceptualizer's induced concepts (`docs/GENERALIZATION.md`). And `instruction`. AutoMathKG has no such attribute, and the imperative
 of a grouped exercise ("In Exercises 12-18, find ...") lives in a shared lead-in that is not
 a member of the individual problem — so `instruction` is a later cross-entity "governor"
-pass, not a per-entity attribute. And `solutions` does not need it: extracting a *shown*
+pass, not a per-entity attribute. And a shown solution does not need it: extracting one
 solution is a positional split; only the downstream Math-LLM *completion* of a *missing*
 solution needs to understand the ask.
 
@@ -62,18 +63,14 @@ class Identify(dspy.Signature):
         it is 3.15, not 3.7. Empty if there is none.
       * title — a short noun phrase naming what the problem is about ("Positive Definiteness
         of a Matrix", "Derivative of a Polynomial"). Not the word "Example" or "Exercise".
-      * field — the single most relevant mathematical field, chosen ONLY from the given list.
       * solution_start — the `position` of the member node where the SOLUTION/answer begins
-        (often a node that is or starts with "models.Solution"). The problem statement is every
+        (often a node that is or starts with "Solution"). The problem statement is every
         member before it; the solution is that node and everything after. Use -1 if NO
         solution is shown (all members are the statement — the typical exercise).
     """
 
     nodes: list[MemberNode] = dspy.InputField(
         description="The problem's member nodes, in order."
-    )
-    field_choices: list[str] = dspy.InputField(
-        description='The allowed fields; choose exactly one.'
     )
     label: str = dspy.OutputField(
         description="The problem's label as written, or empty string."
@@ -83,9 +80,6 @@ class Identify(dspy.Signature):
     )
     title: str = dspy.OutputField(
         description='Short noun phrase naming what the problem is about.'
-    )
-    field: str = dspy.OutputField(
-        description='Exactly one field from the given list.'
     )
     solution_start: int = dspy.OutputField(
         description='Member position where the solution begins, or -1 if none shown.'
@@ -98,7 +92,6 @@ class Identity(BaseModel):
     label: str | None = None
     number: str | None = None
     title: str | None = None
-    field: str | None = None
     solution_start: int = -1
 
 
@@ -111,7 +104,7 @@ class Module(dspy.Module):
         self.set_lm(language_model or llm.text_lm())
 
     async def identity(self, members: list[models.ASTNode]) -> Identity:
-        """Returns label, number, title, field, and solution boundary for one problem."""
+        """Returns label, number, title, and the solution boundary for one problem."""
         nodes = [
             MemberNode(
                 position=k,
@@ -120,14 +113,11 @@ class Module(dspy.Module):
             )
             for k, m in enumerate(members)
         ]
-        result = await self.identify.acall(
-            nodes=nodes, field_choices=models.FIELDS
-        )
+        result = await self.identify.acall(nodes=nodes)
         return Identity(
             label=(result.label or None),
             number=(result.number or None),
             title=(result.title or None),
-            field=(result.field if result.field in models.FIELDS else None),
             solution_start=(
                 result.solution_start
                 if isinstance(result.solution_start, int)
@@ -178,11 +168,12 @@ async def attribute_problem(
 ) -> models.Entity:
     """Fill in the self-contained attributes on one Problem entity, in place.
 
-    A single identity pass gives label/number/title/field and the ``solution_start``
-    boundary; the members split into statement (before the boundary) and solution (from it) —
-    both halves always kept, so a wrong boundary never loses content. ``contents`` is the
-    label-peeled statement; ``solutions`` holds the shown solution's contents (empty for a
-    plain exercise). No bodylist. Persistence-agnostic: the enriched entity is returned.
+    A single identity pass gives label/number/title and the ``solution_start`` boundary; the
+    members split into statement (before the boundary) and solution (from it) — both halves
+    always kept, so a wrong boundary never loses content. ``contents`` is the label-peeled
+    statement; a shown solution becomes one ``models.Procedure`` of type ``solution`` (none for a
+    plain exercise), the unified derivation list every entity carries. No bodylist.
+    Persistence-agnostic: the enriched entity is returned.
     """
     module = module or Module()
     members = _members(entity, nodes_by_id)
@@ -197,8 +188,13 @@ async def attribute_problem(
     solution_contents = (
         _contents(solution_members, None) if solution_members else []
     )
-    solutions = (
-        [models.Solution(contents=solution_contents)]
+    procedures = (
+        [
+            models.Procedure(
+                type=models.ProcedureType.SOLUTION.value,
+                contents=solution_contents,
+            )
+        ]
         if solution_contents
         else []
     )
@@ -206,9 +202,8 @@ async def attribute_problem(
     entity.label = ident.label
     entity.number = ident.number
     entity.title = ident.title
-    entity.field = ident.field
     entity.contents = contents
-    entity.solutions = solutions
+    entity.procedures = procedures
     return entity
 
 

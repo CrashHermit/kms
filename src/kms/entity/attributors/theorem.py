@@ -7,10 +7,11 @@ finder captures a theorem's whole extent — its statement AND its proof — as 
 list, leaving statement-vs-proof roles to this pass. So on top of the shared self-contained
 attributes we build for Definitions:
 
-    label · number · title · field · contents · bodylist
+    label · number · title · contents · bodylist
 
-a Theorem also carries AutoMathKG's Thm-only ``proofs`` (Table B3): a list where each proof
-is ``{contents, bodylist}`` here (its own cross-entity ``refs``/``references_tactics`` are
+a Theorem also carries its proof, as one ``models.Procedure`` of type ``proof`` on the unified
+``procedures`` list every entity has — AutoMathKG's Thm-only ``proofs`` (Table B3), whose
+``{contents, bodylist}`` shape survives as ``{contents, steps}`` (its own cross-entity refs are
 deferred to the graph tier, exactly as for Definitions).
 
 The one structural novelty is splitting the members into statement vs proof. AutoMathKG did
@@ -23,9 +24,9 @@ both of which are kept.
 
 Passes (identity first, then the two bodylists in parallel):
 
-  * ONE LLM CALL — identity: ``label`` + ``number`` + ``title`` + ``field`` + ``proof_start``.
+  * ONE LLM CALL — identity: ``label`` + ``number`` + ``title`` + ``proof_start``.
   * DETERMINISTIC — ``contents`` = the STATEMENT members' markdown, label peeled (the proof
-    members are held out for ``proofs``).
+    members are held out for the proof procedure).
   * ONE LLM CALL — statement ``bodylist`` over ``STATEMENT_ACTIONS`` (premise / assumption /
     conclusion / enumeration — the hypothesis→conclusion shape; a statement never
     ``definition``s, ``deduction``s, or ``calculation``s).
@@ -82,17 +83,13 @@ class Identify(dspy.Signature):
       * title — a short noun phrase naming the RESULT ("Center of Symmetric Group is Trivial",
         "Pythagoras' Theorem", "Set Union is Associative"). The name of the result, not the
         word "Theorem".
-      * field — the single most relevant mathematical field, chosen ONLY from the given list.
       * proof_start — the `position` of the member node where the PROOF begins (usually a node
-        that is or starts with "models.Proof"). The statement is every member before it; the proof is
+        that is or starts with "Proof"). The statement is every member before it; the proof is
         that node and everything after. Use -1 if NO proof is shown (all members are statement).
     """
 
     nodes: list[MemberNode] = dspy.InputField(
         description="The theorem's member nodes, in order."
-    )
-    field_choices: list[str] = dspy.InputField(
-        description='The allowed fields; choose exactly one.'
     )
     label: str = dspy.OutputField(
         description="The theorem's label as written, or empty string."
@@ -102,9 +99,6 @@ class Identify(dspy.Signature):
     )
     title: str = dspy.OutputField(
         description='Short noun phrase naming the result.'
-    )
-    field: str = dspy.OutputField(
-        description='Exactly one field from the given list.'
     )
     proof_start: int = dspy.OutputField(
         description='Member position where the proof begins, or -1 if no proof is shown.'
@@ -196,7 +190,6 @@ class Identity(BaseModel):
     label: str | None = None
     number: str | None = None
     title: str | None = None
-    field: str | None = None
     proof_start: int = -1
 
 
@@ -211,7 +204,7 @@ class Module(dspy.Module):
         self.set_lm(language_model or llm.text_lm())
 
     async def identity(self, members: list[models.ASTNode]) -> Identity:
-        """Returns label, number, title, field, and proof boundary for one theorem."""
+        """Returns label, number, title, and the proof boundary for one theorem."""
         nodes = [
             MemberNode(
                 position=k,
@@ -220,14 +213,11 @@ class Module(dspy.Module):
             )
             for k, m in enumerate(members)
         ]
-        result = await self.identify.acall(
-            nodes=nodes, field_choices=models.FIELDS
-        )
+        result = await self.identify.acall(nodes=nodes)
         return Identity(
             label=(result.label or None),
             number=(result.number or None),
             title=(result.title or None),
-            field=(result.field if result.field in models.FIELDS else None),
             proof_start=(
                 result.proof_start
                 if isinstance(result.proof_start, int)
@@ -294,7 +284,7 @@ async def attribute_theorem(
 ) -> models.Entity:
     """Fill in the self-contained attributes on one Theorem entity, in place.
 
-    The identity pass gives label/number/title/field and the ``proof_start`` boundary; the
+    The identity pass gives label/number/title and the ``proof_start`` boundary; the
     members split into statement (before the boundary) and proof (from it) — both halves are
     always kept, so a wrong boundary never loses content. ``contents`` is the label-peeled
     statement; the statement and proof bodylists run in parallel over their own role sets.
@@ -319,25 +309,28 @@ async def attribute_theorem(
             else []
         )
 
-    async def _proof() -> models.Proof | None:
+    async def _proof() -> models.Procedure | None:
         if not proof_members:
             return None
         p_contents = _contents(
             proof_members, None
-        )  # the "models.Proof." marker is kept for now
+        )  # the "Proof." marker is kept for now
         p_blob = '\n\n'.join(p_contents)
-        p_bodylist = await module.proof_body(p_blob) if p_blob else []
-        return models.Proof(contents=p_contents, bodylist=p_bodylist)
+        p_steps = await module.proof_body(p_blob) if p_blob else []
+        return models.Procedure(
+            type=models.ProcedureType.PROOF.value,
+            contents=p_contents,
+            steps=p_steps,
+        )
 
     statement_bodylist, proof = await asyncio.gather(_statement(), _proof())
 
     entity.label = ident.label
     entity.number = ident.number
     entity.title = ident.title
-    entity.field = ident.field
     entity.contents = contents
     entity.bodylist = statement_bodylist
-    entity.proofs = [proof] if proof else []
+    entity.procedures = [proof] if proof else []
     return entity
 
 

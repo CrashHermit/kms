@@ -94,7 +94,7 @@ class Signature(dspy.Signature):
       ALWAYS include it and begin the span there, not at the claim node after it. (A
       theorem's own label is NOT a section heading like "Convergence", which names a
       section and is a boundary — never part of a span.)
-    - Its claim/statement, THEN its proof if one is shown: the "models.Proof." node and every
+    - Its claim/statement, THEN its proof if one is shown: the "Proof." node and every
       node of the proof after it (prose, display math, steps), through to the end of the
       proof (often marked "□"/"QED" or a clear return to narrative). Keep the whole proof
       in the same span. A theorem may have no proof shown — then the span is just the

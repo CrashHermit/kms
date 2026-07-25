@@ -55,7 +55,7 @@ def test_find_problems_banks_a_bounded_problem_and_emits_member_ids():
     module = _ScriptedFinder([[ProblemSpan(start=1, end=2)], []])
     problems = asyncio.run(find_problems(_nodes(), module=module))
     assert len(problems) == 1
-    assert problems[0].type == models.EntityType.PROBLEM
+    assert problems[0].type == 'problem'
     assert problems[0].members == [
         1,
         2,

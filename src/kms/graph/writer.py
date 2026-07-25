@@ -8,36 +8,44 @@ re-running a book is idempotent, then wires them up — ``(:Source)-[:HEAD]->`` 
 walkable in Cypher. ``persist_entities`` writes the ``:Entity`` overlay on top: one vertex per
 Definition / Theorem / Problem (base ``:Entity`` label + its per-type label), rooted under the book
 via ``:HAS_ENTITY`` and linked back to the structural chunks it was built from via ``:DERIVED_FROM``.
-``persist_procedures`` writes the procedural layer: one ``:Procedure`` per proof/solution hung off its
-entity via ``:HAS_PROCEDURE``, and one ``:Event`` per proof step threaded ``:FIRST``/``:THEN`` (see
+``persist_procedures`` writes the procedural layer: one ``:Procedure`` per derivation hung off its
+entity via ``:HAS_PROCEDURE``, and one ``:Event`` per step threaded ``:FIRST``/``:THEN`` (see
 ``graph.procedures``). ``persist_concepts`` writes the concept layer: a global ``:Concept`` per distinct
-concept and a ``(:Entity)-[:INSTANCE_OF]->(:Concept)`` edge per entity concept (see ``graph.concepts``).
+concept and an ``:INSTANCE_OF`` edge from every entity and every event that instantiates it (see
+``graph.concepts``). ``persist_dependencies`` adds the concept-level prerequisite edges,
+``(:Concept)-[:DEPENDS_ON]->(:Concept)`` (see ``graph.dependencies``).
 ``persist_references`` writes the cross-entity layer: a global ``:Entity:Canonical``
-per distinct reference target, and a ``(:Entity)-[:REFERENCES {tactic}]->(:Canonical)`` edge per reference
-(see ``graph.references`` for why references route through canonicals). ``persist_uses`` adds the
-step-level ``(:Event)-[:USES {tactic}]->(:Canonical)`` edges on top (see ``graph.uses``).
+per distinct reference target, and a ``(:Entity)-[:REFERENCES {relation}]->(:Canonical)`` edge per
+reference (see ``graph.references`` for why references route through canonicals). ``persist_uses`` adds
+the step-level ``(:Event)-[:USES {relation}]->(:Canonical)`` edges on top (see ``graph.uses``).
 ``persist_realizes`` closes the loop: a ``(:Entity:Mention)-[:REALIZES]->(:Entity:Canonical)`` edge
 ties each cited concept's canonical back to the in-corpus mention that defines/states it, so citations
 resolve through the hub to real knowledge (see ``graph.realizes``).
 
-Writes are batched: Cypher can't parameterize a label, but the label comes from a closed enum
-(``models.NodeType`` / ``models.EntityType``), so grouping by label and interpolating it is safe and turns the
-whole stream into one MERGE per label plus a couple for the source/edges — no per-vertex
-round-trips. The pure planning (grouping, edge pairs, head) is factored out and unit-tested; only the
-``session.run`` calls need a live database.
+Writes are batched. Cypher can't parameterize a label, so a per-type label would have to be
+interpolated — which is only safe for a CLOSED vocabulary. The structural ``:Node`` layer still has
+one (``models.NodeType``) and is grouped by label; every semantic layer above it now carries its type
+as a *property* (``docs/GENERALIZATION.md``), which is what lets those layers write in a single
+batched MERGE each with no interpolation at all. The pure planning (grouping, edge pairs, head) is
+factored out and unit-tested; only the ``session.run`` calls need a live database.
 """
 
 from collections import defaultdict
 from typing import Any
 
 from kms.core import models
-from kms.graph.concepts import CONCEPT_LABEL, concept_batches, instance_rows
+from kms.graph.concepts import (
+    CONCEPT_LABEL,
+    concept_rows,
+    entity_instance_rows,
+    event_instance_rows,
+)
 from kms.graph.db import database, driver
+from kms.graph.dependencies import dependency_rows
 from kms.graph.entities import (
     CANONICAL_LABEL,
     ENTITY_LABEL,
     MENTION_LABEL,
-    entity_label,
     entity_properties,
     entity_uuid,
 )
@@ -56,11 +64,11 @@ from kms.graph.procedures import (
     event_rows,
     first_pairs,
     has_procedure_pairs,
-    procedure_batches,
+    procedure_rows,
     then_pairs,
 )
 from kms.graph.realizes import realizes_rows
-from kms.graph.references import canonical_batches, reference_rows
+from kms.graph.references import canonical_rows, reference_rows
 from kms.graph.uses import uses_rows
 
 
@@ -135,15 +143,11 @@ async def persist_nodes(
             )
 
 
-def entity_batches(
-    entities: list[models.Entity], source: str
-) -> dict[str, list[dict]]:
-    """Group the entities' property maps by their per-type label, so each label is one batched
-    MERGE. Every entity is typed, so there is no ``None`` bucket (unlike ``node_batches``)."""
-    batches: dict[str, list[dict]] = defaultdict(list)
-    for entity in entities:
-        batches[entity_label(entity)].append(entity_properties(entity, source))
-    return dict(batches)
+def entity_rows(entities: list[models.Entity], source: str) -> list[dict]:
+    """Every entity's property map, one flat list. Unlike the structural nodes there is no grouping
+    to do: an entity's ``type`` is an open property rather than a label (see ``graph.entities``), so
+    the whole overlay writes in a single batched MERGE."""
+    return [entity_properties(entity, source) for entity in entities]
 
 
 def member_pairs(entities: list[models.Entity], source: str) -> list[dict]:
@@ -161,27 +165,26 @@ def member_pairs(entities: list[models.Entity], source: str) -> list[dict]:
 
 
 async def persist_entities(entities: list[models.Entity], source: str) -> None:
-    """Upsert the book's ``:Entity`` overlay: one vertex per entity (base ``:Entity`` label + its
-    per-type label), rooted under the already-persisted ``:Source`` via ``:HAS_ENTITY``, and linked
-    to its structural chunks via ``:DERIVED_FROM``. Idempotent — every MERGE keys on a deterministic
-    uuid, so re-persisting the same ``source`` updates in place. A no-op for an empty overlay. The
-    ``:Source`` and ``:Node`` vertices are expected to already exist (the node persister runs first);
-    the MATCHes here attach to them rather than creating them. Every entity's id must be assigned
-    (post-flatten)."""
+    """Upsert the book's ``:Entity`` overlay: one vertex per entity (base ``:Entity`` label + the
+    ``:Mention`` role label, its induced ``type`` a property), rooted under the already-persisted
+    ``:Source`` via ``:HAS_ENTITY``, and linked to its structural chunks via ``:DERIVED_FROM``.
+    Idempotent — every MERGE keys on a deterministic uuid, so re-persisting the same ``source``
+    updates in place. A no-op for an empty overlay. The ``:Source`` and ``:Node`` vertices are
+    expected to already exist (the node persister runs first); the MATCHes here attach to them rather
+    than creating them. Every entity's id must be assigned (post-flatten)."""
     if not entities:
         return
-    batches = entity_batches(entities, source)
+    rows = entity_rows(entities, source)
     pairs = member_pairs(entities, source)
     src = source_uuid(source)
     uuids = [entity_uuid(source, entity.id) for entity in entities]
 
     async with driver().session(database=database()) as session:
-        for label, rows in batches.items():
-            await session.run(
-                f'UNWIND $rows AS row MERGE (e:{ENTITY_LABEL} {{uuid: row.uuid}}) '
-                f'SET e += row SET e:{label} SET e:{MENTION_LABEL}',
-                rows=rows,
-            )
+        await session.run(
+            f'UNWIND $rows AS row MERGE (e:{ENTITY_LABEL} {{uuid: row.uuid}}) '
+            f'SET e += row SET e:{MENTION_LABEL}',
+            rows=rows,
+        )
         await session.run(
             f'MATCH (s:{SOURCE_LABEL} {{uuid: $src}}) '
             f'UNWIND $uuids AS uuid '
@@ -202,14 +205,14 @@ async def persist_entities(entities: list[models.Entity], source: str) -> None:
 async def persist_procedures(
     entities: list[models.Entity], source: str
 ) -> None:
-    """Upsert the procedural layer: one ``:Procedure`` per proof/solution (base ``:Procedure`` label +
-    its per-kind label), hung off its entity via ``:HAS_PROCEDURE``; one ``:Event`` per proof step,
+    """Upsert the procedural layer: one ``:Procedure`` per derivation (base ``:Procedure`` label, its
+    ``type`` a property), hung off its entity via ``:HAS_PROCEDURE``; one ``:Event`` per step,
     threaded ``:FIRST`` from the procedure and ``:THEN`` along the steps. Idempotent — every MERGE keys
     on a deterministic uuid. A no-op when no entity carries a derivation. The citing ``:Entity`` vertices
     are expected to already exist (the entity persister writes them first); the ``:HAS_PROCEDURE`` MATCH
     attaches to them. Every entity's id must be assigned (post-flatten)."""
-    proc_batches = procedure_batches(entities, source)
-    if not proc_batches:
+    procedures = procedure_rows(entities, source)
+    if not procedures:
         return
     events = event_rows(entities, source)
     haspairs = has_procedure_pairs(entities, source)
@@ -217,12 +220,10 @@ async def persist_procedures(
     thens = then_pairs(entities, source)
 
     async with driver().session(database=database()) as session:
-        for label, rows in proc_batches.items():
-            await session.run(
-                f'UNWIND $rows AS row MERGE (p:{PROCEDURE_LABEL} {{uuid: row.uuid}}) '
-                f'SET p += row SET p:{label}',
-                rows=rows,
-            )
+        await session.run(
+            f'UNWIND $rows AS row MERGE (p:{PROCEDURE_LABEL} {{uuid: row.uuid}}) SET p += row',
+            rows=procedures,
+        )
         if events:
             await session.run(
                 f'UNWIND $rows AS row MERGE (e:{EVENT_LABEL} {{uuid: row.uuid}}) SET e += row',
@@ -253,28 +254,58 @@ async def persist_procedures(
 
 
 async def persist_concepts(entities: list[models.Entity], source: str) -> None:
-    """Upsert the concept layer: mint a global ``:Concept`` per distinct concept (base ``:Concept``
-    label + its per-type label), then draw a ``(:Entity)-[:INSTANCE_OF]->(:Concept)`` edge per entity
-    concept. Idempotent — concepts MERGE on their deterministic global uuid and edges on the (entity,
-    concept) pair. A no-op when no entity instantiates a concept. The citing mention ``:Entity``
-    vertices are expected to already exist (the entity persister writes them first)."""
-    rows = instance_rows(entities, source)
-    if not rows:
+    """Upsert the concept layer: mint a global ``:Concept`` per distinct concept, then draw an
+    ``:INSTANCE_OF`` edge from every entity and every procedure step that instantiates it. Idempotent
+    — concepts MERGE on their deterministic global uuid and edges on the (instance, concept) pair. A
+    no-op when nothing instantiates a concept. The ``:Entity`` and ``:Event`` vertices are expected to
+    already exist (the entity and procedure persisters write them first)."""
+    concepts = concept_rows(entities, source)
+    if not concepts:
         return
-    batches = concept_batches(entities)
+    entity_instances = entity_instance_rows(entities, source)
+    event_instances = event_instance_rows(entities, source)
 
     async with driver().session(database=database()) as session:
-        for label, concepts in batches.items():
+        await session.run(
+            f'UNWIND $rows AS row MERGE (c:{CONCEPT_LABEL} {{uuid: row.uuid}}) SET c += row',
+            rows=concepts,
+        )
+        if entity_instances:
             await session.run(
-                f'UNWIND $rows AS row MERGE (c:{CONCEPT_LABEL} {{uuid: row.uuid}}) '
-                f'SET c += row SET c:{label}',
-                rows=concepts,
+                f'UNWIND $rows AS row '
+                f'MATCH (e:{ENTITY_LABEL} {{uuid: row.entity}}), '
+                f'(c:{CONCEPT_LABEL} {{uuid: row.concept}}) '
+                f'MERGE (e)-[:INSTANCE_OF]->(c)',
+                rows=entity_instances,
             )
+        if event_instances:
+            await session.run(
+                f'UNWIND $rows AS row '
+                f'MATCH (v:{EVENT_LABEL} {{uuid: row.event}}), '
+                f'(c:{CONCEPT_LABEL} {{uuid: row.concept}}) '
+                f'MERGE (v)-[:INSTANCE_OF]->(c)',
+                rows=event_instances,
+            )
+
+
+async def persist_dependencies(
+    dependencies: list[models.Dependency],
+) -> None:
+    """Upsert the concept prerequisite layer: a ``(:Concept)-[:DEPENDS_ON {support}]->(:Concept)``
+    edge per judged dependency (see ``graph.dependencies``). Idempotent — edges MERGE on the
+    (dependent, prerequisite) pair, with ``support`` set on the relationship so a re-run updates it in
+    place. A no-op when the dependency finder judged nothing. Both endpoints are MATCHed, never
+    minted: a dependency naming a concept no entity instantiates draws no edge, so this is safe to run
+    over the whole judged set."""
+    rows = dependency_rows(dependencies)
+    if not rows:
+        return
+    async with driver().session(database=database()) as session:
         await session.run(
             f'UNWIND $rows AS row '
-            f'MATCH (e:{ENTITY_LABEL} {{uuid: row.entity}}), '
-            f'(c:{CONCEPT_LABEL} {{uuid: row.concept}}) '
-            f'MERGE (e)-[:INSTANCE_OF]->(c)',
+            f'MATCH (a:{CONCEPT_LABEL} {{uuid: row.dependent}}), '
+            f'(b:{CONCEPT_LABEL} {{uuid: row.prerequisite}}) '
+            f'MERGE (a)-[d:DEPENDS_ON]->(b) SET d.support = row.support',
             rows=rows,
         )
 
@@ -283,39 +314,39 @@ async def persist_references(
     entities: list[models.Entity], source: str
 ) -> None:
     """Upsert the cross-entity reference layer: mint a global ``:Entity:Canonical`` per distinct
-    reference target (base ``:Entity`` label + the ``:Canonical`` role label + its per-type label),
-    then draw a ``(:Entity)-[:REFERENCES {tactic}]->(:Canonical)`` edge for each reference. Idempotent —
-    canonicals MERGE on their deterministic global uuid and edges MERGE on the (entity, canonical) pair
-    (the tactic is set on the relationship, so a re-run updates it in place). A no-op when no entity
-    carries references. The citing mention ``:Entity`` vertices are expected to already exist (the entity
-    persister writes them first); the MATCH attaches to them."""
+    reference target (base ``:Entity`` label + the ``:Canonical`` role label, its ``type`` a
+    property), then draw a ``(:Entity)-[:REFERENCES {relation}]->(:Canonical)`` edge for each
+    reference. Idempotent — canonicals MERGE on their deterministic global uuid and edges MERGE on the
+    (entity, canonical) pair (the relation is set on the relationship, so a re-run updates it in
+    place). A no-op when no entity carries references. The citing mention ``:Entity`` vertices are
+    expected to already exist (the entity persister writes them first); the MATCH attaches to them."""
     rows = reference_rows(entities, source)
     if not rows:
         return
-    batches = canonical_batches(entities)
+    canonicals = canonical_rows(entities)
 
     async with driver().session(database=database()) as session:
-        for label, canonicals in batches.items():
-            await session.run(
-                f'UNWIND $rows AS row MERGE (c:{ENTITY_LABEL} {{uuid: row.uuid}}) '
-                f'SET c += row SET c:{CANONICAL_LABEL} SET c:{label}',
-                rows=canonicals,
-            )
+        await session.run(
+            f'UNWIND $rows AS row MERGE (c:{ENTITY_LABEL} {{uuid: row.uuid}}) '
+            f'SET c += row SET c:{CANONICAL_LABEL}',
+            rows=canonicals,
+        )
         await session.run(
             f'UNWIND $rows AS row '
             f'MATCH (e:{ENTITY_LABEL} {{uuid: row.entity}}), '
             f'(c:{CANONICAL_LABEL} {{uuid: row.canonical}}) '
-            f'MERGE (e)-[ref:REFERENCES]->(c) SET ref.tactic = row.tactic',
+            f'MERGE (e)-[ref:REFERENCES]->(c) SET ref.relation = row.relation',
             rows=rows,
         )
 
 
 async def persist_uses(entities: list[models.Entity], source: str) -> None:
-    """Upsert the step-level ``:USES`` layer: for each proof step that mentions a reference target, draw
-    a ``(:Event)-[:USES {tactic}]->(:Entity:Canonical)`` edge (the finer complement of the entity-level
-    ``:REFERENCES`` rollup; see ``graph.uses``). Idempotent — edges MERGE on the (event, canonical) pair,
-    tactic set on the relationship. A no-op when nothing matches. The ``:Event`` and ``:Canonical``
-    vertices are expected to already exist (the procedure and reference persisters run first)."""
+    """Upsert the step-level ``:USES`` layer: for each procedure step that mentions a reference target,
+    draw a ``(:Event)-[:USES {relation}]->(:Entity:Canonical)`` edge (the finer complement of the
+    entity-level ``:REFERENCES`` rollup; see ``graph.uses``). Idempotent — edges MERGE on the (event,
+    canonical) pair, relation set on the relationship. A no-op when nothing matches. The ``:Event`` and
+    ``:Canonical`` vertices are expected to already exist (the procedure and reference persisters run
+    first)."""
     rows = uses_rows(entities, source)
     if not rows:
         return
@@ -324,18 +355,18 @@ async def persist_uses(entities: list[models.Entity], source: str) -> None:
             f'UNWIND $rows AS row '
             f'MATCH (v:{EVENT_LABEL} {{uuid: row.event}}), '
             f'(c:{CANONICAL_LABEL} {{uuid: row.canonical}}) '
-            f'MERGE (v)-[u:USES]->(c) SET u.tactic = row.tactic',
+            f'MERGE (v)-[u:USES]->(c) SET u.relation = row.relation',
             rows=rows,
         )
 
 
 async def persist_realizes(entities: list[models.Entity], source: str) -> None:
-    """Upsert the ``:REALIZES`` identity edges: for each titled Definition/Theorem mention whose
+    """Upsert the ``:REALIZES`` identity edges: for each typed, titled mention whose
     ``(type, title)`` names an already-persisted canonical, draw
     ``(:Entity:Mention)-[:REALIZES]->(:Entity:Canonical)`` (see ``graph.realizes``). Idempotent — edges
     MERGE on the (mention, canonical) pair. The ``MATCH`` on the canonical does the filtering: a mention
     whose title was never cited finds no canonical and gets no edge, so this is safe to run over the
-    whole overlay. A no-op when no titled def/thm mention exists. The mention ``:Entity`` and the
+    whole overlay. A no-op when no typed, titled mention exists. The mention ``:Entity`` and the
     ``:Canonical`` vertices are expected to already exist (the entity and reference persisters run
     first)."""
     rows = realizes_rows(entities, source)

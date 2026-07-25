@@ -21,9 +21,12 @@ the governed run ends. It is the SAME growing look-ahead used by the finders and
     the budget) and re-read; if a non-governed problem is seen to follow the run (bounded), or
     the candidates are exhausted, BANK — stamp `entity.instruction` on the governed problems.
 
-It runs AFTER the Problem attributor (it reads each problem's `contents`/`number` to judge
-governance). Entry point ``distribute_instructions(nodes, problems, module)`` mutates the
-problems in place; ``InstructionDistributorNode`` wires it onto the ``problem_entities`` channel.
+It runs AFTER the attributor that fills each entity's `contents`/`number`, which it reads to judge
+governance. Entry point ``distribute_instructions(nodes, problems, module)`` mutates the problems in
+place; ``InstructionDistributorNode`` wires it onto an entity channel named at construction — the
+per-type layer's `problem_entities` or the block layer's `block_entities`. Nothing here is
+type-specific: a lead-in governing a run of tasks is textbook *genre*, so the same pass serves both
+(`docs/GENERALIZATION.md`, "What stays").
 """
 
 import dspy
@@ -195,17 +198,22 @@ async def distribute_instructions(
 
 
 class InstructionDistributorNode:
-    """Stamps `instruction` onto the governed Problems, reading the splitter's `role="instruction"`
-    lead-in tags. Runs after the Problem attributor (it reads each problem's contents/number) and
-    writes the enriched entities back to the ``problem_entities`` channel."""
+    """Stamps `instruction` onto the governed entities, reading the splitter's `role="instruction"`
+    lead-in tags. Runs after this channel's attributor (it reads each entity's contents/number) and
+    writes the enriched entities back to the same channel, which is named at construction."""
 
-    def __init__(self, module: Module | None = None) -> None:
+    def __init__(
+        self,
+        channel: str = 'problem_entities',
+        module: Module | None = None,
+    ) -> None:
+        self.channel = channel
         self.module = module or Module()
 
     async def run(self, state: state.State) -> dict:
-        """Distributes each lead-in's shared instruction onto governed Problems."""
-        problems = state.get('problem_entities', [])
+        """Distributes each lead-in's shared instruction onto the governed entities."""
+        entities = state.get(self.channel, [])
         await distribute_instructions(
-            state.get('nodes', []), problems, module=self.module
+            state.get('nodes', []), entities, module=self.module
         )
-        return {'problem_entities': problems}
+        return {self.channel: entities}

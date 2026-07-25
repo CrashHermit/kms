@@ -1,6 +1,7 @@
 """Step-level :USES mapping — pure, no database (neo4j is stubbed in conftest). Verifies the
-name-match locates a reference in the right proof step, rolls up to the correct :Event and
-:Canonical uuids, skips fieldless/proofless entities, and that persist_uses issues the edge query."""
+name-match locates a reference in the right procedure step, rolls up to the correct :Event and
+:Canonical uuids, skips entities with no refs or no steps, and that persist_uses issues the edge
+query."""
 
 import asyncio
 
@@ -12,17 +13,20 @@ from kms.graph.writer import persist_uses
 
 # A theorem whose proof cites the Mean Value Theorem in its second step (not its first).
 _THEOREM = models.Entity(
-    type=models.EntityType.THEOREM,
+    type='theorem',
     members=[1],
     id=1,
     refs=[
         models.Reference(
-            target='Mean Value Theorem', kind='theorem', tactic='lemma'
+            target='Mean Value Theorem',
+            kind='theorem',
+            relation='follows from',
         )
     ],
-    proofs=[
-        models.Proof(
-            bodylist=[
+    procedures=[
+        models.Procedure(
+            type='proof',
+            steps=[
                 models.BodySegment(
                     description='Let f be differentiable.', action='premise'
                 ),
@@ -30,7 +34,7 @@ _THEOREM = models.Entity(
                     description="By the Mean Value Theorem, f'(c)=0.",
                     action='deduction',
                 ),
-            ]
+            ],
         )
     ],
 )
@@ -53,25 +57,27 @@ def test_mentions_does_not_match_substrings():
 # --- planning ---
 
 
-def test_uses_rows_locate_the_reference_in_its_proof_step():
+def test_uses_rows_locate_the_reference_in_its_procedure_step():
     rows = uses_rows(_OVERLAY, 'book.pdf')
     assert len(rows) == 1  # matched only the second step, once
     assert rows[0] == {
         # step index 1 = the second proof step
         'event': event_uuid('book.pdf', 1, 'proof', 0, 1),
         'canonical': canonical_uuid('theorem', 'Mean Value Theorem'),
-        'tactic': 'lemma',
+        'relation': 'follows from',
     }
 
 
-def test_uses_rows_skip_entities_without_refs_or_proofs():
-    # a problem with a ref but no proof steps contributes no :USES (its ref stays entity-level)
+def test_uses_rows_skip_entities_without_refs_or_steps():
+    # a problem with a ref but no reified steps contributes no :USES (its ref stays entity-level)
     problem = models.Entity(
-        type=models.EntityType.PROBLEM,
+        type='problem',
         members=[2],
         id=2,
         refs=[
-            models.Reference(target='Set', kind='definition', tactic='premise')
+            models.Reference(
+                target='Set', kind='definition', relation='applies'
+            )
         ],
     )
     assert uses_rows([problem], 'book.pdf') == []
@@ -80,19 +86,22 @@ def test_uses_rows_skip_entities_without_refs_or_proofs():
 def test_uses_rows_dedupe_by_event_and_canonical():
     # the same target named twice in one step yields a single edge
     entity = models.Entity(
-        type=models.EntityType.THEOREM,
+        type='theorem',
         members=[1],
         id=0,
         refs=[
-            models.Reference(target='Set', kind='definition', tactic='premise')
+            models.Reference(
+                target='Set', kind='definition', relation='assumes'
+            )
         ],
-        proofs=[
-            models.Proof(
-                bodylist=[
+        procedures=[
+            models.Procedure(
+                type='proof',
+                steps=[
                     models.BodySegment(
                         description='A Set is a Set.', action='premise'
                     )
-                ]
+                ],
             )
         ],
     )
@@ -133,20 +142,13 @@ def test_persist_uses_writes_event_to_canonical_edges(monkeypatch):
     edge = next(c for c in calls if ':USES' in c[0])
     assert '(v:Event' in edge[0] and '(c:Canonical' in edge[0]
     assert len(edge[1]['rows']) == 1
-    assert any('SET u.tactic' in q for q in queries)
+    assert any('SET u.relation' in q for q in queries)
 
 
 def test_persist_uses_is_a_noop_without_matches(monkeypatch):
     calls: list[tuple[str, dict]] = []
     monkeypatch.setattr('kms.graph.writer.driver', lambda: _FakeDriver(calls))
     asyncio.run(
-        persist_uses(
-            [
-                models.Entity(
-                    type=models.EntityType.DEFINITION, members=[0], id=0
-                )
-            ],
-            'b',
-        )
+        persist_uses([models.Entity(type='definition', members=[0], id=0)], 'b')
     )
-    assert calls == []  # no refs/proofs -> nothing opened, nothing written
+    assert calls == []  # no refs/steps -> nothing opened, nothing written

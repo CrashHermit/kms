@@ -1,8 +1,8 @@
 """Theorem attributor: the statement/proof split around the LLM passes.
 
-The identity pass (label/number/title/field/proof_start) and the two bodylist passes are
+The identity pass (label/number/title/proof_start) and the two bodylist passes are
 injected via a scripted module, so these tests exercise the real split/assembly logic —
-statement vs proof at proof_start, label peeling, proofs population — without dspy."""
+statement vs proof at proof_start, label peeling, proof-procedure population — without dspy."""
 
 import asyncio
 
@@ -26,7 +26,7 @@ def _nodes():
         ),
         models.ASTNode(
             type=models.NodeType.PARAGRAPH,
-            content='models.Proof. Suppose $\\sigma \\in Z(S_n)$ ... hence trivial.',
+            content='Proof. Suppose $\\sigma \\in Z(S_n)$ ... hence trivial.',
             id=2,
             segment_index=0,
         ),
@@ -57,12 +57,11 @@ def _run(entity, nodes, module):
 
 def test_split_holds_out_proof_and_peels_label():
     nodes = _nodes()
-    entity = models.Entity(type=models.EntityType.THEOREM, members=[0, 1, 2])
+    entity = models.Entity(type='theorem', members=[0, 1, 2])
     ident = Identity(
         label='Theorem 3.2',
         number='3.2',
         title='Center is Trivial',
-        field='algebra',
         proof_start=2,
     )
     module = _ScriptedModule(
@@ -80,46 +79,44 @@ def test_split_holds_out_proof_and_peels_label():
 
     assert e.label == 'Theorem 3.2'
     assert e.number == '3.2'
-    assert e.field == 'algebra'
     # Statement = members before proof_start, label node dropped; proof held out of contents.
     assert e.contents == ['Let $n \\ge 3$. Then $Z(S_n)$ is trivial.']
     assert [s.action for s in e.bodylist] == ['assumption']
-    # The proof went into proofs, with its own contents + bodylist.
-    assert len(e.proofs) == 1
-    assert e.proofs[0].contents == [
-        'models.Proof. Suppose $\\sigma \\in Z(S_n)$ ... hence trivial.'
+    # The proof became a `proof` procedure with its own contents + steps.
+    assert len(e.procedures) == 1
+    assert e.procedures[0].type == 'proof'
+    assert e.procedures[0].contents == [
+        'Proof. Suppose $\\sigma \\in Z(S_n)$ ... hence trivial.'
     ]
-    assert [s.action for s in e.proofs[0].bodylist] == ['deduction']
+    assert [s.action for s in e.procedures[0].steps] == ['deduction']
 
 
-def test_no_proof_leaves_proofs_empty():
+def test_no_proof_leaves_procedures_empty():
     nodes = _nodes()[:2]  # label + statement only
-    entity = models.Entity(type=models.EntityType.THEOREM, members=[0, 1])
+    entity = models.Entity(type='theorem', members=[0, 1])
     ident = Identity(
         label='Theorem 3.2',
         number='3.2',
         title='X',
-        field='algebra',
         proof_start=-1,
     )
     e = _run(entity, nodes, _ScriptedModule(ident))
 
-    assert e.proofs == []
+    assert e.procedures == []
     assert e.contents == ['Let $n \\ge 3$. Then $Z(S_n)$ is trivial.']
 
 
 def test_out_of_range_proof_start_is_treated_as_no_proof():
     nodes = _nodes()
-    entity = models.Entity(type=models.EntityType.THEOREM, members=[0, 1, 2])
+    entity = models.Entity(type='theorem', members=[0, 1, 2])
     ident = Identity(
         label='Theorem 3.2',
         number='3.2',
         title='X',
-        field='algebra',
         proof_start=9,
     )
     e = _run(entity, nodes, _ScriptedModule(ident))
 
-    assert e.proofs == []
+    assert e.procedures == []
     # All non-label members stay in the statement contents.
     assert len(e.contents) == 2

@@ -6,11 +6,24 @@ AutoSchemaKG (arXiv:2505.23628). This is the concrete build-out of the "generali
 that `UNIFIED-KG.md` deferred — now **warranted**, because a second and third domain (physics,
 biology) make the engine/profile split real rather than premature (rule of three).
 
-**Status: design only.** Nothing here is built yet. Two live probes (below) validated the
-*concept* layer of the plan; the *extraction* layer is still to be proven. **Do not rip out the
-math-specific extractors before the general path is built and measured against them** — the
-reason is correctness (quality parity), not migration. Greenfield removes migration cost, not
-the risk of deleting validated code before its replacement works.
+**Status: built, steps 1–4 (2026-07-25).** The concept layer, `:DEPENDS_ON`, open relations,
+type-as-property, and the block-finder entity layer are all implemented and unit-tested; see the
+build sequence below for what each step became, and `HANDOFF.md`'s 2026-07-25 session update for the
+narrative. Two things are deliberately **not** done:
+
+* **Step 5 (the rip-out) is gated, not forgotten.** The block layer runs alongside the three
+  per-type chains, selected by `KMS_ENTITY_LAYER` / `build_graph(layer)`, and `per-type` is still the
+  default. Two live probes (below) validated the *concept* layer; the *extraction* layer is still to
+  be proven. **Do not rip out the math-specific extractors before the general path is measured
+  against them** — the reason is correctness (quality parity), not migration. Greenfield removes
+  migration cost, not the risk of deleting validated code before its replacement works.
+* **Step 6 (embedding / fusion) has not started.** It is an independent track and still needs the
+  bake-off described below.
+
+One simplification worth recording: AutoSchemaKG's **ψ** (relation → concept-type) is not a separate
+axis in the build. Once relations became open and LLM-named, the relation label *is* the abstraction
+ψ would have produced, and a property graph cannot hang a `:Concept` off an edge anyway. If relation
+dedup ever needs a vocabulary of relation types, that is where ψ comes back.
 
 ---
 
@@ -267,22 +280,27 @@ concept phrases and entity mentions into canonical hubs. Design:
 
 Each step is usable alone; nothing validated is deleted before its replacement is proven.
 
-1. **Concept layer (start here — validated, additive).** Conceptualization stage (entity + event +
-   relation, context-enhanced) → `:Concept` + `:INSTANCE_OF`; concept-level `:DEPENDS_ON` grounded
-   in the existing `:REFERENCES` rollup, pairwise-induced, cycle-guarded. Deletes nothing; gives
-   math richer concepts immediately and is the exact stage physics/biology reuse.
-2. **Open relations.** Referencers → open `:DEPENDS_ON` / `:USES`, retiring the fixed `tactic` /
-   `REFERENCE_KINDS` vocab.
-3. **Entity `type`: label → property.** So physics/biology types induce. Forward-compatible —
-   entities already *write* the `type` property (`graph/entities.py`), so reads work today.
-4. **Block finder + universal attributor + procedure finder** (the "Entity layer" design), built
-   **alongside** the three per-type finders and **measured against them on real math books**
-   (extraction quality is the one thing the probes did *not* validate). See
-   `ENTITY-LAYER-REBUILD.md` for the file-level removal + build steps.
-5. **Remove** the three per-type finders/attributors/referencers + closed vocab **only once** step 4
-   reaches quality parity.
-6. **Embedding / fusion** (concept + mention convergence) — independent track; start with the
-   model-agnostic candidate-scoring bake-off.
+1. **Concept layer — DONE.** `entity/conceptualizer.py` (entity + event conceptualization,
+   context-enhanced) → `:Concept` + `:INSTANCE_OF` (`graph/concepts.py`); concept-level
+   `:DEPENDS_ON` grounded in the `:REFERENCES` rollup, pairwise-judged, cycle-guarded
+   (`entity/dependency_finder.py`, `graph/dependencies.py`). It replaced the `field` attribute
+   outright — `FIELDS` is gone from `core/models.py` and from all three attributors.
+2. **Open relations — DONE.** The three per-type referencers collapsed into one
+   (`entity/referencers/open.py`) with the target kind and the relation both open and LLM-named;
+   `REFERENCE_KINDS` is gone and `Reference.tactic` became `Reference.relation`, on the model and on
+   the `:REFERENCES` / `:USES` edges.
+3. **Entity `type`: label → property — DONE.** `Entity.type` and `Procedure.type` are open strings;
+   `graph/entities.py` / `procedures.py` / `references.py` stopped minting per-type labels and
+   `schema.py` gained the `type` indexes that replace those label scans. `EntityType` survives only
+   as the math profile's vocabulary. `Proof` + `Solution` also unified into one `Procedure` model.
+4. **Block finder + universal attributor + procedure finder — BUILT, not yet measured.**
+   `entity/finders/block.py`, `attributors/universal.py`, `procedure_finder.py`, wired as the
+   `block` entity layer alongside the per-type chains. **Still to do: measure them against each
+   other on real math books** (extraction quality is the one thing the probes did *not* validate).
+5. **Remove** the three per-type finders/attributors + `EntityType` **only once** step 4 reaches
+   quality parity. See `ENTITY-LAYER-REBUILD.md` for the file-level removal steps.
+6. **Embedding / fusion** (concept + mention convergence) — NOT STARTED; independent track, start
+   with the model-agnostic candidate-scoring bake-off.
 
 ---
 

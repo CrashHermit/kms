@@ -1,33 +1,30 @@
 """Concept-layer graph mapping and writer planning — pure, no database (neo4j is stubbed in
 conftest). Verifies concept identity is deterministic and GLOBAL (born canonical), that an entity's
-field maps onto an :INSTANCE_OF edge, and that persist_concepts mints :Concept nodes + edges via a
-fake session."""
+and a procedure step's induced concepts each map onto an :INSTANCE_OF edge, and that persist_concepts
+mints :Concept nodes + edges via a fake session."""
 
 import asyncio
 
 from kms.core import models
 from kms.graph.concepts import (
-    concept_batches,
+    concept_rows,
     concept_uuid,
-    instance_rows,
+    entity_instance_rows,
+    event_instance_rows,
     normalize_concept,
 )
 from kms.graph.entities import entity_uuid
+from kms.graph.procedures import event_uuid
 from kms.graph.writer import persist_concepts
 
 _OVERLAY = [
     models.Entity(
-        type=models.EntityType.DEFINITION, members=[0], id=0, field='algebra'
+        type='definition', members=[0], id=0, concepts=['group theory']
     ),
-    models.Entity(
-        type=models.EntityType.THEOREM, members=[1], id=1, field='algebra'
-    ),  # same field -> one concept
-    models.Entity(
-        type=models.EntityType.PROBLEM, members=[2], id=2, field='analysis'
-    ),
-    models.Entity(
-        type=models.EntityType.DEFINITION, members=[3], id=3
-    ),  # no field -> no concept
+    # same concept, different spelling -> one node
+    models.Entity(type='theorem', members=[1], id=1, concepts=['Group Theory']),
+    models.Entity(type='problem', members=[2], id=2, concepts=['analysis']),
+    models.Entity(type='definition', members=[3], id=3),  # untagged -> nothing
 ]
 
 
@@ -35,18 +32,18 @@ _OVERLAY = [
 
 
 def test_concept_uuid_is_deterministic_and_global_across_sources():
-    # A concept is born canonical: same (type, name) -> same uuid regardless of book.
-    assert concept_uuid('field', 'algebra') == concept_uuid('field', 'algebra')
+    # A concept is born canonical: same name -> same uuid regardless of book.
+    assert concept_uuid('topic', 'algebra') == concept_uuid('topic', 'algebra')
 
 
 def test_concept_uuid_clusters_case_and_whitespace_variants():
-    assert concept_uuid('field', 'Algebra') == concept_uuid(
-        'field', '  algebra '
+    assert concept_uuid('topic', 'Algebra') == concept_uuid(
+        'topic', '  algebra '
     )
 
 
-def test_concept_uuid_separates_type_and_distinct_names():
-    assert concept_uuid('field', 'algebra') != concept_uuid('field', 'analysis')
+def test_concept_uuid_separates_distinct_names():
+    assert concept_uuid('topic', 'algebra') != concept_uuid('topic', 'analysis')
 
 
 def test_normalize_concept_lowercases_and_collapses_whitespace():
@@ -58,27 +55,52 @@ def test_normalize_concept_lowercases_and_collapses_whitespace():
 # --- planning ---
 
 
-def test_concept_batches_dedupe_by_uuid_and_group_by_type_label():
-    batches = concept_batches(_OVERLAY)
-    assert set(batches) == {'Field'}
-    # algebra appears twice but collapses to one concept; plus analysis => 2 field concepts.
-    assert len(batches['Field']) == 2
-    assert {c['uuid'] for c in batches['Field']} == {
-        concept_uuid('field', 'algebra'),
-        concept_uuid('field', 'analysis'),
+def test_concept_rows_dedupe_by_uuid_across_entities():
+    rows = concept_rows(_OVERLAY, 'book.pdf')
+    # "group theory" appears twice (differently cased) but collapses to one concept; plus analysis
+    assert {row['uuid'] for row in rows} == {
+        concept_uuid('topic', 'group theory'),
+        concept_uuid('topic', 'analysis'),
     }
-    assert batches['Field'][0]['type'] == 'field'
+    assert rows[0]['type'] == 'topic'
 
 
-def test_instance_rows_are_one_per_entity_concept_skipping_fieldless():
-    rows = instance_rows(_OVERLAY, 'book.pdf')
-    assert len(rows) == 3  # the fieldless definition contributes none
+def test_entity_instance_rows_are_one_per_tag_skipping_untagged():
+    rows = entity_instance_rows(_OVERLAY, 'book.pdf')
+    assert len(rows) == 3  # the untagged definition contributes none
     assert rows[0] == {
         'entity': entity_uuid('book.pdf', 0),
-        'concept': concept_uuid('field', 'algebra'),
+        'concept': concept_uuid('topic', 'group theory'),
     }
-    # both algebra entities point at the SAME concept node
+    # both group-theory entities point at the SAME concept node
     assert rows[1]['concept'] == rows[0]['concept']
+
+
+def test_event_instance_rows_tag_procedure_steps_on_their_event_uuid():
+    entity = models.Entity(
+        type='theorem',
+        members=[0],
+        id=0,
+        procedures=[
+            models.Procedure(
+                type='proof',
+                steps=[
+                    models.BodySegment(
+                        description='Assume not.',
+                        action='assumption',
+                        concepts=['proof by contradiction'],
+                    )
+                ],
+            )
+        ],
+    )
+    rows = event_instance_rows([entity], 'book.pdf')
+    assert rows == [
+        {
+            'event': event_uuid('book.pdf', 0, 'proof', 0, 0),
+            'concept': concept_uuid('topic', 'proof by contradiction'),
+        }
+    ]
 
 
 # --- persist_concepts orchestration, via a fake session (no server) ---
@@ -112,24 +134,20 @@ def test_persist_concepts_mints_concepts_and_instance_edges(monkeypatch):
     asyncio.run(persist_concepts(_OVERLAY, 'book.pdf'))
 
     queries = [q for q, _ in calls]
-    # concepts MERGE as :Concept carrying their per-type label
-    assert any('SET c:Field' in q for q in queries)
+    # concepts MERGE as bare :Concept — the type is a property, not a per-type label
+    assert any('MERGE (c:Concept' in q for q in queries)
+    assert not any('SET c:Topic' in q for q in queries)
     # instance edges, one per entity concept
     edge_call = next(c for c in calls if ':INSTANCE_OF' in c[0])
     assert len(edge_call[1]['rows']) == 3
 
 
-def test_persist_concepts_is_a_noop_without_fields(monkeypatch):
+def test_persist_concepts_is_a_noop_without_tags(monkeypatch):
     calls: list[tuple[str, dict]] = []
     monkeypatch.setattr('kms.graph.writer.driver', lambda: _FakeDriver(calls))
     asyncio.run(
         persist_concepts(
-            [
-                models.Entity(
-                    type=models.EntityType.DEFINITION, members=[0], id=0
-                )
-            ],
-            'b',
+            [models.Entity(type='definition', members=[0], id=0)], 'b'
         )
     )
-    assert calls == []  # no fields -> nothing opened, nothing written
+    assert calls == []  # no concepts -> nothing opened, nothing written

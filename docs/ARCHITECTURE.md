@@ -55,27 +55,44 @@ src/kms/
   entity/                  # PHASE 2: nodes → sparse entity overlays  (backbone: nodes)
     __init__.py
     splitter.py            # was exercise_splitter.py; runs first, makes exercises atomic
-    finders/               # the cursor-walk shape, one self-contained copy per type
+    instruction_finder.py  # tag exercise lead-ins role="instruction" over the atomic stream
+    finders/               # the cursor-walk shape, one self-contained copy per layer/type
       __init__.py
+      block.py             # the general finder: any labeled block, spans only
       problem.py
       definition.py
       theorem.py
-    attributors/           # the enrichment shape, one self-contained copy per type
+    attributors/           # the enrichment shape
       __init__.py
+      universal.py         # the general attributor: + the induced open `type`
       problem.py
       definition.py
       theorem.py
-    instruction_distributor.py   # Problem-only; the lone per-type exception, kept at entity level
+    procedure_finder.py    # general path: extract / create / defer / skip an entity's derivation
+    referencers/
+      __init__.py
+      open.py              # one open-relation pass, channel named at construction
+    instruction_distributor.py   # task-only; the lone per-type exception, kept at entity level
+    collector.py           # fan-in: whichever overlays ran → the one `entities` list
+    conceptualizer.py      # induced concept tags per entity and per procedure step
+    dependency_finder.py   # concept-level :DEPENDS_ON, reference-grounded and cycle-guarded
 
   graph/                   # PHASE 3: Neo4j knowledge graph    (backbone: graph)
     __init__.py
     db.py                  # async Neo4j driver — the ONLY module that imports neo4j
     nodes.py               # ASTNode -> :Node mapping (deterministic uuid, multi-label) + :Source root
+    entities.py            # Entity -> :Entity:Mention (type a property, not a label)
+    procedures.py          # procedures -> :Procedure + :Event chain
+    concepts.py            # induced tags -> global :Concept + :INSTANCE_OF (entities and steps)
+    dependencies.py        # concept prerequisites -> :DEPENDS_ON
+    references.py          # refs -> :Entity:Canonical hubs + :REFERENCES {relation}
+    uses.py                # step-level :Event -> :Canonical :USES {relation}
+    realizes.py            # :Mention -> :Canonical identity edges (nominal title-match)
     schema.py              # idempotent constraint/index bootstrap
-    writer.py              # persist_nodes: :Source + :Node stream + :HEAD/:NEXT edges
-    persister.py           # NodePersisterNode — pipeline stage (after splitter, before finders)
-                           # structural provenance layer built; semantic tiers (canonicals/
-                           # entities/concepts, refs/tactics, fusion, completion) NOT started
+    writer.py              # one persist_* per layer, each a batched idempotent MERGE
+    persister.py           # NodePersisterNode (after splitter) + EntityPersisterNode (terminal)
+                           # all layers built; the :DEMONSTRATES/:PRACTICES anchors and the
+                           # semantic dedup tier (embedding fusion) NOT started
 
   output/
     __init__.py
@@ -135,9 +152,15 @@ helper, `_load_dspy_image` (loads a page image at the corrector's LLM boundary),
 `finders/{problem,definition,theorem}.py` rather than `problem/{finder,attributor}.py`. The
 reusable unit here is the *shape* — the cursor-walk finder, the attributor pattern — and what
 varies between types is prompt plus a little schema, not architecture. Grouping by stage keeps
-the "one shape, three self-contained copies" honest and positions us to later collapse the
-copies into a single parameterized module + per-type specs as a **local** change, without files
-moving across the tree.
+the "one shape, several self-contained copies" honest and positions us to later collapse the
+copies into a single module as a **local** change, without files moving across the tree.
+
+**This bet paid off.** The generalization (`GENERALIZATION.md`) did exactly that collapse twice:
+the three referencers became one `referencers/open.py` once their vocabularies opened, and the
+general `finders/block.py` + `attributors/universal.py` dropped in beside their per-type siblings
+with no file moving anywhere. The two entity layers are swapped by wiring alone
+(`pipeline._wire_per_type_layer` vs `_wire_block_layer`), because by-stage grouping meant the
+alternative was a sibling, not a fork.
 
 **When this flips to by-type:** if the per-type logic genuinely diverges — e.g. theorems grow
 real proof-decomposition machinery and problems grow solution-handling until they no longer
