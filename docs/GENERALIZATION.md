@@ -74,21 +74,25 @@ separately-detected block. **There is no separate task/statement classify stage*
 
 **1. Block finder (detect).** Literally the current finder's cursor-walk with only the "what is a
 block" clause of its Signature generalized (from "a posed math task" to "any labeled pedagogical
-block"), emitting each block as a **span only** — **no type, no classification**. (The original
-per-type finders emit only spans too: `problem.py`'s output is `list[ProblemSpan]` of `{start, end}`;
-the entity's type was hardcoded by *which* finder ran — `Entity(type=PROBLEM)` — never classified. A
-single block finder would have to *newly* classify to emit a type, and we don't do that now.)
-Span/boundary is the finder's *existing* machinery (growing-window structural banking; "start at own
-label, stop at next label") — kept **verbatim**.
+block"), emitting each block as a **span only** — **no type**. (The original per-type finders emit
+only spans too: `problem.py`'s output is `list[ProblemSpan]` of `{start, end}`; the entity's type was
+hardcoded by *which* finder ran — `Entity(type=PROBLEM)` — never classified. Keep the finder pure
+detection; the **type is extracted downstream by the attributor**, not here.) Span/boundary is the
+finder's *existing* machinery (growing-window structural banking; "start at own label, stop at next
+label") — kept **verbatim**.
 - *Validated by probe:* one prompt found every block kind across math/physics/biology and excluded
   prose/headers/remarks; when *asked*, it also typed them correctly (incl. a non-math `law` and an
-  induced `key concept`) — so a type tag is available **later** if retrieval wants one, but it is not
-  emitted now. A second boundary probe confirmed the finder's boundary rules cleanly separate adjacent
-  blocks a naive one-shot prompt overlapped (theorem+proof to its own span; 8/9 spans correct, the
-  lone miss a start-of-stream over-reach the full machinery covers).
+  induced `key concept`) — so open typing is reliable (it now lives in the attributor, stage 2). A
+  second boundary probe confirmed the finder's boundary rules cleanly separate adjacent blocks a naive
+  one-shot prompt overlapped (theorem+proof to its own span; 8/9 spans correct, the lone miss a
+  start-of-stream over-reach the full machinery covers).
 
-**2. Universal attributor.** One pass (not per-type) fills the genre-universal fields only: **label,
-number, title, content**. Every labeled block has these regardless of subject.
+**2. Universal attributor.** One pass (not per-type) reads each entity's content and fills its
+attributes: **label, number, title, content, and `type`** — what kind of block it is (definition /
+theorem / law / example / mechanism / …), as an **open, induced property** (not a closed enum, and
+not a Neo4j label — open types would explode the label set; `kind = label, type = property`). The
+attributor already reads the content to fill label/number/title, so typing is one more field — **not
+a separate classify stage and not the finder's job**.
 
 **3. Procedure finder.** A procedure is **extracted from within an entity** — the entity's shown steps
 reify into `:Procedure`/`:Event` via `:HAS_PROCEDURE` (the bi-modal spine holds: entity = declarative,
@@ -105,12 +109,12 @@ absent?* — rather than deriving it from the type. Routing:
 This is the generalized `solution_start`/proof split the old attributor did per-type — one pass over
 any entity, proven machinery.
 
-**No classification at all, for now.** The task-vs-statement distinction only ever drove procedure
-routing (task → create, statement → defer), and the procedure finder decides that routing **directly**
-(posed-problem-to-solve vs asserted-claim, inside its create/defer branch) — so the judgment lives
-*inside* it. And a `type` tag is not emitted either: nothing needs it (the procedure finder self-
-decides; the concept layer works from content). A type can be added later if retrieval wants one — the
-probe shows the finder can produce it reliably — but the entity layer ships with **zero** classify.
+**No separate classify stage.** The two things a "classifier" might do are handled without one: (a)
+the **`type`** (what kind of block) is just one of the attributes the universal attributor extracts —
+it reads the content anyway; (b) the **task-vs-statement** routing lives *inside* the procedure finder
+(posed-problem-to-solve vs asserted-claim, in its create/defer branch). So the finder stays pure
+detection and there is no standalone classify step — but the open `type` metadata is still produced,
+by the attributor.
 
 **The same "kind general, type a property" pattern at every level:**
 

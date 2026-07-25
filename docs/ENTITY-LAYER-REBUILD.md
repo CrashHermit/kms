@@ -14,9 +14,10 @@ Replace the three per-type finders + attributors + referencers with **three gene
 1. **Block finder** — the current finder's cursor-walk (`entity/finders/problem.py` is the base — it
    already has the generalized "posed task in any textbook" prompt) with only the "what is a block"
    clause widened to "any labeled pedagogical block", emitting a **span only** (no type — the per-type
-   finders emit only spans too; the type was hardcoded by which finder ran, never classified). No
-   classify step: the procedure finder self-decides routing; a type tag can be added later if needed.
-2. **Universal attributor** — one pass filling `label / number / title / content` (genre-universal).
+   finders emit only spans too; the type was hardcoded by which finder ran, never classified).
+2. **Universal attributor** — one pass reading each entity's content, filling `label / number / title
+   / content` **and `type`** (what kind — definition/theorem/law/…, an **open induced property**, not
+   the finder's job and not a separate classify stage).
 3. **Procedure finder** — one pass over all entities: *is there something to work out, shown or
    absent?* → extract shown steps / create for a posed problem / defer a proofless statement / skip.
    (No separate task/statement classify — the procedure finder's routing subsumes it.)
@@ -54,11 +55,12 @@ the block finder + universal attributor + procedure finder.
 
 ## Cascade to handle (`src/kms/core/models.py`)
 
-- **`EntityType` / entity `type`**: entities carry **no `type` for now** (the block finder emits spans
-  only). Note the graph side currently *requires* a type — `graph/entities.py` `entity_label` does
-  `entity.type.value.capitalize()` → `:Entity:<Type>`. So give entities a single generic kind (a bare
-  `:Entity`, no per-type sub-label) or make the per-type label optional. A finder-tagged `type`
-  property can be reintroduced later if retrieval wants it.
+- **`EntityType` / entity `type`**: the closed enum (DEFINITION/THEOREM/PROBLEM) gives way to an
+  **open `type` property filled by the attributor** (an induced string: definition/theorem/law/…).
+  Because it is open, store it as a **property on a bare `:Entity`** — do **not** mint a per-type
+  Neo4j label (open labels explode; `kind = label, type = property`). `graph/entities.py` currently
+  builds `:Entity:<Type>` from the closed enum via `entity_label` — change it to drop the per-type
+  label and rely on the `type` property (already written to the vertex).
 - **`Entity`**: `field` → moves to the concept layer (drop once conceptualization lands, not before —
   `concepts.py` still reads it). The two narrow fields **`solutions` + `proofs` unify into one
   `procedures` list** (each `{type, steps}`) that the procedure finder fills and `procedures.py`
