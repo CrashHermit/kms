@@ -45,8 +45,15 @@ AutoMathKG's field taxonomy. `graph/concepts.py` keeps the hub identity scheme (
 block-to-block relations are also gone, **a book's blocks currently connect to nothing outside
 their own `:Source`** — closing that is `CONCEPT-LAYER.md`, and it is the highest-value next step.
 
-**Not yet re-validated.** The rebuild is green on 134 unit tests and compiles, but has **not** been
-run end-to-end against the fixture books since the entity layer changed. See "Next steps".
+**Re-validated live** (2026-07-25) — see `robustness_test/ENTITY-REBUILD-VALIDATION.md`. Five
+fixture books ran end to end. The structural contracts hold exactly (0 dangling refs, 0 span
+overlaps, 0 duplicate-member entities, 8/8 procedures an exact verbatim partition), theorem+proof
+came out as two attached spans 4/4 on Stein, and the open `type` induces non-math genres (`law`,
+`mechanism`) on a direct probe. Two behavioural gaps are open: **unmarked derivations produce no
+procedure spans** (Lebl: 0 procedures despite three worked examples — deterministic across 3 runs,
+so that book's procedural spine is empty), and **`type` keys off a block's embedded content**
+(Hammack: 14/16 exercises typed theorem/example/quote). The graph *write* path is still unverified —
+the Aura credential is stale (see "Known issues").
 
 ---
 
@@ -151,12 +158,13 @@ PYTHONPATH=src uv run --extra mistral python -m kms.cli book.pdf out/
 
 ## Next steps (suggested order)
 
-1. **Re-run the fixture books end to end.** The rebuild is unit-green but has not touched a real
-   PDF since the entity layer changed. Read the output against `robustness_test/REPORT.md`, whose
-   documented behaviours are the checklist. Confirm specifically: theorem + proof produce **two
-   spans**, correctly attached; **solutions now carry steps** (the headline change); exercises stay
-   atomic and lead-ins are never absorbed; `instruction` still stamps on grouped exercises and not
-   on self-contained books; provenance integrity holds. Expect definition counts to drop.
+1. **Teach the group finder to cut unmarked derivations.** *(Was: re-run the fixture books — done
+   2026-07-25, see `robustness_test/ENTITY-REBUILD-VALIDATION.md`.)* The finder only detects a
+   procedure where the book marks one (`Proof.`, `Solution.`). Lebl marks nothing, so it yields 0
+   procedure spans and its worked examples decompose into no steps at all — the same empty
+   procedural spine the rebuild set out to remove, reached a different way. The cut is available:
+   the derivation already sits in its own nodes. This is the drift risk item 3 predicts, and a
+   worked example with no procedure is a countable regression metric.
 2. **Build the concept layer** (`CONCEPT-LAYER.md`). It is the only connective tissue between
    blocks now, so until it lands the graph has no cross-book structure at all. Conceptualization is
    probe-validated and needs no corpus-global pass.
@@ -233,9 +241,22 @@ the whole run.
 - **Validation corpus is still small** — Hefferon §III.1 plus the twelve fixture books. Widen to
   more books/sections and inspect `document.md` alongside the persisted `:Node` + `:Entity` +
   `:Procedure`/`:Act` graph.
-- **The rebuilt entity layer has had no live run.** Unit-green and compiling is not validation; the
-  group finder's two-role Signature and the universal decomposition prompt are both unexercised
-  against real pages. This is next step 1.
+- **Unmarked derivations are invisible to the group finder** — next step 1. Deterministic on Lebl
+  (0 procedure spans, 3/3 runs).
+- **`type` keys off a block's embedded content, not its nature.** Hammack: 14/16 exercises typed
+  `theorem`/`example`/`quote`, because `statement_extractor` sees only the block's own member nodes
+  and runs *before* `instruction_distributor`, which holds the governing lead-in. The run has the
+  disambiguating evidence and types the blocks anyway. This is the baseline's old `field` gap #3
+  moved onto `type`, where it matters much more.
+- **The Neo4j credential is stale**, so the graph *write* path is unverified. Bolt is blocked as
+  documented; the HTTP transport reaches Aura and returns `Unauthorized: Invalid credential`. Note
+  `NEO4J_*` set-but-invalid is worse than unset — the persisters gate only on `NEO4J_URI` being
+  present, so a run would crash rather than skip. The driver-free mapping layer was validated
+  offline against real output instead (uuid disjointness, 0 dangling edge endpoints, `:Act` chain
+  shape).
+- **Trace capture is gone.** `core/tracing.py` and `KMS_TRACE_DIR` no longer exist after the
+  rebuild, but `CLAUDE.md` and `robustness_test/REPORT.md` still describe them. No training data was
+  captured for the live validation run; restore this before tuning any Signature.
 
 ---
 
