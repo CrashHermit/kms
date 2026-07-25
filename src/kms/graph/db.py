@@ -141,6 +141,7 @@ class HttpQueryResult:
 
     def __aiter__(self):
         async def gen():
+            """Replay the buffered records as an async stream."""
             for record in self._records:
                 yield record
 

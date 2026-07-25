@@ -52,30 +52,25 @@ src/kms/
     extractor.py           # purely structural; no math-semantic typing
     seam_merger.py         # flatten_segments lives here — this is the segments→nodes boundary
 
-  entity/                  # PHASE 2: nodes → sparse entity overlays  (backbone: nodes)
+  entity/                  # PHASE 2: nodes → the sparse block overlay  (backbone: nodes)
     __init__.py
-    splitter.py            # was exercise_splitter.py; runs first, makes exercises atomic
-    finders/               # the cursor-walk shape, one self-contained copy per type
-      __init__.py
-      problem.py
-      definition.py
-      theorem.py
-    attributors/           # the enrichment shape, one self-contained copy per type
-      __init__.py
-      problem.py
-      definition.py
-      theorem.py
-    instruction_distributor.py   # Problem-only; the lone per-type exception, kept at entity level
+    splitter.py            # runs first, makes exercises atomic
+    instruction_finder.py  # tags exercise lead-in nodes role="instruction"
+    group_finder.py        # ONE cursor-walk: emits `entity` and `procedure` spans
+    statement_extractor.py # universal attribute pass: open `type` + label/number/title/contents
+    procedure_extractor.py # decomposes each procedure span into verbatim Acts, attaches it
+    instruction_distributor.py   # copies a lead-in's directive onto the blocks it governs
 
   graph/                   # PHASE 3: Neo4j knowledge graph    (backbone: graph)
     __init__.py
     db.py                  # async Neo4j driver — the ONLY module that imports neo4j
     nodes.py               # ASTNode -> :Node mapping (deterministic uuid, multi-label) + :Source root
+    entities.py            # Entity -> bare :Entity (type is an open property, never a label)
+    procedures.py          # Procedure -> :Procedure + its :Act chain (:FIRST/:THEN)
+    concepts.py            # :Concept hub identity — DARK (no writes; see docs/CONCEPT-LAYER.md)
     schema.py              # idempotent constraint/index bootstrap
-    writer.py              # persist_nodes: :Source + :Node stream + :HEAD/:NEXT edges
-    persister.py           # NodePersisterNode — pipeline stage (after splitter, before finders)
-                           # structural provenance layer built; semantic tiers (canonicals/
-                           # entities/concepts, refs/tactics, fusion, completion) NOT started
+    writer.py              # persist_nodes / persist_entities / persist_procedures
+    persister.py           # NodePersisterNode (after splitter) + EntityPersisterNode (terminal)
 
   output/
     __init__.py
@@ -130,25 +125,26 @@ imports only stdlib + pydantic; `state.py` imports `models` + langgraph. The one
 helper, `_load_dspy_image` (loads a page image at the corrector's LLM boundary), lives in
 `ingestion/corrector.py` — its only caller — rather than contaminating `models.py`.
 
-### 4. Entity layer is grouped by **stage**, not by type
+### 4. Entity layer is one chain of stages, not one chain per type
 
-`finders/{problem,definition,theorem}.py` rather than `problem/{finder,attributor}.py`. The
-reusable unit here is the *shape* — the cursor-walk finder, the attributor pattern — and what
-varies between types is prompt plus a little schema, not architecture. Grouping by stage keeps
-the "one shape, three self-contained copies" honest and positions us to later collapse the
-copies into a single parameterized module + per-type specs as a **local** change, without files
-moving across the tree.
+The layout used to be `finders/{problem,definition,theorem}.py` + a matching attributor and
+referencer each — nine modules, three near-identical copies of two shapes. That triplication
+existed only because the entity *type* was decided by **which module ran**. It no longer is:
+the group finder emits untyped spans and the statement extractor induces an open `type`, so
+there is nothing left to copy.
 
-**When this flips to by-type:** if the per-type logic genuinely diverges — e.g. theorems grow
-real proof-decomposition machinery and problems grow solution-handling until they no longer
-share a shape. Today they share the shape, so by-stage wins. Because stages don't cross-import
-(rule 1), switching later is a folder move, not a rewrite — a reversible bet, not a one-way
-door.
+What remains is a single sequential chain — **detect → attribute → decompose** — with the
+per-stage grouping the old layout was already reaching for. Each stage is one module at
+`entity/` level:
 
-Do **not** unify the three copies into one parameterized module yet. Keeping them self-contained
-while the prompts are still being validated is deliberate: three copies you tune independently
-beat one abstraction you fight. Extract the shared shape only after splitter/distributor
-validation settles and the prompts stop moving.
+- `group_finder.py` — the cursor-walk, kept verbatim from `finders/problem.py`. It is the
+  reliable half and was not redesigned; only *what* it detects changed.
+- `statement_extractor.py` — one universal pass where three attributors stood.
+- `procedure_extractor.py` — decomposition, now universal rather than Thm/Def-only.
+
+The genre split that *does* survive is **structural, not type-based**: `entity` spans versus
+`procedure` spans. That is a closed binary distinction the finder detects, not an open taxonomy
+anyone dispatches on, so it never grows a module per value.
 
 ### 5. `graph/` reads entity outputs, never entity code
 

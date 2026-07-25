@@ -14,9 +14,7 @@ _STATE = {
         )
     ],
     'source': 'book.pdf',
-    'definition_entities': [
-        models.Entity(type=models.EntityType.DEFINITION, members=[0])
-    ],
+    'entities': [models.Entity(type='definition', members=[0])],
 }
 
 

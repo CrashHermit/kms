@@ -48,25 +48,25 @@ def _nodes():
 def _problems():
     return [
         models.Entity(
-            type=models.EntityType.PROBLEM,
+            type='exercise',
             members=[1],
             number='1.23',
             contents=['A'],
         ),
         models.Entity(
-            type=models.EntityType.PROBLEM,
+            type='exercise',
             members=[2],
             number='1.24',
             contents=['B'],
         ),
         models.Entity(
-            type=models.EntityType.PROBLEM,
+            type='exercise',
             members=[3],
             number='1.25',
             contents=['C'],
         ),
         models.Entity(
-            type=models.EntityType.PROBLEM,
+            type='exercise',
             members=[4],
             number='1.26',
             contents=['D'],
@@ -106,13 +106,13 @@ def test_numberless_lead_in_is_governed_by_meaning_not_numbers():
     ]
     problems = [
         models.Entity(
-            type=models.EntityType.PROBLEM,
+            type='exercise',
             members=[1],
             number=None,
             contents=['prove X'],
         ),
         models.Entity(
-            type=models.EntityType.PROBLEM,
+            type='exercise',
             members=[2],
             number=None,
             contents=['prove Y'],
@@ -159,7 +159,7 @@ def test_window_grows_when_the_run_reaches_the_edge():
         )
         problems.append(
             models.Entity(
-                type=models.EntityType.PROBLEM,
+                type='exercise',
                 members=[k + 1],
                 number=str(k + 1),
                 contents=[big],
@@ -202,13 +202,13 @@ def test_a_new_lead_in_bounds_the_previous_one():
     ]
     problems = [
         models.Entity(
-            type=models.EntityType.PROBLEM,
+            type='exercise',
             members=[1],
             number='1',
             contents=['first'],
         ),
         models.Entity(
-            type=models.EntityType.PROBLEM,
+            type='exercise',
             members=[3],
             number='2',
             contents=['second'],
@@ -228,13 +228,13 @@ def test_node_writes_channel_and_is_a_noop_without_lead_ins():
     ]
     problems = [
         models.Entity(
-            type=models.EntityType.PROBLEM,
+            type='exercise',
             members=[0],
             number='1.23',
             contents=['A'],
         )
     ]
     node = InstructionDistributorNode(module=_ScriptedGovernor([]))
-    out = asyncio.run(node.run({'nodes': nodes, 'problem_entities': problems}))
-    assert set(out) == {'problem_entities'}
-    assert out['problem_entities'][0].instruction is None
+    out = asyncio.run(node.run({'nodes': nodes, 'entities': problems}))
+    assert set(out) == {'entities'}
+    assert out['entities'][0].instruction is None

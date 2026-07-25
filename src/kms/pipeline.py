@@ -2,18 +2,17 @@
 LangGraph wiring for the document-processing pipeline.
 
 Builds the ordered graph that turns a PDF (via the Mistral OCR front-end) into a
-finished AST, then assembles it to a single markdown document plus the entity overlay.
+finished AST, then assembles it to a single markdown document plus the block overlay.
 The ingestion stages (corrector, extractor, seam merger) are map-reduce: a conditional
 edge fans out one Send per unit of work to the stage's worker, the workers append to a
 per-stage reducer channel, and the collect step drains that channel back into the
-ordered backbone before the next stage runs. The three per-type finders are plain
-sequential nodes (their cursor-walk cannot be sharded) that fan out in parallel off the
-seam-merge collect.
+ordered backbone before the next stage runs. The entity stages are plain sequential
+nodes (a growing look-ahead cursor cannot be sharded).
 
 Stage order:
     corrector -> extractor -> seam_merger (even, odd) -> splitter -> instruction_finder
-              -> node_persister -> {problem, definition, theorem}_finder -> {…}_attributor
-              -> {…}_referencer -> (problem chain only) instruction_distributor -> entity_persister
+              -> node_persister -> group_finder -> statement_extractor
+              -> procedure_extractor -> instruction_distributor -> entity_persister
 
 Two phases split at the seam merger. Ingestion is per-page: `segments` (already carrying
 Mistral's markdown + figures) is the backbone, and the corrector proofreads each page's
@@ -21,27 +20,29 @@ transcription against its image before the (purely structural) extractor parses 
 nodes. The seam merger heals nodes split across page breaks and then flattens the healed
 backbone into the global ordered `nodes` list (stable ids + segment_index). The splitter then
 normalises that stream — it rewrites any node that packs several exercises into one node per
-exercise (embedded lead-ins broken out onto their own nodes too) — so the finders see atomic
-exercises and no longer collapse them into duplicate-membered entities. The instruction finder
-then tags every lead-in node `role="instruction"` over that atomic stream, one uniform pass.
-The node persister then writes the finalized stream to Neo4j as the graph's provenance layer (a
-`:Source` root with its `:Node` chain); it runs after the splitter so the persisted ids match the
-entity `members`, and is a no-op when Neo4j isn't configured. Three per-type chains then run
-in parallel: each finder walks `nodes` to build its entity overlay, its attributor enriches those
-entities with the self-contained AutoMathKG attributes (label, number, title, field, contents,
-bodylist; plus proofs for theorems and solutions for problems), and its referencer then extracts the
-one cross-entity attribute — `refs`, the definitions/theorems the entity cites, each with a tactic
-label. On the problem chain one further stage, the instruction distributor, then stamps
-`Problem.instruction` from the instruction finder's tagged lead-in nodes (the shared directive of a
-grouped-exercise run). The three chains fan into the entity persister, the terminal stage: it flattens
-the overlays into one document-ordered, globally-id'd list and upserts them as the graph's `:Entity`
-layer (rooted under the `:Source`, linked back to their member `:Node` chunks), then the procedural
-layer (`:Procedure` / `:Event` reified from proofs and solutions), the concept layer (`:Concept` +
-`:INSTANCE_OF`, from each entity's field), the reference layer — `:REFERENCES` edges onto
-`:Entity:Canonical` targets, so citations from any entity converge on one target — and the step-level
-`:USES` edges (a proof step to the canonical it names). A no-op when Neo4j isn't configured.
-After the graph returns, `run()` only assembles the markdown document: assembly walks `nodes`,
-consulting `segments` only for picture inventories.
+exercise (embedded lead-ins broken out onto their own nodes too) — so the finder sees atomic
+exercises. The instruction finder then tags every lead-in node `role="instruction"` over that
+atomic stream, one uniform pass. The node persister then writes the finalized stream to Neo4j as
+the graph's provenance layer (a `:Source` root with its `:Node` chain); it runs after the splitter
+so the persisted ids match the overlay's `members`, and is a no-op when Neo4j isn't configured.
+
+One entity chain then runs. The group finder walks `nodes` once and emits two kinds of span:
+`entity` (a labeled pedagogical block — definition, theorem, law, example, exercise) and
+`procedure` (the worked derivation that resolves one — proof, solution, derivation). Statement and
+procedure are SEPARATE spans, so the old semantic proof/solution boundary call is now a structural
+detection. The statement extractor then fills each block's self-contained attributes in one
+universal pass — the open induced `type` plus label, number, title and contents — and the procedure
+extractor decomposes every procedure span into verbatim ordered steps and attaches it to the block
+it derives. Decomposition is universal: a solution's steps are as real as a proof's. The
+instruction distributor then stamps `instruction` from the lead-in tags (the shared directive of a
+grouped-exercise run), which is what makes an atomic exercise mean anything on its own.
+
+The entity persister is the terminal stage: it orders the overlay into one document-ordered,
+globally-id'd list and upserts it as the graph's `:Entity` layer (rooted under the `:Source`,
+linked back to its member `:Node` chunks), then the procedural layer (`:Procedure` per derivation,
+`:Act` per step, threaded `:FIRST`/`:THEN`). A no-op when Neo4j isn't configured. The concept layer
+is currently dark. After the graph returns, `run()` only assembles the markdown document: assembly
+walks `nodes`, consulting `segments` only for picture inventories.
 """
 
 from pathlib import Path
@@ -50,18 +51,12 @@ from typing import TYPE_CHECKING
 from langgraph.graph import END, START, StateGraph
 
 from kms.core import state
-from kms.entity.attributors.definition import DefinitionAttributorNode
-from kms.entity.attributors.problem import ProblemAttributorNode
-from kms.entity.attributors.theorem import TheoremAttributorNode
-from kms.entity.finders.definition import DefinitionFinderNode
-from kms.entity.finders.problem import ProblemFinderNode
-from kms.entity.finders.theorem import TheoremFinderNode
+from kms.entity.group_finder import GroupFinderNode
 from kms.entity.instruction_distributor import InstructionDistributorNode
 from kms.entity.instruction_finder import InstructionFinderNode
-from kms.entity.referencers.definition import DefinitionReferencerNode
-from kms.entity.referencers.problem import ProblemReferencerNode
-from kms.entity.referencers.theorem import TheoremReferencerNode
+from kms.entity.procedure_extractor import ProcedureExtractorNode
 from kms.entity.splitter import SplitterNode
+from kms.entity.statement_extractor import StatementExtractorNode
 from kms.graph.db import close_driver
 from kms.graph.persister import EntityPersisterNode, NodePersisterNode
 from kms.ingestion.corrector import CorrectorNode
@@ -79,25 +74,20 @@ def build_graph() -> 'CompiledStateGraph':
     A single straight path: the correction pass proofreads each Mistral-transcribed
     page against its image, the extractor parses the corrected markdown into structural
     nodes, the seam merger heals page-split nodes and flattens to the global stream, and
-    the three per-type finders (problem / definition / theorem) each build their overlay.
+    the group finder then detects the pedagogical blocks and their worked procedures for
+    the two extractors to fill in.
     """
     corrector = CorrectorNode()
     extractor = ExtractorNode()
     seam = SeamMergerNode()
-    problem_finder = ProblemFinderNode()
-    definition_finder = DefinitionFinderNode()
-    theorem_finder = TheoremFinderNode()
-    problem_attributor = ProblemAttributorNode()
-    definition_attributor = DefinitionAttributorNode()
-    theorem_attributor = TheoremAttributorNode()
-    problem_referencer = ProblemReferencerNode()
-    definition_referencer = DefinitionReferencerNode()
-    theorem_referencer = TheoremReferencerNode()
     splitter = SplitterNode()
     instruction_finder = InstructionFinderNode()
     node_persister = NodePersisterNode()
-    entity_persister = EntityPersisterNode()
+    group_finder = GroupFinderNode()
+    statement_extractor = StatementExtractorNode()
+    procedure_extractor = ProcedureExtractorNode()
     instruction_distributor = InstructionDistributorNode()
+    entity_persister = EntityPersisterNode()
 
     graph = StateGraph(state.State)
 
@@ -110,20 +100,14 @@ def build_graph() -> 'CompiledStateGraph':
     graph.add_node('seam_even_collect', seam.even_collect)
     graph.add_node('seam_odd_worker', seam.odd_worker)
     graph.add_node('seam_odd_collect', seam.odd_collect)
-    graph.add_node('problem_finder', problem_finder.run)
-    graph.add_node('definition_finder', definition_finder.run)
-    graph.add_node('theorem_finder', theorem_finder.run)
-    graph.add_node('problem_attributor', problem_attributor.run)
-    graph.add_node('definition_attributor', definition_attributor.run)
-    graph.add_node('theorem_attributor', theorem_attributor.run)
-    graph.add_node('problem_referencer', problem_referencer.run)
-    graph.add_node('definition_referencer', definition_referencer.run)
-    graph.add_node('theorem_referencer', theorem_referencer.run)
     graph.add_node('splitter', splitter.run)
     graph.add_node('instruction_finder', instruction_finder.run)
     graph.add_node('node_persister', node_persister.run)
-    graph.add_node('entity_persister', entity_persister.run)
+    graph.add_node('group_finder', group_finder.run)
+    graph.add_node('statement_extractor', statement_extractor.run)
+    graph.add_node('procedure_extractor', procedure_extractor.run)
     graph.add_node('instruction_distributor', instruction_distributor.run)
+    graph.add_node('entity_persister', entity_persister.run)
 
     # A stage's dispatch is a conditional edge off the previous collect: it either fans
     # out Sends to the worker or short-circuits straight to its own collect.
@@ -155,50 +139,31 @@ def build_graph() -> 'CompiledStateGraph':
     graph.add_edge('seam_odd_worker', 'seam_odd_collect')
 
     # The splitter runs once after the seam collect, normalising the node stream so each
-    # exercise (and each embedded lead-in) is its own node before any finder walks it.
+    # exercise (and each embedded lead-in) is its own node before the finder walks it.
     graph.add_edge('seam_odd_collect', 'splitter')
 
     # The instruction finder then tags every lead-in node `role="instruction"` over the
     # now-atomic stream — one uniform pass, standalone and embedded lead-ins alike.
     graph.add_edge('splitter', 'instruction_finder')
 
-    # Persist the finalized node stream as the graph's provenance layer BEFORE any finder runs.
+    # Persist the finalized node stream as the graph's provenance layer BEFORE the finder runs.
     # It sits after the splitter (which re-ids the stream) and the instruction finder so the
-    # persisted node ids and role tags match the entity overlay. A no-op when Neo4j isn't
-    # configured.
+    # persisted node ids match the overlay's members. A no-op when Neo4j isn't configured.
     graph.add_edge('instruction_finder', 'node_persister')
 
-    # Three per-type chains run in parallel off the persister: each finder does a sequential
-    # cursor-walk (not shardable) to build its overlay, then its attributor enriches those
-    # entities with the self-contained AutoMathKG attributes. Each chain writes only its own
-    # entity channel; overlap between overlays is fine (members are node-id pointers).
-    # `run()` concatenates the three channels after the graph returns.
-    chains = [
-        ('problem_finder', 'problem_attributor'),
-        ('definition_finder', 'definition_attributor'),
-        ('theorem_finder', 'theorem_attributor'),
-    ]
-    for finder, attributor in chains:
-        graph.add_edge('node_persister', finder)
-        graph.add_edge(finder, attributor)
-
-    # Each attributor is followed by its per-type referencer, which extracts the entity's
-    # cross-entity `refs` (needs `contents`, so it runs after the attributor). The definition and
-    # theorem chains then fan into the entity persister; the problem chain has one more step first,
-    # the instruction distributor, which stamps `Problem.instruction` from the instruction finder's
-    # tagged lead-in nodes and must run after the attributor because it matches on each problem's
-    # `number` (which the attributor fills).
-    graph.add_edge('definition_attributor', 'definition_referencer')
-    graph.add_edge('definition_referencer', 'entity_persister')
-    graph.add_edge('theorem_attributor', 'theorem_referencer')
-    graph.add_edge('theorem_referencer', 'entity_persister')
-    graph.add_edge('problem_attributor', 'problem_referencer')
-    graph.add_edge('problem_referencer', 'instruction_distributor')
+    # One entity chain, sequential. The finder's cursor-walk is not shardable, and the two
+    # extractors both write the `entities` channel, so sequencing avoids a reducer clash for no
+    # meaningful latency cost. The instruction distributor runs last because it reads each block's
+    # contents/number (which the statement extractor fills) to judge governance.
+    graph.add_edge('node_persister', 'group_finder')
+    graph.add_edge('group_finder', 'statement_extractor')
+    graph.add_edge('statement_extractor', 'procedure_extractor')
+    graph.add_edge('procedure_extractor', 'instruction_distributor')
     graph.add_edge('instruction_distributor', 'entity_persister')
 
-    # The entity persister is the fan-in: it runs once all three chains complete, flattens the
-    # overlays into one document-ordered list, and upserts them as the graph's `:Entity` layer
-    # (a no-op when Neo4j isn't configured). It is the pipeline's terminal stage.
+    # The entity persister orders the overlay into one document-ordered list and upserts it as the
+    # graph's `:Entity` layer plus the procedural layer on top (a no-op when Neo4j isn't
+    # configured). It is the pipeline's terminal stage.
     graph.add_edge('entity_persister', END)
 
     return graph.compile()
@@ -217,8 +182,8 @@ async def run(
 
     The Mistral OCR API turns each page into reading-ordered markdown plus extracted
     figures (no GPU, no docling); the graph then corrects, parses, heals, builds the typed
-    entity overlay, and (when Neo4j is configured) persists the ``:Node`` provenance layer and
-    the ``:Entity`` overlay on top of it. ``pages`` (0-based) optionally limits which pages are
+    block overlay, and (when Neo4j is configured) persists the ``:Node`` provenance layer and
+    the ``:Entity`` overlay plus its procedural layer on top of it. ``pages`` (0-based) optionally limits which pages are
     sent. ``source`` is the book identity used as the graph's Neo4j key (defaults to the PDF's
     filename); ``title``/``author`` are optional book attributes stored on the ``:Source`` node.
     Graph persistence is skipped entirely when Neo4j isn't configured — a DB-less run still

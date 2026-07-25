@@ -70,6 +70,40 @@ from kms.core import state
 Imports from `typing` for annotation-only use are exempt — import those directly, not
 the module. (The `UP` pyupgrade rule converts `typing.List` → `list` anyway.)
 
+### 1.5 Exception: name collisions inside `graph/`
+
+`graph/`'s modules are named after the domain nouns they map — `nodes`, `entities`,
+`procedures`, `concepts` — and those are exactly the natural names for the *parameters* that
+carry them (`def act_rows(entities: list[models.Entity], ...)`). A module import therefore
+shadows, and the shadowing is not always caught at import time:
+
+```python
+# NO — the parameter shadows the module; ruff flags F823 at best, UnboundLocalError at worst
+from kms.graph import procedures
+def persist(entities, source):
+    procedures = procedures.procedure_rows(entities, source)   # boom
+
+# YES — symbol import where the module name collides with the domain noun
+from kms.graph.procedures import procedure_rows
+```
+
+So inside `graph/`, prefer a **symbol import** when the module name would collide with a
+parameter or local, and keep a file internally consistent (don't mix both styles for sibling
+modules in one file). Use the module import where there is no collision — `schema.py` and
+`persister.py` both do, since neither has an `entities`/`nodes` parameter.
+
+This is narrow: it applies to `graph/` because of the deliberate module-named-after-its-subject
+layout. Everywhere else §1.1 stands — and `from kms.core import models` never collides, because
+nothing is called `models`.
+
+### 1.6 Standard-library and third-party conventions
+
+`from pathlib import Path`, `from uuid import uuid5`, `from pydantic import BaseModel`, and
+`from dataclasses import dataclass, field` are used directly throughout. These are universal
+idioms whose origin nobody has to trace, and `BaseModel` in particular is a base class, so the
+qualified form reads badly (`class Span(pydantic.BaseModel)`). §1.1 is about **our own**
+modules, where module-qualification genuinely aids traceability.
+
 ---
 
 ## 2. Line length: 80 characters

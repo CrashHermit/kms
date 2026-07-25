@@ -1,5 +1,5 @@
-"""Flattening the three per-type overlays into one document-ordered, globally-id'd entity list —
-pure logic, no database. This is what the entity persister feeds to the graph writer."""
+"""Ordering the block overlay into one document-ordered, globally-id'd entity list — pure logic,
+no database. This is what the entity persister feeds to the graph writer."""
 
 from kms.core import models
 
@@ -16,35 +16,45 @@ def _nodes():
     ]
 
 
-def test_flatten_concatenates_orders_by_document_position_and_assigns_ids():
+def test_flatten_orders_by_document_position_and_assigns_ids():
     nodes = _nodes()
     flat = models.flatten_entities(
-        problem=[models.Entity(type=models.EntityType.PROBLEM, members=[3, 4])],
-        definition=[
-            models.Entity(type=models.EntityType.DEFINITION, members=[0])
+        [
+            models.Entity(type='exercise', members=[3, 4]),
+            models.Entity(type='definition', members=[0]),
+            models.Entity(type='theorem', members=[1, 2]),
         ],
-        theorem=[models.Entity(type=models.EntityType.THEOREM, members=[1, 2])],
-        nodes=nodes,
+        nodes,
     )
-    # Ordered by first member's document position (def@0, thm@1, prob@3), ids 0..2.
-    assert [(e.id, e.type.value, e.members) for e in flat] == [
+    # Ordered by first member's document position (def@0, thm@1, exercise@3), ids 0..2.
+    assert [(e.id, e.type, e.members) for e in flat] == [
         (0, 'definition', [0]),
         (1, 'theorem', [1, 2]),
-        (2, 'problem', [3, 4]),
+        (2, 'exercise', [3, 4]),
     ]
 
 
 def test_flatten_sorts_memberless_entities_to_the_end():
     nodes = _nodes()
     flat = models.flatten_entities(
-        problem=[models.Entity(type=models.EntityType.PROBLEM, members=[])],
-        definition=[
-            models.Entity(type=models.EntityType.DEFINITION, members=[2])
+        [
+            models.Entity(type='exercise', members=[]),
+            models.Entity(type='definition', members=[2]),
         ],
-        theorem=[],
-        nodes=nodes,
+        nodes,
     )
-    assert [(e.id, e.type.value) for e in flat] == [
+    assert [(e.id, e.type) for e in flat] == [
         (0, 'definition'),
-        (1, 'problem'),
+        (1, 'exercise'),
     ]
+
+
+def test_flatten_leaves_procedures_attached_to_their_block():
+    nodes = _nodes()
+    theorem = models.Entity(
+        type='theorem',
+        members=[1],
+        procedures=[models.Procedure(members=[2], steps=['Clear.'])],
+    )
+    flat = models.flatten_entities([theorem], nodes)
+    assert flat[0].procedures[0].steps == ['Clear.']
