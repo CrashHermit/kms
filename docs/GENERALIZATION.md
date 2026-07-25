@@ -83,29 +83,22 @@ way as a `definition`.
   verbatim. A second boundary probe confirmed those rules cleanly separate adjacent blocks that a
   naive one-shot prompt overlapped (theorem+proof resolved to its own span; 8/9 spans correct, the
   lone miss being start-of-stream over-reach the full machinery covers).
-- **Separate classify step — kind first, then type.** Its *primary* job is the **bi-modal kind
-  split**: is this block **declarative (→ `:Entity`)** or **procedural (→ `:Procedure`)**? That is the
-  "statement vs procedure" distinction, and it is fundamental — it decides which node kind the block
-  becomes and how it is persisted, so it must happen *before* attribution. Then the fine `type` within
-  the kind: Entity → definition/theorem/law/example/… (asserts/poses is a grouping); Procedure →
-  proof/solution/derivation/…. Type is a **property**, not a per-type finder (`kind` structural,
-  `type` open) — applied at the genre layer. This lives in the classifier, **not** the attributor
-  (routing precedes attribution; the attributor fills `label/number/title/content` once the kind is
-  known).
-- **The general shape: detect → classify → resolve.** Three general verbs:
-  1. **Detect** — find any labeled **block** (the finder), uniformly, including "Proof."/"Solution."
-     units (drop the probe's "absorb the proof into the parent span" rule).
-  2. **Classify** — *kind* (declarative → `:Entity` vs procedural → `:Procedure`), then within
-     declarative the *mode* (asserts = statement vs poses = task) and the fine *type*.
-  3. **Resolve** procedures — attach a detected procedure to its declarative neighbour (link,
-     `instruction_distributor` shape), and for a block that *needs* worked steps but has none,
-     **generate** one. `resolve = extract-if-shown OR generate-if-absent`; the generate half is
-     **completion** (AutoMathKG's Math-LLM completion), generalized to any block.
-- **"Task or statement" is not the branch point for procedures.** Both are **declarative blocks**;
-  the task/statement split is just the asserts/poses *mode* (a property). Procedure handling keys on
-  "does this block have/need worked steps?", not on task-vs-statement — a theorem has a proof, an
-  example has a solution, both are declarative blocks with a procedure; a definition has none; an
-  exercise has one to be generated.
+- **Everything the finder produces is an `:Entity`.** A procedure is **not** a separately-detected
+  block nor a classify "kind" — it is **extracted from within an entity**: the entity's shown worked
+  steps reify into `:Procedure`/`:Event` hanging off it via `:HAS_PROCEDURE`. The bi-modal spine still
+  holds (entity = declarative, extracted procedure = procedural), but the split is **produced by
+  extraction, not decided by a classifier**. This matches the old validated pipeline — a theorem span
+  included its proof, which the attributor split out and reified.
+- **Classify = statement vs task** (asserts vs poses), plus the fine `type` as a property. Both are
+  entities; the classifier does **not** route Entity-vs-Procedure. `kind` structural, `type` open.
+- **Resolve procedures — extract universally, create for tasks.** Any entity's **shown** steps are
+  **extracted** into its `:Procedure` (a theorem's proof, an example's solution). A **task** (a posed
+  problem) additionally routes to a **procedure creator** that **generates** the solution steps when
+  none are shown (an exercise with no worked solution) — AutoMathKG-style completion, **task-first**.
+  Statements' proofs are extracted when shown; *generating* missing proofs is deferred (harder,
+  riskier). So `extract` is universal, `create` is the task path.
+- **General shape:** detect (entities) → classify (statement/task + type) → resolve procedures
+  (extract shown steps; create for tasks).
 - **One universal attributor** (not per-type) runs after the finder and fills the genre-universal
   fields only: **label, number, title, content**. Every labeled block has these regardless of
   subject, so it is one pass over the unified block stream — no forking.
