@@ -86,13 +86,20 @@ way as a `definition`.
 - **Separate classify step.** The fine `type` (definition/theorem/law/…) is assigned *after*
   detection — a classification/induction pass, a **property** on the entity, not a per-type finder.
   `kind = label, type = property` applied at the genre layer.
-- **No attributor for now.** The per-type attributors are dropped. An entity is just its
-  `{type, mode, members-span}` — no `label`/`number`/`title`/`contents`, and **no solution/proof
-  split**, so the procedural `:Procedure`/`:Event` layer pauses with the attributor (it was fed by
-  it). Detection + typing only.
-- **Attribution forks by type when it returns.** Detection is unified; *extraction* (what you pull
-  from a block) legitimately differs by type — a task's solution vs a theorem's proof vs a
-  definition's body — so a later attribution step forks by type over the unified detection.
+- **One universal attributor** (not per-type) runs after the finder and fills the genre-universal
+  fields only: **label, number, title, content**. Every labeled block has these regardless of
+  subject, so it is one pass over the unified block stream — no forking.
+- **No procedural split yet.** The block's worked-out part (proof/solution/…) is deferred. When it
+  returns, it is **one general pass**, not per-type — see below.
+- **Generalize "solution"/"proof" → a `procedure` made of `steps`.** "Solution" (task) and "proof"
+  (theorem) are too narrow: the general notion is a **procedure** — the worked-out sequence attached
+  to a block — whose units are **steps**. This already exists in the graph as `:Procedure`
+  (open `type`: proof / solution / derivation / protocol / …) rooting an `:Event` step chain. So it
+  is the **same "kind general, type a property" pattern as the block, one level down**: `procedure`
+  is the kind, proof/solution/derivation are its types. Concretely, the entity's two narrow fields
+  (`solutions`, `proofs`) unify into one general `procedures` list (a block may have several), each
+  carrying a `type` + its `steps` — snapping straight onto the existing `:Procedure`/`:Event` layer.
+  When this pass returns it is one general "find this block's procedure(s) and steps", any block type.
 
 **This supersedes** the "rename `problem`→`task` + keep the task attributor" shape in
 `REMOVAL-def-thm-rename-task.md`: the finder becomes `block` (not `task`), and the attributors are
