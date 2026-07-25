@@ -53,79 +53,73 @@ the declarative extractor is where per-domain work concentrates.
 | Component | Layer | Fate |
 |---|---|---|
 | `splitter`, `instruction_finder`, `instruction_distributor` | genre | **Keep** — pedagogy, already domain-free |
-| **`problem` finder** (+ most of the problem attributor) | genre | **Keep** — "a posed task" is a pedagogical universal; already neutralized to any textbook. Gives a reliable cross-domain `problem` type *without* induction |
+| **The three per-type finders** (problem / definition / theorem) **+ their attributors + referencers** | genre + domain | **Collapse into one `block finder`** + universal attributor + procedure finder (see "Entity layer" below). The per-type walk was already triplicated; the block finder is that walk with a generalized "what is a block" clause |
 | `:Procedure` / `:Event` spine (proofs/solutions → step chain) | kind | **Keep — richer than AutoSchemaKG.** Their events are flat triples; ours is a real derivation spine. Adopt AutoSchemaKG's *openness*, do **not** downgrade to their flat event model |
 | `:Source` / `:Node` provenance | kind | **Keep** — unchanged |
-| **`definition` & `theorem` finders** | domain | **Generalize / replace** — math's declarative types. Physics = law/model, etc. Replace with open extraction or a per-domain profile |
-| Problem attributor `field` | domain | **Replace** — → conceptualization (concept layer) |
+| Attributor `field` | domain | **Replace** — → conceptualization (concept layer) |
 | Referencers' `tactic` / `REFERENCE_KINDS` | domain | **Replace** — → open relations (`:DEPENDS_ON` / `:USES`) |
-| `EntityType` / `FIELDS` / `ACTIONS_ALL` closed vocab | domain | **Open up** — induced or profile-supplied |
+| `EntityType` / `FIELDS` / `ACTIONS_ALL` closed vocab | domain | **Open up** — the entity `type` becomes an open property (finder-tagged); the closed field/tactic taxonomies give way to conceptualization + open relations |
 
-The rip-out target is therefore **narrow**: the def/theorem declarative extractors + the domain
-attribution (`field`, `tactic`) + the closed vocab. The problem chain, the pedagogy stages, the
-procedural spine, and the provenance layer are **not** on the chopping block.
+What is **not** touched: the pedagogy stages (splitter/instruction), the `:Procedure`/`:Event`
+procedural spine, and the `:Source`/`:Node` provenance layer.
 
 ---
 
-## Entity layer: one type-agnostic block finder (decided)
+## Entity layer: the block finder (decided)
 
-The per-type finders collapse into **one type-agnostic "block finder"** — literally the current
-finder's cursor-walk with only the "what is a block" clause of its Signature generalized (from "a
-posed math task" to "any labeled pedagogical block"), plus a rough `type` + `mode` (asserts/poses) on
-the output. Detection and typing unify: a physics `law` or an induced `key concept` is found the same
-way as a `definition`.
+The three per-type finders (problem / definition / theorem) — with their attributors and referencers —
+collapse into **three general stages**: **detect → attribute → procedure-find**. Everything the finder
+produces is an **`:Entity`**; a procedure is *extracted from within* an entity, never a
+separately-detected block. **There is no separate task/statement classify stage** — see below.
 
-- **One finder, not per-type.** Detecting a block and typing it are different jobs; only typing
-  differs across definition/theorem/example/exercise/law. **Validated by probe:** one prompt found +
-  typed every block kind across math/physics/biology (incl. a non-math `law` and an induced
-  `key concept`) and excluded prose/headers/remarks. Span/boundary is the finder's *existing*
-  machinery (growing-window structural banking; "start at own label, stop at next label") — keep it
-  verbatim. A second boundary probe confirmed those rules cleanly separate adjacent blocks that a
-  naive one-shot prompt overlapped (theorem+proof resolved to its own span; 8/9 spans correct, the
-  lone miss being start-of-stream over-reach the full machinery covers).
-- **Everything the finder produces is an `:Entity`.** A procedure is **not** a separately-detected
-  block nor a classify "kind" — it is **extracted from within an entity**: the entity's shown worked
-  steps reify into `:Procedure`/`:Event` hanging off it via `:HAS_PROCEDURE`. The bi-modal spine still
-  holds (entity = declarative, extracted procedure = procedural), but the split is **produced by
-  extraction, not decided by a classifier**. This matches the old validated pipeline — a theorem span
-  included its proof, which the attributor split out and reified.
-- **Classify = statement vs task** (asserts vs poses), plus the fine `type` as a property. Both are
-  entities; the classifier does **not** route Entity-vs-Procedure. `kind` structural, `type` open.
-- **A `procedure finder` decides, per entity, whether there is anything to work out.** It runs over
-  **all** extracted entities and makes one direct semantic call — *is there a procedure here (something
-  to prove / solve / derive / show), and is it shown or absent?* — rather than deriving it from the
-  type (more robust and domain-general: no per-domain table of which types have procedures, so a
-  physics "Derivation" or a bio "Mechanism" just works). Routing on (has-procedure? × shown/absent?):
-  - **shown** (theorem's proof, example's solution) → **extract**: split statement from steps, reify
-    into `:Procedure`/`:Event`.
-  - **absent + task** (an exercise with no worked solution) → **create**: the procedure creator
-    generates the steps (AutoMathKG-style completion, **task-first**).
-  - **absent + statement** (a theorem with no shown proof) → **defer** (generating proofs is deferred —
-    harder, riskier).
-  - **nothing to work out** (a definition, a bare stated fact) → **skip** — no procedure.
+**1. Block finder (detect + type tag).** Literally the current finder's cursor-walk with only the
+"what is a block" clause of its Signature generalized (from "a posed math task" to "any labeled
+pedagogical block"), emitting each block as a span plus a rough `type` (definition / theorem / example
+/ law / …) as **metadata**. Span/boundary is the finder's *existing* machinery (growing-window
+structural banking; "start at own label, stop at next label") — kept **verbatim**.
+- *Validated by probe:* one prompt found + typed every block kind across math/physics/biology (incl. a
+  non-math `law` and an induced `key concept`) and excluded prose/headers/remarks. A second boundary
+  probe confirmed the finder's boundary rules cleanly separate adjacent blocks a naive one-shot prompt
+  overlapped (theorem+proof to its own span; 8/9 spans correct, the lone miss a start-of-stream
+  over-reach the full machinery covers).
 
-  This is the **generalized `solution_start`/proof split** the old attributor did per-type, now one
-  pass over any entity — proven machinery, low-risk.
-- **General shape:** detect (entities) → classify (statement/task + type) → attribute
-  (label/number/title/content) → procedure-find (extract shown / create for tasks / skip).
-- **One universal attributor** (not per-type) runs after the finder and fills the genre-universal
-  fields only: **label, number, title, content**. Every labeled block has these regardless of
-  subject, so it is one pass over the unified block stream — no forking.
-- **No procedural split yet.** The block's worked-out part (proof/solution/…) is deferred. When it
-  returns, it is **one general pass**, not per-type — see below.
-- **Generalize "solution"/"proof" → a `procedure` made of `steps`.** "Solution" (task) and "proof"
-  (theorem) are too narrow: the general notion is a **procedure** — the worked-out sequence attached
-  to a block — whose units are **steps**. This already exists in the graph as `:Procedure`
-  (open `type`: proof / solution / derivation / protocol / …) rooting an `:Event` step chain. So it
-  is the **same "kind general, type a property" pattern as the block, one level down**: `procedure`
-  is the kind, proof/solution/derivation are its types. Concretely, the entity's two narrow fields
-  (`solutions`, `proofs`) unify into one general `procedures` list (a block may have several), each
-  carrying a `type` + its `steps` — snapping straight onto the existing `:Procedure`/`:Event` layer.
-  When this pass returns it is one general "find this block's procedure(s) and steps", any block type.
+**2. Universal attributor.** One pass (not per-type) fills the genre-universal fields only: **label,
+number, title, content**. Every labeled block has these regardless of subject.
 
-**This supersedes** the "rename `problem`→`task` + keep the task attributor" shape in
-`REMOVAL-def-thm-rename-task.md`: the finder becomes `block` (not `task`), and the attributors are
-removed rather than kept. Reconcile that spec before implementing.
+**3. Procedure finder.** A procedure is **extracted from within an entity** — the entity's shown steps
+reify into `:Procedure`/`:Event` via `:HAS_PROCEDURE` (the bi-modal spine holds: entity = declarative,
+extracted procedure = procedural; the split is *produced by extraction*, not decided by a classifier —
+matching the old validated pipeline). The procedure finder runs over **all** entities and makes one
+direct semantic call each — *is there something to work out (prove / solve / derive), shown or
+absent?* — rather than deriving it from the type. Routing:
+- **shown** (theorem's proof, example's solution) → **extract**: split statement from steps, reify.
+- **absent + posed problem to solve** (exercise, no worked solution) → **create**: the procedure
+  creator generates the steps (AutoMathKG-style completion, **task-first**).
+- **absent + asserted claim** (theorem, no shown proof) → **defer** (generating proofs is deferred).
+- **nothing to work out** (a definition, a bare fact) → **skip**.
+
+This is the generalized `solution_start`/proof split the old attributor did per-type — one pass over
+any entity, proven machinery.
+
+**No separate task/statement classify stage.** The task-vs-statement distinction only ever drove
+procedure routing (task → create, statement → defer). The procedure finder decides that routing
+**directly** (posed-problem-to-solve vs asserted-claim, inside its create/defer branch), so the
+judgment lives *inside* it — a standalone classify step would be redundant. The finder's rough `type`
+tag is kept as metadata (retrieval, concepts); nothing else needs a task/statement label.
+
+**The same "kind general, type a property" pattern at every level:**
+
+| Level | Kind (general) | Type (property) | Made of |
+|---|---|---|---|
+| block | `:Entity` | definition / theorem / example / law / … | — |
+| worked part | `:Procedure` | proof / solution / derivation / … | steps |
+| unit | `:Event` (step) | — | — |
+
+`solution` and `proof` are just `:Procedure` **types**, not separate fields — the entity's old
+`solutions` / `proofs` fields unify into one `procedures` list.
+
+**This replaces the per-type finders/attributors/referencers.** The file-level removal + build steps
+are in `ENTITY-LAYER-REBUILD.md`, with this section as the build design.
 
 ## Concept layer redesign (the validated core)
 
@@ -212,15 +206,16 @@ the **general path**; hierarchy quality rides on *method* (pairwise/grounded, no
 
 ## The engine / profile / genre architecture
 
-- **Genre layer** (universal, keep): pedagogical extractors — splitter, instruction stages,
-  **problem finder**. Give reliable pedagogical structure (exercises, worked examples, lead-ins)
-  with no induction.
-- **Domain profiles** (optional, per-domain): the existing math profile (def/thm finders, the
-  math relation set) is the **first profile**. Physics/biology may start fully induced and grow a
-  light profile only where measurement shows a gap.
-- **Engine** (default/general path): open triple extraction (AutoSchemaKG §3.1 / B.1 — entity–
-  entity, entity–event, event–event, with **LLM-named open relations**) + conceptualization.
-  Unprofiled domains route here.
+- **Genre layer** (universal, keep): pedagogical extractors — splitter, instruction stages, and the
+  **block finder** itself (detecting labeled blocks is genre — every textbook has them). Reliable
+  structure with no per-domain induction.
+- **Domain vocabulary** (open, per-run): the entity `type` (definition/theorem/law/…), the relation
+  labels, and the concept set are **induced** by the frontier model (validated for concepts; see
+  Evidence), not drawn from a closed math taxonomy. A hand-authored **profile** remains available for
+  a domain that measurement shows needs one; math is the first candidate profile.
+- **Engine** (semantic layer): open relation extraction (AutoSchemaKG §3.1 / B.1 — **LLM-named open
+  relations**) + conceptualization, run over the block finder's entities. This is the fine-grained
+  dependency/concept graph *inside and between* the document-level blocks.
 - **Rule (unchanged):** a domain *with* a profile is **never** downgraded to induction. Generality
   lets a new domain in cheaply; it must not degrade a domain that has a profile.
 
@@ -271,10 +266,12 @@ Each step is usable alone; nothing validated is deleted before its replacement i
    `REFERENCE_KINDS` vocab.
 3. **Entity `type`: label → property.** So physics/biology types induce. Forward-compatible —
    entities already *write* the `type` property (`graph/entities.py`), so reads work today.
-4. **General declarative extractor** (open triple extraction), built **alongside** the def/theorem
-   finders, and **measured against them on real math books** (extraction quality is the one thing
-   the probes did *not* validate).
-5. **Remove** the def/theorem finders + closed vocab **only once** step 4 reaches quality parity.
+4. **Block finder + universal attributor + procedure finder** (the "Entity layer" design), built
+   **alongside** the three per-type finders and **measured against them on real math books**
+   (extraction quality is the one thing the probes did *not* validate). See
+   `ENTITY-LAYER-REBUILD.md` for the file-level removal + build steps.
+5. **Remove** the three per-type finders/attributors/referencers + closed vocab **only once** step 4
+   reaches quality parity.
 6. **Embedding / fusion** (concept + mention convergence) — independent track; start with the
    model-agnostic candidate-scoring bake-off.
 
