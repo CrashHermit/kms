@@ -91,14 +91,23 @@ way as a `definition`.
   included its proof, which the attributor split out and reified.
 - **Classify = statement vs task** (asserts vs poses), plus the fine `type` as a property. Both are
   entities; the classifier does **not** route Entity-vs-Procedure. `kind` structural, `type` open.
-- **Resolve procedures — extract universally, create for tasks.** Any entity's **shown** steps are
-  **extracted** into its `:Procedure` (a theorem's proof, an example's solution). A **task** (a posed
-  problem) additionally routes to a **procedure creator** that **generates** the solution steps when
-  none are shown (an exercise with no worked solution) — AutoMathKG-style completion, **task-first**.
-  Statements' proofs are extracted when shown; *generating* missing proofs is deferred (harder,
-  riskier). So `extract` is universal, `create` is the task path.
-- **General shape:** detect (entities) → classify (statement/task + type) → resolve procedures
-  (extract shown steps; create for tasks).
+- **A `procedure finder` decides, per entity, whether there is anything to work out.** It runs over
+  **all** extracted entities and makes one direct semantic call — *is there a procedure here (something
+  to prove / solve / derive / show), and is it shown or absent?* — rather than deriving it from the
+  type (more robust and domain-general: no per-domain table of which types have procedures, so a
+  physics "Derivation" or a bio "Mechanism" just works). Routing on (has-procedure? × shown/absent?):
+  - **shown** (theorem's proof, example's solution) → **extract**: split statement from steps, reify
+    into `:Procedure`/`:Event`.
+  - **absent + task** (an exercise with no worked solution) → **create**: the procedure creator
+    generates the steps (AutoMathKG-style completion, **task-first**).
+  - **absent + statement** (a theorem with no shown proof) → **defer** (generating proofs is deferred —
+    harder, riskier).
+  - **nothing to work out** (a definition, a bare stated fact) → **skip** — no procedure.
+
+  This is the **generalized `solution_start`/proof split** the old attributor did per-type, now one
+  pass over any entity — proven machinery, low-risk.
+- **General shape:** detect (entities) → classify (statement/task + type) → attribute
+  (label/number/title/content) → procedure-find (extract shown / create for tasks / skip).
 - **One universal attributor** (not per-type) runs after the finder and fills the genre-universal
   fields only: **label, number, title, content**. Every labeled block has these regardless of
   subject, so it is one pass over the unified block stream — no forking.
