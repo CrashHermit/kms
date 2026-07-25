@@ -21,18 +21,20 @@ class State(TypedDict, total=False):
 
     Two backbones, one after the other. During per-page ingestion (corrector, extractor,
     seam) `segments` is the ordered backbone. The seam merger then flattens the healed
-    per-page nodes into `nodes` — the global ordered node list that the per-type entity
-    finders each walk. `segments` is retained past that point only for its pictures
-    (picture resolution at assembly). Both backbones use the default overwrite reducer
-    because only the sequential collect steps write them.
+    per-page nodes into `nodes` — the global ordered node list that the group finder walks.
+    `segments` is retained past that point only for its pictures (picture resolution at
+    assembly). Both backbones use the default overwrite reducer because only the sequential
+    collect steps write them.
 
-    The three `*_entities` channels are each written once, by their own finder (the
-    finders run in parallel over `nodes`). They are independent sparse overlays and may
-    reference the same node from more than one entity — that is fine, members are node-id
-    pointers. Because the splitter has already made exercise nodes atomic (one node per
-    exercise), the problem finder emits one entity per exercise with distinct members — no
-    coarse-vs-fine reconciliation is needed. The entity persister stage flattens the three into
-    one document-ordered, globally-id'd list and upserts them as the graph's `:Entity` layer.
+    `entities` is the single entity channel: the group finder writes the overlay, the
+    statement extractor fills each block's attributes in place, the procedure extractor
+    attaches procedures, and the instruction distributor stamps the shared directive.
+    One finder produces one partition, so entities never overlap and the channel is
+    written and rewritten by one chain in sequence.
+
+    `procedure_spans` carries the finder's procedure-role spans from the finder to the
+    procedure extractor — the one piece of the group scaffold that outlives the finder.
+    The scaffold itself is never persisted.
 
     The `*_results` channels are map-reduce scratch space: parallel Send workers append
     entries and the stage's collect step drains them back into the active backbone. They
@@ -45,9 +47,12 @@ class State(TypedDict, total=False):
     source_metadata: dict[
         str, str
     ]  # book attributes (title, author, …) for the :Source node
-    problem_entities: list[models.Entity]  # written by the problem finder
-    definition_entities: list[models.Entity]  # written by the definition finder
-    theorem_entities: list[models.Entity]  # written by the theorem finder
+    entities: list[
+        models.Entity
+    ]  # written by the group finder, enriched downstream
+    procedure_spans: list[
+        list[int]
+    ]  # member node ids per procedure span, document order
     correction_results: Annotated[
         list[tuple[int, str]], operator.add
     ]  # (segment index, corrected markdown)

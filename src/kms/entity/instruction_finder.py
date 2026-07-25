@@ -130,8 +130,8 @@ async def tag_instructions(
                 for k, node in enumerate(window)
             ]
         )
-        for pos in positions:
-            clamped = min(max(pos, 0), last_local)
+        for position in positions:
+            clamped = min(max(position, 0), last_local)
             window[clamped].role = 'instruction'
         cursor = end
     return nodes

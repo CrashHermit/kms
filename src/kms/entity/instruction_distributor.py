@@ -1,12 +1,16 @@
 r"""
 Instruction distributor — copies a grouped-exercise lead-in's shared directive onto the
-Problem entities it governs, by a growing-window walk (no number/range parsing).
+blocks it governs, by a growing-window walk (no number/range parsing).
 
 A run of exercises often states its imperative ONCE, in a lead-in that governs the whole run.
-That lead-in is not a member of any individual problem, so the per-entity Problem attributor
-can't see it — AutoMathKG's `instruction` is inherently a cross-entity, positional attribute.
-The splitter has already TAGGED each lead-in node `role="instruction"`; this pass reads those
-tags and distributes the directive.
+That lead-in is not a member of any individual exercise, so the per-entity statement
+extractor can't see it — `instruction` is inherently a cross-entity, positional attribute.
+The instruction finder has already TAGGED each lead-in node `role="instruction"`; this pass
+reads those tags and distributes the directive.
+
+It is what makes an atomic exercise mean anything: "3. y = x^2 + 1" retrieved on its own is
+noise, while the same block carrying "graph the following relations" is a usable item. That
+is why the directive is copied onto every governed block rather than left on the lead-in.
 
 The extent is judged by the LLM, not by numbers. A lead-in may name a range ("In Exercises
 1.23-1.25, …") or may not ("Answer the following.", "Prove each of the following."), so a range
@@ -21,9 +25,9 @@ the governed run ends. It is the SAME growing look-ahead used by the finders and
     the budget) and re-read; if a non-governed problem is seen to follow the run (bounded), or
     the candidates are exhausted, BANK — stamp `entity.instruction` on the governed problems.
 
-It runs AFTER the Problem attributor (it reads each problem's `contents`/`number` to judge
-governance). Entry point ``distribute_instructions(nodes, problems, module)`` mutates the
-problems in place; ``InstructionDistributorNode`` wires it onto the ``problem_entities`` channel.
+It runs AFTER the statement extractor (it reads each block's `contents`/`number` to judge
+governance). Entry point ``distribute_instructions(nodes, blocks, module)`` mutates the
+blocks in place; ``InstructionDistributorNode`` wires it onto the ``entities`` channel.
 """
 
 import dspy
@@ -98,27 +102,27 @@ class Module(dspy.Module):
         return instruction, positions
 
 
-def _estimate_tokens(problem: models.Entity) -> int:
-    return len(_problem_text(problem)) // 4 + 1
+def _estimate_tokens(block: models.Entity) -> int:
+    return len(_block_text(block)) // 4 + 1
 
 
-def _problem_text(problem: models.Entity) -> str:
-    """The problem's statement as the LLM should see it — its attributed contents, or its
+def _block_text(block: models.Entity) -> str:
+    """The block's statement as the LLM should see it — its attributed contents, or its
     number as a last resort."""
-    body = ' '.join(c for c in (problem.contents or []) if c)
-    return body or (problem.number or '')
+    body = ' '.join(text for text in (block.contents or []) if text)
+    return body or (block.number or '')
 
 
 def _window(
     candidates: list[models.Entity], budget: int
 ) -> list[models.Entity]:
-    """Whole following problems up to the soft token budget, always at least one."""
+    """Whole following blocks up to the soft token budget, always at least one."""
     window, accumulated = [], 0
-    for problem in candidates:
-        token_count = _estimate_tokens(problem)
+    for block in candidates:
+        token_count = _estimate_tokens(block)
         if window and accumulated + token_count > budget:
             break
-        window.append(problem)
+        window.append(block)
         accumulated += token_count
     return window
 
@@ -126,8 +130,8 @@ def _window(
 async def _govern_one(
     node: models.ASTNode, candidates: list[models.Entity], module: Module
 ) -> None:
-    """Growing-window walk for one lead-in: find the governed run among its following problems
-    and stamp the instruction on them. Grows the window while the run reaches its edge."""
+    """Growing-window walk for one lead-in: find the governed run among the blocks that follow
+    it and stamp the instruction on them. Grows the window while the run reaches its edge."""
     if not candidates:
         return
     size = LOOKAHEAD_BUDGET
@@ -142,12 +146,14 @@ async def _govern_one(
                 WindowProblem(
                     position=k,
                     number=window[k].number,
-                    text=_problem_text(window[k]),
+                    text=_block_text(window[k]),
                 )
                 for k in range(len(window))
             ],
         )
-        governed = sorted({min(max(p, 0), last_local) for p in positions})
+        governed = sorted(
+            {min(max(position, 0), last_local) for position in positions}
+        )
 
         if not governed:
             return  # this lead-in governs nothing here
@@ -164,48 +170,68 @@ async def _govern_one(
 
 async def distribute_instructions(
     nodes: list[models.ASTNode],
-    problems: list[models.Entity],
+    blocks: list[models.Entity],
     module: Module | None = None,
 ) -> list[models.Entity]:
-    """Stamp each governed Problem's `instruction` from the tagged lead-in nodes (in place),
-    judging the governed run per lead-in with a growing-window LLM walk (no number matching)."""
-    lead_ins = [n for n in nodes if n.role == 'instruction']
-    if not lead_ins or not problems:
-        return problems
+    """Stamp each governed block's `instruction` from the tagged lead-in nodes, in place.
+
+    The governed run is judged per lead-in with a growing-window LLM walk, never by parsing
+    numbers — a lead-in may name a range or none at all.
+
+    Args:
+        nodes: The flat node stream, carrying the lead-in `role` tags.
+        blocks: The attributed block overlay, mutated in place.
+        module: The governance module. Created fresh if None.
+
+    Returns:
+        The same blocks, with `instruction` stamped on the governed ones.
+    """
+    lead_ins = [node for node in nodes if node.role == 'instruction']
+    if not lead_ins or not blocks:
+        return blocks
     module = module or Module()
-    order = {n.id: i for i, n in enumerate(nodes)}
-    far = len(order)
+    order = {node.id: i for i, node in enumerate(nodes)}
+    last = len(order)
 
-    def pos(entity: models.Entity) -> int:
-        return order.get(entity.members[0], far) if entity.members else far
+    def position_of(entity: models.Entity) -> int:
+        """The entity's first member's position in the stream; `last` if it has none."""
+        return order.get(entity.members[0], last) if entity.members else last
 
-    ordered = sorted(problems, key=pos)
-    lead_positions = sorted(order.get(n.id, -1) for n in lead_ins)
+    ordered = sorted(blocks, key=position_of)
+    lead_positions = sorted(order.get(node.id, -1) for node in lead_ins)
 
     for node in lead_ins:
         here = order.get(node.id, -1)
         # A new lead-in starts a new governance, so a lead-in's candidates end at the next one.
-        nxt = min((p for p in lead_positions if p > here), default=far)
-        candidates = [p for p in ordered if here < pos(p) < nxt]
+        next_lead_in = min(
+            (position for position in lead_positions if position > here),
+            default=last,
+        )
+        candidates = [
+            block
+            for block in ordered
+            if here < position_of(block) < next_lead_in
+        ]
         await _govern_one(node, candidates, module)
-    return problems
+    return blocks
 
 
-# --- LangGraph node: distribute instructions over the attributed Problem entities ---
+# --- LangGraph node: distribute instructions over the attributed blocks ---
 
 
 class InstructionDistributorNode:
-    """Stamps `instruction` onto the governed Problems, reading the splitter's `role="instruction"`
-    lead-in tags. Runs after the Problem attributor (it reads each problem's contents/number) and
-    writes the enriched entities back to the ``problem_entities`` channel."""
+    """Stamps `instruction` onto the governed blocks, reading the instruction finder's
+    `role="instruction"` lead-in tags. Runs after the statement extractor (it reads each
+    block's contents/number) and writes the enriched entities back to the ``entities``
+    channel."""
 
     def __init__(self, module: Module | None = None) -> None:
         self.module = module or Module()
 
     async def run(self, state: state.State) -> dict:
-        """Distributes each lead-in's shared instruction onto governed Problems."""
-        problems = state.get('problem_entities', [])
+        """Distributes each lead-in's shared instruction onto the governed blocks."""
+        entities = state.get('entities', [])
         await distribute_instructions(
-            state.get('nodes', []), problems, module=self.module
+            state.get('nodes', []), entities, module=self.module
         )
-        return {'problem_entities': problems}
+        return {'entities': entities}

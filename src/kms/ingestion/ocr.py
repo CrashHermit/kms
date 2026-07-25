@@ -145,11 +145,13 @@ def _rewrite_page(
     ] = []  # image ids in reading order; position + 1 == placeholder index
 
     def index_of(image_id: str) -> int:
+        """The 1-based placeholder index for an image id, assigning one on first sight."""
         if image_id not in order:
             order.append(image_id)
         return order.index(image_id) + 1
 
     def repl(match: re.Match) -> str:
+        """Rewrite one markdown image link to its ``![N]()`` placeholder form."""
         target = match.group(1)
         if target not in by_id:
             return match.group(

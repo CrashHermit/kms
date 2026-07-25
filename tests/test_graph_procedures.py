@@ -1,6 +1,6 @@
 """Procedural-layer graph mapping and writer planning — pure, no database (neo4j is stubbed in
-conftest). Verifies procedure/event identity is stable, deterministic and disjoint from the other
-uuid namespaces, that proofs/solutions map onto the expected :Procedure/:Event rows, and that
+conftest). Verifies procedure/act identity is stable, deterministic and disjoint from the other
+uuid namespaces, that derivations map onto the expected :Procedure/:Act rows, and that
 persist_procedures issues the right queries/params via a fake session."""
 
 import asyncio
@@ -9,137 +9,132 @@ from kms.core import models
 from kms.graph.entities import entity_uuid
 from kms.graph.nodes import node_uuid
 from kms.graph.procedures import (
-    event_rows,
-    event_uuid,
+    act_rows,
+    act_uuid,
     first_pairs,
     has_procedure_pairs,
-    procedure_batches,
-    procedure_label,
+    procedure_member_pairs,
+    procedure_rows,
     procedure_uuid,
     then_pairs,
 )
 from kms.graph.writer import persist_procedures
 
-# A theorem with a two-step proof, and a problem with a (stepless) solution.
+# A theorem with a two-step proof, and an example with a two-step solution — decomposition is
+# universal, so the solution has steps too (the old schema left every solution stepless).
 _THEOREM = models.Entity(
-    type=models.EntityType.THEOREM,
+    type='theorem',
     members=[1],
     id=1,
-    proofs=[
-        models.Proof(
+    procedures=[
+        models.Procedure(
+            index=0,
+            members=[2],
             contents=['Assume n≥3.', 'Then Z(Sn) is trivial.'],
-            bodylist=[
-                models.BodySegment(
-                    description='Assume n≥3.', action='assumption'
-                ),
-                models.BodySegment(
-                    description='Then Z(Sn) is trivial.', action='conclusion'
-                ),
-            ],
+            steps=['Assume n≥3.', 'Then Z(Sn) is trivial.'],
         )
     ],
 )
-_PROBLEM = models.Entity(
-    type=models.EntityType.PROBLEM,
+_EXAMPLE = models.Entity(
+    type='example',
     members=[3],
     id=2,
-    solutions=[models.Solution(contents=['x = 2'])],
+    procedures=[
+        models.Procedure(
+            index=0,
+            members=[4],
+            contents=['Substitute x = 2.', 'So y = 5.'],
+            steps=['Substitute x = 2.', 'So y = 5.'],
+        )
+    ],
 )
-_OVERLAY = [_THEOREM, _PROBLEM]
+_OVERLAY = [_THEOREM, _EXAMPLE]
 
 
 # --- identity ---
 
 
-def test_procedure_uuid_is_deterministic_and_distinct_by_kind_and_index():
-    assert procedure_uuid('b', 1, 'proof', 0) == procedure_uuid(
-        'b', 1, 'proof', 0
-    )
-    assert procedure_uuid('b', 1, 'proof', 0) != procedure_uuid(
-        'b', 1, 'proof', 1
-    )
-    assert procedure_uuid('b', 1, 'proof', 0) != procedure_uuid(
-        'b', 1, 'solution', 0
-    )
-    assert procedure_uuid('b', 1, 'proof', 0) != procedure_uuid(
-        'other', 1, 'proof', 0
-    )
+def test_procedure_uuid_is_deterministic_and_distinct_by_index_and_source():
+    assert procedure_uuid('b', 1, 0) == procedure_uuid('b', 1, 0)
+    assert procedure_uuid('b', 1, 0) != procedure_uuid('b', 1, 1)
+    assert procedure_uuid('b', 1, 0) != procedure_uuid('b', 2, 0)
+    assert procedure_uuid('b', 1, 0) != procedure_uuid('other', 1, 0)
 
 
-def test_event_uuid_is_deterministic_and_ordered_within_a_procedure():
-    assert event_uuid('b', 1, 'proof', 0, 0) == event_uuid(
-        'b', 1, 'proof', 0, 0
-    )
-    assert event_uuid('b', 1, 'proof', 0, 0) != event_uuid(
-        'b', 1, 'proof', 0, 1
-    )
+def test_act_uuid_is_deterministic_and_ordered_within_a_procedure():
+    assert act_uuid('b', 1, 0, 0) == act_uuid('b', 1, 0, 0)
+    assert act_uuid('b', 1, 0, 0) != act_uuid('b', 1, 0, 1)
+    assert act_uuid('b', 1, 0, 0) != act_uuid('b', 1, 1, 0)
 
 
 def test_uuids_are_disjoint_from_node_and_entity_namespaces():
-    # a procedure/event and a node/entity with matching numeric keys must not collide
-    assert procedure_uuid('b', 1, 'proof', 0) != entity_uuid('b', 1)
-    assert procedure_uuid('b', 1, 'proof', 0) != node_uuid('b', 1)
-    assert event_uuid('b', 1, 'proof', 0, 0) != procedure_uuid(
-        'b', 1, 'proof', 0
-    )
-
-
-# --- labels ---
-
-
-def test_procedure_label_is_the_capitalized_kind():
-    assert procedure_label('proof') == 'Proof'
-    assert procedure_label('solution') == 'Solution'
+    # a procedure/act and a node/entity with matching numeric keys must not collide
+    assert procedure_uuid('b', 1, 0) != entity_uuid('b', 1)
+    assert procedure_uuid('b', 1, 0) != node_uuid('b', 1)
+    assert act_uuid('b', 1, 0, 0) != procedure_uuid('b', 1, 0)
 
 
 # --- planning ---
 
 
-def test_procedure_batches_group_by_per_kind_label_with_contents():
-    batches = procedure_batches(_OVERLAY, 'book.pdf')
-    assert set(batches) == {'Proof', 'Solution'}
-    assert batches['Proof'][0]['uuid'] == procedure_uuid(
-        'book.pdf', 1, 'proof', 0
-    )
-    assert batches['Proof'][0]['contents'] == [
-        'Assume n≥3.',
-        'Then Z(Sn) is trivial.',
-    ]
-    assert batches['Solution'][0]['contents'] == ['x = 2']
+def test_procedure_rows_are_one_per_derivation_with_contents_and_no_type():
+    rows = procedure_rows(_OVERLAY, 'book.pdf')
+    assert len(rows) == 2
+    assert rows[0]['uuid'] == procedure_uuid('book.pdf', 1, 0)
+    assert rows[0]['contents'] == ['Assume n≥3.', 'Then Z(Sn) is trivial.']
+    # proof/solution is derivable from the owning entity's type, so it is not stored
+    assert 'type' not in rows[0]
 
 
-def test_event_rows_are_one_per_proof_step_with_action_and_text():
-    rows = event_rows(_OVERLAY, 'book.pdf')
-    assert len(rows) == 2  # the solution contributes no steps (no bodylist)
-    assert rows[0]['action'] == 'assumption' and rows[0]['index'] == 0
-    assert rows[1]['text'] == 'Then Z(Sn) is trivial.'
-    assert rows[0]['uuid'] == event_uuid('book.pdf', 1, 'proof', 0, 0)
+def test_act_rows_cover_every_procedure_including_solutions():
+    rows = act_rows(_OVERLAY, 'book.pdf')
+    assert len(rows) == 4  # decomposition is universal: 2 proof + 2 solution
+    assert rows[0]['text'] == 'Assume n≥3.' and rows[0]['index'] == 0
+    assert rows[0]['uuid'] == act_uuid('book.pdf', 1, 0, 0)
+    assert rows[3]['text'] == 'So y = 5.'
+    assert 'action' not in rows[0]  # the closed tactic taxonomy is gone
 
 
 def test_has_procedure_pairs_are_one_per_derivation():
     pairs = has_procedure_pairs(_OVERLAY, 'book.pdf')
-    assert len(pairs) == 2  # one proof + one solution
+    assert len(pairs) == 2
     assert pairs[0] == {
         'entity': entity_uuid('book.pdf', 1),
-        'procedure': procedure_uuid('book.pdf', 1, 'proof', 0),
+        'procedure': procedure_uuid('book.pdf', 1, 0),
+    }
+
+
+def test_procedures_carry_their_own_derived_from_provenance():
+    pairs = procedure_member_pairs(_OVERLAY, 'book.pdf')
+    assert len(pairs) == 2  # one member node each
+    assert pairs[0] == {
+        'procedure': procedure_uuid('book.pdf', 1, 0),
+        'node': node_uuid('book.pdf', 2),
     }
 
 
 def test_first_pairs_only_for_procedures_with_steps():
     pairs = first_pairs(_OVERLAY, 'book.pdf')
-    assert (
-        len(pairs) == 1
-    )  # only the proof has steps; the stepless solution has no :FIRST
-    assert pairs[0]['event'] == event_uuid('book.pdf', 1, 'proof', 0, 0)
+    assert len(pairs) == 2
+    assert pairs[0]['act'] == act_uuid('book.pdf', 1, 0, 0)
+    stepless = [
+        models.Entity(
+            type='theorem', members=[1], id=1, procedures=[models.Procedure()]
+        )
+    ]
+    assert first_pairs(stepless, 'b') == []
 
 
 def test_then_pairs_thread_consecutive_steps_and_never_cross_procedures():
     pairs = then_pairs(_OVERLAY, 'book.pdf')
-    assert len(pairs) == 1  # two steps -> one :THEN edge
+    assert (
+        len(pairs) == 2
+    )  # two steps in each of two procedures -> one edge each
     assert pairs[0] == {
-        'from': event_uuid('book.pdf', 1, 'proof', 0, 0),
-        'to': event_uuid('book.pdf', 1, 'proof', 0, 1),
+        'from': act_uuid('book.pdf', 1, 0, 0),
+        'to': act_uuid('book.pdf', 1, 0, 1),
     }
+    assert pairs[1]['from'] == act_uuid('book.pdf', 2, 0, 0)
 
 
 # --- persist_procedures orchestration, via a fake session (no server) ---
@@ -167,20 +162,28 @@ class _FakeDriver:
         return _FakeSession(self.calls)
 
 
-def test_persist_procedures_writes_procedures_events_and_spine(monkeypatch):
+def test_persist_procedures_writes_procedures_acts_and_spine(monkeypatch):
     calls: list[tuple[str, dict]] = []
     monkeypatch.setattr('kms.graph.writer.driver', lambda: _FakeDriver(calls))
     asyncio.run(persist_procedures(_OVERLAY, 'book.pdf'))
 
-    queries = [q for q, _ in calls]
-    assert any('SET p:Proof' in q for q in queries)  # per-kind label applied
-    assert any('SET p:Solution' in q for q in queries)
-    haspair = next(c for c in calls if ':HAS_PROCEDURE' in c[0])
-    assert len(haspair[1]['pairs']) == 2  # entity -> each derivation
-    first = next(c for c in calls if ':FIRST' in c[0])
-    assert len(first[1]['pairs']) == 1  # only the proof has an opening step
-    then = next(c for c in calls if ':THEN' in c[0])
-    assert len(then[1]['pairs']) == 1  # one step-to-step edge
+    queries = [query for query, _ in calls]
+    assert any('MERGE (p:Procedure' in query for query in queries)
+    assert any('MERGE (a:Act' in query for query in queries)
+    # no per-kind label is applied — :Procedure and :Act are bare
+    assert not any('SET p:Proof' in query for query in queries)
+    owners = next(call for call in calls if ':HAS_PROCEDURE' in call[0])
+    assert len(owners[1]['pairs']) == 2
+    derived = next(
+        call
+        for call in calls
+        if ':DERIVED_FROM' in call[0] and 'p:Procedure' in call[0]
+    )
+    assert len(derived[1]['pairs']) == 2
+    first = next(call for call in calls if ':FIRST' in call[0])
+    assert len(first[1]['pairs']) == 2
+    then = next(call for call in calls if ':THEN' in call[0])
+    assert len(then[1]['pairs']) == 2
 
 
 def test_persist_procedures_is_a_noop_without_derivations(monkeypatch):
@@ -188,14 +191,7 @@ def test_persist_procedures_is_a_noop_without_derivations(monkeypatch):
     monkeypatch.setattr('kms.graph.writer.driver', lambda: _FakeDriver(calls))
     asyncio.run(
         persist_procedures(
-            [
-                models.Entity(
-                    type=models.EntityType.DEFINITION, members=[0], id=0
-                )
-            ],
-            'b',
+            [models.Entity(type='definition', members=[0], id=0)], 'b'
         )
     )
-    assert (
-        calls == []
-    )  # a definition has no proof/solution, so nothing is opened or written
+    assert calls == []  # a definition has no derivation — nothing is opened

@@ -1,135 +1,67 @@
-"""Concept-layer graph mapping and writer planning — pure, no database (neo4j is stubbed in
-conftest). Verifies concept identity is deterministic and GLOBAL (born canonical), that an entity's
-field maps onto an :INSTANCE_OF edge, and that persist_concepts mints :Concept nodes + edges via a
-fake session."""
+"""Concept hub identity — the naming and dedup scheme the (currently dark) concept layer will
+write through. Pure, no database.
 
-import asyncio
+The layer emits nothing today: its only source was the deleted ``field`` taxonomy, and
+conceptualization is not built yet (see ``docs/CONCEPT-LAYER.md``). What is tested here is the
+half that survives — global, source-free identity so the same concept converges on one node
+across books, and cheap exact-name clustering."""
 
-from kms.core import models
 from kms.graph.concepts import (
-    concept_batches,
+    concept_batch,
+    concept_properties,
     concept_uuid,
-    instance_rows,
     normalize_concept,
 )
 from kms.graph.entities import entity_uuid
-from kms.graph.writer import persist_concepts
+from kms.graph.nodes import node_uuid
 
-_OVERLAY = [
-    models.Entity(
-        type=models.EntityType.DEFINITION, members=[0], id=0, field='algebra'
-    ),
-    models.Entity(
-        type=models.EntityType.THEOREM, members=[1], id=1, field='algebra'
-    ),  # same field -> one concept
-    models.Entity(
-        type=models.EntityType.PROBLEM, members=[2], id=2, field='analysis'
-    ),
-    models.Entity(
-        type=models.EntityType.DEFINITION, members=[3], id=3
-    ),  # no field -> no concept
-]
+# --- normalization ---
+
+
+def test_normalize_lowercases_and_collapses_whitespace():
+    assert normalize_concept('  Linear   Algebra ') == 'linear algebra'
+    assert normalize_concept('Chain Rule') == normalize_concept('chain  rule')
+
+
+def test_normalization_does_not_merge_genuine_paraphrases():
+    # only spacing/case variants converge; "vector spaces" vs "linear algebra" is the
+    # fusion tier's job, not this one
+    assert normalize_concept('vector spaces') != normalize_concept(
+        'linear algebra'
+    )
 
 
 # --- identity ---
 
 
-def test_concept_uuid_is_deterministic_and_global_across_sources():
-    # A concept is born canonical: same (type, name) -> same uuid regardless of book.
-    assert concept_uuid('field', 'algebra') == concept_uuid('field', 'algebra')
+def test_concept_uuid_is_deterministic_and_name_keyed():
+    assert concept_uuid('chain rule') == concept_uuid('chain rule')
+    assert concept_uuid('chain rule') != concept_uuid('product rule')
 
 
-def test_concept_uuid_clusters_case_and_whitespace_variants():
-    assert concept_uuid('field', 'Algebra') == concept_uuid(
-        'field', '  algebra '
-    )
+def test_concept_uuid_is_global_so_books_converge_on_one_node():
+    # no source prefix anywhere in the key: the same concept induced from any book is one node
+    assert concept_uuid('Chain Rule') == concept_uuid('  chain   rule  ')
 
 
-def test_concept_uuid_separates_type_and_distinct_names():
-    assert concept_uuid('field', 'algebra') != concept_uuid('field', 'analysis')
+def test_concept_uuid_is_disjoint_from_the_other_namespaces():
+    assert concept_uuid('1') != entity_uuid('1', 1)
+    assert concept_uuid('1') != node_uuid('1', 1)
 
 
-def test_normalize_concept_lowercases_and_collapses_whitespace():
-    assert (
-        normalize_concept('  Applied   Mathematics ') == 'applied mathematics'
-    )
+# --- properties and batching ---
 
 
-# --- planning ---
+def test_concept_properties_carry_uuid_and_name_but_no_source():
+    props = concept_properties('  Chain Rule ')
+    assert props == {'uuid': concept_uuid('chain rule'), 'name': 'Chain Rule'}
+    assert 'source' not in props  # a concept is corpus-level, not book-scoped
 
 
-def test_concept_batches_dedupe_by_uuid_and_group_by_type_label():
-    batches = concept_batches(_OVERLAY)
-    assert set(batches) == {'Field'}
-    # algebra appears twice but collapses to one concept; plus analysis => 2 field concepts.
-    assert len(batches['Field']) == 2
-    assert {c['uuid'] for c in batches['Field']} == {
-        concept_uuid('field', 'algebra'),
-        concept_uuid('field', 'analysis'),
+def test_concept_batch_dedupes_by_uuid_and_drops_blanks():
+    batch = concept_batch(['Chain Rule', 'chain  rule', '', '  ', 'Limits'])
+    assert len(batch) == 2
+    assert {props['uuid'] for props in batch} == {
+        concept_uuid('chain rule'),
+        concept_uuid('limits'),
     }
-    assert batches['Field'][0]['type'] == 'field'
-
-
-def test_instance_rows_are_one_per_entity_concept_skipping_fieldless():
-    rows = instance_rows(_OVERLAY, 'book.pdf')
-    assert len(rows) == 3  # the fieldless definition contributes none
-    assert rows[0] == {
-        'entity': entity_uuid('book.pdf', 0),
-        'concept': concept_uuid('field', 'algebra'),
-    }
-    # both algebra entities point at the SAME concept node
-    assert rows[1]['concept'] == rows[0]['concept']
-
-
-# --- persist_concepts orchestration, via a fake session (no server) ---
-
-
-class _FakeSession:
-    def __init__(self, calls):
-        self.calls = calls
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *exc):
-        return False
-
-    async def run(self, query, **params):
-        self.calls.append((query, params))
-
-
-class _FakeDriver:
-    def __init__(self, calls):
-        self.calls = calls
-
-    def session(self, **kwargs):
-        return _FakeSession(self.calls)
-
-
-def test_persist_concepts_mints_concepts_and_instance_edges(monkeypatch):
-    calls: list[tuple[str, dict]] = []
-    monkeypatch.setattr('kms.graph.writer.driver', lambda: _FakeDriver(calls))
-    asyncio.run(persist_concepts(_OVERLAY, 'book.pdf'))
-
-    queries = [q for q, _ in calls]
-    # concepts MERGE as :Concept carrying their per-type label
-    assert any('SET c:Field' in q for q in queries)
-    # instance edges, one per entity concept
-    edge_call = next(c for c in calls if ':INSTANCE_OF' in c[0])
-    assert len(edge_call[1]['rows']) == 3
-
-
-def test_persist_concepts_is_a_noop_without_fields(monkeypatch):
-    calls: list[tuple[str, dict]] = []
-    monkeypatch.setattr('kms.graph.writer.driver', lambda: _FakeDriver(calls))
-    asyncio.run(
-        persist_concepts(
-            [
-                models.Entity(
-                    type=models.EntityType.DEFINITION, members=[0], id=0
-                )
-            ],
-            'b',
-        )
-    )
-    assert calls == []  # no fields -> nothing opened, nothing written

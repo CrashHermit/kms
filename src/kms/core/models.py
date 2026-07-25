@@ -1,25 +1,29 @@
 """
-Domain models for the pipeline: the in-memory AST and entity data structures, the
-shared AutoMathKG vocabularies, and the pure helpers that operate on them.
+Domain models for the pipeline: the in-memory AST and entity data structures, and the
+pure helpers that operate on them.
 
 These are the vocabulary the whole system is *about*. They depend only on the standard
-library and pydantic — deliberately free of the orchestration framework (LangGraph) and
-the LLM stack (dspy), so a test, the graph tier, or a future non-LangGraph runner can use
-them in isolation. The LangGraph ``state.State`` that carries these through the graph lives in
-its sibling ``kms.core.state``.
+library — deliberately free of the orchestration framework (LangGraph) and the LLM stack
+(dspy), so a test, the graph tier, or a future non-LangGraph runner can use them in
+isolation. The LangGraph ``state.State`` that carries these through the graph lives in its
+sibling ``kms.core.state``.
 
 The pipeline assembles an ordered AST in memory: a list of Segments (one per page, in
 document order), each owning its pictures, its OCR'd markdown content, and the AST nodes
 extracted from that content. The seam merger later flattens the per-page segments into one
 global ordered node list (``flatten_segments``); from that point the flat list is the
 single source of truth.
+
+Persisted vs. transient (see ``docs/SCHEMA.md``): these models are the pipeline's *working
+state*, and the graph is the deliverable. A field is persisted only if something reads it
+back from the graph; fields that exist purely to pass information between stages are
+transient and are labelled as such below (currently ``ASTNode.role`` and all of
+``Segment``).
 """
 
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
-
-from pydantic import BaseModel
 
 # --- AST data structures ---
 
@@ -29,8 +33,9 @@ class NodeType(StrEnum):
     structure (bold, inline math, links) stays inside a node's markdown content.
 
     The extractor is purely STRUCTURAL and domain-agnostic: it emits general document
-    structure only. Math-semantic typing (Definition/Theorem/Problem) lives entirely at
-    the entity layer — the per-type finders — not here."""
+    structure only. What *kind* of pedagogical block a run of nodes forms (definition,
+    theorem, example, law, …) lives entirely at the entity layer — the statement
+    extractor's open ``Entity.type`` — not here."""
 
     PARAGRAPH = 'paragraph'
     MATH = 'math'  # standalone display math block
@@ -42,151 +47,71 @@ class NodeType(StrEnum):
     HEADER = 'header'
 
 
-class EntityType(StrEnum):
-    """The three math-semantic entity categories the entity finders produce
-    (AutoMathKG's taxonomy). Distinct from NodeType, which is document structure."""
+@dataclass(slots=True)
+class Procedure:
+    """One worked derivation of an entity — a proof, a solution, a derivation.
 
-    DEFINITION = 'definition'
-    THEOREM = 'theorem'  # subsumes proposition, corollary, lemma
-    PROBLEM = 'problem'  # worked examples and exercises
+    Found as its own span by the group finder (so it carries ``members``, its own node
+    ids, and gets real ``:DERIVED_FROM`` provenance) and decomposed into ordered ``steps``
+    by the procedure extractor. Decomposition is universal: every procedure decomposes,
+    whatever it derives.
 
+    ``steps`` are VERBATIM slices that partition ``contents`` — concatenating them in order
+    reproduces the source with nothing added or removed. They reify into the graph's
+    ``:Act`` chain.
 
-class ProcedureType(StrEnum):
-    """The kinds of procedure — a named, ordered derivation attached to an entity (see
-    ``docs/UNIFIED-KG.md``). A Theorem's ``proofs`` reify into ``proof`` procedures, a Problem's
-    ``solutions`` into ``solution`` procedures. Generic on purpose (a physics ``derivation`` or CS
-    ``algorithm`` would be more values of the same kind), but math-first the set is these two.
+    Deliberately no ``type`` (proof / solution / derivation): it is derivable from the
+    owning entity's ``type``, so storing it would duplicate a neighbour's fact (see
+    ``docs/SCHEMA.md``, principle 5). ``index`` orders an entity's procedures — a theorem
+    with two proofs owns two of these."""
 
-    Their step decomposition (a proof's ``bodylist``) reifies into ``:Event`` nodes; the derivation
-    is thus the procedural half of the graph, distinct from the declarative ``:Entity`` it hangs off."""
-
-    PROOF = 'proof'
-    SOLUTION = 'solution'
-
-
-# --- Shared AutoMathKG vocabularies (Table C4) ---
-# Kept here, not in a single attributor, so every per-type attributor draws the field and
-# role taxonomies from one source of truth instead of copying the lists.
-
-# The fixed mathematical-field taxonomy ("field" template).
-FIELDS = [
-    'algebra',
-    'geometry',
-    'analysis',
-    'logic',
-    'probability and statistics',
-    'applied mathematics',
-    'foundations of mathematics',
-]
-
-# The nine role/tactic labels ("bodylist" template), the full taxonomy across all types.
-# Each attributor offers the model only the subset a given context actually exercises
-# (e.g. a definition never uses proof-only roles; a theorem statement never `deduction`s).
-ACTIONS_ALL = [
-    'premise',
-    'assumption',
-    'lemma',
-    'corollary',
-    'definition',
-    'conclusion',
-    'deduction',
-    'calculation',
-    'enumeration',
-]
-
-# The entity kinds a cross-entity reference may target (AutoMathKG's `definition:`/`theorem:`
-# prefixes). Shared by the per-type referencers so the allowed set lives in one place.
-REFERENCE_KINDS = ['definition', 'theorem']
-
-
-class BodySegment(BaseModel):
-    """One `bodylist` piece: a contiguous slice of an entity's content and the role it
-    plays (AutoMathKG's action label — see the per-type attributor for the allowed set).
-    A pydantic model because it doubles as a DSPy structured-output type at the LLM
-    boundary; stored as-is on the entity."""
-
-    description: str
-    action: str
-
-
-class Proof(BaseModel):
-    """One proof of a Theorem: its own content and role-labelled decomposition (AutoMathKG's
-    Thm-only `proofs`, each element `{contents, bodylist, ...}`). refs/references_tactics are
-    deferred to the graph tier, so a proof reduces to contents + bodylist here. A pydantic
-    model like BodySegment — it doubles as a DSPy structured type and is stored on the entity."""
-
-    contents: list[str] = []
-    bodylist: list[BodySegment] = []
-
-
-class Solution(BaseModel):
-    """One solution of a Problem (AutoMathKG's Prob-only `solutions`, each element
-    `{contents, ...}`). A Problem carries no bodylist — even in the paper a solution's
-    bodylist is empty — so a solution reduces to just its contents here."""
-
-    contents: list[str] = []
-
-
-class Reference(BaseModel):
-    """One outgoing cross-entity reference — AutoMathKG's `refs` + `references_tactics` fused into a
-    single record (the graph tier keeps them as one edge). `target` is the referenced entity's name
-    as written ("Set", "positive definite matrix"); `kind` is its type prefix (`"definition"` /
-    `"theorem"`, the paper's `definition:`/`theorem:` convention); `tactic` is the role the reference
-    plays, one of `ACTIONS_ALL`. Resolved to a graph edge onto a general-entity hub keyed by
-    (kind, normalized target), so references from different books/entities converge on one target.
-    A pydantic model like BodySegment — it doubles as a DSPy structured type at the referencer's LLM
-    boundary and is carried on the entity until the graph tier turns it into an edge."""
-
-    target: str
-    kind: str  # "definition" | "theorem"
-    tactic: str  # one of ACTIONS_ALL
+    index: int = 0
+    members: list[int] = field(
+        default_factory=list
+    )  # member node ids, document order
+    contents: list[str] = field(default_factory=list)  # member markdown
+    steps: list[str] = field(
+        default_factory=list
+    )  # verbatim partition of contents
 
 
 @dataclass(slots=True)
 class Entity:
-    """A math-semantic entity: a typed grouping of member nodes — a sparse overlay on the
-    flat node stream (most nodes belong to no entity). `members` are node ids in document
-    order: pointers back to the source nodes (persisted for provenance), so the later graph
-    phase can draw edges from an entity to the chunks it came from. `id` is assigned when
-    the three per-type overlays are flattened into the single emitted entity list.
+    """A pedagogical block: a typed grouping of member nodes — a sparse overlay on the
+    flat node stream (most nodes belong to no entity).
 
-    The overlays are independent and may reference the same node (members are pointers), so
-    they are concatenated, not merged.
+    MACRO ONLY. This is a document region — a theorem statement, a definition, a worked
+    example, an exercise — not the fine-grained noun-phrase entity of AutoSchemaKG (that
+    kind does not exist in this schema). ``members`` are node ids in document order:
+    pointers back to the source nodes, so the graph phase can draw provenance edges from
+    an entity to the chunks it came from. ``id`` is assigned when the finder's overlay is
+    flattened into the emitted entity list.
 
-    The self-contained AutoMathKG attributes below are filled in by the per-type attributor
-    passes; they stay unset (None / empty) until then. `refs` is the one cross-entity attribute —
-    filled by the per-type referencer pass (after the attributor) and turned into graph edges (onto
-    general-entity hubs) by the entity persister; it stays empty until the referencer runs."""
+    ``type`` is an OPEN, induced string (``definition`` / ``theorem`` / ``example`` /
+    ``law`` / …) filled by the statement extractor — never a closed enum, and never a
+    Neo4j label (open label sets explode). It records the block's *genre*, which concept
+    tags cannot recover: a definition of X and an exercise about X carry identical
+    concepts and are entirely different objects.
 
-    type: EntityType
+    The attributes below stay unset until the statement extractor fills them.
+    ``procedures`` is filled by the procedure extractor, which runs after."""
+
     members: list[int] = field(
         default_factory=list
     )  # member node ids, document order
-    id: int | None = None  # assigned when overlays are flattened
-    # Self-contained attributes (per-type attributor output). NOTE: the `field` attribute
-    # (AutoMathKG's mathematical-field name) shadows `dataclasses.field` inside this class
-    # body, so any attribute using `field(default_factory=...)` must be declared ABOVE it.
-    label: str | None = None  # the entity's own label, as written
+    id: int | None = None  # assigned when the overlay is flattened
+    type: str | None = None  # open, induced block genre
+    label: str | None = None  # the block's own label, as written
     number: str | None = None  # the reference number in that label
     title: str | None = None  # short descriptive name of the concept
     contents: list[str] = field(
         default_factory=list
     )  # member markdown, a list of strings
-    bodylist: list[BodySegment] = field(
+    procedures: list[Procedure] = field(
         default_factory=list
-    )  # role-labelled segmentation
-    proofs: list[Proof] = field(
-        default_factory=list
-    )  # Theorem-only: its proof(s)
-    solutions: list[Solution] = field(
-        default_factory=list
-    )  # Problem-only: its solution(s)
-    refs: list[Reference] = field(
-        default_factory=list
-    )  # cross-entity references (referencer output)
-    field: str | None = None  # mathematical field (fixed taxonomy)
+    )  # worked derivations (procedure extractor output)
     instruction: str | None = (
-        None  # Problem-only: shared exercise-group directive
+        None  # shared exercise-group directive (instruction distributor output)
     )
 
 
@@ -211,9 +136,13 @@ class ASTNode:
     node, and `segment_index` is retained only so the assembler can resolve `![N]()`
     picture placeholders against the right page's pictures.
 
-    `role` is a non-structural annotation the splitter may set (currently only "instruction",
-    marking an exercise lead-in). It is kept off `type` deliberately: `type` is the purely
-    structural taxonomy, `role` is an entity-layer hint that rides along on the node.
+    `role` is TRANSIENT — pipeline state, never persisted. The instruction finder stamps
+    "instruction" on exercise lead-in nodes; the group finder reads it to treat those nodes
+    as hard boundaries, and the instruction distributor reads it to find the lead-ins whose
+    directive it propagates. Nothing reads it back from the graph, so it stays out of the
+    node's Neo4j property map. It is kept off `type` deliberately: `type` is the purely
+    structural taxonomy the extractor emits, `role` is a later entity-layer hint riding
+    along on the node.
     """
 
     type: NodeType | None = None
@@ -225,13 +154,16 @@ class ASTNode:
         None  # originating page, for picture resolution after flattening
     )
     role: str | None = (
-        None  # non-structural annotation (e.g. "instruction" lead-in), set by the splitter
+        None  # TRANSIENT: "instruction" lead-in marker, set by the instruction finder
     )
 
 
 @dataclass(slots=True)
 class Segment:
-    """One page of the document. `index` is 0-based document order."""
+    """One page of the document. `index` is 0-based document order.
+
+    TRANSIENT — per-page ingestion scaffolding. Only its pictures outlive the seam merger,
+    and only for placeholder resolution at assembly; no Segment reaches the graph."""
 
     index: int
     image_path: str
@@ -263,31 +195,32 @@ def merge_results_into_segments(
 
 
 def flatten_entities(
-    problem: list['Entity'],
-    definition: list['Entity'],
-    theorem: list['Entity'],
-    nodes: list[ASTNode],
+    entities: list['Entity'], nodes: list[ASTNode]
 ) -> list['Entity']:
-    """Concatenate the three per-type finder overlays into one flat, document-ordered entity list
-    and assign each a global id.
+    """Order the finder's entity overlay by document position and assign each a global id.
 
-    The overlays are independent and may reference the same node more than once (members are
-    node-id pointers) — they are concatenated, not merged. Ordering is by each entity's first
-    member's position in the flat node stream; an entity with no members sorts to the end. Because
-    the splitter made exercise nodes atomic upstream, the problem finder already emits one entity
-    per exercise with distinct members, so no coarse-vs-fine reconciliation is needed. The assigned
-    `id` is the entity's stable document-order position — the key the graph tier's entity vertex
-    uuid is derived from — so a re-run maps onto the same vertices.
+    Ordering is by each entity's first member's position in the flat node stream; an entity
+    with no members sorts to the end. One finder produces one partition — entities no longer
+    overlap, so there is nothing to merge or reconcile, only to order. The assigned ``id`` is
+    the entity's stable document-order position — the key the graph tier's entity vertex uuid
+    is derived from — so a re-run maps onto the same vertices.
+
+    Args:
+        entities: The block finder's overlay, in any order.
+        nodes: The flat node stream, for resolving member positions.
+
+    Returns:
+        The same entities, sorted into document order with ``id`` assigned.
     """
-    entities = list(problem) + list(definition) + list(theorem)
+    ordered = list(entities)
     order = {node.id: i for i, node in enumerate(nodes)}
-    big = len(order)
-    entities.sort(
-        key=lambda e: order.get(e.members[0], big) if e.members else big
+    last = len(order)
+    ordered.sort(
+        key=lambda e: order.get(e.members[0], last) if e.members else last
     )
-    for i, entity in enumerate(entities):
+    for i, entity in enumerate(ordered):
         entity.id = i
-    return entities
+    return ordered
 
 
 def flatten_segments(segments: list[Segment]) -> list[ASTNode]:

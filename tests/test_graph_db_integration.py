@@ -100,11 +100,15 @@ def test_persist_nodes_upserts_labels_and_next_chain():
     asyncio.run(scenario())
 
 
-def test_persist_entities_upserts_labels_root_and_members():
+def test_persist_entities_and_procedures_upsert_the_overlay_and_its_spine():
     from kms.core import models
     from kms.graph.db import close_driver, database, driver
     from kms.graph.schema import ensure_schema
-    from kms.graph.writer import persist_entities, persist_nodes
+    from kms.graph.writer import (
+        persist_entities,
+        persist_nodes,
+        persist_procedures,
+    )
 
     source = 'integration-test-book'
     stream = [
@@ -118,21 +122,38 @@ def test_persist_entities_upserts_labels_root_and_members():
             segment_index=0,
         ),
         models.ASTNode(
-            type=models.NodeType.MATH,
-            content='$a^2+b^2=c^2$',
+            type=models.NodeType.PARAGRAPH,
+            content='Theorem 1.1. $a^2+b^2=c^2$',
             id=2,
             segment_index=0,
         ),
+        models.ASTNode(
+            type=models.NodeType.PARAGRAPH,
+            content='Proof. Drop the altitude. Then compare areas.',
+            id=3,
+            segment_index=0,
+        ),
     ]
+    # A definition, and a theorem whose proof is its own span with two steps. Decomposition is
+    # universal and the procedure carries its own :DERIVED_FROM provenance.
     overlay = [
         models.Entity(
-            type=models.EntityType.DEFINITION,
-            members=[1],
-            id=0,
-            title='Right triangle',
+            type='definition', members=[1], id=0, title='Right Triangle'
         ),
         models.Entity(
-            type=models.EntityType.THEOREM, members=[2], id=1, number='1.1'
+            type='theorem',
+            members=[2],
+            id=1,
+            number='1.1',
+            title='Pythagorean Theorem',
+            procedures=[
+                models.Procedure(
+                    index=0,
+                    members=[3],
+                    contents=['Drop the altitude. Then compare areas.'],
+                    steps=['Drop the altitude.', 'Then compare areas.'],
+                )
+            ],
         ),
     ]
 
@@ -142,201 +163,49 @@ def test_persist_entities_upserts_labels_root_and_members():
     async def scenario():
         try:
             await ensure_schema()
-            await persist_nodes(
-                stream, source
-            )  # the :Entity layer roots on the :Source/:Node layer
+            await persist_nodes(stream, source)
             await persist_entities(overlay, source)
+            await persist_procedures(overlay, source)
             await persist_entities(overlay, source)  # idempotent re-run
+            await persist_procedures(overlay, source)
             async with driver().session(database=database()) as session:
-                # multi-label: the theorem is reachable as :Theorem and carries base :Entity too
-                thm = await one(
+                # type is an open PROPERTY on a bare :Entity — no per-type label is minted
+                typed = await one(
                     session,
-                    "MATCH (e:Theorem:Entity {number: '1.1'}) RETURN count(e) AS c",
+                    "MATCH (e:Entity {type: 'theorem'}) RETURN count(e) AS c",
                 )
-                # both entities are rooted under the book's :Source via :HAS_ENTITY
+                labelled = await one(
+                    session, 'MATCH (e:Theorem) RETURN count(e) AS c'
+                )
+                # the overlay roots under its :Source and points back at its member chunks
                 rooted = await one(
                     session,
-                    "MATCH (:Source {key: '"
-                    + source
-                    + "'})-[:HAS_ENTITY]->(e:Entity) "
-                    'RETURN count(e) AS c',
+                    'MATCH (:Source)-[:HAS_ENTITY]->(e:Entity) RETURN count(e) AS c',
                 )
-                # the definition links to its member :Node (the paragraph) via :DERIVED_FROM
-                member = await one(
+                derived = await one(
                     session,
-                    "MATCH (:Entity {title: 'Right triangle'})-[:DERIVED_FROM]->(n:Node) "
-                    'RETURN n.content AS c',
+                    'MATCH (:Entity)-[:DERIVED_FROM]->(:Node) RETURN count(*) AS c',
                 )
-                assert thm['c'] == 1  # re-run did not duplicate the entity
+                # the procedural spine: one :Procedure, its own provenance, and a 2-act chain
+                spine = await one(
+                    session,
+                    'MATCH (:Entity)-[:HAS_PROCEDURE]->(p:Procedure)-[:FIRST]->(a:Act)'
+                    '-[:THEN]->(b:Act) RETURN a.text AS first, b.text AS second',
+                )
+                proc_prov = await one(
+                    session,
+                    'MATCH (:Procedure)-[:DERIVED_FROM]->(:Node) RETURN count(*) AS c',
+                )
+                assert typed['c'] == 1  # re-run did not duplicate
+                assert labelled['c'] == 0  # open types never become labels
                 assert rooted['c'] == 2
-                assert member['c'] == 'a right triangle is …'
+                assert derived['c'] == 2
+                assert spine['first'] == 'Drop the altitude.'
+                assert spine['second'] == 'Then compare areas.'
+                assert proc_prov['c'] == 1
         finally:
             async with driver().session(database=database()) as session:
-                await session.run(
-                    'MATCH (n) DETACH DELETE n'
-                )  # test DB: clear the graph
-            await close_driver()
-
-    asyncio.run(scenario())
-
-
-def test_persist_references_mints_hubs_and_edges():
-    from kms.core import models
-    from kms.graph.db import close_driver, database, driver
-    from kms.graph.schema import ensure_schema
-    from kms.graph.writer import (
-        persist_entities,
-        persist_nodes,
-        persist_references,
-    )
-
-    source = 'integration-test-book'
-    stream = [
-        models.ASTNode(
-            type=models.NodeType.PARAGRAPH, content='…', id=0, segment_index=0
-        )
-    ]
-    # Two entities that both reference "Set" — they must converge on ONE hub.
-    overlay = [
-        models.Entity(
-            type=models.EntityType.THEOREM,
-            members=[0],
-            id=0,
-            refs=[
-                models.Reference(
-                    target='Set', kind='definition', tactic='premise'
-                )
-            ],
-        ),
-        models.Entity(
-            type=models.EntityType.PROBLEM,
-            members=[0],
-            id=1,
-            refs=[
-                models.Reference(
-                    target='set', kind='definition', tactic='deduction'
-                )
-            ],
-        ),
-    ]
-
-    async def one(session, query):
-        return await (await session.run(query)).single()
-
-    async def scenario():
-        try:
-            await ensure_schema()
-            await persist_nodes(stream, source)
-            await persist_entities(overlay, source)
-            await persist_references(overlay, source)
-            await persist_references(overlay, source)  # idempotent re-run
-            async with driver().session(database=database()) as session:
-                # "Set" and "set" collapse to a single canonical
-                hubs = await one(
-                    session,
-                    "MATCH (c:Canonical {type: 'definition'}) RETURN count(c) AS c",
-                )
-                # both entities reference that one canonical -> two :REFERENCES edges into it
-                edges = await one(
-                    session,
-                    "MATCH (:Entity)-[r:REFERENCES]->(:Canonical {name: 'Set'}) "
-                    'RETURN count(r) AS c',
-                )
-                # the tactic rides on the relationship
-                tactic = await one(
-                    session,
-                    'MATCH (:Theorem)-[r:REFERENCES]->(:Canonical) RETURN r.tactic AS t',
-                )
-                assert hubs['c'] == 1  # converged, and re-run did not duplicate
-                assert edges['c'] == 2
-                assert tactic['t'] == 'premise'
-        finally:
-            async with driver().session(database=database()) as session:
-                await session.run(
-                    'MATCH (n) DETACH DELETE n'
-                )  # test DB: clear the graph
-            await close_driver()
-
-    asyncio.run(scenario())
-
-
-def test_persist_realizes_wires_a_mention_to_the_canonical_it_defines():
-    from kms.core import models
-    from kms.graph.db import close_driver, database, driver
-    from kms.graph.schema import ensure_schema
-    from kms.graph.writer import (
-        persist_entities,
-        persist_nodes,
-        persist_realizes,
-        persist_references,
-    )
-
-    source = 'integration-test-book'
-    stream = [
-        models.ASTNode(
-            type=models.NodeType.PARAGRAPH, content='…', id=0, segment_index=0
-        )
-    ]
-    # A definition of "Vector Space", a theorem that references it, and a definition nobody cites.
-    overlay = [
-        models.Entity(
-            type=models.EntityType.DEFINITION,
-            members=[0],
-            id=0,
-            title='Vector Space',
-        ),
-        models.Entity(
-            type=models.EntityType.THEOREM,
-            members=[0],
-            id=1,
-            title='Basis Theorem',
-            refs=[
-                models.Reference(
-                    target='vector space', kind='definition', tactic='premise'
-                )
-            ],
-        ),
-        models.Entity(
-            type=models.EntityType.DEFINITION,
-            members=[0],
-            id=2,
-            title='Uncited Widget',  # never referenced -> no canonical -> no :REALIZES edge
-        ),
-    ]
-
-    async def one(session, query):
-        return await (await session.run(query)).single()
-
-    async def scenario():
-        try:
-            await ensure_schema()
-            await persist_nodes(stream, source)
-            await persist_entities(overlay, source)
-            await persist_references(overlay, source)
-            await persist_realizes(overlay, source)
-            await persist_realizes(overlay, source)  # idempotent re-run
-            async with driver().session(database=database()) as session:
-                # the "Vector Space" mention realizes the SAME canonical the theorem references,
-                # so the citation resolves through the hub to where the concept is defined.
-                realized = await one(
-                    session,
-                    "MATCH (m:Mention {title: 'Vector Space'})-[:REALIZES]->"
-                    "(c:Canonical {type: 'definition'})"
-                    '<-[:REFERENCES]-(:Theorem) RETURN count(c) AS c',
-                )
-                # exactly one :REALIZES edge total: the uncited definition draws none (its title
-                # matched no canonical), and the re-run did not duplicate.
-                total = await one(
-                    session,
-                    'MATCH (:Mention)-[r:REALIZES]->(:Canonical) RETURN count(r) AS c',
-                )
-                assert realized['c'] == 1
-                assert total['c'] == 1
-        finally:
-            async with driver().session(database=database()) as session:
-                await session.run(
-                    'MATCH (n) DETACH DELETE n'
-                )  # test DB: clear the graph
+                await session.run('MATCH (n) DETACH DELETE n')
             await close_driver()
 
     asyncio.run(scenario())

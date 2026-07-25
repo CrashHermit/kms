@@ -10,6 +10,11 @@ logger = logging.getLogger(__name__)
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Run the pipeline from the command line: ``python -m kms.cli <pdf> [out_dir]``.
+
+    Args:
+        argv: Argument list. Reads ``sys.argv[1:]`` when None.
+    """
     args = sys.argv[1:] if argv is None else argv
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     pdf = args[0] if args else 'test.pdf'

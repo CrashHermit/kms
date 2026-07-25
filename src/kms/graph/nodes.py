@@ -70,8 +70,12 @@ def node_label(node: models.ASTNode) -> str | None:
 def node_properties(node: models.ASTNode, source: str) -> dict:
     """The Neo4j property map for one structural node: its stable uuid, the structural type,
     the markdown content, and provenance (document-order ``index`` + originating ``segment_index``).
-    None-valued fields (e.g. an unset ``role``) are omitted rather than written as nulls.
-    Precondition: ``node.id`` is set (true once the stream is flattened)."""
+    None-valued fields are omitted rather than written as nulls. Precondition: ``node.id`` is set
+    (true once the stream is flattened).
+
+    ``role`` is deliberately absent: it is TRANSIENT pipeline state (the instruction finder's
+    lead-in marker, read by the group finder and the instruction distributor) and nothing reads it
+    back from the graph, so it stays out of the deliverable (``docs/SCHEMA.md``, principle 1)."""
     props = {
         'uuid': node_uuid(source, node.id),
         'source': source_uuid(source),  # links back to the :Source node
@@ -79,6 +83,5 @@ def node_properties(node: models.ASTNode, source: str) -> dict:
         'content': node.content,
         'index': node.id,
         'segment_index': node.segment_index,
-        'role': node.role,
     }
     return {key: value for key, value in props.items() if value is not None}

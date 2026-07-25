@@ -21,7 +21,7 @@ def test_no_separate_canonical_constraint_since_entity_covers_it():
 def test_declares_uuid_constraints_for_the_procedural_and_concept_layers():
     stmts = schema_statements()
     assert any('(p:Procedure)' in s and 'IS UNIQUE' in s for s in stmts)
-    assert any('(v:Event)' in s and 'IS UNIQUE' in s for s in stmts)
+    assert any('(a:Act)' in s and 'IS UNIQUE' in s for s in stmts)
     assert any('(c:Concept)' in s and 'IS UNIQUE' in s for s in stmts)
 
 

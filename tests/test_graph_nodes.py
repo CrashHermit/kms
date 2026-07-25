@@ -35,18 +35,18 @@ def test_node_properties_maps_type_content_and_provenance():
     assert props['uuid'] == node_uuid('book.pdf', 3)
 
 
-def test_node_properties_omits_unset_role_but_keeps_index_zero():
+def test_node_properties_keep_index_zero():
     node = models.ASTNode(
         type=models.NodeType.PARAGRAPH, content='text', id=0, segment_index=0
     )
     props = node_properties(node, 'book.pdf')
-    assert (
-        'role' not in props
-    )  # None-valued fields are dropped from the property map
     assert props['index'] == 0  # a falsy-but-valid value is kept
 
 
-def test_node_properties_keeps_role_when_set():
+def test_node_properties_never_persist_the_transient_role():
+    # `role` is pipeline state — the instruction finder writes it, the group finder and the
+    # instruction distributor read it, and nothing reads it back from the graph. So it stays
+    # out of the deliverable (docs/SCHEMA.md, principle 1).
     node = models.ASTNode(
         type=models.NodeType.LIST,
         content='1. do it',
@@ -54,7 +54,7 @@ def test_node_properties_keeps_role_when_set():
         segment_index=1,
         role='instruction',
     )
-    assert node_properties(node, 'book.pdf')['role'] == 'instruction'
+    assert 'role' not in node_properties(node, 'book.pdf')
 
 
 def test_node_label_is_the_capitalized_type():

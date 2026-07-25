@@ -1,171 +1,112 @@
 """
-Graph representation of the procedural layer — the ``:Procedure`` containers and their ``:Event``
-step chains (see ``docs/UNIFIED-KG.md``, "Edges (math-first)").
+Graph representation of the procedural layer — the ``:Procedure`` containers and their ``:Act``
+step chains (see ``docs/SCHEMA.md``).
 
-A Theorem's ``proofs`` and a Problem's ``solutions`` are *derivations* — the procedural half of the
-bi-modal graph — so they are reified out of the entity (where the older schema kept them as JSON-string
-blobs) into real graph structure: one ``:Procedure`` per proof/solution, hung off its entity via
-``(:Entity)-[:HAS_PROCEDURE]->(:Procedure)``, and one ``:Event`` per ``bodylist`` step, threaded
-``(:Procedure)-[:FIRST]->(:Event)-[:THEN]->(:Event)-…``. The entity keeps only its *statement*
-structure (its own ``bodylist``); the doing lives here. This mirrors ``graph.nodes``/``graph.entities``:
-the vocabulary is ``core.models.ProcedureType`` (it invents no kinds) and it stays free of the neo4j driver
-(pure mapping) — the driver lives in ``graph.db``, the writes in ``graph.writer``.
+A block's derivations are *procedures* — the procedural half of the bi-modal graph — so they are
+reified out of the entity (where an older schema kept them as JSON-string blobs) into real graph
+structure: one ``:Procedure`` per derivation, hung off its entity via
+``(:Entity)-[:HAS_PROCEDURE]->(:Procedure)``, and one ``:Act`` per step, threaded
+``(:Procedure)-[:FIRST]->(:Act)-[:THEN]->(:Act)-…``. The entity keeps only its statement; the doing
+lives here. This mirrors ``graph.nodes``/``graph.entities``: pure mapping, free of the neo4j driver
+(the driver lives in ``graph.db``, the writes in ``graph.writer``).
 
-Representation: every procedure carries the base ``:Procedure`` label AND its per-kind label
-(``:Procedure:Proof`` / ``:Procedure:Solution``); math-first the kind is a label, like ``:Entity:Theorem``
-(``docs/UNIFIED-KG.md``, the math-first note). Events carry only ``:Event`` (the step's ``action`` — the
-tactic role — is a property, not a label, since roles are open). A solution has no ``bodylist`` in the
-model, so a ``:Procedure:Solution`` carries its ``contents`` but no event chain; proofs get both.
+Representation: a procedure carries the bare ``:Procedure`` label, with NO per-kind label and no
+``type`` property — proof / solution / derivation is derivable from the owning entity's ``type``,
+so storing it would duplicate a neighbour's fact (``docs/SCHEMA.md``, principle 5). An ``:Act``
+likewise carries only its verbatim ``text`` and its ordinal ``index``: the old ``action`` tactic
+role was AutoMathKG's closed nine-value taxonomy, was written and never read, and the concept layer
+supersedes it with open, cross-corpus-linkable tags.
 
-Identity: deterministic uuid5s, disjoint from node/entity/hub uuids by their segment. A procedure keys
-on ``(source, entity id, kind, procedure index)`` — kind keeps a Thm's proof #0 distinct from a Prob's
-solution #0 on the (rare) shared entity — and an event on the procedure key plus its step index. So
-re-persisting a book MERGEs onto the same procedure/event vertices instead of duplicating them.
+Decomposition is UNIVERSAL — every procedure has steps, whatever it derives. The old schema
+restricted its step list to Theorems and Definitions, which left every solution stepless.
 
-Event provenance: a ``bodylist`` step is a content slice, not tied to a specific source node id, so no
-``(:Event)-[:DERIVED_FROM]->(:Node)`` edge is drawn here — provenance is reachable transitively
-(event → procedure → entity → its member ``:Node`` s). A precise step→node link is later work.
+Identity: deterministic uuid5s, disjoint from node/entity uuids by their segment. A procedure keys
+on ``(source, entity id, procedure index)`` and an act on the procedure key plus its step index. So
+re-persisting a book MERGEs onto the same procedure/act vertices instead of duplicating them.
+
+Provenance: a procedure is found as its own span, so it carries ``members`` and gets real
+``(:Procedure)-[:DERIVED_FROM]->(:Node)`` edges. An ``:Act`` does not: its text is a sub-node slice
+that need not align to node boundaries, so its provenance is transitive (act → procedure → node).
 """
 
-from collections.abc import Iterator
 from uuid import NAMESPACE_URL, uuid5
 
 from kms.core import models
+from kms.graph import nodes
 from kms.graph.entities import entity_uuid
-from kms.graph.nodes import source_uuid
 
 PROCEDURE_LABEL = 'Procedure'
-EVENT_LABEL = 'Event'
+ACT_LABEL = 'Act'
 
 
-def procedure_uuid(source: str, entity_id: int, kind: str, index: int) -> str:
-    """Stable, deterministic vertex key for a procedure: uuid5 over ``(source, entity id, kind,
-    procedure index)``. The ``procedure#`` segment keeps it disjoint from node/entity/hub uuids; kind
-    disambiguates a proof from a solution on the same entity id."""
-    return uuid5(
-        NAMESPACE_URL, f'{source}#procedure#{entity_id}#{kind}#{index}'
-    ).hex
+def procedure_uuid(source: str, entity_id: int, index: int) -> str:
+    """Stable, deterministic vertex key for a procedure: uuid5 over ``(source, entity id,
+    procedure index)``. The ``procedure#`` segment keeps it disjoint from every other uuid
+    namespace. An entity's procedures are indexed from 0 in document order."""
+    return uuid5(NAMESPACE_URL, f'{source}#procedure#{entity_id}#{index}').hex
 
 
-def event_uuid(
-    source: str, entity_id: int, kind: str, proc_index: int, step_index: int
+def act_uuid(
+    source: str, entity_id: int, procedure_index: int, step_index: int
 ) -> str:
     """Stable, deterministic vertex key for one procedure step: the procedure key plus the step's
-    position. The ``event#`` segment keeps it disjoint from every other uuid namespace."""
+    position. The ``act#`` segment keeps it disjoint from every other uuid namespace."""
     return uuid5(
         NAMESPACE_URL,
-        f'{source}#event#{entity_id}#{kind}#{proc_index}#{step_index}',
+        f'{source}#act#{entity_id}#{procedure_index}#{step_index}',
     ).hex
-
-
-def procedure_label(kind: str) -> str:
-    """The per-kind label for a procedure (``models.ProcedureType.PROOF`` -> ``"models.Proof"``), applied ALONGSIDE
-    the base ``:Procedure`` label. The models.ProcedureType values are single lowercase words, so capitalizing
-    yields a valid Neo4j label."""
-    return kind.capitalize()
-
-
-def proof_events(
-    entity: models.Entity, source: str
-) -> Iterator[tuple[str, models.BodySegment]]:
-    """Yield ``(event_uuid, step)`` for every step of every proof of the entity — the reified
-    ``:Event`` identities. The single place the ``:Event`` key is derived from the (proof index, step
-    index) scheme, so a consumer (e.g. the step-level ``:USES`` builder) reuses it instead of
-    reconstructing the same uuid."""
-    for proc_index, proof in enumerate(entity.proofs):
-        for step_index, step in enumerate(proof.bodylist):
-            yield (
-                event_uuid(
-                    source,
-                    entity.id,
-                    models.ProcedureType.PROOF.value,
-                    proc_index,
-                    step_index,
-                ),
-                step,
-            )
-
-
-def _derivations(
-    entity: models.Entity,
-) -> list[tuple[str, int, list[str], list[models.BodySegment]]]:
-    """The entity's procedures as ``(kind, index, contents, bodylist)`` tuples, in a stable order:
-    proofs first (Theorem-only), then solutions (Problem-only). A solution carries no bodylist, so its
-    step list is empty. The index is per-kind (proof #0, #1, …; solution #0, …); the uuid folds in the
-    kind, so the two index spaces don't collide."""
-    rows: list[tuple[str, int, list[str], list[models.BodySegment]]] = []
-    for i, proof in enumerate(entity.proofs):
-        rows.append(
-            (
-                models.ProcedureType.PROOF.value,
-                i,
-                proof.contents,
-                proof.bodylist,
-            )
-        )
-    for i, solution in enumerate(entity.solutions):
-        rows.append(
-            (models.ProcedureType.SOLUTION.value, i, solution.contents, [])
-        )
-    return rows
 
 
 def procedure_properties(
-    source: str, entity_id: int, kind: str, index: int, contents: list[str]
+    source: str, entity_id: int, procedure: models.Procedure
 ) -> dict:
-    """The Neo4j property map for one procedure: its stable uuid, the source link, the ``type`` (kind),
-    its per-kind ``index``, and ``contents`` as a native string array. Empty contents is dropped."""
+    """The Neo4j property map for one procedure: its stable uuid, the source link, its ordinal
+    ``index``, and ``contents`` as a native string array. Empty contents is dropped. No ``type``
+    — see the module docstring."""
     props = {
-        'uuid': procedure_uuid(source, entity_id, kind, index),
-        'source': source_uuid(source),
-        'type': kind,
-        'index': index,
-        'contents': contents or None,
+        'uuid': procedure_uuid(source, entity_id, procedure.index),
+        'source': nodes.source_uuid(source),
+        'index': procedure.index,
+        'contents': procedure.contents or None,
     }
     return {key: value for key, value in props.items() if value is not None}
 
 
-def event_properties(
+def act_properties(
     source: str,
     entity_id: int,
-    kind: str,
-    proc_index: int,
+    procedure_index: int,
     step_index: int,
-    step: models.BodySegment,
+    text: str,
 ) -> dict:
-    """The Neo4j property map for one procedure step: its stable uuid, the source link, the ``action``
-    (the tactic role, a property since roles are open), the step ``text``, and its ordinal ``index``."""
+    """The Neo4j property map for one procedure step: its stable uuid, the source link, the
+    verbatim step ``text``, and its ordinal ``index``."""
     return {
-        'uuid': event_uuid(source, entity_id, kind, proc_index, step_index),
-        'source': source_uuid(source),
-        'action': step.action,
-        'text': step.description,
+        'uuid': act_uuid(source, entity_id, procedure_index, step_index),
+        'source': nodes.source_uuid(source),
+        'text': text,
         'index': step_index,
     }
 
 
-def procedure_batches(
-    entities: list[models.Entity], source: str
-) -> dict[str, list[dict]]:
-    """Group every procedure's property map by its per-kind label, so each label is one batched
-    MERGE (mirrors ``entity_batches``)."""
-    batches: dict[str, list[dict]] = {}
-    for entity in entities:
-        for kind, index, contents, _ in _derivations(entity):
-            batches.setdefault(procedure_label(kind), []).append(
-                procedure_properties(source, entity.id, kind, index, contents)
-            )
-    return batches
-
-
-def event_rows(entities: list[models.Entity], source: str) -> list[dict]:
-    """Every step's property map across the overlay, one flat list — events carry a single ``:Event``
-    label (their ``action`` is a property, not a per-type label), so one batched MERGE writes them all."""
+def procedure_rows(entities: list[models.Entity], source: str) -> list[dict]:
+    """Every procedure's property map across the overlay, one flat list. Procedures carry a single
+    ``:Procedure`` label, so one batched MERGE writes them all."""
     return [
-        event_properties(source, entity.id, kind, index, step_index, step)
+        procedure_properties(source, entity.id, procedure)
         for entity in entities
-        for kind, index, _, bodylist in _derivations(entity)
-        for step_index, step in enumerate(bodylist)
+        for procedure in entity.procedures
+    ]
+
+
+def act_rows(entities: list[models.Entity], source: str) -> list[dict]:
+    """Every step's property map across the overlay, one flat list — acts carry a single ``:Act``
+    label, so one batched MERGE writes them all."""
+    return [
+        act_properties(source, entity.id, procedure.index, step_index, text)
+        for entity in entities
+        for procedure in entity.procedures
+        for step_index, text in enumerate(procedure.steps)
     ]
 
 
@@ -173,50 +114,58 @@ def has_procedure_pairs(
     entities: list[models.Entity], source: str
 ) -> list[dict]:
     """The ``{entity, procedure}`` uuid pairs for the ``:HAS_PROCEDURE`` edges — one per (entity,
-    derivation), hanging each procedure off the declarative entity it derives."""
+    procedure), hanging each derivation off the block it derives."""
     return [
         {
             'entity': entity_uuid(source, entity.id),
-            'procedure': procedure_uuid(source, entity.id, kind, index),
+            'procedure': procedure_uuid(source, entity.id, procedure.index),
         }
         for entity in entities
-        for kind, index, _, _ in _derivations(entity)
+        for procedure in entity.procedures
+    ]
+
+
+def procedure_member_pairs(
+    entities: list[models.Entity], source: str
+) -> list[dict]:
+    """The ``{procedure, node}`` uuid pairs for the procedures' ``:DERIVED_FROM`` edges — one per
+    (procedure, member), so a derivation links to every source chunk it was built from. Possible
+    because the group finder detects a procedure as its own span, giving it member node ids."""
+    return [
+        {
+            'procedure': procedure_uuid(source, entity.id, procedure.index),
+            'node': nodes.node_uuid(source, member),
+        }
+        for entity in entities
+        for procedure in entity.procedures
+        for member in procedure.members
     ]
 
 
 def first_pairs(entities: list[models.Entity], source: str) -> list[dict]:
-    """The ``{procedure, event}`` uuid pairs for the ``:FIRST`` edges — each procedure to its opening
-    step. Only procedures with at least one step (proofs) appear; a stepless solution has none."""
-    pairs: list[dict] = []
-    for entity in entities:
-        for kind, index, _, bodylist in _derivations(entity):
-            if bodylist:
-                pairs.append(
-                    {
-                        'procedure': procedure_uuid(
-                            source, entity.id, kind, index
-                        ),
-                        'event': event_uuid(source, entity.id, kind, index, 0),
-                    }
-                )
-    return pairs
+    """The ``{procedure, act}`` uuid pairs for the ``:FIRST`` edges — each procedure to its opening
+    step. A procedure that decomposed into nothing contributes none."""
+    return [
+        {
+            'procedure': procedure_uuid(source, entity.id, procedure.index),
+            'act': act_uuid(source, entity.id, procedure.index, 0),
+        }
+        for entity in entities
+        for procedure in entity.procedures
+        if procedure.steps
+    ]
 
 
 def then_pairs(entities: list[models.Entity], source: str) -> list[dict]:
-    """The ``{from, to}`` uuid pairs for the ``:THEN`` chain — consecutive steps within each procedure.
-    A procedure of fewer than two steps contributes none; the chain never crosses procedures."""
-    pairs: list[dict] = []
-    for entity in entities:
-        for kind, index, _, bodylist in _derivations(entity):
-            for step_index in range(len(bodylist) - 1):
-                pairs.append(
-                    {
-                        'from': event_uuid(
-                            source, entity.id, kind, index, step_index
-                        ),
-                        'to': event_uuid(
-                            source, entity.id, kind, index, step_index + 1
-                        ),
-                    }
-                )
-    return pairs
+    """The ``{from, to}`` uuid pairs for the ``:THEN`` chain — consecutive steps within each
+    procedure. A procedure of fewer than two steps contributes none; the chain never crosses
+    procedures."""
+    return [
+        {
+            'from': act_uuid(source, entity.id, procedure.index, step_index),
+            'to': act_uuid(source, entity.id, procedure.index, step_index + 1),
+        }
+        for entity in entities
+        for procedure in entity.procedures
+        for step_index in range(len(procedure.steps) - 1)
+    ]
