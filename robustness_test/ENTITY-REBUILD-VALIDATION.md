@@ -65,6 +65,38 @@ stamps 110/112, 68/74 and 26/33 across correctly segmented groups. Hefferon also
 test: its per-exercise imperatives ("Solve each system.") produced **0** lead-in tags, so they
 were not mistaken for run-governing directives.
 
+### Two open questions, measured against the sources
+
+Both were flagged as "unverified, worth measuring rather than guessing". Measured:
+
+**Hefferon is correct — 12/12, not under-split.** The slice contains exercises **3.14 through
+3.25 inclusive, which is exactly 12 items**, and all twelve were extracted with the right
+numbers. The only other number on the page, `3.7`, appears solely inside exercise 3.18's text
+("Lemma 3.7 says that we can use any particular solution for $\vec{p}$") — correctly excluded
+as a block, and correctly *not* stolen as 3.18's own number. That is the documented
+cross-reference hazard behaving, on real content. The earlier suspicion was unfounded.
+
+**Grinstead's 12 → 7 is the documented one-partition trade, not a coverage loss.** Every
+labelled block on the slice is captured: Definitions 1.1 and 1.2, Examples 1.6, 1.7, 1.8 and
+1.9 — **6 of 6**. The baseline's extra count came from its **7 unnumbered inline definitions**,
+which are italicised technical terms embedded in the surrounding prose — `*sample space*`,
+`*outcomes*`, `*event*`, `*random variable*`, `*probability*`, `*distribution function*`,
+`*discrete*`. Three independent finders could each claim those nodes; under one partition they
+are absorbed into the block that contains them. HANDOFF predicts exactly this ("expect
+definition counts to drop"), and Levin showed the same 8 → 2 pattern. So the drop is the
+intended cost, and it is worth restating what it costs: **an inline term-definition is
+currently not addressable in the graph.** If those matter, the concept layer — not the entity
+layer — is where they should come back.
+
+**One real defect surfaced by the audit.** Grinstead's Example 1.6 is split across *two*
+entities: node 16 (`**Example 1.6** A die is rolled once...`) and node 17
+(`$$\Omega = \{1,...,6\}$$ where each outcome $i$ corresponds to...`), which is a plain
+continuation of the same example's setup. The finder cut between them and the role typer
+reasonably called the continuation a block, giving a spurious numberless `example`. It is a
+boundary over-cut, not a typing error. Left unfixed deliberately: it is a single instance, and
+hand-tuning the cut prompt for one case is precisely what produced the two regressions above.
+It belongs in the eval set.
+
 ### The over-firing regression this caught
 
 The held-out set immediately found something five books never would have. On the two dense
