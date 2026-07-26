@@ -44,9 +44,9 @@ is currently dark**: its only source was the deleted `field` taxonomy, so nothin
   the backward-only dependency rule). Packages:
   - `core/` — shared center that every stage depends on and that depends on no stage:
     `models.py` (domain data, dspy/langgraph-free), `state.py` (the LangGraph `State`),
-    `llm.py` (LM config), `logs.py` (log formatting helpers). There is no `tracing.py` —
-    trainable per-call capture was removed with the AutoMathKG layer and has not been
-    replaced; `logs.py` is a debugging aid, not a substitute (see `docs/HANDOFF.md`).
+    `llm.py` (LM config), `logs.py` (log formatting helpers), `tracing.py` (per-call JSONL
+    capture for prompt optimisation — hooks DSPy's callback system, so no stage module
+    imports it and a new stage is traced the day it is written).
   - `ingestion/` — phase 1 (backbone `segments`): `ocr.py` (Mistral front-end), `corrector.py`,
     `extractor.py` (purely structural), `seam_merger.py`. Map-reduce `dispatch → worker → collect`.
   - `entity/` — phase 2 (backbone `nodes`), all plain sequential nodes: `splitter.py`,
@@ -81,7 +81,10 @@ is currently dark**: its only source was the deleted `field` taxonomy, so nothin
 - Logs: every stage logs one INFO line summarising what it produced; `KMS_LOG_LEVEL=DEBUG` adds
   one line per DSPy call (inputs' shape + elided outputs, ~70 lines/book). Loggers are named after
   their modules, so a single stage can be turned up on its own.
-- Tests: `PYTHONPATH=src uv run pytest -q` (161 tests, 3 skipped) — `conftest` stubs the heavy
+- Traces: `KMS_TRACE_DIR=traces/<book>` captures every DSPy call as `<stage>.jsonl` lines of
+  `{stage, inputs, outputs}` — load straight into `dspy.Example` for optimisation. Automatic for
+  every stage; nothing is instrumented.
+- Tests: `PYTHONPATH=src uv run pytest -q` (175 tests, 3 skipped) — `conftest` stubs the heavy
   deps, so it runs anywhere, no keys needed. The Neo4j integration test is opt-in
   (`KMS_NEO4J_IT=1`).
 - Run (full pipeline): `PYTHONPATH=src uv run --extra mistral python -m kms.cli book.pdf out/`,

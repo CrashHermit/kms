@@ -136,7 +136,7 @@ on a re-run versus the numbers recorded below — that is intended.
 - `uv sync` — light CPU core.
 - `uv sync --extra mistral` — adds `pypdfium2` + `pillow` (render page images for the corrector).
 
-**Tests:** `PYTHONPATH=src uv run pytest -q` (161 tests, 3 skipped). `tests/conftest.py` stubs
+**Tests:** `PYTHONPATH=src uv run pytest -q` (175 tests, 3 skipped). `tests/conftest.py` stubs
 dspy/pydantic/langgraph *only if absent*, so the suite runs with or without the real deps. The
 Neo4j integration test is opt-in behind `KMS_NEO4J_IT=1`.
 
@@ -159,7 +159,27 @@ PYTHONPATH=src uv run --extra mistral python -m kms.cli book.pdf out/
 
 # every stage logs an INFO summary; KMS_LOG_LEVEL=DEBUG adds one line per DSPy call
 KMS_LOG_LEVEL=DEBUG PYTHONPATH=src uv run --extra mistral python -m kms.cli book.pdf out/
+
+# KMS_TRACE_DIR captures every DSPy call as trainable JSONL (one file per stage)
+KMS_TRACE_DIR=traces/morris PYTHONPATH=src uv run --extra mistral python -m kms.cli book.pdf out/
 ```
+
+**Traces (`core/tracing.py`).** `KMS_TRACE_DIR=<dir>` writes `<dir>/<stage>.jsonl`, one line per
+DSPy call: `{"stage", "inputs", "outputs"}`, with `reasoning` kept and page images recorded as a
+`'<image>'` placeholder. Load them straight into a DSPy optimiser:
+
+```python
+examples = [
+    dspy.Example(**r['inputs'], **r['outputs']).with_inputs(*r['inputs'])
+    for r in map(json.loads, open('traces/morris/group_finder.jsonl'))
+]
+```
+
+Capture is **automatic for every stage** — it hooks DSPy's own callback system
+(`dspy.settings.callbacks`) rather than requiring a `record()` call inside each module, so no
+stage module mentions tracing and a stage added tomorrow is traced the day it is written. Only
+`dspy.Predict` instances are recorded; a `ChainOfThought` wraps exactly one inner `Predict`, and
+recording both would double every line. A 4-page book yields ~45 lines across 10 stages.
 
 A healthy INFO run reads like this (Morris, *Topology Without Tears*, 4 pp) — the stage counts
 are the fastest check that a run behaved:
@@ -303,12 +323,10 @@ the whole run.
   claim that was really 3 cache hits in 4.5 s). To measure real behaviour, disable it:
   `dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=False)`. As a smell test,
   a genuine DeepSeek stage call is seconds, not milliseconds.
-- **There is logging, but still no tracing.** Every stage logs one INFO line summarising what it
-  produced, and `KMS_LOG_LEVEL=DEBUG` adds one line per DSPy call (inputs' shape + elided outputs,
-  ~70 lines/book); loggers are module-named, so one stage can be turned up alone. This is a
-  debugging aid only — `core/tracing.py` / `KMS_TRACE_DIR` are still gone, so a run still produces
-  NO trainable per-call capture. For structured I/O you must keep the LangGraph `State` yourself or
-  read `~/.dspy_cache` (responses only — the cache is keyed by a request hash, so inputs are gone).
+- **Logging and tracing are both back, and they are different tools.** Every stage logs one INFO
+  line summarising what it produced, and `KMS_LOG_LEVEL=DEBUG` adds one line per DSPy call
+  (inputs' shape + elided outputs, ~70 lines/book); loggers are module-named, so one stage can be
+  turned up alone. That is for *reading*. For *data*, set `KMS_TRACE_DIR` — see below.
 - **There is one finder now, not three copies.** A walk bug is fixed in one place
   (`entity/group_finder.py`); the banking machinery there is load-bearing and was carried over
   verbatim — change the Signature freely, the cursor logic only with care.

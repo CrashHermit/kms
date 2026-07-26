@@ -54,7 +54,7 @@ from typing import TYPE_CHECKING
 
 from langgraph.graph import END, START, StateGraph
 
-from kms.core import state
+from kms.core import state, tracing
 from kms.entity.block_typer import BlockTyperNode
 from kms.entity.group_finder import GroupFinderNode
 from kms.entity.instruction_distributor import InstructionDistributorNode
@@ -200,9 +200,11 @@ async def run(
     filename); ``title``/``author`` are optional book attributes stored on the ``:Source`` node.
     Graph persistence is skipped entirely when Neo4j isn't configured — a DB-less run still
     produces ``document.md`` but persists no nodes or entities. Returns the path of the assembled
-    document.
+    document. Setting ``KMS_TRACE_DIR`` additionally captures every DSPy call's inputs and
+    outputs as JSONL (see ``core.tracing``).
     """
     output_dir = Path(output_dir)
+    tracing.enable_from_env()  # captures every DSPy call when KMS_TRACE_DIR is set
     from kms.ingestion import ocr
 
     source = source or Path(pdf_path).name

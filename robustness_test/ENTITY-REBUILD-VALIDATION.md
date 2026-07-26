@@ -486,6 +486,10 @@ captured 227 trainable `{stage, inputs, outputs}` trace lines; **this one captur
 | `entity.instruction_finder` | 3 |
 | `entity.instruction_distributor` | 2 |
 
+> **Resolved 2026-07-26.** `core/tracing.py` is back — see the note below and
+> `docs/HANDOFF.md`. The paragraph that follows describes why the DSPy cache was never an
+> adequate stand-in, which is what motivated rebuilding it.
+
 **The cache is not a replacement for tracing**, for three reasons: entries are keyed by a
 hash of the request, so **the inputs are unrecoverable** and the pairing needed for training
 data does not exist; the count is far short of the calls actually made (30 cached vs 67
@@ -493,8 +497,19 @@ statement extractions), so it is not a complete record; and it lives in an ephem
 container. It is also an active hazard for validation — see the methodology correction under
 Finding 1.
 
-Restoring trace capture should come **before** any Signature tuning, since the tuning has no
-data without it.
+**Trace capture was restored** on 2026-07-26, and deliberately in a lighter form than the
+scheme it replaces. The retired one required a `tracing.record()` call inside every module, so
+a new stage silently produced nothing until someone wired it up. The replacement hooks DSPy's
+own callback system (`dspy.settings.callbacks`), so **no stage module imports or mentions
+tracing at all** and every stage — including any added later — is captured automatically. Set
+`KMS_TRACE_DIR`; each stage gets a `<stage>.jsonl` of `{stage, inputs, outputs}` lines that
+load directly into `dspy.Example`. A 4-page book yields ~45 lines across all 10 stages, and the
+counts cross-check against the INFO logs (9 blocks produced 9 `block_typer` and 9
+`statement_extractor` lines; 11 spans produced 11 `role_typer` lines).
+
+Only `dspy.Predict` instances are recorded: a `ChainOfThought` fires its own callback and wraps
+exactly one inner `Predict`, so recording both would double every line. Page images are stored
+as a `'<image>'` placeholder, as the previous scheme did.
 
 ## Smaller notes
 - **Node counts differ from baseline** (e.g. Stein 36 vs 47). The front-end is untouched by
