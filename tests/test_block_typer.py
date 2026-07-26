@@ -24,7 +24,7 @@ class _ScriptedModule:
         self._types = list(types)
         self.seen = []
 
-    async def block_type(self, members):
+    async def acall(self, members):
         self.seen.append(members)
         return self._types.pop(0)
 

@@ -24,7 +24,7 @@ class _ScriptedModule:
         self._roles = list(roles)
         self.seen = []
 
-    async def role(self, contents):
+    async def acall(self, contents):
         self.seen.append(contents)
         return self._roles.pop(0)
 
@@ -73,7 +73,7 @@ def test_an_unusable_role_falls_back_to_entity():
 
 
 class _FakeClassify:
-    """Stands in for the dspy predictor so the real Module.role normalisation is exercised."""
+    """Stands in for the dspy predictor so the real RoleTyper.role normalisation is exercised."""
 
     def __init__(self, raw):
         self._raw = raw
@@ -83,20 +83,20 @@ class _FakeClassify:
 
 
 def _module_returning(raw):
-    module = role_typer.Module.__new__(role_typer.Module)
+    module = role_typer.RoleTyper.__new__(role_typer.RoleTyper)
     module.classify = _FakeClassify(raw)
     return module
 
 
 def test_role_matching_is_case_and_whitespace_insensitive():
-    assert asyncio.run(_module_returning(' PROCEDURE ').role('x')) == (
+    assert asyncio.run(_module_returning(' PROCEDURE ').aforward('x')) == (
         'procedure'
     )
 
 
 def test_module_falls_back_to_entity_for_an_unusable_answer():
-    assert asyncio.run(_module_returning('nonsense').role('x')) == 'entity'
-    assert asyncio.run(_module_returning('').role('x')) == 'entity'
+    assert asyncio.run(_module_returning('nonsense').aforward('x')) == 'entity'
+    assert asyncio.run(_module_returning('').aforward('x')) == 'entity'
 
 
 def test_entities_carry_members_only():

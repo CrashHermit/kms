@@ -80,7 +80,7 @@ class Decompose(dspy.Signature):
     )
 
 
-class Module(dspy.Module):
+class ProcedureExtractor(dspy.Module):
     """Runs the step decomposition for one procedure."""
 
     def __init__(self, language_model: dspy.LM | None = None) -> None:
@@ -88,7 +88,7 @@ class Module(dspy.Module):
         self.decompose = dspy.ChainOfThought(Decompose)
         self.set_lm(language_model or llm.text_lm())
 
-    async def steps(self, contents: str) -> list[str]:
+    async def aforward(self, contents: str) -> list[str]:
         """Returns the ordered verbatim steps for one procedure's content."""
         result = await self.decompose.acall(contents=contents)
         steps = [step for step in (result.steps or []) if step and step.strip()]
@@ -154,12 +154,12 @@ async def _build(
     span: list[int],
     index: int,
     nodes_by_id: dict[int, models.ASTNode],
-    module: Module,
+    module: ProcedureExtractor,
 ) -> models.Procedure:
     """Decompose one procedure span into a Procedure with verbatim steps."""
     members = [nodes_by_id[i] for i in span if i in nodes_by_id]
     contents = statement_extractor.contents_of(members)
-    steps = await module.steps('\n\n'.join(contents)) if contents else []
+    steps = await module.acall('\n\n'.join(contents)) if contents else []
     return models.Procedure(
         index=index, members=span, contents=contents, steps=steps
     )
@@ -169,7 +169,7 @@ async def extract_procedures(
     entities: list[models.Entity],
     procedure_spans: list[list[int]],
     nodes_by_id: dict[int, models.ASTNode],
-    module: Module | None = None,
+    module: ProcedureExtractor | None = None,
 ) -> list[models.Procedure]:
     """Decompose every procedure span and attach it to the block it derives, in place.
 
@@ -187,7 +187,7 @@ async def extract_procedures(
         The orphan procedures — decomposed but attached to no entity. The attached ones are
         written onto their entity's ``procedures`` list in place.
     """
-    module = module or Module()
+    module = module or ProcedureExtractor()
     order = {
         node_id: position
         for position, node_id in enumerate(sorted(nodes_by_id))
@@ -241,8 +241,8 @@ class ProcedureExtractorNode:
     for now — the graph tier will grow an orphan write when the attachment rule is
     designed."""
 
-    def __init__(self, module: Module | None = None) -> None:
-        self.module = module or Module()
+    def __init__(self, module: ProcedureExtractor | None = None) -> None:
+        self.module = module or ProcedureExtractor()
 
     async def run(self, state: state.State) -> dict:
         """Decomposes the found procedure spans and attaches them to their blocks."""

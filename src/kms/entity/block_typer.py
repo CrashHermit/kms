@@ -87,7 +87,7 @@ class Induce(dspy.Signature):
     )
 
 
-class Module(dspy.Module):
+class BlockTyper(dspy.Module):
     """Induces the open ``type`` for one pedagogical block."""
 
     def __init__(self, language_model: dspy.LM | None = None) -> None:
@@ -95,7 +95,7 @@ class Module(dspy.Module):
         self.induce = dspy.ChainOfThought(Induce)
         self.set_lm(language_model or llm.text_lm())
 
-    async def block_type(self, members: list[models.ASTNode]) -> str | None:
+    async def aforward(self, members: list[models.ASTNode]) -> str | None:
         """Returns the induced type for one block, or None if the model gave nothing."""
         nodes = [
             MemberNode(
@@ -125,7 +125,7 @@ def normalize_type(raw: str | None) -> str:
 async def type_blocks(
     entities: list[models.Entity],
     nodes_by_id: dict[int, models.ASTNode],
-    module: Module | None = None,
+    module: BlockTyper | None = None,
 ) -> list[models.Entity]:
     """Induce and write the open ``type`` on every block, in place.
 
@@ -139,16 +139,13 @@ async def type_blocks(
     Returns:
         The same entities, with ``type`` filled in.
     """
-    module = module or Module()
+    module = module or BlockTyper()
     if not entities:
         logger.info('block typer: no blocks')
         return entities
 
     types = await asyncio.gather(
-        *(
-            module.block_type(members_of(entity, nodes_by_id))
-            for entity in entities
-        )
+        *(module.acall(members_of(entity, nodes_by_id)) for entity in entities)
     )
     for entity, induced in zip(entities, types, strict=True):
         entity.type = induced
@@ -177,8 +174,8 @@ class BlockTyperNode:
     Runs after the role typer (so every entity is known to be a block, not a derivation) and
     before the statement extractor, which fills the remaining attributes."""
 
-    def __init__(self, module: Module | None = None) -> None:
-        self.module = module or Module()
+    def __init__(self, module: BlockTyper | None = None) -> None:
+        self.module = module or BlockTyper()
 
     async def run(self, state: state.State) -> dict:
         """Induces each block's open type."""

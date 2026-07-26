@@ -129,7 +129,7 @@ class Signature(dspy.Signature):
     )
 
 
-class Module(dspy.Module):
+class Corrector(dspy.Module):
     """Proofreads a transcribed page against its source image and fixes OCR errors."""
 
     def __init__(self, language_model: dspy.LM | None = None) -> None:
@@ -157,8 +157,8 @@ class Module(dspy.Module):
 class CorrectorNode:
     """LangGraph node: fans out per-page proofreaders and collects the corrected text."""
 
-    def __init__(self, module: Module | None = None) -> None:
-        self.module = module or Module()
+    def __init__(self, module: Corrector | None = None) -> None:
+        self.module = module or Corrector()
 
     def dispatch(self, state: state.State) -> list[Send] | str:
         """Fan out one worker per transcribed segment. Every page is proofread; a segment

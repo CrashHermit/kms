@@ -78,7 +78,7 @@ class Signature(dspy.Signature):
     )
 
 
-class Module(dspy.Module):
+class InstructionFinder(dspy.Module):
     """Tags exercise lead-in nodes `role='instruction'` in the structural stream."""
 
     def __init__(self, language_model: dspy.LM | None = None) -> None:
@@ -100,12 +100,12 @@ class Module(dspy.Module):
 
 async def tag_instructions(
     nodes: list[models.ASTNode],
-    module: Module | None = None,
+    module: InstructionFinder | None = None,
     budget: int = LOOKAHEAD_BUDGET,
 ) -> list[models.ASTNode]:
     """Walk the stream in windows and stamp `role="instruction"` on every lead-in node, in
     place. Returns the same node list (mutated)."""
-    module = module or Module()
+    module = module or InstructionFinder()
     if not nodes:
         return nodes
     cursor, node_count = 0, len(nodes)
@@ -151,8 +151,8 @@ class InstructionFinderNode:
     graph node. It runs after the splitter (so every lead-in is already its own node) and before
     the node persister and the three finders, which read the tags."""
 
-    def __init__(self, module: Module | None = None) -> None:
-        self.module = module or Module()
+    def __init__(self, module: InstructionFinder | None = None) -> None:
+        self.module = module or InstructionFinder()
 
     async def run(self, state: state.State) -> dict:
         """Tags exercise lead-in nodes with `role='instruction'`."""

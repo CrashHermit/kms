@@ -206,7 +206,8 @@ async def run(
     Graph persistence is skipped entirely when Neo4j isn't configured — a DB-less run still
     produces ``document.md`` but persists no nodes or entities. Returns the path of the assembled
     document. Setting ``KMS_TRACE_DIR`` additionally captures every DSPy call's inputs and
-    outputs as JSONL (see ``core.tracing``).
+    outputs as MLflow traces, loadable as ``dspy.Example``\\ s (see ``core.tracing`` and
+    ``core.datasets``).
     """
     output_dir = Path(output_dir)
     from kms.ingestion import ocr
@@ -230,6 +231,9 @@ async def run(
         )
         return written
     finally:
+        # Traces export asynchronously; without this a short run can exit before the queue
+        # drains and the sweep looks like it captured nothing. No-op when tracing is off.
+        tracing.flush()
         await (
             close_driver()
         )  # release the Neo4j connection pool (a no-op if never opened)

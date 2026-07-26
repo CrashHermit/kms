@@ -84,7 +84,7 @@ class Signature(dspy.Signature):
     )
 
 
-class Module(dspy.Module):
+class Extractor(dspy.Module):
     """Parses one page's OCR markdown into a flat list of structural block nodes."""
 
     def __init__(self, language_model: dspy.LM | None = None) -> None:
@@ -111,8 +111,8 @@ class Module(dspy.Module):
 class ExtractorNode:
     """LangGraph node: fans out per-segment workers and collects the extracted AST."""
 
-    def __init__(self, module: Module | None = None) -> None:
-        self.module = module or Module()
+    def __init__(self, module: Extractor | None = None) -> None:
+        self.module = module or Extractor()
 
     def dispatch(self, state: state.State) -> list[Send] | str:
         """Fan out one worker per segment that has OCR'd content.

@@ -160,26 +160,62 @@ PYTHONPATH=src uv run --extra mistral python -m kms.cli book.pdf out/
 # every stage logs an INFO summary; KMS_LOG_LEVEL=DEBUG adds one line per DSPy call
 KMS_LOG_LEVEL=DEBUG PYTHONPATH=src uv run --extra mistral python -m kms.cli book.pdf out/
 
-# KMS_TRACE_DIR captures every DSPy call as trainable JSONL (one file per stage)
-KMS_TRACE_DIR=traces/morris PYTHONPATH=src uv run --extra mistral python -m kms.cli book.pdf out/
+# KMS_TRACE_DIR captures every DSPy call as trainable MLflow traces (needs --extra mlflow)
+KMS_TRACE_DIR=traces/morris PYTHONPATH=src uv run --extra mlflow --extra mistral python -m kms.cli book.pdf out/
 ```
 
-**Traces (`core/tracing.py`).** `KMS_TRACE_DIR=<dir>` writes `<dir>/<stage>.jsonl`, one line per
-DSPy call: `{"stage", "inputs", "outputs"}`, with `reasoning` kept and page images recorded as a
-`'<image>'` placeholder. Load them straight into a DSPy optimiser:
+**Traces (`core/tracing.py`, `core/datasets.py`).** `KMS_TRACE_DIR=<dir>` captures every DSPy
+call into an MLflow store at `<dir>/mlruns.db`, under an experiment named after the directory.
+`reasoning` is kept; page images are redacted to `'<image>'`. Read them back as optimiser input:
 
 ```python
-examples = [
-    dspy.Example(**r['inputs'], **r['outputs']).with_inputs(*r['inputs'])
-    for r in map(json.loads, open('traces/morris/group_finder.jsonl'))
-]
+from kms.core import datasets
+
+by_stage = datasets.examples_by_stage('traces/morris')
+trainset = by_stage['group_finder']        # list[dspy.Example], inputs already marked
+datasets.stage_counts('traces/morris')     # {'group_finder': 12, 'role_typer': 12, ...}
 ```
 
-Capture is **automatic for every stage** — it hooks DSPy's own callback system
-(`dspy.settings.callbacks`) rather than requiring a `record()` call inside each module, so no
-stage module mentions tracing and a stage added tomorrow is traced the day it is written. Only
-`dspy.Predict` instances are recorded; a `ChainOfThought` wraps exactly one inner `Predict`, and
-recording both would double every line. A 4-page book yields ~45 lines across 10 stages.
+Or eyeball the same store in the UI — no separate server needed during the run:
+
+```bash
+mlflow ui --backend-store-uri sqlite:///traces/morris/mlruns.db
+```
+
+Capture is **automatic for every stage** — `mlflow.dspy.autolog()` plus two global hooks, rather
+than a `record()` call inside each module, so no stage module mentions tracing and a stage added
+tomorrow is traced the day it is written. MLflow is an **optional extra**: without it the
+pipeline runs untraced rather than failing, and `uv sync`'s core stays light.
+
+**Stage identity is a naming contract, not code.** MLflow's DSPy integration is itself a DSPy
+callback, and it names each trace's root span `f"{instance.__class__.__name__}.forward"`
+(`mlflow/dspy/callback.py`). So the stage *is* the class name — provided two things hold, both
+pinned by `tests/test_datasets.py`:
+
+1. **Every stage's `dspy.Module` subclass is named for its stage** (`GroupFinder` in
+   `group_finder.py`). They were all uniformly named `Module` before this, which made every
+   root span read `Module.forward`.
+2. **Every stage's entry point is `aforward`, reached via `acall()`.** DSPy only fires
+   callbacks for `Module.__call__`/`acall`, so a custom method called directly (`module.role(…)`)
+   produces *no* span named after its class. Five stages were written that way — `role`,
+   `steps`, `identity`, `govern`, `block_type` — and were conformed. This is also what DSPy
+   optimisers compile against, so it is the right shape independent of tracing.
+
+`datasets` then reads the stage from the root span and builds the example from the single
+`Predict.forward` span inside it, which is what keeps the `ChatAdapter`/`LM` fan-out and
+`ChainOfThought`'s duplicate wrapper out of the dataset.
+
+**The one thing MLflow does not solve** is page images: autolog embeds the whole base64
+payload (~1.2 MB per corrected page), and it ships no built-in redactors — a custom span
+processor is the documented way to mask trace data. `_strip_images` is that processor, swapping
+the payload for `'<image>'`; the bytes are reconstructable from the PDF, and the
+transcription -> corrected signal is kept in full.
+
+**Gotcha:** traces export asynchronously. `run()` calls `tracing.flush()` in its `finally`, but
+a script driving the compiled graph directly must call it too — query without flushing and the
+sweep looks like it captured nothing. `docs/TRACING-RESEARCH.md` has the measurements behind
+choosing MLflow (and behind rejecting Phoenix/Langfuse, which record pydantic inputs as `repr`
+strings that cannot be parsed back).
 
 A healthy INFO run reads like this (Morris, *Topology Without Tears*, 4 pp) — the stage counts
 are the fastest check that a run behaved:
@@ -298,9 +334,10 @@ the whole run.
   present, so a run would crash rather than skip. The driver-free mapping layer was validated
   offline against real output instead (uuid disjointness, 0 dangling edge endpoints, `:Act` chain
   shape).
-- **Trace capture is gone.** `core/tracing.py` and `KMS_TRACE_DIR` no longer exist after the
-  rebuild, but `CLAUDE.md` and `robustness_test/REPORT.md` still describe them. No training data was
-  captured for the live validation run; restore this before tuning any Signature.
+- **Trace capture is back, on MLflow.** It was restored after the rebuild and then moved off the
+  hand-rolled JSONL recorder onto `mlflow.dspy.autolog()` (see the run section above and
+  `docs/TRACING-RESEARCH.md`). No training data was captured for the live validation run — the
+  fixture books need re-sweeping with `KMS_TRACE_DIR` set before tuning any Signature.
 
 ---
 

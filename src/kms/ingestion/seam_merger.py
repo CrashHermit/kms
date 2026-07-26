@@ -69,7 +69,7 @@ class Signature(dspy.Signature):
     )
 
 
-class Module(dspy.Module):
+class SeamMerger(dspy.Module):
     """Decides whether two adjacent segments' edge nodes are halves of one split block."""
 
     def __init__(self, language_model: dspy.LM | None = None) -> None:
@@ -125,7 +125,7 @@ def _pairs(
 
 
 async def _merge_pair(
-    module: Module, top: models.Segment, bottom: models.Segment
+    module: SeamMerger, top: models.Segment, bottom: models.Segment
 ) -> list[tuple[int, list[models.ASTNode]]]:
     """Decide whether the top's tail and the bottom's head are one split node; if so,
     fold the merged content into the tail and drop the head."""
@@ -162,8 +162,8 @@ async def _merge_pair(
 class SeamMergerNode:
     """Heals cross-page structural splits using two parity passes to avoid races."""
 
-    def __init__(self, module: Module | None = None) -> None:
-        self.module = module or Module()
+    def __init__(self, module: SeamMerger | None = None) -> None:
+        self.module = module or SeamMerger()
 
     def dispatch_even(self, state: state.State) -> list[Send] | str:
         """Fans out workers for even-indexed segment pairs (0-1, 2-3, …)."""

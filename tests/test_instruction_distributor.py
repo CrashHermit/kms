@@ -16,7 +16,7 @@ class _ScriptedGovernor:
     def __init__(self, scripted):
         self._scripted = list(scripted)
 
-    async def govern(self, lead_in, following):
+    async def acall(self, lead_in, following):
         return self._scripted.pop(0) if self._scripted else ('', [])
 
 

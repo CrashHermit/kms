@@ -224,7 +224,7 @@ class Signature(dspy.Signature):
     )
 
 
-class Module(dspy.Module):
+class GroupFinder(dspy.Module):
     """Finds the pedagogical units' span boundaries in the node stream."""
 
     def __init__(self, language_model: dspy.LM | None = None) -> None:
@@ -267,7 +267,7 @@ def _clean_spans(spans: list[Span], last_local: int) -> list[Span]:
 
 async def find_spans(
     nodes: list[models.ASTNode],
-    module: Module | None = None,
+    module: GroupFinder | None = None,
     budget: int = LOOKAHEAD_BUDGET,
     max_budget: int = MAX_LOOKAHEAD_BUDGET,
 ) -> list[list[int]]:
@@ -291,7 +291,7 @@ async def find_spans(
         The spans in document order, each a list of member node ids. UNTYPED — whether a
         span is a block or the derivation that resolves one is decided by ``role_typer``.
     """
-    module = module or Module()
+    module = module or GroupFinder()
     spans_out: list[list[int]] = []
     cursor, node_count = 0, len(nodes)
 
@@ -378,8 +378,8 @@ class GroupFinderNode:
     this is a plain graph node rather than the map-reduce dispatch/worker/collect shape
     the parallel stages use."""
 
-    def __init__(self, module: Module | None = None) -> None:
-        self.module = module or Module()
+    def __init__(self, module: GroupFinder | None = None) -> None:
+        self.module = module or GroupFinder()
 
     async def run(self, state: state.State) -> dict:
         """Walks the node stream and writes the untyped spans."""

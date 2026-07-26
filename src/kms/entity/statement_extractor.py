@@ -93,7 +93,7 @@ class Identity(BaseModel):
     title: str | None = None
 
 
-class Module(dspy.Module):
+class StatementExtractor(dspy.Module):
     """Runs the attribute transcription pass for one pedagogical block."""
 
     def __init__(self, language_model: dspy.LM | None = None) -> None:
@@ -101,7 +101,7 @@ class Module(dspy.Module):
         self.identify = dspy.Predict(Identify)
         self.set_lm(language_model or llm.text_lm())
 
-    async def identity(self, members: list[models.ASTNode]) -> Identity:
+    async def aforward(self, members: list[models.ASTNode]) -> Identity:
         """Returns the label, number and title for one block."""
         nodes = [
             MemberNode(
@@ -171,7 +171,7 @@ def _strip_label_prefix(text: str, label: str | None) -> str:
 async def extract_statement(
     entity: models.Entity,
     nodes_by_id: dict[int, models.ASTNode],
-    module: Module | None = None,
+    module: StatementExtractor | None = None,
 ) -> models.Entity:
     """Fill in the self-contained attributes on one pedagogical block, in place.
 
@@ -187,9 +187,9 @@ async def extract_statement(
     Returns:
         The same entity, with label, number, title and contents filled in.
     """
-    module = module or Module()
+    module = module or StatementExtractor()
     members = members_of(entity, nodes_by_id)
-    identity = await module.identity(members)
+    identity = await module.acall(members)
 
     entity.label = identity.label
     entity.number = identity.number
@@ -208,8 +208,8 @@ class StatementExtractorNode:
     extractions are independent, so they run concurrently; the enriched entities (mutated in
     place) are written back to the same channel."""
 
-    def __init__(self, module: Module | None = None) -> None:
-        self.module = module or Module()
+    def __init__(self, module: StatementExtractor | None = None) -> None:
+        self.module = module or StatementExtractor()
 
     async def run(self, state: state.State) -> dict:
         """Fills in each found block's self-contained attributes, in place."""
