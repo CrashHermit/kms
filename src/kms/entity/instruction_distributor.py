@@ -84,7 +84,7 @@ class GovernExtent(dspy.Signature):
     )
 
 
-class Module(dspy.Module):
+class InstructionDistributor(dspy.Module):
     """Determines which following problems a lead-in's shared instruction governs."""
 
     def __init__(self, language_model: dspy.LM | None = None) -> None:
@@ -92,7 +92,7 @@ class Module(dspy.Module):
         self.judge = dspy.ChainOfThought(GovernExtent)
         self.set_lm(language_model or llm.text_lm())
 
-    async def govern(
+    async def aforward(
         self, lead_in: str, following: list[WindowProblem]
     ) -> tuple[str, list[int]]:
         """Returns the shared instruction and the positions it governs."""
@@ -140,7 +140,9 @@ def _window(
 
 
 async def _govern_one(
-    node: models.ASTNode, candidates: list[models.Entity], module: Module
+    node: models.ASTNode,
+    candidates: list[models.Entity],
+    module: InstructionDistributor,
 ) -> None:
     """Growing-window walk for one lead-in: find the governed run among the blocks that follow
     it and stamp the instruction on them. Grows the window while the run reaches its edge."""
@@ -152,7 +154,7 @@ async def _govern_one(
         last_local = len(window) - 1
         exhausted = len(window) == len(candidates)
 
-        instruction, positions = await module.govern(
+        instruction, positions = await module.acall(
             node.content or '',
             [
                 WindowProblem(
@@ -183,7 +185,7 @@ async def _govern_one(
 async def distribute_instructions(
     nodes: list[models.ASTNode],
     blocks: list[models.Entity],
-    module: Module | None = None,
+    module: InstructionDistributor | None = None,
 ) -> list[models.Entity]:
     """Stamp each governed block's `instruction` from the tagged lead-in nodes, in place.
 
@@ -206,7 +208,7 @@ async def distribute_instructions(
             len(blocks),
         )
         return blocks
-    module = module or Module()
+    module = module or InstructionDistributor()
     order = {node.id: i for i, node in enumerate(nodes)}
     last = len(order)
 
@@ -248,8 +250,8 @@ class InstructionDistributorNode:
     block's contents/number) and writes the enriched entities back to the ``entities``
     channel."""
 
-    def __init__(self, module: Module | None = None) -> None:
-        self.module = module or Module()
+    def __init__(self, module: InstructionDistributor | None = None) -> None:
+        self.module = module or InstructionDistributor()
 
     async def run(self, state: state.State) -> dict:
         """Distributes each lead-in's shared instruction onto the governed blocks."""

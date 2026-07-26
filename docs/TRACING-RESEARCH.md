@@ -12,17 +12,31 @@ custom code.
 - **MLflow — adopted.** It clears every bar Phoenix failed (structured inputs, redactable
   images, no server needed) and adds optimiser-run tracking. `core/tracing.py` now wraps
   `mlflow.dspy.autolog()`, and `core/datasets.py` reads the traces back as `dspy.Example`s.
-- **The JSONL recorder — gone.** Its serialiser, file handling, locking and input/output
-  pairing were all replaced by MLflow. What survived is the ~35 lines of stage resolution
-  (finding 3 below), because that solves a DSPy problem MLflow has no answer for.
+- **The JSONL recorder — gone entirely.** Serialiser, file handling, locking, input/output
+  pairing *and* stage resolution. The last of those looked unavoidable (finding 3 below) until
+  the stage classes were named properly: MLflow names each trace's root span after the
+  `dspy.Module` subclass, so stage identity is free once the class is called `GroupFinder`
+  rather than `Module`, and reached through `aforward`/`acall` rather than a custom method.
+  All that remains is image redaction, which MLflow genuinely has no built-in answer for.
 
 **Research note.** The original recommendation here was "MLflow eventually, not yet" — the
-reasoning being that capture was never the bottleneck. That was overridden deliberately: the
-call was to take the cleaner tool now rather than carry hand-rolled code until the first
-optimiser run. The finding that *did* change the design is finding 3: reading
-`instance.signature.__module__` in the tagger looks correct and silently mislabels ten of the
-twelve stages, because `ChainOfThought` rewrites the signature. The instructions fallback is
-load-bearing, not a nicety.
+reasoning being that capture was never the bottleneck. That was overridden deliberately: take
+the cleaner tool now rather than carry hand-rolled code until the first optimiser run.
+
+Two findings changed the design after that, both from probing rather than reading:
+
+- Reading `instance.signature.__module__` to identify a stage looks correct and silently
+  mislabels ten of the twelve stages, because `ChainOfThought` rewrites the signature
+  (finding 3). This is why the *signature* classes cannot carry stage identity — renaming them
+  would not have helped.
+- The *module* classes can, and that removed the last custom capture code. `mlflow/dspy/
+  callback.py` names the root span `f"{instance.__class__.__name__}.forward"`, and MLflow's
+  integration is a DSPy callback, so it only sees `Module.__call__`/`acall`. Naming each stage
+  class for its stage and entering it through `aforward` is therefore the whole mechanism —
+  and it is what DSPy optimisers compile against anyway.
+
+The lesson worth keeping: the instrumentation's seams are visible only from probes. Every
+design decision here that came from reading documentation was wrong at least once.
 
 Everything below was measured, not read off a docs page. Probe scripts and versions are in
 the last section.

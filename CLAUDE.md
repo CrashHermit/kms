@@ -45,9 +45,9 @@ is currently dark**: its only source was the deleted `field` taxonomy, so nothin
   - `core/` — shared center that every stage depends on and that depends on no stage:
     `models.py` (domain data, dspy/langgraph-free), `state.py` (the LangGraph `State`),
     `llm.py` (LM config), `logs.py` (log formatting helpers), `tracing.py` (per-call MLflow
-    capture for prompt optimisation — `mlflow.dspy.autolog()` plus a stage tagger and an
-    image redactor, so no stage module imports it and a new stage is traced the day it is
-    written), `datasets.py` (reads those traces back as `dspy.Example`s per stage).
+    capture for prompt optimisation — `mlflow.dspy.autolog()` plus one image redactor, so no
+    stage module imports it and a new stage is traced the day it is written),
+    `datasets.py` (reads those traces back as `dspy.Example`s per stage).
   - `ingestion/` — phase 1 (backbone `segments`): `ocr.py` (Mistral front-end), `corrector.py`,
     `extractor.py` (purely structural), `seam_merger.py`. Map-reduce `dispatch → worker → collect`.
   - `entity/` — phase 2 (backbone `nodes`), all plain sequential nodes: `splitter.py`,
@@ -111,6 +111,11 @@ is currently dark**: its only source was the deleted `field` taxonomy, so nothin
 - **Kind is a label, type is a property.** A node kind is a Neo4j label; a subtype is a property,
   and only exists if it is non-constant and not derivable from a neighbour. Open type sets never
   become labels.
+- **A stage's `dspy.Module` subclass is named for its stage and entered through `aforward`**
+  (callers use `acall()`). Both halves are load-bearing: MLflow names each trace's root span
+  after the class, and DSPy only fires callbacks for `Module.__call__`/`acall`, so a class
+  named otherwise — or a custom entry method called directly — is invisible to trace capture.
+  `tests/test_datasets.py` pins both.
 - Match the surrounding code's style (`docs/STYLE.md` — Google Python, 80 cols, single quotes,
   module-level imports). Parallel (map-reduce) stages use the `dispatch → worker → collect` shape;
   a genuinely sequential stage (every entity stage) is a plain graph node instead of forcing a

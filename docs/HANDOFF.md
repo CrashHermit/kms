@@ -187,18 +187,29 @@ than a `record()` call inside each module, so no stage module mentions tracing a
 tomorrow is traced the day it is written. MLflow is an **optional extra**: without it the
 pipeline runs untraced rather than failing, and `uv sync`'s core stays light.
 
-Two things MLflow does not solve, which is all the code in `core/tracing.py` is for:
+**Stage identity is a naming contract, not code.** MLflow's DSPy integration is itself a DSPy
+callback, and it names each trace's root span `f"{instance.__class__.__name__}.forward"`
+(`mlflow/dspy/callback.py`). So the stage *is* the class name — provided two things hold, both
+pinned by `tests/test_datasets.py`:
 
-- **Stage identity.** Every span is named `Predict.forward` with a `signature` attribute of
-  field names, not the stage — and a `ChainOfThought` rebuilds its signature, so the inner
-  predictor reports dspy's own module. `_StageTagger` resolves the stage at capture time (where
-  `instructions` is a live string, not a repr to parse) and writes it to the span as
-  `kms.stage`. Ten of the twelve stages use `ChainOfThought`, so that fallback carries most of
-  the pipeline; `datasets` selects on that attribute and nothing else, which is also what keeps
-  the `ChatAdapter`/`LM` span fan-out out of the dataset.
-- **Page images.** Autolog embeds the whole base64 payload (~1.2 MB per corrected page).
-  `_strip_images` is a span processor that swaps it for `'<image>'` — the bytes are
-  reconstructable from the PDF, and the transcription -> corrected signal is kept in full.
+1. **Every stage's `dspy.Module` subclass is named for its stage** (`GroupFinder` in
+   `group_finder.py`). They were all uniformly named `Module` before this, which made every
+   root span read `Module.forward`.
+2. **Every stage's entry point is `aforward`, reached via `acall()`.** DSPy only fires
+   callbacks for `Module.__call__`/`acall`, so a custom method called directly (`module.role(…)`)
+   produces *no* span named after its class. Five stages were written that way — `role`,
+   `steps`, `identity`, `govern`, `block_type` — and were conformed. This is also what DSPy
+   optimisers compile against, so it is the right shape independent of tracing.
+
+`datasets` then reads the stage from the root span and builds the example from the single
+`Predict.forward` span inside it, which is what keeps the `ChatAdapter`/`LM` fan-out and
+`ChainOfThought`'s duplicate wrapper out of the dataset.
+
+**The one thing MLflow does not solve** is page images: autolog embeds the whole base64
+payload (~1.2 MB per corrected page), and it ships no built-in redactors — a custom span
+processor is the documented way to mask trace data. `_strip_images` is that processor, swapping
+the payload for `'<image>'`; the bytes are reconstructable from the PDF, and the
+transcription -> corrected signal is kept in full.
 
 **Gotcha:** traces export asynchronously. `run()` calls `tracing.flush()` in its `finally`, but
 a script driving the compiled graph directly must call it too — query without flushing and the

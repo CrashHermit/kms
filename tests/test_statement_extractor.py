@@ -33,7 +33,7 @@ class _ScriptedModule:
         self.identity_result = identity
         self.seen: list[list[models.ASTNode]] = []
 
-    async def identity(self, members):
+    async def acall(self, members):
         self.seen.append(members)
         return self.identity_result
 

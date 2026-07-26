@@ -29,7 +29,7 @@ class _ScriptedModule:
     def __init__(self):
         self.seen: list[str] = []
 
-    async def steps(self, contents):
+    async def acall(self, contents):
         self.seen.append(contents)
         return [part.strip() for part in contents.split('.') if part.strip()]
 

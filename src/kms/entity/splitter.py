@@ -122,7 +122,7 @@ class Decision(BaseModel):
     ] = {}  # node id -> its exercise pieces
 
 
-class Module(dspy.Module):
+class Splitter(dspy.Module):
     """Splits nodes that pack multiple numbered exercises into per-exercise nodes."""
 
     def __init__(self, language_model: dspy.LM | None = None) -> None:
@@ -151,7 +151,7 @@ class Module(dspy.Module):
 
 
 async def _gather_decisions(
-    nodes: list[models.ASTNode], module: Module, budget: int
+    nodes: list[models.ASTNode], module: Splitter, budget: int
 ) -> Decision:
     """Walk the stream in windows and collect every split, keyed by node id.
 
@@ -223,12 +223,12 @@ def _rebuild(
 
 async def split_exercises(
     nodes: list[models.ASTNode],
-    module: Module | None = None,
+    module: Splitter | None = None,
     budget: int = LOOKAHEAD_BUDGET,
 ) -> list[models.ASTNode]:
     """Normalise the flat node stream: split packed exercise nodes into per-exercise nodes.
     Returns a new, re-id'd node list (the canonical stream is mutated)."""
-    module = module or Module()
+    module = module or Splitter()
     if not nodes:
         return nodes
     decision = await _gather_decisions(nodes, module, budget)
@@ -253,8 +253,8 @@ class SplitterNode:
     `nodes` channel is safe because no entity overlay exists yet — nothing references the old
     ids."""
 
-    def __init__(self, module: Module | None = None) -> None:
-        self.module = module or Module()
+    def __init__(self, module: Splitter | None = None) -> None:
+        self.module = module or Splitter()
 
     async def run(self, state: state.State) -> dict:
         """Normalises the node stream so each exercise is its own node."""

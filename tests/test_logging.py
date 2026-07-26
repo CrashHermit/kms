@@ -81,7 +81,7 @@ class _ScriptedRoles:
     def __init__(self, roles):
         self._roles = list(roles)
 
-    async def role(self, contents):
+    async def acall(self, contents):
         return self._roles.pop(0)
 
 
@@ -108,7 +108,7 @@ class _ScriptedTypes:
     def __init__(self, types):
         self._types = list(types)
 
-    async def block_type(self, members):
+    async def acall(self, members):
         return self._types.pop(0)
 
 

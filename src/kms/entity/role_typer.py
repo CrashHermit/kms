@@ -116,7 +116,7 @@ class Classify(dspy.Signature):
     )
 
 
-class Module(dspy.Module):
+class RoleTyper(dspy.Module):
     """Classifies one span as a block or a derivation."""
 
     def __init__(self, language_model: dspy.LM | None = None) -> None:
@@ -124,7 +124,7 @@ class Module(dspy.Module):
         self.classify = dspy.ChainOfThought(Classify)
         self.set_lm(language_model or llm.text_lm())
 
-    async def role(self, contents: str) -> str:
+    async def aforward(self, contents: str) -> str:
         """Returns the span's role, falling back to ``entity`` for an unusable answer."""
         result = await self.classify.acall(contents=contents)
         raw = ' '.join((result.role or '').split()).lower()
@@ -154,7 +154,7 @@ def contents_of(span: list[int], nodes_by_id: dict[int, models.ASTNode]) -> str:
 async def type_roles(
     spans: list[list[int]],
     nodes_by_id: dict[int, models.ASTNode],
-    module: Module | None = None,
+    module: RoleTyper | None = None,
 ) -> tuple[list[models.Entity], list[list[int]]]:
     """Split the finder's untyped spans into blocks and derivations.
 
@@ -172,13 +172,13 @@ async def type_roles(
         member node ids and nothing else — the attributes come from ``block_typer`` and
         ``statement_extractor``.
     """
-    module = module or Module()
+    module = module or RoleTyper()
     if not spans:
         logger.info('role typer: no spans')
         return [], []
 
     roles = await asyncio.gather(
-        *(module.role(contents_of(span, nodes_by_id)) for span in spans)
+        *(module.acall(contents_of(span, nodes_by_id)) for span in spans)
     )
     entities: list[models.Entity] = []
     procedure_spans: list[list[int]] = []
@@ -207,8 +207,8 @@ class RoleTyperNode:
     the ``entities`` overlay plus the ``procedure_spans`` the procedure extractor consumes.
     The per-span classifications are independent, so they run concurrently."""
 
-    def __init__(self, module: Module | None = None) -> None:
-        self.module = module or Module()
+    def __init__(self, module: RoleTyper | None = None) -> None:
+        self.module = module or RoleTyper()
 
     async def run(self, state: state.State) -> dict:
         """Splits the finder's spans into the entity overlay and the procedure spans."""

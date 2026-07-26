@@ -1,51 +1,13 @@
-"""Trace capture: stage naming, image redaction, and the enable/flush hooks.
+"""Trace capture: image redaction and the enable/flush hooks.
 
-MLflow owns storage now, so there is no recorder to exercise — what is left is the two
-things MLflow does not solve (which stage a span belongs to, and keeping page images out
-of the store) plus the guards that keep capture from ever breaking a run. Nothing here
-needs mlflow installed: the tagger and the span processor are driven directly with
-stand-in objects.
+MLflow owns storage, and stage identity comes free from naming each stage's dspy.Module
+subclass after its stage (pinned in `test_datasets.py`). What is left here is the one thing
+MLflow has no built-in answer for — keeping page images out of the store — plus the guards
+that keep capture from ever breaking a run. Nothing here needs mlflow installed: the span
+processor is driven directly with stand-in objects.
 """
 
 from kms.core import tracing
-
-# --- stage naming ---
-
-
-class _Signature:
-    """A signature defined in a kms module, as a plain Predict would carry it."""
-
-    __module__ = 'kms.entity.group_finder'
-    instructions = 'Find the BOUNDARIES.'
-    input_fields = {}
-
-
-def test_stage_comes_from_the_signatures_defining_module():
-    assert tracing._stage_of(_Signature) == 'group_finder'
-
-
-def test_stage_falls_back_to_unknown_for_an_unmatched_signature():
-    class Foreign:
-        __module__ = 'dspy.signatures.signature'
-        instructions = 'not one of ours'
-        input_fields = {}
-
-    assert tracing._stage_of(Foreign) == 'unknown'
-
-
-def test_stage_of_a_real_signature_resolves_by_instructions():
-    # ChainOfThought rebuilds the signature to add `reasoning`, losing __module__ but
-    # copying the instructions verbatim — that is what the registry matches on. Ten of the
-    # twelve stages go through ChainOfThought, so this path carries most of the pipeline.
-    from kms.entity import role_typer
-
-    class Rebuilt:
-        __module__ = 'dspy.signatures.signature'
-        instructions = role_typer.Classify.instructions
-        input_fields = {}
-
-    assert tracing._stage_of(Rebuilt) == 'role_typer'
-
 
 # --- image redaction ---
 
@@ -104,35 +66,6 @@ def test_strip_images_never_raises_on_a_hostile_span():
             raise RuntimeError('boom')
 
     tracing._strip_images(Hostile())  # must not propagate
-
-
-# --- the tagger ---
-
-
-class _Predict:
-    """A predictor: exposes `.signature`, so it is the one whose span gets tagged."""
-
-    signature = _Signature
-
-
-class _Wrapper:
-    """A ChainOfThought-like wrapper: no `.signature`, so it must be skipped."""
-
-
-def test_the_tagger_skips_a_wrapper_without_a_signature(monkeypatch):
-    # ChainOfThought fires a callback AND wraps an inner Predict; tagging both would put
-    # the stage on two spans for one logical call.
-    calls = []
-    monkeypatch.setattr(
-        tracing, '_stage_of', lambda sig: calls.append(sig) or 'x'
-    )
-    tracing._StageTagger().on_module_start('c1', _Wrapper(), {})
-    assert calls == []
-
-
-def test_the_tagger_never_raises_when_mlflow_is_absent():
-    # capture is a convenience; it must never break a run
-    tracing._StageTagger().on_module_start('c1', _Predict(), {'kwargs': {}})
 
 
 # --- enable / flush ---

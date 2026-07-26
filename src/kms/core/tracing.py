@@ -15,22 +15,24 @@ trip back into a ``dspy.Example`` losslessly. It needs no server (SQLite is enou
 account, and it tracks optimiser runs, which is what the traces are collected *for*.
 ``docs/TRACING-RESEARCH.md`` has the measurements behind that choice.
 
-STILL NOTHING IS INSTRUMENTED. ``mlflow.dspy.autolog()`` plus the two hooks below are global,
+STILL NOTHING IS INSTRUMENTED. ``mlflow.dspy.autolog()`` plus the one hook below are global,
 so **every stage is captured automatically and no stage module imports or mentions tracing at
 all**. A stage added tomorrow is traced the day it is written.
 
-TWO THINGS MLFLOW DOES NOT SOLVE, and why the small amount of code here exists:
+STAGE IDENTITY IS FREE, AND IT IS A NAMING CONTRACT. MLflow names each trace's root span
+after the ``dspy.Module`` subclass that was called — ``GroupFinder.forward`` — so the stage
+*is* the class name, and nothing here has to track it. That only works because every stage's
+module class is named for its stage: they were uniformly called ``Module`` until this was
+adopted, which made every root span read ``Module.forward``. ``core.datasets`` maps the name
+back to a stage name, and ``tests/test_datasets.py`` pins the convention so a future stage
+cannot quietly break it. An earlier revision tagged spans from a DSPy callback instead; that
+is deleted — naming the classes properly does the same job with no code.
 
-1. *Stage identity.* MLflow names every span ``Predict.forward`` and records a ``signature``
-   attribute of field names (``'window -> reasoning, spans'``), not the stage. Worse, a
-   ``ChainOfThought`` rebuilds its signature, so the inner predictor reports dspy's own
-   module. ``_StageTagger`` resolves the real stage at capture time — where ``instructions``
-   is a live string rather than something to parse back out of a repr — and writes it to the
-   span as ``kms.stage``. ``core.datasets`` then reads that attribute and nothing else.
-2. *Page images.* Autolog embeds the whole base64 payload (~1.2 MB per corrected page).
-   ``_strip_images`` is a span processor — MLflow's supported extension point — that swaps it
-   for ``'<image>'``. The bytes are reconstructable from the input PDF, and the trainable text
-   signal (transcription -> corrected) is kept in full.
+ONE THING MLFLOW DOES NOT SOLVE. Autolog embeds a page image's whole base64 payload (~1.2 MB
+per corrected page), and MLflow ships no built-in redactors — a custom span processor is the
+documented way to mask trace data. ``_strip_images`` is that processor: it swaps the payload
+for ``'<image>'``. The bytes are reconstructable from the input PDF, and the trainable text
+signal (transcription -> corrected) is kept in full.
 
 USAGE. Set ``KMS_TRACE_DIR`` and run the pipeline — ``run()`` enables capture when the variable
 is set, so both the CLI and library callers get it:
@@ -53,62 +55,12 @@ is called at the end of ``run()``. Query a store without flushing first and you 
 
 import contextlib
 import os
-import sys
 from pathlib import Path
-
-# DSPy's callback base. Guarded like the optional imports in ``core.llm`` — the test suite
-# may run against a stub that has no ``dspy.utils`` package, and tracing is a convenience
-# that must never make the package unimportable.
-try:
-    from dspy.utils.callback import BaseCallback
-except ImportError:  # pragma: no cover - only when dspy is stubbed/absent
-    BaseCallback = object
 
 TRACE_DIR_ENV = 'KMS_TRACE_DIR'
 URI_ENV = 'KMS_MLFLOW_URI'
-STAGE_ATTR = 'kms.stage'
 
 _enabled = False
-
-
-def _stage_of(signature: object) -> str:
-    """The stage name a signature belongs to — the last part of its defining module.
-
-    A plain ``Predict`` keeps the original signature class, so its ``__module__`` answers
-    directly. ``ChainOfThought`` rebuilds the signature to add its ``reasoning`` field, and
-    the rebuilt class reports dspy's own module — but it copies the instructions verbatim,
-    so the docstring identifies the origin. Falls back to ``'unknown'`` rather than raising.
-    """
-    module = getattr(signature, '__module__', '') or ''
-    if module.startswith('kms.'):
-        return module.rsplit('.', 1)[-1]
-    instructions = (getattr(signature, 'instructions', '') or '').strip()
-    return _by_instructions().get(instructions, 'unknown')
-
-
-def _by_instructions() -> dict[str, str]:
-    """Map every loaded ``kms.*`` signature's instructions to its stage name.
-
-    Built by scanning ``sys.modules`` rather than importing the stages: ``core`` depends on
-    no stage (``docs/ARCHITECTURE.md``, backward-only rule), and by the time a DSPy call
-    happens the stage that made it is necessarily imported.
-    """
-    registry: dict[str, str] = {}
-    for name, module in list(sys.modules.items()):
-        if not name.startswith('kms.') or module is None:
-            continue
-        for attr in list(vars(module).values()):
-            if not isinstance(attr, type):
-                continue
-            if getattr(attr, '__module__', None) != name:
-                continue  # imported into this module, defined in another
-            with contextlib.suppress(Exception):
-                if not hasattr(attr, 'input_fields'):
-                    continue
-                key = (attr.instructions or '').strip()
-                if key:
-                    registry[key] = name.rsplit('.', 1)[-1]
-    return registry
 
 
 def _is_image(value: object) -> bool:
@@ -125,29 +77,6 @@ def _is_image(value: object) -> bool:
     if 'CUSTOM-TYPE-START' in text and 'image_url' in text:
         return True
     return 'data:image/' in text and ';base64,' in text
-
-
-class _StageTagger(BaseCallback):
-    """Writes the resolved stage onto the MLflow span for each predictor call.
-
-    Only ``dspy.Predict`` instances carry a ``.signature``; a ``ChainOfThought`` fires the
-    callback too but delegates to exactly one inner ``Predict``, so keying on the signature
-    tags one span per logical call — the same filter that kept the retired JSONL recorder
-    from doubling every line.
-    """
-
-    def on_module_start(
-        self, call_id: str, instance: object, inputs: dict
-    ) -> None:
-        signature = getattr(instance, 'signature', None)
-        if signature is None:
-            return  # a ChainOfThought wrapper; its inner Predict is the tagged one
-        with contextlib.suppress(Exception):  # tracing must never break a run
-            import mlflow
-
-            span = mlflow.get_current_active_span()
-            if span is not None:
-                span.set_attribute(STAGE_ATTR, _stage_of(signature))
 
 
 def _strip_images(span: object) -> None:
@@ -196,9 +125,6 @@ def enable(directory: str | Path) -> None:
         import mlflow
     except ImportError:  # pragma: no cover - the mlflow extra is optional
         return
-    if BaseCallback is object:  # dspy stubbed or absent — nothing to hook
-        return
-    import dspy
 
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -208,10 +134,6 @@ def enable(directory: str | Path) -> None:
     mlflow.set_experiment(directory.name or 'kms')
     mlflow.tracing.configure(span_processors=[_strip_images])
     mlflow.dspy.autolog()
-    # Registered after autolog so the span exists by the time the tagger runs.
-    dspy.settings.configure(
-        callbacks=[*(dspy.settings.callbacks or []), _StageTagger()]
-    )
     _enabled = True
 
 
