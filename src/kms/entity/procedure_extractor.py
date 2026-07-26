@@ -31,11 +31,14 @@ Persistence-agnostic.
 """
 
 import asyncio
+import logging
 
 import dspy
 
-from kms.core import llm, models, state
+from kms.core import llm, logs, models, state
 from kms.entity import statement_extractor
+
+logger = logging.getLogger(__name__)
 
 
 class Decompose(dspy.Signature):
@@ -78,7 +81,17 @@ class Module(dspy.Module):
     async def steps(self, contents: str) -> list[str]:
         """Returns the ordered verbatim steps for one procedure's content."""
         result = await self.decompose.acall(contents=contents)
-        return [step for step in (result.steps or []) if step and step.strip()]
+        steps = [step for step in (result.steps or []) if step and step.strip()]
+        # Steps must PARTITION the content, so the two character counts should be near
+        # equal; a large shortfall means the decomposition dropped text.
+        logger.debug(
+            'decompose: %d chars -> %d step(s), %d chars | from %r',
+            len(contents),
+            len(steps),
+            sum(len(step) for step in steps),
+            logs.elide(contents),
+        )
+        return steps
 
 
 def attach(
@@ -188,6 +201,22 @@ async def extract_procedures(
 
     for (entity_index, _, _), procedure in zip(tasks, attached, strict=True):
         entities[entity_index].procedures.append(procedure)
+
+    # Orphans are returned rather than dropped, but the caller currently discards them and
+    # nothing writes them to the graph — so this line is the only record that a book had a
+    # derivation with no preceding block.
+    if orphans:
+        logger.warning(
+            '%d procedure(s) attached to no block and will not be persisted',
+            len(orphans),
+        )
+    logger.info(
+        'procedure extractor: %d span(s) -> %d attached, %d orphan, %d step(s)',
+        len(procedure_spans),
+        len(attached),
+        len(orphans),
+        sum(len(procedure.steps) for procedure in built),
+    )
     return orphans
 
 

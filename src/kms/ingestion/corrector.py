@@ -35,12 +35,15 @@ rewrite output) is a drop-in future optimization behind the same interface.
 """
 
 import base64
+import logging
 from pathlib import Path
 
 import dspy
 from langgraph.types import Send
 
 from kms.core import llm, models, state
+
+logger = logging.getLogger(__name__)
 
 # A correction should be a light edit; reject anything outside this band of the
 # original length as a runaway rewrite or a truncation.
@@ -139,7 +142,13 @@ class Module(dspy.Module):
         result = await self.proofreader.acall(
             page_image=page_image, transcription=transcription
         )
-        return result.corrected or ''
+        corrected = result.corrected or ''
+        logger.debug(
+            'proofread: %d chars in, %d chars out',
+            len(transcription),
+            len(corrected),
+        )
+        return corrected
 
 
 # --- LangGraph node: proofread each Mistral-transcribed page against its image ---
@@ -171,11 +180,18 @@ class CorrectorNode:
             page_image=_load_dspy_image(segment.image_path),
             transcription=segment.content,
         )
-        final = (
-            corrected
-            if _within_tolerance(segment.content, corrected)
-            else segment.content
-        )
+        kept = _within_tolerance(segment.content, corrected)
+        if not kept:
+            # A runaway rewrite or a truncated completion; the page silently keeps its
+            # original transcription, so this is the only signal it happened.
+            logger.warning(
+                'page %d: correction rejected (%d chars in, %d out); keeping '
+                'the original transcription',
+                segment.index,
+                len(segment.content or ''),
+                len(corrected),
+            )
+        final = corrected if kept else segment.content
         # Normalize math delimiters on the chosen text — even when the correction was
         # rejected, so a kept-original page still gets uniform `$$`/`$` delimiters.
         final = _normalize_math_delimiters(final)
@@ -184,7 +200,9 @@ class CorrectorNode:
     def collect(self, state: state.State) -> dict:
         """Write each corrected transcription back into its segment. Segments that were
         not dispatched keep their original content untouched."""
+        results = state.get('correction_results', [])
         segments = models.merge_results_into_segments(
-            state['segments'], state.get('correction_results', []), 'content'
+            state['segments'], results, 'content'
         )
+        logger.info('corrector: %d page(s) proofread', len(results))
         return {'segments': segments}

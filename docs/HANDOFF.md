@@ -129,7 +129,7 @@ on a re-run versus the numbers recorded below — that is intended.
 - `uv sync` — light CPU core.
 - `uv sync --extra mistral` — adds `pypdfium2` + `pillow` (render page images for the corrector).
 
-**Tests:** `PYTHONPATH=src uv run pytest -q` (134 tests, 3 skipped). `tests/conftest.py` stubs
+**Tests:** `PYTHONPATH=src uv run pytest -q` (145 tests, 3 skipped). `tests/conftest.py` stubs
 dspy/pydantic/langgraph *only if absent*, so the suite runs with or without the real deps. The
 Neo4j integration test is opt-in behind `KMS_NEO4J_IT=1`.
 
@@ -149,6 +149,22 @@ PYTHONPATH=src uv run --extra mistral python -m kms.cli book.pdf out/
 # or, from Python, to limit pages (0-based):
 #   from kms import run; run(pdf, output_dir="out/", pages=[...])
 # -> out/document.md; with NEO4J_* set, also the persisted :Node + :Entity + :Procedure/:Act graph
+
+# every stage logs an INFO summary; KMS_LOG_LEVEL=DEBUG adds one line per DSPy call
+KMS_LOG_LEVEL=DEBUG PYTHONPATH=src uv run --extra mistral python -m kms.cli book.pdf out/
+```
+
+A healthy INFO run reads like this (Morris, *Topology Without Tears*, 4 pp) — the stage counts
+are the fastest check that a run behaved:
+
+```
+kms.ingestion.extractor: extractor: 4 page(s) -> 38 node(s)
+kms.ingestion.seam_merger: seam merger: 4 page(s) -> flat stream of 37 node(s)
+kms.entity.splitter: splitter: 37 node(s) -> 38 (1 packed node(s) split)
+kms.entity.instruction_finder: instruction finder: 38 node(s) -> 0 lead-in(s) tagged
+kms.entity.group_finder: group finder: 38 nodes -> 10 block(s), 1 procedure span(s)
+kms.entity.statement_extractor: statement extractor: 10 block(s) typed | exercise=6 definition=2 example=2
+kms.entity.procedure_extractor: procedure extractor: 1 span(s) -> 1 attached, 0 orphan, 16 step(s)
 ```
 
 **Fixture books** for stress runs (12 PDFs, do not re-download): `tests/fixtures/books/` and
@@ -279,10 +295,12 @@ the whole run.
   claim that was really 3 cache hits in 4.5 s). To measure real behaviour, disable it:
   `dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=False)`. As a smell test,
   a genuine DeepSeek stage call is seconds, not milliseconds.
-- **There is no logging and no tracing.** The pipeline emits one line total (`cli.py`), and
-  `core/tracing.py` / `KMS_TRACE_DIR` no longer exist. To see what a stage did you must keep
-  the LangGraph `State` yourself or read `~/.dspy_cache` (responses only — the cache is keyed
-  by a request hash, so inputs are gone).
+- **There is logging, but still no tracing.** Every stage logs one INFO line summarising what it
+  produced, and `KMS_LOG_LEVEL=DEBUG` adds one line per DSPy call (inputs' shape + elided outputs,
+  ~70 lines/book); loggers are module-named, so one stage can be turned up alone. This is a
+  debugging aid only — `core/tracing.py` / `KMS_TRACE_DIR` are still gone, so a run still produces
+  NO trainable per-call capture. For structured I/O you must keep the LangGraph `State` yourself or
+  read `~/.dspy_cache` (responses only — the cache is keyed by a request hash, so inputs are gone).
 - **There is one finder now, not three copies.** A walk bug is fixed in one place
   (`entity/group_finder.py`); the banking machinery there is load-bearing and was carried over
   verbatim — change the Signature freely, the cursor logic only with care.

@@ -30,10 +30,14 @@ governance). Entry point ``distribute_instructions(nodes, blocks, module)`` muta
 blocks in place; ``InstructionDistributorNode`` wires it onto the ``entities`` channel.
 """
 
+import logging
+
 import dspy
 from pydantic import BaseModel
 
-from kms.core import llm, models, state
+from kms.core import llm, logs, models, state
+
+logger = logging.getLogger(__name__)
 
 # Same growing look-ahead shape as the finders/splitter (~4 chars/token).
 LOOKAHEAD_BUDGET = 2000
@@ -98,6 +102,14 @@ class Module(dspy.Module):
         instruction, positions = (
             (result.instruction or '').strip(),
             list(result.governed_positions or []),
+        )
+        # Extent is the judgement worth auditing: the run a lead-in governs is decided
+        # here, never by parsing its numbers.
+        logger.debug(
+            'govern: %d candidate(s) -> position(s) %s | instruction %r',
+            len(following),
+            positions or 'none',
+            logs.elide(instruction),
         )
         return instruction, positions
 
@@ -188,6 +200,11 @@ async def distribute_instructions(
     """
     lead_ins = [node for node in nodes if node.role == 'instruction']
     if not lead_ins or not blocks:
+        logger.info(
+            'instruction distributor: no-op (%d lead-in(s), %d block(s))',
+            len(lead_ins),
+            len(blocks),
+        )
         return blocks
     module = module or Module()
     order = {node.id: i for i, node in enumerate(nodes)}
@@ -213,6 +230,12 @@ async def distribute_instructions(
             if here < position_of(block) < next_lead_in
         ]
         await _govern_one(node, candidates, module)
+    logger.info(
+        'instruction distributor: %d lead-in(s) -> %d of %d block(s) stamped',
+        len(lead_ins),
+        sum(1 for block in blocks if block.instruction),
+        len(blocks),
+    )
     return blocks
 
 

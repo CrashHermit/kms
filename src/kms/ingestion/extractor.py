@@ -6,11 +6,15 @@ The result is a flat list of structural nodes per page — purely structural, no
 math-semantic typing (that lives in the entity layer).
 """
 
+import logging
+
 import dspy
 from langgraph.types import Send
 from pydantic import BaseModel, Field
 
-from kms.core import llm, models, state
+from kms.core import llm, logs, models, state
+
+logger = logging.getLogger(__name__)
 
 
 class DSPyModel(BaseModel):
@@ -91,7 +95,14 @@ class Module(dspy.Module):
     async def aforward(self, segment_markdown: str) -> list[DSPyModel]:
         """Returns the top-level structural nodes from a page's markdown."""
         result = await self.extractor.acall(segment_markdown=segment_markdown)
-        return list(result.nodes or [])
+        nodes = list(result.nodes or [])
+        logger.debug(
+            'extract: %d chars -> %d node(s) | %s',
+            len(segment_markdown or ''),
+            len(nodes),
+            logs.counts([str(node.type or '') for node in nodes]),
+        )
+        return nodes
 
 
 # --- LangGraph node: parse each segment's markdown into AST nodes ---
@@ -131,7 +142,13 @@ class ExtractorNode:
 
     def collect(self, state: state.State) -> dict:
         """Merge each segment's extracted AST nodes back into the ordered backbone."""
+        results = state.get('extract_results', [])
         segments = models.merge_results_into_segments(
-            state['segments'], state.get('extract_results', []), 'nodes'
+            state['segments'], results, 'nodes'
+        )
+        logger.info(
+            'extractor: %d page(s) -> %d node(s)',
+            len(results),
+            sum(len(nodes) for _, nodes in results),
         )
         return {'segments': segments}

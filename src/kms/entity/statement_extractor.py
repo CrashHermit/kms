@@ -27,11 +27,14 @@ the passed entity and returns it. Persistence-agnostic.
 """
 
 import asyncio
+import logging
 
 import dspy
 from pydantic import BaseModel
 
-from kms.core import llm, models, state
+from kms.core import llm, logs, models, state
+
+logger = logging.getLogger(__name__)
 
 
 class MemberNode(BaseModel):
@@ -115,12 +118,24 @@ class Module(dspy.Module):
             for k, member in enumerate(members)
         ]
         result = await self.identify.acall(nodes=nodes)
-        return Identity(
+        identity = Identity(
             type=(_normalize_type(result.type) or None),
             label=(result.label or None),
             number=(result.number or None),
             title=(result.title or None),
         )
+        # The induced type is judged from these member nodes ALONE — no lead-in, no
+        # neighbours — so logging the two together is what makes a mistyped block
+        # explicable rather than mysterious (docs/HANDOFF.md, known issues).
+        logger.debug(
+            'identify: %d node(s) -> type=%r label=%r number=%r | from %r',
+            len(members),
+            identity.type,
+            identity.label,
+            identity.number,
+            logs.elide(members[0].content if members else ''),
+        )
+        return identity
 
 
 def _normalize_type(raw: str | None) -> str:
@@ -229,4 +244,9 @@ class StatementExtractorNode:
                     for entity in entities
                 )
             )
+        logger.info(
+            'statement extractor: %d block(s) typed | %s',
+            len(entities),
+            logs.counts([entity.type for entity in entities]),
+        )
         return {'entities': entities}

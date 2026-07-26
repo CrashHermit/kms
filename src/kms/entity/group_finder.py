@@ -51,10 +51,14 @@ the run of nodes a block and its derivation jointly occupy — is a scaffold: it
 inside this walk and is never persisted.
 """
 
+import logging
+
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import llm, models, state
+from kms.core import llm, logs, models, state
+
+logger = logging.getLogger(__name__)
 
 # Soft look-ahead budget (~4 chars/token). A single node larger than the budget still
 # forms a window (at least one node). When the only span in a window reaches its edge,
@@ -183,7 +187,15 @@ class Module(dspy.Module):
     async def aforward(self, current_nodes: list[WindowNode]) -> list[Span]:
         """Returns the spans found in the given window of nodes."""
         result = await self.finder.acall(current_nodes=current_nodes)
-        return list(result.spans or [])
+        spans = list(result.spans or [])
+        logger.debug(
+            'find: %d nodes in, %d spans out (%s) | first node %r',
+            len(current_nodes),
+            len(spans),
+            logs.counts([span.role for span in spans]),
+            logs.elide(current_nodes[0].content if current_nodes else ''),
+        )
+        return spans
 
 
 def _window_from(nodes: list[models.ASTNode], cursor: int, budget: int) -> int:
@@ -286,6 +298,14 @@ async def find_groups(
             if reached_doc_end or size >= max_budget:
                 # Nothing left to gather (document end), or the window hit the context
                 # cap: bank every span as-is and advance past the window.
+                if not reached_doc_end:
+                    logger.warning(
+                        'window hit the %d-token cap at cursor %d; banking %d '
+                        'span(s) as-is (a span may be truncated)',
+                        max_budget,
+                        cursor,
+                        len(clean),
+                    )
                 to_bank, advance = clean, end
             elif bounded:
                 # Commit the bounded spans; the cursor lands just after the last one
@@ -293,6 +313,13 @@ async def find_groups(
                 to_bank, advance = bounded, cursor + bounded[-1].end + 1
             else:
                 # The sole span reaches the edge and may continue — grow and re-read.
+                logger.debug(
+                    'grow: sole span reaches the window edge at cursor %d; '
+                    'budget %d -> %d',
+                    cursor,
+                    size,
+                    size * 2,
+                )
                 size *= 2
                 continue
 
@@ -311,6 +338,15 @@ async def find_groups(
             cursor = advance
             break
 
+    # The two counts are the stage's headline result: blocks found, and how many of them
+    # the book shows worked out. A book with blocks but zero procedure spans is the
+    # signature of an unmarked-derivation miss (docs/HANDOFF.md, next step 1).
+    logger.info(
+        'group finder: %d nodes -> %d block(s), %d procedure span(s)',
+        node_count,
+        len(entities),
+        len(procedure_spans),
+    )
     return entities, procedure_spans
 
 

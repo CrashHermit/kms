@@ -28,10 +28,14 @@ Wired in by ``SplitterNode`` (bottom of file): it runs right after the seam merg
 the instruction finder, overwriting the `nodes` channel with the normalized stream.
 """
 
+import logging
+
 import dspy
 from pydantic import BaseModel, Field
 
 from kms.core import llm, models, state
+
+logger = logging.getLogger(__name__)
 
 # Same look-ahead budget shape as the finders (~4 chars/token). A packed exercise list is one
 # node and always fits whole (min-one-node), so the budget only needs to be large enough to
@@ -133,7 +137,19 @@ class Module(dspy.Module):
     ) -> list[NodeSplit]:
         """Returns the split decisions for the given window of nodes."""
         result = await self.splitter.acall(current_nodes=current_nodes)
-        return list(result.splits or [])
+        splits = list(result.splits or [])
+        # Whether a given packed node splits is the stage's known run-to-run variance
+        # (docs/HANDOFF.md, known issues), so log the per-window verdict.
+        logger.debug(
+            'split: %d nodes in, %d split(s) out%s',
+            len(current_nodes),
+            len(splits),
+            ''.join(
+                f' | position {split.position} -> {len(split.exercises)} piece(s)'
+                for split in splits
+            ),
+        )
+        return splits
 
 
 def _window_from(nodes: list[models.ASTNode], cursor: int, budget: int) -> int:
@@ -232,7 +248,14 @@ async def split_exercises(
     if not nodes:
         return nodes
     decision = await _gather_decisions(nodes, module, budget)
-    return _rebuild(nodes, decision)
+    rebuilt = _rebuild(nodes, decision)
+    logger.info(
+        'splitter: %d node(s) -> %d (%d packed node(s) split)',
+        len(nodes),
+        len(rebuilt),
+        len(decision.splits),
+    )
+    return rebuilt
 
 
 # --- LangGraph node: normalise the node stream between the seam merger and the finders ---
