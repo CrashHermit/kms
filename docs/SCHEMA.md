@@ -117,8 +117,6 @@ until conceptualization lands. Design: `CONCEPT-LAYER.md`.
 
 ```
 (:Source)-[:HEAD]->(:Node)-[:NEXT]->(:Node)-[:NEXT]->…      document order
-(:Source)-[:HAS_ENTITY]->(:Entity)
-
 (:Entity)-[:DERIVED_FROM]->(:Node)                          provenance
 (:Procedure)-[:DERIVED_FROM]->(:Node)                       provenance
 

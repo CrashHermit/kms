@@ -34,6 +34,7 @@ import dspy
 from pydantic import BaseModel, Field
 
 from kms.core import llm, models, state
+from kms.core.walker import estimate_tokens, window_from
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +43,6 @@ logger = logging.getLogger(__name__)
 # hold that node; a single list is all one split call needs to see.
 LOOKAHEAD_BUDGET = 2000
 
-
-def _estimate_tokens(node: models.ASTNode) -> int:
-    return len(node.content or '') // 4 + 1
 
 
 class WindowNode(BaseModel):
@@ -152,20 +150,6 @@ class Module(dspy.Module):
         return splits
 
 
-def _window_from(nodes: list[models.ASTNode], cursor: int, budget: int) -> int:
-    """Returns the exclusive end index of a look-ahead window starting at `cursor`:
-    whole nodes up to the soft token budget, always at least one node."""
-    i, accumulated = cursor, 0
-    node_count = len(nodes)
-    while i < node_count:
-        token_count = _estimate_tokens(nodes[i])
-        if i > cursor and accumulated + token_count > budget:
-            break
-        accumulated += token_count
-        i += 1
-    return i
-
-
 async def _gather_decisions(
     nodes: list[models.ASTNode], module: Module, budget: int
 ) -> Decision:
@@ -176,7 +160,7 @@ async def _gather_decisions(
     decision = Decision()
     cursor, node_count = 0, len(nodes)
     while cursor < node_count:
-        end = _window_from(nodes, cursor, budget)
+        end = window_from(nodes, cursor, budget)
         window = nodes[cursor:end]
         last_local = len(window) - 1
         splits = await module.aforward(

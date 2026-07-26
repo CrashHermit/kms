@@ -10,11 +10,11 @@ Representation: every entity carries the bare ``:Entity`` label and nothing else
 per-type label: ``type`` is an OPEN, induced property (definition / theorem / example / law / …)
 and an open vocabulary would explode the label set — ``kind = label, type = property`` (see
 ``docs/SCHEMA.md``). There is likewise no ``:Mention``/``:Canonical`` role split: canonical hubs
-existed only as reference targets, and the reference layer is gone. An entity roots under its
-book via ``(:Source)-[:HAS_ENTITY]->(:Entity)`` and points back at the structural chunks it was
-built from via ``(:Entity)-[:DERIVED_FROM]->(:Node)`` (its ``members`` are node ids, resolved to
-the same deterministic node uuids the ``:Node`` layer wrote). Its derivations reify into the
-procedural layer (``graph.procedures``).
+existed only as reference targets, and the reference layer is gone. An entity carries a ``source``
+property linking back to its ``:Source`` (the same value used on the ``:Node`` layer), and points
+back at the structural chunks it was built from via ``(:Entity)-[:DERIVED_FROM]->(:Node)`` (its
+``members`` are node ids, resolved to the same deterministic node uuids the ``:Node`` layer wrote).
+Its derivations reify into the procedural layer (``graph.procedures``).
 
 Identity: the stable vertex key is a DETERMINISTIC uuid5 over ``(source, entity id)`` — the id is
 the entity's document-order position, assigned when the overlay is flattened (see

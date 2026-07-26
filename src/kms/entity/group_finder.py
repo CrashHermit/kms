@@ -62,6 +62,7 @@ import dspy
 from pydantic import BaseModel, Field
 
 from kms.core import llm, logs, models, state
+from kms.core.walker import window_from
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +72,6 @@ logger = logging.getLogger(__name__)
 # pathological block can't grow past the model's context (banked as-is there).
 LOOKAHEAD_BUDGET = 2000
 MAX_LOOKAHEAD_BUDGET = 8000
-
-
-def _estimate_tokens(node: models.ASTNode) -> int:
-    return len(node.content or '') // 4 + 1
 
 
 class WindowNode(BaseModel):
@@ -248,20 +245,6 @@ class Module(dspy.Module):
         return spans
 
 
-def _window_from(nodes: list[models.ASTNode], cursor: int, budget: int) -> int:
-    """Return the exclusive end index of a look-ahead window starting at `cursor`:
-    whole nodes up to the soft token budget, always at least one node."""
-    i, accumulated = cursor, 0
-    node_count = len(nodes)
-    while i < node_count:
-        token_count = _estimate_tokens(nodes[i])
-        if i > cursor and accumulated + token_count > budget:
-            break
-        accumulated += token_count
-        i += 1
-    return i
-
-
 def _clean_spans(spans: list[Span], last_local: int) -> list[Span]:
     """Clamp spans into the window, drop overlaps, and sort.
 
@@ -315,7 +298,7 @@ async def find_spans(
     while cursor < node_count:
         size = budget
         while True:
-            end = _window_from(nodes, cursor, size)
+            end = window_from(nodes, cursor, size)
             window = nodes[cursor:end]
             last_local = len(window) - 1
             reached_doc_end = end == node_count

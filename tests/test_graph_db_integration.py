@@ -104,6 +104,7 @@ def test_persist_entities_and_procedures_upsert_the_overlay_and_its_spine():
     from kms.core import models
     from kms.graph.db import close_driver, database, driver
     from kms.graph.schema import ensure_schema
+    from kms.graph.nodes import source_uuid
     from kms.graph.writer import (
         persist_entities,
         persist_nodes,
@@ -177,10 +178,12 @@ def test_persist_entities_and_procedures_upsert_the_overlay_and_its_spine():
                 labelled = await one(
                     session, 'MATCH (e:Theorem) RETURN count(e) AS c'
                 )
-                # the overlay roots under its :Source and points back at its member chunks
+                # the overlay is linked to its book via the source property and points back
+                # at its member chunks
+                src_uuid = source_uuid(source)
                 rooted = await one(
                     session,
-                    'MATCH (:Source)-[:HAS_ENTITY]->(e:Entity) RETURN count(e) AS c',
+                    f"MATCH (e:Entity {{source: '{src_uuid}'}}) RETURN count(e) AS c",
                 )
                 derived = await one(
                     session,

@@ -6,8 +6,8 @@ Persist the structural node stream and the entity overlay into Neo4j — the I/O
 re-running a book is idempotent, then wires them up — ``(:Source)-[:HEAD]->`` the first node and
 ``:NEXT`` edges threading the rest in document order so the stream hangs off the source and is
 walkable in Cypher. ``persist_entities`` writes the ``:Entity`` overlay on top: one vertex per pedagogical block (a bare
-``:Entity`` label — ``type`` is an open property, never a label), rooted under the book via
-``:HAS_ENTITY`` and linked back to the structural chunks it was built from via ``:DERIVED_FROM``.
+``:Entity`` label — ``type`` is an open property, never a label), carrying a ``source`` property
+linking back to the book, and linked to the structural chunks it was built from via ``:DERIVED_FROM``.
 ``persist_procedures`` writes the procedural layer: one ``:Procedure`` per derivation hung off its
 entity via ``:HAS_PROCEDURE`` and linked to its own source chunks via ``:DERIVED_FROM``, and one
 ``:Act`` per step threaded ``:FIRST``/``:THEN`` (see ``graph.procedures``).
@@ -144,31 +144,21 @@ def member_pairs(entities: list[models.Entity], source: str) -> list[dict]:
 
 async def persist_entities(entities: list[models.Entity], source: str) -> None:
     """Upsert the book's ``:Entity`` overlay: one vertex per pedagogical block (a bare ``:Entity``
-    label), rooted under the already-persisted ``:Source`` via ``:HAS_ENTITY``, and linked to its
-    structural chunks via ``:DERIVED_FROM``. Idempotent — every MERGE keys on a deterministic uuid,
-    so re-persisting the same ``source`` updates in place. A no-op for an empty overlay. The
-    ``:Source`` and ``:Node`` vertices are expected to already exist (the node persister runs first);
-    the MATCHes here attach to them rather than creating them. Every entity's id must be assigned
-    (post-flatten)."""
+    label), carrying a ``source`` property linking back to the already-persisted ``:Source``, and
+    linked to its structural chunks via ``:DERIVED_FROM``. Idempotent — every MERGE keys on a
+    deterministic uuid, so re-persisting the same ``source`` updates in place. A no-op for an empty
+    overlay. The ``:Source`` and ``:Node`` vertices are expected to already exist (the node
+    persister runs first); the MATCHes here attach to them rather than creating them. Every entity's
+    id must be assigned (post-flatten)."""
     if not entities:
         return
     rows = entity_rows(entities, source)
     pairs = member_pairs(entities, source)
-    source_key = source_uuid(source)
-    uuids = [entity_uuid(source, entity.id) for entity in entities]
 
     async with driver().session(database=database()) as session:
         await session.run(
             f'UNWIND $rows AS row MERGE (e:{ENTITY_LABEL} {{uuid: row.uuid}}) SET e += row',
             rows=rows,
-        )
-        await session.run(
-            f'MATCH (s:{SOURCE_LABEL} {{uuid: $src}}) '
-            f'UNWIND $uuids AS uuid '
-            f'MATCH (e:{ENTITY_LABEL} {{uuid: uuid}}) '
-            f'MERGE (s)-[:HAS_ENTITY]->(e)',
-            src=source_key,
-            uuids=uuids,
         )
         if pairs:
             await session.run(

@@ -154,12 +154,9 @@ def test_persist_entities_writes_vertices_root_and_members(monkeypatch):
     assert any('MERGE (e:Entity' in query for query in queries)
     assert not any('SET e:Theorem' in query for query in queries)
     assert not any('SET e:Mention' in query for query in queries)
-    # entities are rooted under their :Source via :HAS_ENTITY
-    root = next(call for call in calls if ':HAS_ENTITY' in call[0])
-    assert root[1]['src'] == source_uuid('book.pdf')
-    assert set(root[1]['uuids']) == {
-        entity_uuid('book.pdf', i) for i in range(3)
-    }
+    # no HAS_ENTITY relationship is written — the source property on :Entity provides
+    # book-scoped lookup; no :HAS_ENTITY query should appear
+    assert not any(':HAS_ENTITY' in q for q, _ in calls)
     # members are linked via :DERIVED_FROM, one edge per (entity, member)
     members = next(call for call in calls if ':DERIVED_FROM' in call[0])
     assert len(members[1]['pairs']) == 4
