@@ -151,13 +151,35 @@ The finder emitted one span `[20..25]` where it could have emitted entity `[20,2
 procedure `[22..25]`. A clean cut existed and was available.
 
 **It is systematic, not variance.** Re-running the group finder in isolation over the saved
-node stream gives `entities=22, procedure_spans=0` on **3/3** runs.
+node stream gives `entities=22, procedure_spans=0` on **3/3** runs with DSPy's caches
+explicitly disabled (`dspy.configure_cache(enable_disk_cache=False,
+enable_memory_cache=False)`, ~13 s of real calls per trial).
 
-**Cause.** The `Signature` tells the model derivations are "usually marked explicitly
-(`Proof.`, `Solution.`)", and `docs/SCHEMA.md` principle 4 ("absence is structural") means
-there is deliberately no fallback question. Against a book that marks nothing, the detector
-has no cue. This is precisely the drift HANDOFF next step 3 predicted — a reliable
-structural task fused with a softer unmarked-prose one.
+> **Methodology correction.** An earlier version of this section cited 3/3 identical runs
+> *without* disabling the cache. Those repeats were served from `~/.dspy_cache` — the whole
+> 3-trial probe returned in 4.5 s — so they demonstrated cache determinism, not model
+> determinism. The numbers above are the re-verified, genuinely uncached result; the
+> conclusion is unchanged, its evidence is not. **Anyone re-running a book on this machine
+> should assume the DSPy disk cache is on and will silently serve a prior run's answers.**
+
+**Cause — the finder sees the derivation and declines to mark it.** This is not a perception
+failure. The finder's own recovered reasoning for the Lebl window says so outright:
+
+> "Nodes 4-5: The example statement and discussion. **This example doesn't have a separate
+> solution marker** — it's just presented and discussed. So the example itself is the entity."
+>
+> "Nodes 7-9: The equation and solution discussion. **Again no separate 'Solution.' marker —
+> the solution is integrated.**"
+>
+> "Nodes 21-25: The example **with its solution integrated**. End entity at 25."
+
+The model identifies the solution, names it as a solution, and then folds it into the entity
+because the `Signature` tells it derivations are "usually marked explicitly (`Proof.`,
+`Solution.`)" — and `docs/SCHEMA.md` principle 4 ("absence is structural") deliberately
+provides no fallback question. Against a book that marks nothing, the rule fires exactly as
+written. This is precisely the drift HANDOFF next step 3 predicted — a reliable structural
+task fused with a softer unmarked-prose one — and it makes the fix cheap: the Signature needs
+to say that an *integrated* solution is still a procedure span.
 
 **Consequence in the graph.** Lebl and Hammack both persist **0 `:Procedure` and 0 `:Act`
 vertices**. Hammack's zero is *correct* (a pure exercise set has nothing worked out); Lebl's
@@ -247,14 +269,50 @@ is unverified.
 
 ---
 
-## Smaller notes
+## Observability: what could and could not be seen
 
-- **Doc drift — trace capture is gone.** `CLAUDE.md:41` still lists `core/tracing.py`, and
-  `REPORT.md` documents a `KMS_TRACE_DIR` workflow feeding `training/*/dataset.py`. Neither
-  exists after #21: there is no `tracing` module and no `KMS_TRACE_DIR` reference anywhere in
-  `src/`. **No traces could be captured for this run**, so it produced no training data — a
-  loss worth restoring deliberately given the DSPy-optimisation plans for the splitter and
-  the finder Signature. Left unfixed here; it is a decision, not a typo.
+Worth stating plainly, because it shaped how much of this validation had to be reconstructed.
+
+**There are no logs.** The pipeline emits no logging at all outside a single line in
+`cli.py` (`Wrote assembled document to: …`). No stage — DSPy or otherwise — logs its inputs,
+outputs, timings, or decisions. The per-run `.log` files from this sweep are one line each,
+and that line came from the harness, not the pipeline.
+
+**Tracing is gone.** `CLAUDE.md:41` still lists `core/tracing.py`, and `REPORT.md` documents
+a `KMS_TRACE_DIR` workflow feeding `training/*/dataset.py`. Neither survived #21: there is no
+`tracing` module and no `KMS_TRACE_DIR` reference anywhere in `src/`. The previous sweep
+captured 227 trainable `{stage, inputs, outputs}` trace lines; **this one captured none.**
+
+**What stood in for it.** Stage *outputs* were recovered two ways:
+
+1. The harness kept the final `State`, giving the fully-attributed overlay per book — enough
+   to check every structural invariant in this report, but only end-state, not per-call.
+2. `~/.dspy_cache` retained **78 raw model responses** spanning **all nine** DSPy signatures
+   — including the ChainOfThought reasoning, which is what produced the Lebl evidence above.
+
+| Stage | Cached responses |
+|---|--:|
+| `statement_extractor.Identify` | 30 |
+| `ingestion.extractor` | 8 |
+| `ingestion.seam_merger` | 8 |
+| `entity.group_finder` | 7 |
+| `entity.splitter` | 7 |
+| `ingestion.corrector` | 7 |
+| `procedure_extractor.Decompose` | 6 |
+| `entity.instruction_finder` | 3 |
+| `entity.instruction_distributor` | 2 |
+
+**The cache is not a replacement for tracing**, for three reasons: entries are keyed by a
+hash of the request, so **the inputs are unrecoverable** and the pairing needed for training
+data does not exist; the count is far short of the calls actually made (30 cached vs 67
+statement extractions), so it is not a complete record; and it lives in an ephemeral
+container. It is also an active hazard for validation — see the methodology correction under
+Finding 1.
+
+Restoring trace capture should come **before** any Signature tuning, since the tuning has no
+data without it.
+
+## Smaller notes
 - **Node counts differ from baseline** (e.g. Stein 36 vs 47). The front-end is untouched by
   #21, so this is OCR/corrector/extractor run-to-run variance, not an entity-layer effect.
   It does mean baseline entity counts are not a like-for-like comparison.
@@ -269,7 +327,8 @@ is unverified.
 2. **Refresh the Neo4j credential**, then re-run one book with `NEO4J_TRANSPORT=http` to
    validate the write path end to end.
 3. **Finding 2** (`type` context) — cheap if the lead-in is threaded into `Identify`.
-4. Restore trace capture before doing any Signature tuning, so the tuning has data.
+4. Restore trace capture before doing any Signature tuning, so the tuning has data — and add
+   at least minimal per-stage logging, since the pipeline currently emits none.
 5. Then the concept layer (`docs/CONCEPT-LAYER.md`), per HANDOFF.
 
 ## Reproducing

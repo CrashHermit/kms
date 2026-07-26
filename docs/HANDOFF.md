@@ -272,6 +272,17 @@ the whole run.
 - **No GPU is needed anywhere** — the whole front-end is API-based.
 - **DeepSeek prompt caching** makes re-runs with unchanged prompts fast; changing a stage's
   prompt invalidates that stage's cache (slower first re-run).
+- **DSPy's own disk cache (`~/.dspy_cache`) will silently serve a prior run's answers**, and
+  it is on by default. This is a validation trap, not just a speed-up: re-running a stage on
+  an unchanged input returns byte-identical output in a fraction of the time, which looks
+  exactly like model determinism. It caught the 2026-07-25 sweep once (a "3/3 identical runs"
+  claim that was really 3 cache hits in 4.5 s). To measure real behaviour, disable it:
+  `dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=False)`. As a smell test,
+  a genuine DeepSeek stage call is seconds, not milliseconds.
+- **There is no logging and no tracing.** The pipeline emits one line total (`cli.py`), and
+  `core/tracing.py` / `KMS_TRACE_DIR` no longer exist. To see what a stage did you must keep
+  the LangGraph `State` yourself or read `~/.dspy_cache` (responses only — the cache is keyed
+  by a request hash, so inputs are gone).
 - **There is one finder now, not three copies.** A walk bug is fixed in one place
   (`entity/group_finder.py`); the banking machinery there is load-bearing and was carried over
   verbatim — change the Signature freely, the cursor logic only with care.
