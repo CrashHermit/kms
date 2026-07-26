@@ -16,10 +16,12 @@ import dspy
 
 from kms.core import models
 from kms.entity import (
+    block_typer,
     group_finder,
     instruction_distributor,
     instruction_finder,
     procedure_extractor,
+    role_typer,
     splitter,
     statement_extractor,
 )
@@ -215,10 +217,11 @@ async def probe_instruction_finder() -> None:
     )
 
 
-# --- 5. group_finder: the marked/unmarked derivation A/B ----------------------------
+# --- 5. group_finder: cuts the statement/derivation boundary, marked or not ------------
 
 
 async def probe_group_finder() -> None:
+    """The finder emits UNTYPED spans now: assert it CUTS in the right place."""
     print('\n=== group_finder ===')
     module = group_finder.Module()
 
@@ -236,12 +239,12 @@ async def probe_group_finder() -> None:
             'Given $\\epsilon>0$ there is $N$ with $a_N > L-\\epsilon$. Hence $a_n \\to L$. $\\square$',
         ),
     )
-    ents, procs = await group_finder.find_groups(marked, module=module)
+    spans = await group_finder.find_spans(marked, module=module)
     check(
         'group_finder',
-        'MARKED derivation -> separate procedure span',
-        len(ents) == 1 and len(procs) == 1,
-        f'{len(ents)} entity span(s), {len(procs)} procedure span(s)',
+        'MARKED derivation -> cut into two spans',
+        len(spans) == 2,
+        f'{len(spans)} span(s): {spans}',
     )
 
     unmarked = nodes(
@@ -255,12 +258,123 @@ async def probe_group_finder() -> None:
             'If $A = 0$ then $y = 0$ is a solution. The solution blows up at $x=1/A$.',
         ),
     )
-    ents2, procs2 = await group_finder.find_groups(unmarked, module=module)
+    spans2 = await group_finder.find_spans(unmarked, module=module)
     check(
         'group_finder',
-        'UNMARKED derivation -> procedure span (known gap)',
-        len(procs2) >= 1,
-        f'{len(ents2)} entity span(s), {len(procs2)} procedure span(s)',
+        'UNMARKED derivation -> cut into two spans',
+        len(spans2) >= 2,
+        f'{len(spans2)} span(s): {spans2}',
+    )
+
+    # Regression: a bare labelled definition with nothing worked out after it got NO span
+    # at all, which deleted it from the document.
+    bare = nodes(
+        (
+            'paragraph',
+            'Definition 2.5.1 (Primitive Root). A primitive root modulo $n$ is an '
+            'element of $(\\mathbf{Z}/n\\mathbf{Z})^*$ of maximal order.',
+        ),
+        ('paragraph', 'We now turn to the question of existence.'),
+    )
+    spans3 = await group_finder.find_spans(bare, module=module)
+    check(
+        'group_finder',
+        'a bare labelled definition still gets its own span',
+        any(0 in span for span in spans3),
+        f'{len(spans3)} span(s): {spans3}',
+    )
+
+
+# --- 5b. role_typer: the closed block/derivation call ---------------------------------
+
+
+async def probe_role_typer() -> None:
+    print('\n=== role_typer ===')
+    module = role_typer.Module()
+
+    cases = [
+        (
+            'a stated theorem',
+            'entity',
+            '**Theorem 2.1.** Every bounded monotone sequence converges.',
+        ),
+        (
+            'a marked proof',
+            'procedure',
+            '*Proof.* Let $S$ be the set of terms. By completeness $S$ has a supremum $L$. '
+            'Hence $a_n \\to L$. $\\square$',
+        ),
+        (
+            'an UNMARKED worked solution',
+            'procedure',
+            'We know how to solve this. Assume $A \\neq 0$, so $x = -1/y + C$, giving '
+            '$y = 1/(C-x)$. If $A = 0$ then $y = 0$ is a solution.',
+        ),
+        (
+            'a posed exercise',
+            'entity',
+            "12. Sketch the slope field for $y' = e^{x-y}$.",
+        ),
+        (
+            'a bare definition',
+            'entity',
+            '**Definition 3.7.** A set is *compact* if every open cover has a finite subcover.',
+        ),
+    ]
+    for name, expected, text in cases:
+        got = await module.role(text)
+        check(
+            'role_typer',
+            f'{name} -> {expected}',
+            got == expected,
+            f'got {got!r}',
+        )
+
+
+# --- 6. block_typer + statement_extractor: typing and the number hazard ---------------
+
+
+async def probe_block_typer() -> None:
+    print('\n=== block_typer ===')
+    module = block_typer.Module()
+
+    law = nodes(
+        ('header', "Law 4.1 (Ohm's Law)."),
+        (
+            'paragraph',
+            'The current through a conductor is proportional to the voltage across it, $V = IR$.',
+        ),
+    )
+    induced = await module.block_type(law)
+    check(
+        'block_typer',
+        'induces an open non-math type',
+        induced not in ('', None, 'theorem', 'definition', 'example'),
+        f'type={induced!r}',
+    )
+
+    bare = nodes(('paragraph', '$P \\vee (Q \\Rightarrow R)$'))
+    induced2 = await module.block_type(bare)
+    check(
+        'block_typer',
+        'types a bare formula exercise as an exercise',
+        induced2 in ('exercise', 'problem'),
+        f'type={induced2!r}',
+    )
+
+    assertion = nodes(
+        (
+            'paragraph',
+            'For matrix $A$ to be invertible, it is necessary and sufficient that '
+            '$\\det(A) \\neq 0$.',
+        ),
+    )
+    induced3 = await module.block_type(assertion)
+    check(
+        'block_typer',
+        'types an exercise whose body is an assertion as an exercise',
+        induced3 in ('exercise', 'problem'),
+        f'type={induced3!r} (subject matter is a theorem; the block is an exercise)',
     )
 
 
@@ -282,31 +396,7 @@ async def probe_statement_extractor() -> None:
         'statement_extractor',
         "takes the block's OWN number, not an in-text cross-reference",
         identity.number == '2.1.12',
-        f'number={identity.number!r} (expected 2.1.12), type={identity.type!r}',
-    )
-
-    law = nodes(
-        ('header', "Law 4.1 (Ohm's Law)."),
-        (
-            'paragraph',
-            'The current through a conductor is proportional to the voltage across it, $V = IR$.',
-        ),
-    )
-    identity2 = await module.identity(law)
-    check(
-        'statement_extractor',
-        'induces an open non-math type',
-        (identity2.type or '') not in ('', 'theorem', 'definition', 'example'),
-        f'type={identity2.type!r} number={identity2.number!r}',
-    )
-
-    bare = nodes(('paragraph', '$P \\vee (Q \\Rightarrow R)$'))
-    identity3 = await module.identity(bare)
-    check(
-        'statement_extractor',
-        'types a bare formula exercise as an exercise (known gap)',
-        (identity3.type or '') in ('exercise', 'problem'),
-        f'type={identity3.type!r} — no lead-in context is passed to this pass',
+        f'number={identity.number!r} (expected 2.1.12), label={identity.label!r}',
     )
 
 
@@ -457,6 +547,8 @@ async def main() -> None:
     await probe_splitter()
     await probe_instruction_finder()
     await probe_group_finder()
+    await probe_role_typer()
+    await probe_block_typer()
     await probe_statement_extractor()
     await probe_procedure_extractor()
     await probe_distributor()

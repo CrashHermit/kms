@@ -17,7 +17,7 @@ blocks + their procedures → Neo4j. No GPU anywhere; three hosted API keys.
 **The AutoMathKG entity layer is gone.** It was replaced (see `REBUILD.md`) by one general chain:
 
 ```
-group_finder → statement_extractor → procedure_extractor
+group_finder → role_typer → block_typer → statement_extractor → procedure_extractor
 ```
 
 where nine per-type modules (three finders, three attributors, three referencers) used to stand.
@@ -63,8 +63,8 @@ is stale (see "Known issues").
 
 ```
 ocr → corrector → extractor → seam_merger → splitter → instruction_finder
-    → node_persister → group_finder → statement_extractor → procedure_extractor
-    → instruction_distributor → entity_persister
+    → node_persister → group_finder → role_typer → block_typer → statement_extractor
+    → procedure_extractor → instruction_distributor → entity_persister
 ```
 
 Two phases split at the seam merger.
@@ -84,8 +84,13 @@ provenance layer — after the splitter, so persisted ids match the overlay's me
   problem finder. It banks a span only once a node is seen to follow it (so a window cut can never
   split one), and grows the window when the sole span reaches the edge. Emits `entity` and
   `procedure` spans; **one partition** — a node belongs to at most one span.
-- **`statement_extractor`** — one universal pass filling `type`, `label`, `number`, `title`,
-  `contents`. It never restructures the span.
+- **`role_typer`** — one closed, binary call per span: block (`entity`) or derivation
+  (`procedure`)? Split out of the finder so the walk keeps only its reliable structural job.
+- **`block_typer`** — induces the open `type` (definition / theorem / law / mechanism / …),
+  one question per block. Split out of the statement extractor, where a genre judgement was
+  riding along in a transcription call and typed problem-set items by their subject matter.
+- **`statement_extractor`** — transcribes `label`, `number`, `title`, `contents`. It never
+  restructures the span.
 - **`procedure_extractor`** — decomposes each procedure span into verbatim ordered steps and
   attaches it to the **nearest preceding block**. Steps partition the content exactly.
 - **`instruction_distributor`** — copies a lead-in's shared directive onto the blocks it governs.
@@ -131,7 +136,7 @@ on a re-run versus the numbers recorded below — that is intended.
 - `uv sync` — light CPU core.
 - `uv sync --extra mistral` — adds `pypdfium2` + `pillow` (render page images for the corrector).
 
-**Tests:** `PYTHONPATH=src uv run pytest -q` (145 tests, 3 skipped). `tests/conftest.py` stubs
+**Tests:** `PYTHONPATH=src uv run pytest -q` (161 tests, 3 skipped). `tests/conftest.py` stubs
 dspy/pydantic/langgraph *only if absent*, so the suite runs with or without the real deps. The
 Neo4j integration test is opt-in behind `KMS_NEO4J_IT=1`.
 

@@ -11,8 +11,9 @@ nodes (a growing look-ahead cursor cannot be sharded).
 
 Stage order:
     corrector -> extractor -> seam_merger (even, odd) -> splitter -> instruction_finder
-              -> node_persister -> group_finder -> statement_extractor
-              -> procedure_extractor -> instruction_distributor -> entity_persister
+              -> node_persister -> group_finder -> role_typer -> block_typer
+              -> statement_extractor -> procedure_extractor -> instruction_distributor
+              -> entity_persister
 
 Two phases split at the seam merger. Ingestion is per-page: `segments` (already carrying
 Mistral's markdown + figures) is the backbone, and the corrector proofreads each page's
@@ -26,14 +27,17 @@ atomic stream, one uniform pass. The node persister then writes the finalized st
 the graph's provenance layer (a `:Source` root with its `:Node` chain); it runs after the splitter
 so the persisted ids match the overlay's `members`, and is a no-op when Neo4j isn't configured.
 
-One entity chain then runs. The group finder walks `nodes` once and emits two kinds of span:
-`entity` (a labeled pedagogical block — definition, theorem, law, example, exercise) and
-`procedure` (the worked derivation that resolves one — proof, solution, derivation). Statement and
-procedure are SEPARATE spans, so the old semantic proof/solution boundary call is now a structural
-detection. The statement extractor then fills each block's self-contained attributes in one
-universal pass — the open induced `type` plus label, number, title and contents — and the procedure
-extractor decomposes every procedure span into verbatim ordered steps and attaches it to the block
-it derives. Decomposition is universal: a solution's steps are as real as a proof's. The
+One entity chain then runs, each stage asking ONE question. The group finder walks `nodes` once and
+cuts it into UNTYPED spans — boundaries only, including the cut between a statement and the working
+that resolves it, so the old semantic proof/solution boundary call is now a structural detection.
+The role typer then labels each span `entity` (a block) or `procedure` (a derivation); the block
+typer induces each block's open `type`; and the statement extractor fills the remaining attributes
+(label, number, title, contents), which are transcription rather than judgement. The chain is split
+this way because fusing these questions made each one worse — the finder read a missing "Solution."
+marker as "no derivation", and a shared type/label call typed problem-set items by their subject
+matter. The procedure extractor then decomposes every procedure span into verbatim ordered steps and
+attaches it to the block it derives. Decomposition is universal: a solution's steps are as real as a
+proof's. The
 instruction distributor then stamps `instruction` from the lead-in tags (the shared directive of a
 grouped-exercise run), which is what makes an atomic exercise mean anything on its own.
 
@@ -51,10 +55,12 @@ from typing import TYPE_CHECKING
 from langgraph.graph import END, START, StateGraph
 
 from kms.core import state
+from kms.entity.block_typer import BlockTyperNode
 from kms.entity.group_finder import GroupFinderNode
 from kms.entity.instruction_distributor import InstructionDistributorNode
 from kms.entity.instruction_finder import InstructionFinderNode
 from kms.entity.procedure_extractor import ProcedureExtractorNode
+from kms.entity.role_typer import RoleTyperNode
 from kms.entity.splitter import SplitterNode
 from kms.entity.statement_extractor import StatementExtractorNode
 from kms.graph.db import close_driver
@@ -74,8 +80,8 @@ def build_graph() -> 'CompiledStateGraph':
     A single straight path: the correction pass proofreads each Mistral-transcribed
     page against its image, the extractor parses the corrected markdown into structural
     nodes, the seam merger heals page-split nodes and flattens to the global stream, and
-    the group finder then detects the pedagogical blocks and their worked procedures for
-    the two extractors to fill in.
+    the group finder then cuts that stream into untyped spans for the role typer, the block
+    typer and the two extractors to classify and fill in.
     """
     corrector = CorrectorNode()
     extractor = ExtractorNode()
@@ -84,6 +90,8 @@ def build_graph() -> 'CompiledStateGraph':
     instruction_finder = InstructionFinderNode()
     node_persister = NodePersisterNode()
     group_finder = GroupFinderNode()
+    role_typer = RoleTyperNode()
+    block_typer = BlockTyperNode()
     statement_extractor = StatementExtractorNode()
     procedure_extractor = ProcedureExtractorNode()
     instruction_distributor = InstructionDistributorNode()
@@ -104,6 +112,8 @@ def build_graph() -> 'CompiledStateGraph':
     graph.add_node('instruction_finder', instruction_finder.run)
     graph.add_node('node_persister', node_persister.run)
     graph.add_node('group_finder', group_finder.run)
+    graph.add_node('role_typer', role_typer.run)
+    graph.add_node('block_typer', block_typer.run)
     graph.add_node('statement_extractor', statement_extractor.run)
     graph.add_node('procedure_extractor', procedure_extractor.run)
     graph.add_node('instruction_distributor', instruction_distributor.run)
@@ -156,7 +166,9 @@ def build_graph() -> 'CompiledStateGraph':
     # meaningful latency cost. The instruction distributor runs last because it reads each block's
     # contents/number (which the statement extractor fills) to judge governance.
     graph.add_edge('node_persister', 'group_finder')
-    graph.add_edge('group_finder', 'statement_extractor')
+    graph.add_edge('group_finder', 'role_typer')
+    graph.add_edge('role_typer', 'block_typer')
+    graph.add_edge('block_typer', 'statement_extractor')
     graph.add_edge('statement_extractor', 'procedure_extractor')
     graph.add_edge('procedure_extractor', 'instruction_distributor')
     graph.add_edge('instruction_distributor', 'entity_persister')

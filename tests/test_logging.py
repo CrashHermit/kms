@@ -11,9 +11,10 @@ import asyncio
 import logging
 
 from kms.core import logs, models
-from kms.entity.group_finder import Span, find_groups
+from kms.entity.block_typer import BlockTyperNode
+from kms.entity.group_finder import Span, find_spans
 from kms.entity.instruction_finder import tag_instructions
-from kms.entity.statement_extractor import StatementExtractorNode
+from kms.entity.role_typer import RoleTyperNode
 from kms.ingestion.seam_merger import SeamMergerNode
 
 # --- logs.elide ---
@@ -67,49 +68,54 @@ class _ScriptedFinder:
         return self._scripted.pop(0) if self._scripted else []
 
 
-def test_group_finder_logs_block_and_procedure_span_counts(caplog):
-    # A block plus its derivation: the summary must report both roles separately, since
-    # "blocks found but zero procedure spans" is the signature of an unmarked-derivation
-    # miss and is otherwise invisible.
-    module = _ScriptedFinder(
-        [
-            [
-                Span(start=0, end=0, role='entity'),
-                Span(start=1, end=1, role='procedure'),
-            ],
-            [],
-        ]
-    )
+def test_group_finder_logs_the_span_count(caplog):
+    module = _ScriptedFinder([[Span(start=0, end=0), Span(start=1, end=1)], []])
     with caplog.at_level(logging.INFO, logger='kms.entity.group_finder'):
         asyncio.run(
-            find_groups(_nodes('Theorem 1', 'Proof.', 'tail'), module=module)
+            find_spans(_nodes('Theorem 1', 'Proof.', 'tail'), module=module)
         )
-    assert '3 nodes -> 1 block(s), 1 procedure span(s)' in caplog.text
+    assert '3 nodes -> 2 span(s)' in caplog.text
 
 
-def test_group_finder_logs_zero_procedure_spans(caplog):
-    module = _ScriptedFinder([[Span(start=0, end=0, role='entity')], []])
-    with caplog.at_level(logging.INFO, logger='kms.entity.group_finder'):
-        asyncio.run(find_groups(_nodes('Example 1', 'tail'), module=module))
-    assert '1 block(s), 0 procedure span(s)' in caplog.text
+class _ScriptedRoles:
+    def __init__(self, roles):
+        self._roles = list(roles)
+
+    async def role(self, contents):
+        return self._roles.pop(0)
 
 
-class _ScriptedIdentity:
+def test_role_typer_logs_the_block_derivation_split(caplog):
+    # "blocks found but zero derivations" is the signature of an unmarked-derivation miss,
+    # so the two counts must be reported separately.
+    node = RoleTyperNode(module=_ScriptedRoles(['entity', 'procedure']))
+    with caplog.at_level(logging.INFO, logger='kms.entity.role_typer'):
+        out = asyncio.run(
+            node.run({'nodes': _nodes('a', 'b'), 'spans': [[0], [1]]})
+        )
+    assert '2 span(s) -> 1 block(s), 1 derivation(s)' in caplog.text
+    assert out['procedure_spans'] == [[1]]
+
+
+def test_role_typer_logs_zero_derivations(caplog):
+    node = RoleTyperNode(module=_ScriptedRoles(['entity']))
+    with caplog.at_level(logging.INFO, logger='kms.entity.role_typer'):
+        asyncio.run(node.run({'nodes': _nodes('a'), 'spans': [[0]]}))
+    assert '1 block(s), 0 derivation(s)' in caplog.text
+
+
+class _ScriptedTypes:
     def __init__(self, types):
         self._types = list(types)
 
-    async def identity(self, members):
-        from kms.entity.statement_extractor import Identity
-
-        return Identity(type=self._types.pop(0), label=None, number=None)
+    async def block_type(self, members):
+        return self._types.pop(0)
 
 
-def test_statement_extractor_logs_the_induced_type_histogram(caplog):
+def test_block_typer_logs_the_induced_type_histogram(caplog):
     entities = [models.Entity(members=[0]), models.Entity(members=[1])]
-    node = StatementExtractorNode(
-        module=_ScriptedIdentity(['theorem', 'theorem'])
-    )
-    with caplog.at_level(logging.INFO, logger='kms.entity.statement_extractor'):
+    node = BlockTyperNode(module=_ScriptedTypes(['theorem', 'theorem']))
+    with caplog.at_level(logging.INFO, logger='kms.entity.block_typer'):
         asyncio.run(node.run({'nodes': _nodes('a', 'b'), 'entities': entities}))
     assert '2 block(s) typed | theorem=2' in caplog.text
 

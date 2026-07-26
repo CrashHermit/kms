@@ -32,6 +32,68 @@ rebuild was principally for.
 
 ---
 
+## Update 2026-07-26 (later) — the entity chain split into one question per stage
+
+The entity layer was refactored from three stages into five, each asking a single question:
+
+```
+group_finder        -> spans (boundaries only, untyped)
+role_typer     NEW  -> entity | procedure          (closed, binary)
+block_typer    NEW  -> type                        (open, induced)
+statement_extractor -> label, number, title, contents   (transcription)
+procedure_extractor -> steps
+```
+
+The motivation was the one HANDOFF next-step 3 named: the finder fused a reliable structural
+task (where do units start and stop?) with a softer semantic one (which of these is the
+working?), and that fusion is what let a book with no `Solution.` markers lose its whole
+procedural spine. `statement_extractor` was fused the same way — a genre *judgement* riding
+along in a call that is otherwise *transcription*.
+
+**Where it landed (5 books, versus the fused chain measured the same way):**
+
+| | Fused | Granular |
+|---|--:|--:|
+| Entities | 63 | 62 |
+| Procedures | **15** | **13** |
+| Steps | 62 | 58 |
+| Verbatim-exact partitions | 15/15 | 13/13 |
+| Module probes | 17/17 | **24/24** |
+| Structural invariants | 0 | 0 |
+
+**What the split clearly bought.** Each stage is separately testable, and the probe suite grew
+from 17 to 24 checks because there are now three isolated decisions to pin instead of one
+fused one. `role_typer` is accurate in isolation (5/5, including an unmarked worked solution
+and an unlabelled computation session). `block_typer`, given nothing to do but type, now
+handles the case the fused pass never could — an exercise whose body is a bare mathematical
+assertion comes back `exercise`, not `theorem`.
+
+**What it cost.** Two books still find one fewer procedure than the fused chain (Lebl 2 vs 3,
+Levin 3 vs 4). The deficit is in the *finder*, not the typer: stripping the role output also
+removed scaffolding that had been helping it decide where to cut. Telling it to cut without
+telling it what it is cutting is a harder instruction to follow, and the remaining gap is the
+price of that.
+
+**Two regressions found and fixed during the split**, both worth recording because both were
+self-inflicted and caught only by the book sweep, never by the probes:
+
+1. *A bare labelled definition got no span at all* — Stein's Definition 2.5.1 vanished from
+   the document. The "boundaries only" rewrite lost the emphasis that every labelled unit
+   starts a span even when nothing is worked out after it.
+2. *Labelled examples containing a worked session were demoted to procedures*, attaching
+   Stein's SAGE examples to the preceding proposition as second proofs. Fixing that by
+   deleting "a worked session and its output" from the procedure definition then
+   over-corrected in the opposite direction — *unlabelled* sessions became entities, which is
+   what the 11-procedure intermediate result was. The correct fix is the label rule alone: a
+   span that opens with its own label is a block whatever follows; an unlabelled session is
+   the working. Both directions are now pinned as probes.
+
+**Recommendation.** Keep the split — the isolated stages are more accurate at what they each
+do, and far easier to tune. The open item is the finder's cut rate, which is now a
+single-stage prompt problem rather than a whole-chain one.
+
+---
+
 ## Update 2026-07-26 — both findings fixed, in the prompts only
 
 Both findings were resolved by editing **Signature text only**: no new functions, no new input
