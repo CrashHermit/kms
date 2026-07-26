@@ -83,6 +83,11 @@ def build_graph() -> 'CompiledStateGraph':
     the group finder then cuts that stream into untyped spans for the role typer, the block
     typer and the two extractors to classify and fill in.
     """
+    # Hooked here rather than in run(), so EVERY entry point traces — a caller that drives
+    # the compiled graph directly (a harness, a notebook) gets capture too. Idempotent, and
+    # a no-op unless KMS_TRACE_DIR is set.
+    tracing.enable_from_env()
+
     corrector = CorrectorNode()
     extractor = ExtractorNode()
     seam = SeamMergerNode()
@@ -204,7 +209,6 @@ async def run(
     outputs as JSONL (see ``core.tracing``).
     """
     output_dir = Path(output_dir)
-    tracing.enable_from_env()  # captures every DSPy call when KMS_TRACE_DIR is set
     from kms.ingestion import ocr
 
     source = source or Path(pdf_path).name
