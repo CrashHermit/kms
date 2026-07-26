@@ -52,13 +52,13 @@ along in a call that is otherwise *transcription*.
 
 **Where it landed (5 books, versus the fused chain measured the same way):**
 
-| | Fused | Granular |
+| | Fused | Granular (after finder tuning) |
 |---|--:|--:|
-| Entities | 63 | 62 |
-| Procedures | **15** | **13** |
-| Steps | 62 | 58 |
-| Verbatim-exact partitions | 15/15 | 13/13 |
-| Module probes | 17/17 | **24/24** |
+| Entities | 63 | **64** |
+| Procedures | **15** | 14 |
+| Steps | 62 | 61 |
+| Verbatim-exact partitions | 15/15 | 14/14 |
+| Module probes | 17/17 | **28/28** |
 | Structural invariants | 0 | 0 |
 
 **What the split clearly bought.** Each stage is separately testable, and the probe suite grew
@@ -68,11 +68,25 @@ and an unlabelled computation session). `block_typer`, given nothing to do but t
 handles the case the fused pass never could — an exercise whose body is a bare mathematical
 assertion comes back `exercise`, not `theorem`.
 
-**What it cost.** Two books still find one fewer procedure than the fused chain (Lebl 2 vs 3,
-Levin 3 vs 4). The deficit is in the *finder*, not the typer: stripping the role output also
-removed scaffolding that had been helping it decide where to cut. Telling it to cut without
-telling it what it is cutting is a harder instruction to follow, and the remaining gap is the
-price of that.
+**What it cost, and how far tuning closed it.** The split initially found 13 procedures
+against the fused chain's 15. Diagnosing the two misses showed they had *different* causes,
+which is itself an argument for the split — the fused stage could not have told them apart:
+
+- *Levin 2.1.7* — the **finder** under-cut, absorbing the working into the block.
+- *Lebl 1.2.2* — the finder cut correctly; the **role typer** called the working a block.
+
+Both shared one root cause: **working is not only algebra.** Neither passage manipulates a
+symbol. Lebl's *exhibits* the answer ("Note that $y = 0$ is a solution. But another solution
+is the function …") and Levin's *analyses* the posed figures ("Here both $G_2$ and $G_3$ are
+subgraphs … but only $G_2$ is induced"). The "signs of working" lists in both Signatures were
+all symbol manipulation, so neither passage matched. Both now say that text which EXHIBITS an
+answer, ANALYSES the posed case, or VERIFIES a claim is working, whatever notation it uses.
+
+That recovered Levin and lifted the total to **14**, with entities *above* the fused chain
+(64 vs 63) and steps at parity (61 vs 62). **Lebl 1.2.2 is still outstanding**: its working
+merges into the run of figures and narrative that follows, producing one mixed span the role
+typer reasonably calls a block. Further prompt edits traded it against other books rather than
+fixing it, so it is left open rather than over-fitted.
 
 **Two regressions found and fixed during the split**, both worth recording because both were
 self-inflicted and caught only by the book sweep, never by the probes:
@@ -87,6 +101,13 @@ self-inflicted and caught only by the book sweep, never by the probes:
    what the 11-procedure intermediate result was. The correct fix is the label rule alone: a
    span that opens with its own label is a block whatever follows; an unlabelled session is
    the working. Both directions are now pinned as probes.
+
+**A process note worth keeping.** Three of those probes were reported as "pinned" one round
+before they actually were: the edits that inserted them were anchored on text the formatter
+had since rewritten, so they silently no-oped while the suite still reported all-passing —
+the total simply never grew. Probe counts are now checked against the expected number after
+an edit, not just the pass/fail line. Every probe named in this report has been confirmed
+present in `module_probes.py` and observed running.
 
 **Recommendation.** Keep the split — the isolated stages are more accurate at what they each
 do, and far easier to tune. The open item is the finder's cut rate, which is now a

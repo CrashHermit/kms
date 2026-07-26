@@ -320,6 +320,37 @@ async def probe_role_typer() -> None:
             'entity',
             '**Definition 3.7.** A set is *compact* if every open cover has a finite subcover.',
         ),
+        # Regression: a LABELLED example containing a worked session was read as a
+        # derivation, demoting Stein's SAGE examples into procedures of the block above.
+        (
+            'a LABELLED example holding a worked session',
+            'entity',
+            '*SAGE Example 2.5.4.* We use Sage to find the roots of a polynomial.\n\n'
+            'sage: f = x^15 + 1\nsage: f.roots()\n[(12, 1), (10, 1), (4, 1)]',
+        ),
+        # Regression, the other direction: over-correcting the above made an UNLABELLED
+        # session an entity. A session with no label of its own is the block's working.
+        (
+            'an UNLABELLED computation session',
+            'procedure',
+            'sage: R.<x> = PolynomialRing(Integers(13))\nsage: f = x^15 + 1\n'
+            'sage: f.roots()\n[(12, 1), (10, 1), (4, 1)]\n\n'
+            'The output above lists each root with its multiplicity.',
+        ),
+        # Working is not only algebra: text that EXHIBITS the answer (Lebl 1.2.2) or
+        # ANALYSES the posed figures (Levin 2.1.7) is still the block's derivation.
+        (
+            'text EXHIBITING the answer with no algebra',
+            'procedure',
+            'See Figure 1.7 on the next page. Note that $y = 0$ is a solution. But '
+            'another solution is the function $y(x) = x^2$ for $x \\geq 0$.',
+        ),
+        (
+            'text ANALYSING the posed example',
+            'procedure',
+            'Here both $G_2$ and $G_3$ are subgraphs of $G_1$. But only $G_2$ is an '
+            '*induced* subgraph. The graph $G_4$ is NOT a subgraph of $G_1$.',
+        ),
     ]
     for name, expected, text in cases:
         got = await module.role(text)

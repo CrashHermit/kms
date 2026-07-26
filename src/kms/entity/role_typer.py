@@ -60,6 +60,18 @@ class Classify(dspy.Signature):
     working: it substitutes, integrates, factors, splits into cases, applies a named result,
     computes, or concludes ("hence", "therefore", "so we get", "this completes the proof").
 
+    WORKING IS NOT ONLY ALGEBRA. Text that RESOLVES the block before it is a derivation even
+    when it manipulates no symbols at all. All of these are "procedure":
+    - EXHIBITING an answer: "Note that $y = 0$ is a solution. But another solution is the
+      function ..." — it supplies what the block asked for, so it is the solution.
+    - ANALYSING the block's own case or figure: "Here both $G_2$ and $G_3$ are subgraphs of
+      $G_1$. But only $G_2$ is an induced subgraph, because ..." — it works the posed example
+      out in prose.
+    - VERIFYING or JUSTIFYING: checking a condition holds, saying why a result follows, or
+      explaining why something FAILS ("$G_4$ is NOT a subgraph, because ...").
+    The question is never "does it contain equations?" but "does this text ANSWER or WORK OUT
+    what came before it?" If yes, it is "procedure".
+
     A COMPUTATION SESSION IS A DERIVATION. Unlabelled transcript lines and their printed
     output — "sage: f = x^15 + 1", "sage: f.roots()", "[(12, 1), (10, 1), (4, 1)]", a shell or
     REPL session, a table of computed values — are the working of the block above them, so

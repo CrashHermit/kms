@@ -142,6 +142,20 @@ class Signature(dspy.Signature):
     - WORKING ("We know how to solve this equation. First assume ... so ... hence ...",
       integrating, substituting, case-splitting, computing, concluding) — the NEXT span starts
       here.
+
+    WORKING IS NOT ONLY ALGEBRA — cut for these too, even with no symbols manipulated:
+    - text that EXHIBITS the answer the block asked for ("Note that $y = 0$ is a solution. But
+      another solution is the function ...");
+    - text that ANALYSES the block's own example or figures ("Here both $G_2$ and $G_3$ are
+      subgraphs of $G_1$. But only $G_2$ is induced, because ...", "$G_4$ is NOT a subgraph,
+      even though ...");
+    - text that VERIFIES or JUSTIFIES what was posed.
+    A figure that ILLUSTRATES the posed example, and sits before any working, belongs to the
+    STATEMENT span; the discussion that then works through it starts the NEXT span. But a
+    working span still ENDS where the working ends — do not let it run on to absorb the
+    figures, captions and narrative that follow it. Ask "does this text answer or work out
+    what came before it?" — cut before the first node where the answer is yes, and cut again
+    after the last one.
     Cut AT THAT TURN — where the text stops posing or asserting and starts deriving. An
     example whose solution is "integrated" into it is still two spans: split it at the turn.
     Only when a unit shows NO working at all (a bare exercise for the reader, a definition, an
