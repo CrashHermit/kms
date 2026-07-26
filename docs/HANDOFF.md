@@ -167,6 +167,11 @@ kms.entity.statement_extractor: statement extractor: 10 block(s) typed | exercis
 kms.entity.procedure_extractor: procedure extractor: 1 span(s) -> 1 attached, 0 orphan, 16 step(s)
 ```
 
+**Per-module probes:** `PYTHONPATH=src uv run --extra mistral python robustness_test/module_probes.py
+[book.pdf out_dir]` drives each DSPy module in isolation against its documented contract (18/20
+passing; the 2 failures are the two open findings, each reproducing on three synthetic nodes — use
+them as the regression test for a fix). Caches are disabled inside it, so every probe is a real call.
+
 **Fixture books** for stress runs (12 PDFs, do not re-download): `tests/fixtures/books/` and
 `robustness_test/books/`. `robustness_test/REPORT.md` records the prior behaviour of each.
 

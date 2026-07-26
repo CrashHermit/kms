@@ -269,6 +269,61 @@ is unverified.
 
 ---
 
+## Per-module contract probes (2026-07-26)
+
+`module_probes.py` drives each DSPy module **in isolation** against hand-built input and
+asserts the contract its Signature claims, including the hazards HANDOFF records as known.
+It complements the book-level sweep above: a book run tells you the pipeline's output, a
+probe tells you which module owns a behaviour. DSPy's caches are disabled, so every probe is
+a real call.
+
+```bash
+# the 8 text modules; add a PDF + out dir to also run the vision probe
+PYTHONPATH=src uv run --extra mistral python robustness_test/module_probes.py \
+    robustness_test/books/topology_morris.pdf /tmp/probe
+```
+
+**18/20 passing.** The two failures are the two open findings, and this is the useful part:
+each now reproduces on **three synthetic nodes** instead of a whole book, which makes them
+fast regression tests for a fix.
+
+| Module | Probe | Result |
+|---|---|---|
+| `corrector` | stays within the tolerance guard | pass |
+| `corrector` | repairs injected `f^{-2}`, `\bigcap`, `\infty` against the page image | pass ×3 |
+| `extractor` | emits only structural node types | pass |
+| `extractor` | preserves a display-math block verbatim | pass |
+| `seam_merger` | merges a sentence split across the page break | pass |
+| `seam_merger` | leaves a genuine boundary (proof end → next definition) unmerged | pass |
+| `splitter` | splits a node packing three exercises | pass |
+| `splitter` | leaves a single worked example unsplit | pass |
+| `splitter` | breaks an embedded lead-in onto its own piece | pass |
+| `instruction_finder` | tags the lead-in and nothing else | pass |
+| `group_finder` | **marked** derivation → separate procedure span | pass |
+| `group_finder` | **unmarked** derivation → procedure span | **FAIL** (Finding 1) |
+| `statement_extractor` | takes the block's own number, not an in-text cross-reference | pass |
+| `statement_extractor` | induces an open non-math type (`law`) | pass |
+| `statement_extractor` | types a bare-formula exercise as an exercise | **FAIL** (Finding 2) |
+| `procedure_extractor` | steps are a verbatim partition | pass |
+| `procedure_extractor` | decomposes into more than one step | pass |
+| `instruction_distributor` | governs two prove-problems, excludes a compute one | pass |
+
+Notes on what the probes settle that the book sweep could not:
+
+- **The corrector does its job.** Three subtle single-token math errors injected into a real
+  page's transcription — an inverse-image index, a union flipped to an intersection, an empty
+  set flipped to infinity — were **all** repaired against the page image, with no collateral
+  rewriting. This is the first direct test of the claim in `core.llm`'s docstring.
+- **The `number` hazard is not currently firing.** "2.1.12 Prove Proposition 2.1.13" yields
+  `number='2.1.12'`. The guard carried into the statement extractor's Signature works.
+- **Finding 2 is confirmed as a context problem, not a prompt-quality one.** The same pass
+  types `Law 4.1 (Ohm's Law)` correctly as `law` — it is perfectly capable — but types a bare
+  `$P \vee (Q \Rightarrow R)$` as `example`, because nothing tells it the block sits under
+  "Write a truth table for…".
+- **Step granularity varies run to run.** The same proof decomposed into 4 steps on one run
+  and 6 on another. Both were exact verbatim partitions, so the contract holds; only the
+  cut-points move. Worth knowing before treating step counts as a stable metric.
+
 ## Observability: what could and could not be seen
 
 Worth stating plainly, because it shaped how much of this validation had to be reconstructed.
