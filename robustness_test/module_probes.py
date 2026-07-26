@@ -351,6 +351,19 @@ async def probe_role_typer() -> None:
             'Here both $G_2$ and $G_3$ are subgraphs of $G_1$. But only $G_2$ is an '
             '*induced* subgraph. The graph $G_4$ is NOT a subgraph of $G_1$.',
         ),
+        # Regression: on dense elementary-algebra pages a numbered exercise whose body is a
+        # bare expression read as "computing", so items were buried as fake derivations of
+        # their neighbour and lost as blocks entirely (OpenStax ea2e, 15 of them).
+        (
+            'a numbered exercise that is a bare expression',
+            'entity',
+            '949 25 - 7',
+        ),
+        (
+            'a numbered exercise with an unpunctuated number',
+            'entity',
+            '963 20 ÷ (4 + 6) · 5',
+        ),
     ]
     for name, expected, text in cases:
         got = await module.role(text)
@@ -393,11 +406,15 @@ async def probe_block_typer() -> None:
         f'type={induced2!r}',
     )
 
+    # As the item actually appears in Hammack: a leading exercise number, then a sentence
+    # that is itself a mathematical claim. The block is an exercise; its subject matter is a
+    # theorem. (Stripped of its number the same sentence is genuinely ambiguous — a human
+    # would read it as a theorem too — so that form is deliberately NOT asserted here.)
     assertion = nodes(
         (
             'paragraph',
-            'For matrix $A$ to be invertible, it is necessary and sufficient that '
-            '$\\det(A) \\neq 0$.',
+            '1. For matrix $A$ to be invertible, it is necessary and sufficient '
+            'that $\\det(A) \\neq 0$.',
         ),
     )
     induced3 = await module.block_type(assertion)

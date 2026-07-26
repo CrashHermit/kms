@@ -32,6 +32,68 @@ rebuild was principally for.
 
 ---
 
+## Update 2026-07-26 (held-out books) — seven books the tuning never saw
+
+Every prompt so far was tuned against Stein / Lebl / Levin / Morris / Hammack. The six
+`tests/fixtures/books/` slices plus Grinstead & Snell were **never looked at while tuning**,
+so they are a genuine held-out set — and they are deliberately different in character:
+elementary-algebra drill with dense shared lead-ins at one end, graduate proof exercises with
+none at the other.
+
+| Book (held-out) | Entities | Procs | Lead-ins | Stamped | Types |
+|---|--:|--:|--:|--:|---|
+| OpenStax *Elem. Algebra 2e* ch.1 review | 112 | 0 | 28 | 110 | exercise 112 |
+| OpenStax *Elem. Algebra 2e* §1.3 | 74 | 0 | 10 | 68 | exercise 74 |
+| OpenStax *Calculus Vol. 3* gradients | 33 | 0 | 8 | 26 | exercise 33 |
+| Lebl *Basic Analysis I* §2.1 | 23 | 0 | 1 | **0** | exercise 23 |
+| Lebl *Basic Analysis II* §8.1 | 22 | 1 | 0 | **0** | exercise 20, example 1, proposition 1 |
+| Hefferon *Linear Algebra* | 12 | 0 | 0 | **0** | exercise 12 |
+| Grinstead & Snell *Probability* | 7 | 2 | 0 | 0 | example 5, definition 2 |
+
+**283 entities, 3 procedures, 3/3 exact partitions, and every structural invariant zero** —
+0 dangling refs, 0 overlaps, 0 duplicate members, 0 mis-ordered attachments, 0 orphans, 0
+absorbed lead-ins.
+
+**The Finding 2 typing fix generalised.** These are exercise-heavy books, exactly the shape
+that produced 14/16 mis-typings before the fix. Held out, they come back **112/112, 74/74,
+33/33, 23/23 and 12/12 `exercise`**. Nothing was tuned against any of them.
+
+**Both designed distributor tests pass.** The README marks Lebl I/II and Hefferon as
+false-positive cases — self-contained exercises with no shared lead-ins, where the distributor
+should stamp *nothing*. It stamps **0 on all three**. On the lead-in-heavy OpenStax books it
+stamps 110/112, 68/74 and 26/33 across correctly segmented groups. Hefferon also passes its own
+test: its per-exercise imperatives ("Solve each system.") produced **0** lead-in tags, so they
+were not mistaken for run-governing directives.
+
+### The over-firing regression this caught
+
+The held-out set immediately found something five books never would have. On the two dense
+OpenStax pages the role typer called **21 numbered exercises "derivations"** — 15 in the chapter
+review, 6 in §1.3. These were not noise: a mis-typed span is attached to its neighbour as a
+procedure, so those exercises were **deleted as blocks** and buried inside another exercise.
+
+The cause was mine. Tuning for Stein's SAGE sessions had taught the typer that "computes" means
+working, and on an elementary-algebra page an item *is* bare arithmetic — "949 25 - 7",
+"963 20 ÷ (4 + 6) · 5". My leading-number rule should have caught them but only recognised
+punctuated labels ("12.", "2.1.12"), not a number running straight into an expression. The rule
+now covers that form and says explicitly that the expression is the *task*, not a computation:
+nothing is worked out and no result is shown. An unnumbered expression that *produces* a result
+("= 18", "so $x = 4$") is still working.
+
+The fix recovers every buried block exactly — 97 + 15 → **112**, 68 + 6 → **74**, both with 0
+procedures — and re-running Stein, Lebl and Levin afterwards reproduces their earlier numbers
+unchanged (8/6, 23/2, 8/4), so it did not cost the books it was originally tuned for. Both
+forms are pinned as probes.
+
+**A flaky probe was also fixed.** The "exercise whose body is an assertion" case had been
+written *without* its leading number, which made it genuinely ambiguous — it passed one run and
+failed the next. It now uses the item as Hammack actually prints it (with the number), which is
+both deterministic and the real code path; the unnumbered form is left unasserted and noted as
+ambiguous, since a human reads that sentence as a theorem too. Probes: 30/30, stable across
+repeated runs.
+
+---
+
 ## Update 2026-07-26 (later) — the entity chain split into one question per stage
 
 The entity layer was refactored from three stages into five, each asking a single question:

@@ -80,12 +80,20 @@ class Classify(dspy.Signature):
 
     ITS OWN LABEL MAKES IT A BLOCK — CHECK THIS FIRST. If the text OPENS with a label naming
     it as a unit of the book — "Definition 2.5.1", "SAGE Example 2.5.4.", "Theorem 3.4",
-    "Lemma 1.2", "Example 6.7", or a bare leading number ("12.", "2.1.12") — the answer is
-    "entity", WHATEVER FOLLOWS THAT LABEL. A labelled example that goes on to work itself out,
-    or that contains a worked session and its printed output, is STILL a block: books label
-    blocks, not derivations. A derivation never carries a block label of its own — it either
-    opens with a derivation marker ("Proof.", "Solution.") or is unlabelled text continuing
-    from the block before it.
+    "Lemma 1.2", "Example 6.7", or a bare leading number ("12.", "949", "2.1.12") — the answer
+    is "entity", WHATEVER FOLLOWS THAT LABEL. A labelled example that goes on to work itself
+    out, or that contains a worked session and its printed output, is STILL a block: books
+    label blocks, not derivations. A derivation never carries a block label of its own — it
+    either opens with a derivation marker ("Proof.", "Solution.") or is unlabelled text
+    continuing from the block before it.
+
+    A LEADING EXERCISE NUMBER COUNTS AS A LABEL EVEN WITH NO PUNCTUATION AFTER IT, and even
+    when everything after it is a bare expression with no words. In a problem set the items
+    run "949 25 - 7", "952 x + 8", "957 6 · 3 + 5", "963 20 ÷ (4 + 6) · 5" — a number, then
+    the thing the reader must evaluate. Every one of those is an EXERCISE, so the answer is
+    "entity". Do NOT read the arithmetic as "computing" and call it a derivation: nothing is
+    being worked out, the expression is the task itself and no result is shown. An unnumbered
+    expression that PRODUCES a result ("= 18", "so $x = 4$") is different — that is working.
 
     OTHERWISE, THE TEST IS WHAT THE TEXT DOES, NOT HOW IT IS LABELLED. A "Proof." or
     "Solution." marker means "procedure", but MOST derivations in some books carry no marker
