@@ -17,7 +17,7 @@ blocks + their procedures → Neo4j. No GPU anywhere; three hosted API keys.
 **The AutoMathKG entity layer is gone.** It was replaced (see `REBUILD.md`) by one general chain:
 
 ```
-group_finder → statement_extractor → procedure_extractor
+group_finder → role_typer → block_typer → statement_extractor → procedure_extractor
 ```
 
 where nine per-type modules (three finders, three attributors, three referencers) used to stand.
@@ -45,8 +45,17 @@ AutoMathKG's field taxonomy. `graph/concepts.py` keeps the hub identity scheme (
 block-to-block relations are also gone, **a book's blocks currently connect to nothing outside
 their own `:Source`** — closing that is `CONCEPT-LAYER.md`, and it is the highest-value next step.
 
-**Not yet re-validated.** The rebuild is green on 134 unit tests and compiles, but has **not** been
-run end-to-end against the fixture books since the entity layer changed. See "Next steps".
+**Re-validated live** (2026-07-25) — see `robustness_test/ENTITY-REBUILD-VALIDATION.md`. Five
+fixture books ran end to end. The structural contracts hold exactly (0 dangling refs, 0 span
+overlaps, 0 duplicate-member entities, 8/8 procedures an exact verbatim partition), theorem+proof
+came out as two attached spans 4/4 on Stein, and the open `type` induces non-math genres (`law`,
+`mechanism`) on a direct probe. Two behavioural gaps were found and **fixed in the prompts** (2026-07-26,
+Signature text only — no new functions, fields, or stage reordering): unmarked derivations now
+produce procedure spans (Lebl 0 → 3), and `type` is judged on the block rather than its subject
+matter (Hammack 2/16 → 15/16 correctly typed). Across the five books that took procedures from
+**8 → 15** and steps from **37 → 62**, with every partition still exact (15/15) and every
+structural invariant still zero. The graph *write* path is still unverified — the Aura credential
+is stale (see "Known issues").
 
 ---
 
@@ -54,8 +63,8 @@ run end-to-end against the fixture books since the entity layer changed. See "Ne
 
 ```
 ocr → corrector → extractor → seam_merger → splitter → instruction_finder
-    → node_persister → group_finder → statement_extractor → procedure_extractor
-    → instruction_distributor → entity_persister
+    → node_persister → group_finder → role_typer → block_typer → statement_extractor
+    → procedure_extractor → instruction_distributor → entity_persister
 ```
 
 Two phases split at the seam merger.
@@ -75,8 +84,13 @@ provenance layer — after the splitter, so persisted ids match the overlay's me
   problem finder. It banks a span only once a node is seen to follow it (so a window cut can never
   split one), and grows the window when the sole span reaches the edge. Emits `entity` and
   `procedure` spans; **one partition** — a node belongs to at most one span.
-- **`statement_extractor`** — one universal pass filling `type`, `label`, `number`, `title`,
-  `contents`. It never restructures the span.
+- **`role_typer`** — one closed, binary call per span: block (`entity`) or derivation
+  (`procedure`)? Split out of the finder so the walk keeps only its reliable structural job.
+- **`block_typer`** — induces the open `type` (definition / theorem / law / mechanism / …),
+  one question per block. Split out of the statement extractor, where a genre judgement was
+  riding along in a transcription call and typed problem-set items by their subject matter.
+- **`statement_extractor`** — transcribes `label`, `number`, `title`, `contents`. It never
+  restructures the span.
 - **`procedure_extractor`** — decomposes each procedure span into verbatim ordered steps and
   attaches it to the **nearest preceding block**. Steps partition the content exactly.
 - **`instruction_distributor`** — copies a lead-in's shared directive onto the blocks it governs.
@@ -122,7 +136,7 @@ on a re-run versus the numbers recorded below — that is intended.
 - `uv sync` — light CPU core.
 - `uv sync --extra mistral` — adds `pypdfium2` + `pillow` (render page images for the corrector).
 
-**Tests:** `PYTHONPATH=src uv run pytest -q` (134 tests, 3 skipped). `tests/conftest.py` stubs
+**Tests:** `PYTHONPATH=src uv run pytest -q` (175 tests, 3 skipped). `tests/conftest.py` stubs
 dspy/pydantic/langgraph *only if absent*, so the suite runs with or without the real deps. The
 Neo4j integration test is opt-in behind `KMS_NEO4J_IT=1`.
 
@@ -142,7 +156,48 @@ PYTHONPATH=src uv run --extra mistral python -m kms.cli book.pdf out/
 # or, from Python, to limit pages (0-based):
 #   from kms import run; run(pdf, output_dir="out/", pages=[...])
 # -> out/document.md; with NEO4J_* set, also the persisted :Node + :Entity + :Procedure/:Act graph
+
+# every stage logs an INFO summary; KMS_LOG_LEVEL=DEBUG adds one line per DSPy call
+KMS_LOG_LEVEL=DEBUG PYTHONPATH=src uv run --extra mistral python -m kms.cli book.pdf out/
+
+# KMS_TRACE_DIR captures every DSPy call as trainable JSONL (one file per stage)
+KMS_TRACE_DIR=traces/morris PYTHONPATH=src uv run --extra mistral python -m kms.cli book.pdf out/
 ```
+
+**Traces (`core/tracing.py`).** `KMS_TRACE_DIR=<dir>` writes `<dir>/<stage>.jsonl`, one line per
+DSPy call: `{"stage", "inputs", "outputs"}`, with `reasoning` kept and page images recorded as a
+`'<image>'` placeholder. Load them straight into a DSPy optimiser:
+
+```python
+examples = [
+    dspy.Example(**r['inputs'], **r['outputs']).with_inputs(*r['inputs'])
+    for r in map(json.loads, open('traces/morris/group_finder.jsonl'))
+]
+```
+
+Capture is **automatic for every stage** — it hooks DSPy's own callback system
+(`dspy.settings.callbacks`) rather than requiring a `record()` call inside each module, so no
+stage module mentions tracing and a stage added tomorrow is traced the day it is written. Only
+`dspy.Predict` instances are recorded; a `ChainOfThought` wraps exactly one inner `Predict`, and
+recording both would double every line. A 4-page book yields ~45 lines across 10 stages.
+
+A healthy INFO run reads like this (Morris, *Topology Without Tears*, 4 pp) — the stage counts
+are the fastest check that a run behaved:
+
+```
+kms.ingestion.extractor: extractor: 4 page(s) -> 38 node(s)
+kms.ingestion.seam_merger: seam merger: 4 page(s) -> flat stream of 37 node(s)
+kms.entity.splitter: splitter: 37 node(s) -> 38 (1 packed node(s) split)
+kms.entity.instruction_finder: instruction finder: 38 node(s) -> 0 lead-in(s) tagged
+kms.entity.group_finder: group finder: 38 nodes -> 10 block(s), 1 procedure span(s)
+kms.entity.statement_extractor: statement extractor: 10 block(s) typed | exercise=6 definition=2 example=2
+kms.entity.procedure_extractor: procedure extractor: 1 span(s) -> 1 attached, 0 orphan, 16 step(s)
+```
+
+**Per-module probes:** `PYTHONPATH=src uv run --extra mistral python robustness_test/module_probes.py
+[book.pdf out_dir]` drives each DSPy module in isolation against its documented contract (18/20
+passing; the 2 failures are the two open findings, each reproducing on three synthetic nodes — use
+them as the regression test for a fix). Caches are disabled inside it, so every probe is a real call.
 
 **Fixture books** for stress runs (12 PDFs, do not re-download): `tests/fixtures/books/` and
 `robustness_test/books/`. `robustness_test/REPORT.md` records the prior behaviour of each.
@@ -151,12 +206,10 @@ PYTHONPATH=src uv run --extra mistral python -m kms.cli book.pdf out/
 
 ## Next steps (suggested order)
 
-1. **Re-run the fixture books end to end.** The rebuild is unit-green but has not touched a real
-   PDF since the entity layer changed. Read the output against `robustness_test/REPORT.md`, whose
-   documented behaviours are the checklist. Confirm specifically: theorem + proof produce **two
-   spans**, correctly attached; **solutions now carry steps** (the headline change); exercises stay
-   atomic and lead-ins are never absorbed; `instruction` still stamps on grouped exercises and not
-   on self-contained books; provenance integrity holds. Expect definition counts to drop.
+1. **Build the concept layer** (`CONCEPT-LAYER.md`). *(The two entity-layer findings from the
+   2026-07-25 sweep were fixed in the prompts on 2026-07-26 — see
+   `robustness_test/ENTITY-REBUILD-VALIDATION.md`.)* It is the only connective tissue between
+   blocks, so until it lands the graph has no cross-book structure at all.
 2. **Build the concept layer** (`CONCEPT-LAYER.md`). It is the only connective tissue between
    blocks now, so until it lands the graph has no cross-book structure at all. Conceptualization is
    probe-validated and needs no corpus-global pass.
@@ -233,9 +286,21 @@ the whole run.
 - **Validation corpus is still small** — Hefferon §III.1 plus the twelve fixture books. Widen to
   more books/sections and inspect `document.md` alongside the persisted `:Node` + `:Entity` +
   `:Procedure`/`:Act` graph.
-- **The rebuilt entity layer has had no live run.** Unit-green and compiling is not validation; the
-  group finder's two-role Signature and the universal decomposition prompt are both unexercised
-  against real pages. This is next step 1.
+- **Residual typing errors (~1/16).** The 2026-07-26 prompt fix took Hammack from 14/16 mis-typed
+  to 1/16, but one exercise whose body is a mathematical assertion is still typed `theorem`. The
+  statement extractor still sees only the block's own member nodes — it now has explicit guidance
+  to type the block rather than its subject matter, which is enough in almost every case.
+- **Span boundaries shift a little between runs.** The 2026-07-26 re-run moved Morris 10 → 9 blocks
+  and Levin 7 → 8. No invariant broke; treat small block-count deltas as normal, not as regressions.
+- **The Neo4j credential is stale**, so the graph *write* path is unverified. Bolt is blocked as
+  documented; the HTTP transport reaches Aura and returns `Unauthorized: Invalid credential`. Note
+  `NEO4J_*` set-but-invalid is worse than unset — the persisters gate only on `NEO4J_URI` being
+  present, so a run would crash rather than skip. The driver-free mapping layer was validated
+  offline against real output instead (uuid disjointness, 0 dangling edge endpoints, `:Act` chain
+  shape).
+- **Trace capture is gone.** `core/tracing.py` and `KMS_TRACE_DIR` no longer exist after the
+  rebuild, but `CLAUDE.md` and `robustness_test/REPORT.md` still describe them. No training data was
+  captured for the live validation run; restore this before tuning any Signature.
 
 ---
 
@@ -251,6 +316,17 @@ the whole run.
 - **No GPU is needed anywhere** — the whole front-end is API-based.
 - **DeepSeek prompt caching** makes re-runs with unchanged prompts fast; changing a stage's
   prompt invalidates that stage's cache (slower first re-run).
+- **DSPy's own disk cache (`~/.dspy_cache`) will silently serve a prior run's answers**, and
+  it is on by default. This is a validation trap, not just a speed-up: re-running a stage on
+  an unchanged input returns byte-identical output in a fraction of the time, which looks
+  exactly like model determinism. It caught the 2026-07-25 sweep once (a "3/3 identical runs"
+  claim that was really 3 cache hits in 4.5 s). To measure real behaviour, disable it:
+  `dspy.configure_cache(enable_disk_cache=False, enable_memory_cache=False)`. As a smell test,
+  a genuine DeepSeek stage call is seconds, not milliseconds.
+- **Logging and tracing are both back, and they are different tools.** Every stage logs one INFO
+  line summarising what it produced, and `KMS_LOG_LEVEL=DEBUG` adds one line per DSPy call
+  (inputs' shape + elided outputs, ~70 lines/book); loggers are module-named, so one stage can be
+  turned up alone. That is for *reading*. For *data*, set `KMS_TRACE_DIR` — see below.
 - **There is one finder now, not three copies.** A walk bug is fixed in one place
   (`entity/group_finder.py`); the banking machinery there is load-bearing and was carried over
   verbatim — change the Signature freely, the cursor logic only with care.

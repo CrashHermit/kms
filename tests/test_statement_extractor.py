@@ -1,6 +1,7 @@
-"""Statement extractor: the universal attribute pass over a found block. Covers the open induced
-`type`, the deterministic contents assembly (label peeling), and the graph-node wrapper. The LLM
-call is stubbed — this tests everything around it."""
+"""Statement extractor: the attribute transcription pass over a typed block. Covers
+label/number/title, the deterministic contents assembly (label peeling), and the graph-node
+wrapper. The open `type` is `block_typer`'s job and is tested there. The LLM call is stubbed —
+this tests everything around it."""
 
 import asyncio
 
@@ -82,12 +83,11 @@ def test_contents_leaves_text_that_does_not_start_with_the_label():
 # --- the attribute pass ---
 
 
-def test_extract_fills_type_label_number_title_and_contents():
+def test_extract_fills_label_number_title_and_contents():
     nodes = _nodes()
     entity = models.Entity(members=[0, 1])
     module = _ScriptedModule(
         _identity(
-            type='theorem',
             label='Theorem 2.1',
             number='2.1',
             title='Group Identity',
@@ -98,7 +98,7 @@ def test_extract_fills_type_label_number_title_and_contents():
             entity, {node.id: node for node in nodes}, module
         )
     )
-    assert entity.type == 'theorem'
+    assert entity.label == 'Theorem 2.1'
     assert entity.number == '2.1' and entity.title == 'Group Identity'
     assert entity.contents == ['Every group has an identity.']
 
@@ -107,7 +107,7 @@ def test_extract_never_restructures_the_span():
     # the finder decided the extent; this pass only reads it (no proof_start/solution_start)
     nodes = _nodes()
     entity = models.Entity(members=[0, 1])
-    module = _ScriptedModule(_identity(type='theorem'))
+    module = _ScriptedModule(_identity(label='Theorem 2.1'))
     asyncio.run(
         statement_extractor.extract_statement(
             entity, {node.id: node for node in nodes}, module
@@ -120,21 +120,13 @@ def test_extract_never_restructures_the_span():
 def test_extract_skips_member_ids_missing_from_the_stream():
     nodes = _nodes()
     entity = models.Entity(members=[0, 1, 99])
-    module = _ScriptedModule(_identity(type='theorem'))
+    module = _ScriptedModule(_identity(label='Theorem 2.1'))
     asyncio.run(
         statement_extractor.extract_statement(
             entity, {node.id: node for node in nodes}, module
         )
     )
     assert [node.id for node in module.seen[0]] == [0, 1]
-
-
-def test_type_is_normalized_but_not_validated_against_a_list():
-    # open vocabulary: a non-math genre passes straight through
-    assert (
-        statement_extractor._normalize_type('  Second   LAW ') == 'second law'
-    )
-    assert statement_extractor._normalize_type(None) == ''
 
 
 # --- graph node ---
@@ -144,11 +136,11 @@ def test_node_run_writes_the_entities_channel():
     nodes = _nodes()
     entity = models.Entity(members=[0, 1])
     node = statement_extractor.StatementExtractorNode(
-        module=_ScriptedModule(_identity(type='definition'))
+        module=_ScriptedModule(_identity(label='Definition 2.1', number='2.1'))
     )
     out = asyncio.run(node.run({'nodes': nodes, 'entities': [entity]}))
     assert list(out) == ['entities']
-    assert out['entities'][0].type == 'definition'
+    assert out['entities'][0].number == '2.1'
 
 
 def test_node_run_on_an_empty_overlay_is_a_noop():

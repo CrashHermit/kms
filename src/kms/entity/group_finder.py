@@ -1,13 +1,19 @@
 r"""
-Group finder — a cursor-walk over the flat structural node stream that lifts out the
-pedagogical blocks and the worked procedures that derive them.
+Group finder — a cursor-walk over the flat structural node stream that cuts it into the
+spans the pedagogical units occupy.
 
-The single detection stage of the entity layer. It is a forward walk:
+The BOUNDARY stage of the entity layer, and only that: it says where each unit starts and
+stops, never what any of them is. Three passes downstream answer that, one question each —
+``role_typer`` (block or derivation?), ``block_typer`` (which kind of block?) and
+``statement_extractor`` (label / number / title / contents). Splitting them keeps this walk
+on the job it is reliable at — structural boundary detection — instead of fusing it with a
+softer classification call.
+
+It is a forward walk:
 
   * A cursor moves along the node stream. From the cursor it takes a *look-ahead
     window* of whole nodes up to a soft token budget, and the LLM returns the
-    spans inside it, each an inclusive [start, end] range of local positions
-    carrying a role: ``entity`` (a block) or ``procedure`` (its derivation).
+    spans inside it, each an inclusive [start, end] range of local positions.
   * How far the cursor advances is decided *structurally* — no self-report from the
     LLM. A span is only "banked" once a node is seen to follow it, so it can never
     be split by a window cut:
@@ -30,31 +36,34 @@ the reliable half and is deliberately not redesigned. What changed is *what* is 
 Design commitments:
   * DOMAIN-NEUTRAL, GENRE-SPECIFIC. A labeled pedagogical block is a universal of
     textbooks — math, physics, CS and biology all carry definitions, statements of fact,
-    worked examples and exercises — so the finder is domain-free. What *kind* of block it
-    is (definition / theorem / law / example / mechanism) is NOT decided here: the finder
-    emits spans only, and the open ``type`` is induced downstream by the statement
-    extractor.
-  * STATEMENT AND PROCEDURE ARE SEPARATE SPANS. A theorem and its proof are two adjacent
-    spans, not one fused span split later. The ``entity``/``procedure`` distinction is
-    closed, binary and structural — textbooks mark derivations explicitly ("Proof.",
-    "Solution.") — which is exactly the kind of judgment this walk is good at. It replaces
-    the old per-type attributors' semantic ``proof_start`` / ``solution_start`` boundary
-    call with a detection.
-  * ENTITIES ARE A SPARSE OVERLAY, and ONE PARTITION. Nodes keep their stable ids; a span
+    worked examples and exercises — so the finder is domain-free.
+  * BOUNDARIES ONLY, NO CLASSIFICATION. The walk emits untyped spans. Whether a span is a
+    block or the derivation that resolves one is ``role_typer``'s question, and which kind
+    of block it is is ``block_typer``'s. Note the cut between a statement and its
+    derivation is still made HERE — that is a boundary, not a label.
+  * A STATEMENT AND ITS DERIVATION ARE TWO SPANS. A theorem and its proof are adjacent
+    spans, not one fused span split later. The cut is structural: it lands where the text
+    stops posing or asserting and starts working, whether or not the book marks it
+    ("Proof.", "Solution."). This replaces the old per-type attributors' semantic
+    ``proof_start`` / ``solution_start`` call with a detection.
+  * SPANS ARE A SPARSE OVERLAY, and ONE PARTITION. Nodes keep their stable ids; a span
     just records the node ids that are its members. Nothing about the node list is mutated
     or renumbered, so the forward walk emits spans already in document order. Unlike the
     three per-type finders this replaces, a node now belongs to at most one span.
 
-``GroupFinderNode`` (bottom of this file) runs the walk and writes the entity overlay to
-the ``entities`` channel and the procedure spans to ``procedure_spans``. The group itself —
-the run of nodes a block and its derivation jointly occupy — is a scaffold: it exists only
-inside this walk and is never persisted.
+``GroupFinderNode`` (bottom of this file) runs the walk and writes the untyped spans to the
+``spans`` channel, which ``role_typer`` then splits into the entity overlay and the
+procedure spans.
 """
+
+import logging
 
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import llm, models, state
+from kms.core import llm, logs, models, state
+
+logger = logging.getLogger(__name__)
 
 # Soft look-ahead budget (~4 chars/token). A single node larger than the budget still
 # forms a window (at least one node). When the only span in a window reaches its edge,
@@ -62,12 +71,6 @@ from kms.core import llm, models, state
 # pathological block can't grow past the model's context (banked as-is there).
 LOOKAHEAD_BUDGET = 2000
 MAX_LOOKAHEAD_BUDGET = 8000
-
-# The two span roles. Closed, binary and structural — NOT the open `type` taxonomy
-# (definition / theorem / law / …), which the statement extractor induces downstream.
-ENTITY_ROLE = 'entity'
-PROCEDURE_ROLE = 'procedure'
-SPAN_ROLES = [ENTITY_ROLE, PROCEDURE_ROLE]
 
 
 def _estimate_tokens(node: models.ASTNode) -> int:
@@ -85,40 +88,90 @@ class WindowNode(BaseModel):
 
 
 class Span(BaseModel):
-    """One span the LLM found, as an inclusive range of local positions plus its role."""
+    """One span the LLM found, as an inclusive range of local positions.
+
+    Untyped by design: WHAT the span is — a block or the derivation that resolves one, and
+    which kind of block — is decided by the passes downstream (``role_typer``,
+    ``block_typer``). This stage only says where one unit stops and the next begins."""
 
     start: int = Field(
         description='First local position of the span (inclusive).'
     )
     end: int = Field(description='Last local position of the span (inclusive).')
-    role: str = Field(
-        description='Either "entity" (a pedagogical block) or "procedure" (a worked derivation).'
-    )
 
 
 class Signature(dspy.Signature):
     r"""
-    Find the PEDAGOGICAL BLOCKS in a run of textbook nodes, and the WORKED PROCEDURES that
-    derive them, and return each as a span of node positions. Anchor on the node that opens
-    a block, gather the run of nodes that belongs to it, stop at its boundary. This is
-    domain-neutral — it applies to ANY textbook (math, physics, CS, biology), not just math.
+    Find the BOUNDARIES of the pedagogical units in a run of textbook nodes, and return each
+    unit as a span of node positions. Anchor on the node that opens a unit, gather the run of
+    nodes that belongs to it, stop where the next one begins. This is domain-neutral — it
+    applies to ANY textbook (math, physics, CS, biology), not just math.
 
-    TWO KINDS OF SPAN. Give every span a `role`:
+    This task is PURELY STRUCTURAL: say WHERE the units start and stop, never WHAT they are.
+    Do not classify, label, or name them — a later pass decides whether a span is a block or
+    the derivation that resolves one, and which kind of block it is. Your only job is to cut
+    the stream in the right places.
 
-    role="entity" — a labeled pedagogical BLOCK. This covers every kind of block a textbook
-    presents as a unit:
+    WHAT COUNTS AS A UNIT. Emit a span for each of these:
     - a DECLARATIVE STATEMENT: a definition, theorem, proposition, lemma, corollary, axiom,
       or a domain's law / model / rule / principle.
     - a WORKED EXAMPLE from the exposition (labelled "Example ...", a posed question).
     - an EXERCISE from a problem set (labelled by a number, usually with no solution shown).
-    Do NOT classify which kind it is — that is decided later. Just mark it "entity".
+    - a WORKED DERIVATION that resolves one of the above: a proof, a solution, a derivation,
+      a worked calculation.
 
-    role="procedure" — the WORKED DERIVATION that resolves a block: a proof, a solution, a
-    derivation, a worked calculation. Textbooks usually mark these explicitly ("Proof.",
-    "Solution.", "Proof of Theorem 2.4."). A procedure is its OWN span, ALWAYS separate from
-    the block it derives — never merge a theorem with its proof, or an example with its
-    solution, into one span. If a block has TWO derivations ("Proof 1 ...", "Proof 2 ..."),
-    emit TWO procedure spans.
+    NEVER SKIP A LABELLED UNIT. Every node that opens with its own label — "Definition 2.5.1",
+    "Theorem 3.4", "Example 6.7", "SAGE Example 2.5.4.", "Lemma 1.2", or a bare leading number
+    ("12.", "2.1.12") — BEGINS a span, without exception. This holds even when the unit is a
+    single node with nothing worked out after it: a bare definition that is simply stated, a
+    theorem quoted without proof, an exercise with no solution. Such a unit is ONE span of one
+    node. Do not pass over a labelled unit merely because there is no working attached to it —
+    a missing span here deletes that block from the document entirely.
+
+    A STATEMENT AND ITS DERIVATION ARE ALWAYS TWO SEPARATE SPANS. Never merge a theorem with
+    its proof, or an example with its solution, into one span — cut between them. If a
+    statement has TWO derivations ("Proof 1 ...", "Proof 2 ..."), that is THREE spans.
+
+    THE DERIVATION CUT — A MARKER IS COMMON BUT NEVER REQUIRED. Many books mark a derivation
+    explicitly ("Proof.", "Solution.", "Proof of Theorem 2.4."), and that marker always starts
+    a new span. But MANY BOOKS DO NOT: a worked example very often runs straight from the
+    posed task into the working with no marker word at all. The ABSENCE of "Solution." IS NOT
+    a reason to keep it in one span. Cut on what the text DOES:
+    - POSING / STATING ("Solve $y' = y^2$, $y(0)=A$.", "Show that $f$ is bounded.", a theorem's
+      claim) — one span ENDS here.
+    - WORKING ("We know how to solve this equation. First assume ... so ... hence ...",
+      integrating, substituting, case-splitting, computing, concluding) — the NEXT span starts
+      here.
+
+    WORKING IS NOT ONLY ALGEBRA — cut for these too, even with no symbols manipulated:
+    - text that EXHIBITS the answer the block asked for ("Note that $y = 0$ is a solution. But
+      another solution is the function ...");
+    - text that ANALYSES the block's own example or figures ("Here both $G_2$ and $G_3$ are
+      subgraphs of $G_1$. But only $G_2$ is induced, because ...", "$G_4$ is NOT a subgraph,
+      even though ...");
+    - text that VERIFIES or JUSTIFIES what was posed.
+    A figure that ILLUSTRATES the posed example, and sits before any working, belongs to the
+    STATEMENT span; the discussion that then works through it starts the NEXT span. But a
+    working span still ENDS where the working ends — do not let it run on to absorb the
+    figures, captions and narrative that follow it. Ask "does this text answer or work out
+    what came before it?" — cut before the first node where the answer is yes, and cut again
+    after the last one.
+    Cut AT THAT TURN — where the text stops posing or asserting and starts deriving. An
+    example whose solution is "integrated" into it is still two spans: split it at the turn.
+    Only when a unit shows NO working at all (a bare exercise for the reader, a definition, an
+    unproved statement) is there nothing to cut.
+
+    THE LABEL RULE AND THE CUT RULE WORK TOGETHER — a labelled unit that goes on to work
+    itself out is TWO spans, not one. The label opens the first span; the working opens the
+    second. Both rules apply to the same block:
+
+        node 0: "Example 1.2.3: For some constant $A$, solve $y' = y^2$."   <- span A starts
+        node 1: "We know how to solve this. Assume $A \neq 0$, so ..."      <- span A ends,
+        node 2: "If $A = 0$ then $y = 0$ is a solution."                       span B covers 1-2
+
+    Emit [0,0] and [1,2] — NOT one span [0,2]. The same holds when the working is a code or
+    computation session with its output: label first, session after. Never let "this block
+    owns its label" become a reason to swallow the working into it.
 
     NOT SPANS AT ALL: ordinary narrative prose, section headers, figures, running text
     between blocks. Return nothing for them.
@@ -143,13 +196,15 @@ class Signature(dspy.Signature):
     - Keep subparts together: a stem with parts (a)(b)(c) or (i)(ii)(iii) is ONE block; a
       repeated base number with letter suffixes (12a, 12b, 12c) is ONE block. Do NOT split
       subparts into separate spans.
-    - A procedure span starts at its own marker node ("Proof.", "Solution.") and runs to the
-      end of the derivation.
-    - Stop at the boundary: the next block's label, a procedure marker, a section header, an
-      exercise lead-in (role "instruction"), or a clear return to ordinary narrative.
+    - A derivation's span starts at its marker node ("Proof.", "Solution.") when there is one,
+      and otherwise at the FIRST node that starts working the unit out — and runs to the end
+      of the derivation.
+    - Stop at the boundary: the next unit's label, a derivation marker, the turn from posing
+      or stating into working, a section header, an exercise lead-in (role "instruction"), or
+      a clear return to ordinary narrative.
 
-    SEPARATE BLOCKS: distinct base numbers are distinct blocks (exercise 12 and exercise 13
-    are two spans, never merged). A worked example and a following exercise are two blocks.
+    SEPARATE UNITS: distinct base numbers are distinct units (exercise 12 and exercise 13
+    are two spans, never merged). A worked example and a following exercise are two units.
 
     POSITIONS:
     - Emit spans over the given nodes ONLY, using their `position` values; a span is the
@@ -158,7 +213,7 @@ class Signature(dspy.Signature):
     - Return the spans in document order.
     - Include a span even if it is unfinished at the last given node — still emit it,
       spanning it out to that last node.
-    - If there are no blocks or procedures in the window, return an empty list.
+    - If there are no units in the window, return an empty list.
     """
 
     current_nodes: list[WindowNode] = dspy.InputField(
@@ -167,13 +222,13 @@ class Signature(dspy.Signature):
         'Emit spans over these only.'
     )
     spans: list[Span] = dspy.OutputField(
-        description='The blocks and procedures found in current_nodes, as position spans with a '
-        'role of "entity" or "procedure", in document order. Empty list if none.'
+        description='The pedagogical units found in current_nodes, as position spans, in '
+        'document order. Boundaries only — do NOT classify them. Empty list if none.'
     )
 
 
 class Module(dspy.Module):
-    """Finds pedagogical block and procedure spans in the node stream."""
+    """Finds the pedagogical units' span boundaries in the node stream."""
 
     def __init__(self, language_model: dspy.LM | None = None) -> None:
         super().__init__()
@@ -183,7 +238,14 @@ class Module(dspy.Module):
     async def aforward(self, current_nodes: list[WindowNode]) -> list[Span]:
         """Returns the spans found in the given window of nodes."""
         result = await self.finder.acall(current_nodes=current_nodes)
-        return list(result.spans or [])
+        spans = list(result.spans or [])
+        logger.debug(
+            'find: %d nodes in, %d span(s) out | first node %r',
+            len(current_nodes),
+            len(spans),
+            logs.elide(current_nodes[0].content if current_nodes else ''),
+        )
+        return spans
 
 
 def _window_from(nodes: list[models.ASTNode], cursor: int, budget: int) -> int:
@@ -201,18 +263,15 @@ def _window_from(nodes: list[models.ASTNode], cursor: int, budget: int) -> int:
 
 
 def _clean_spans(spans: list[Span], last_local: int) -> list[Span]:
-    """Clamp spans into the window, normalise their role, drop overlaps, and sort.
+    """Clamp spans into the window, drop overlaps, and sort.
 
-    A span whose role the model did not give as one of ``SPAN_ROLES`` falls back to
-    ``entity`` — the far more common kind, and the one a mislabelled block should join.
     Overlap is resolved greedily in document order (the first span wins), enforcing the
     one partition the schema requires."""
     clamped: list[Span] = []
     for span in spans:
         start = min(max(span.start, 0), last_local)
         end = min(max(span.end, start), last_local)
-        role = span.role if span.role in SPAN_ROLES else ENTITY_ROLE
-        clamped.append(Span(start=start, end=end, role=role))
+        clamped.append(Span(start=start, end=end))
     clamped.sort(key=lambda span: (span.start, span.end))
 
     kept: list[Span] = []
@@ -223,13 +282,13 @@ def _clean_spans(spans: list[Span], last_local: int) -> list[Span]:
     return kept
 
 
-async def find_groups(
+async def find_spans(
     nodes: list[models.ASTNode],
     module: Module | None = None,
     budget: int = LOOKAHEAD_BUDGET,
     max_budget: int = MAX_LOOKAHEAD_BUDGET,
-) -> tuple[list[models.Entity], list[list[int]]]:
-    """Cursor-walk the node stream and return the block overlay and the procedure spans.
+) -> list[list[int]]:
+    """Cursor-walk the node stream and return the pedagogical units' spans.
 
     From the cursor, read a look-ahead window and ask the LLM for the spans in it. Bank
     every span a node is seen to follow (bounded) and advance past them; if the only span
@@ -246,13 +305,11 @@ async def find_groups(
         max_budget: Cap past which a growing window is banked as-is.
 
     Returns:
-        An ``(entities, procedure_spans)`` pair, both in document order. Entities carry
-        their member node ids and nothing else — attributes come from the statement
-        extractor. Each procedure span is a list of member node ids.
+        The spans in document order, each a list of member node ids. UNTYPED — whether a
+        span is a block or the derivation that resolves one is decided by ``role_typer``.
     """
     module = module or Module()
-    entities: list[models.Entity] = []
-    procedure_spans: list[list[int]] = []
+    spans_out: list[list[int]] = []
     cursor, node_count = 0, len(nodes)
 
     while cursor < node_count:
@@ -286,6 +343,14 @@ async def find_groups(
             if reached_doc_end or size >= max_budget:
                 # Nothing left to gather (document end), or the window hit the context
                 # cap: bank every span as-is and advance past the window.
+                if not reached_doc_end:
+                    logger.warning(
+                        'window hit the %d-token cap at cursor %d; banking %d '
+                        'span(s) as-is (a span may be truncated)',
+                        max_budget,
+                        cursor,
+                        len(clean),
+                    )
                 to_bank, advance = clean, end
             elif bounded:
                 # Commit the bounded spans; the cursor lands just after the last one
@@ -293,6 +358,13 @@ async def find_groups(
                 to_bank, advance = bounded, cursor + bounded[-1].end + 1
             else:
                 # The sole span reaches the edge and may continue — grow and re-read.
+                logger.debug(
+                    'grow: sole span reaches the window edge at cursor %d; '
+                    'budget %d -> %d',
+                    cursor,
+                    size,
+                    size * 2,
+                )
                 size *= 2
                 continue
 
@@ -302,23 +374,22 @@ async def find_groups(
                     for k in range(span.start, span.end + 1)
                     if window[k].id is not None
                 ]
-                if not ids:
-                    continue
-                if span.role == PROCEDURE_ROLE:
-                    procedure_spans.append(ids)
-                else:
-                    entities.append(models.Entity(members=ids))
+                if ids:
+                    spans_out.append(ids)
             cursor = advance
             break
 
-    return entities, procedure_spans
+    logger.info(
+        'group finder: %d nodes -> %d span(s)', node_count, len(spans_out)
+    )
+    return spans_out
 
 
 # --- LangGraph node: emit the found blocks and procedure spans onto their channels ---
 
 
 class GroupFinderNode:
-    """Walks the flat node stream and writes the block overlay and the procedure spans.
+    """Walks the flat node stream and writes the untyped unit spans.
 
     The walk is one sequential unit (a growing look-ahead cursor cannot be sharded), so
     this is a plain graph node rather than the map-reduce dispatch/worker/collect shape
@@ -328,8 +399,6 @@ class GroupFinderNode:
         self.module = module or Module()
 
     async def run(self, state: state.State) -> dict:
-        """Walks the node stream and writes the entity overlay and procedure spans."""
-        entities, procedure_spans = await find_groups(
-            state.get('nodes', []), module=self.module
-        )
-        return {'entities': entities, 'procedure_spans': procedure_spans}
+        """Walks the node stream and writes the untyped spans."""
+        spans = await find_spans(state.get('nodes', []), module=self.module)
+        return {'spans': spans}

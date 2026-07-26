@@ -26,15 +26,19 @@ class State(TypedDict, total=False):
     assembly). Both backbones use the default overwrite reducer because only the sequential
     collect steps write them.
 
-    `entities` is the single entity channel: the group finder writes the overlay, the
-    statement extractor fills each block's attributes in place, the procedure extractor
-    attaches procedures, and the instruction distributor stamps the shared directive.
-    One finder produces one partition, so entities never overlap and the channel is
-    written and rewritten by one chain in sequence.
+    `spans` carries the group finder's UNTYPED unit spans (member node ids, document order)
+    to the role typer, which is the only stage that reads it. The finder cuts boundaries; it
+    does not say what any span is.
 
-    `procedure_spans` carries the finder's procedure-role spans from the finder to the
-    procedure extractor — the one piece of the group scaffold that outlives the finder.
-    The scaffold itself is never persisted.
+    `entities` is the single entity channel: the role typer writes the overlay (the spans it
+    judged to be blocks), the block typer induces each one's open `type`, the statement
+    extractor fills the remaining attributes in place, the procedure extractor attaches
+    procedures, and the instruction distributor stamps the shared directive. One finder
+    produces one partition, so entities never overlap and the channel is written and
+    rewritten by one chain in sequence.
+
+    `procedure_spans` carries the spans the role typer judged to be derivations, from the
+    role typer to the procedure extractor. Neither it nor `spans` is ever persisted.
 
     The `*_results` channels are map-reduce scratch space: parallel Send workers append
     entries and the stage's collect step drains them back into the active backbone. They
@@ -47,9 +51,12 @@ class State(TypedDict, total=False):
     source_metadata: dict[
         str, str
     ]  # book attributes (title, author, …) for the :Source node
+    spans: list[
+        list[int]
+    ]  # untyped unit spans from the group finder, document order
     entities: list[
         models.Entity
-    ]  # written by the group finder, enriched downstream
+    ]  # written by the role typer, enriched downstream
     procedure_spans: list[
         list[int]
     ]  # member node ids per procedure span, document order

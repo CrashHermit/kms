@@ -24,10 +24,14 @@ Wired in by ``InstructionFinderNode`` (bottom of file): it rewrites the `nodes` 
 the tagged stream, between the splitter and the node persister.
 """
 
+import logging
+
 import dspy
 from pydantic import BaseModel
 
-from kms.core import llm, models, state
+from kms.core import llm, logs, models, state
+
+logger = logging.getLogger(__name__)
 
 # Same look-ahead budget shape as the finders (~4 chars/token). A lead-in and the exercise it
 # introduces are small; the budget only needs enough context to tell a lead-in from an exercise.
@@ -88,7 +92,13 @@ class Module(dspy.Module):
     async def aforward(self, current_nodes: list[WindowNode]) -> list[int]:
         """Returns the positions of lead-in nodes in the given window."""
         result = await self.finder.acall(current_nodes=current_nodes)
-        return list(result.instruction_positions or [])
+        positions = list(result.instruction_positions or [])
+        logger.debug(
+            'tag: %d nodes in, lead-in position(s) %s',
+            len(current_nodes),
+            positions or 'none',
+        )
+        return positions
 
 
 def _window_from(nodes: list[models.ASTNode], cursor: int, budget: int) -> int:
@@ -133,7 +143,18 @@ async def tag_instructions(
         for position in positions:
             clamped = min(max(position, 0), last_local)
             window[clamped].role = 'instruction'
+            logger.debug(
+                'lead-in at node %s: %r',
+                window[clamped].id,
+                logs.elide(window[clamped].content),
+            )
         cursor = end
+    tagged = [node for node in nodes if node.role == 'instruction']
+    logger.info(
+        'instruction finder: %d node(s) -> %d lead-in(s) tagged',
+        node_count,
+        len(tagged),
+    )
     return nodes
 
 

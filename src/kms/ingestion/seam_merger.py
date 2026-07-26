@@ -7,11 +7,15 @@ each cross-page pair is a split block and merges the halves. Workers run in two
 passes (even/odd) to avoid races on shared segments.
 """
 
+import logging
+
 import dspy
 from langgraph.types import Send
 from pydantic import BaseModel
 
-from kms.core import llm, models, state
+from kms.core import llm, logs, models, state
+
+logger = logging.getLogger(__name__)
 
 
 class SeamNodeDTO(BaseModel):
@@ -139,7 +143,16 @@ async def _merge_pair(
         top_node_context=_to_seam_node_dto(top_context),
         bottom_node_context=_to_seam_node_dto(bottom_context),
     )
-    if merged is not None and merged.content:
+    healed = merged is not None and bool(merged.content)
+    logger.debug(
+        'seam %d/%d: %s | tail %r + head %r',
+        top.index,
+        bottom.index,
+        'merged' if healed else 'left split',
+        logs.elide(tail.content, 40),
+        logs.elide(head.content, 40),
+    )
+    if healed:
         tail.content = merged.content
         bottom_nodes = bottom_nodes[1:]
 
@@ -202,7 +215,15 @@ class SeamMergerNode:
         this works on `nodes`, not on the per-segment nesting."""
         result = self._collect(state, 'seam_odd_results')
         segments = result['segments']
+        nodes = models.flatten_segments(segments)
+        # The handover between the pipeline's two phases: per-page segments become one
+        # flat, stably-id'd stream that every later stage walks.
+        logger.info(
+            'seam merger: %d page(s) -> flat stream of %d node(s)',
+            len(segments),
+            len(nodes),
+        )
         return {
             'segments': segments,
-            'nodes': models.flatten_segments(segments),
+            'nodes': nodes,
         }

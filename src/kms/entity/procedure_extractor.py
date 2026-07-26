@@ -31,11 +31,14 @@ Persistence-agnostic.
 """
 
 import asyncio
+import logging
 
 import dspy
 
-from kms.core import llm, models, state
+from kms.core import llm, logs, models, state
 from kms.entity import statement_extractor
+
+logger = logging.getLogger(__name__)
 
 
 class Decompose(dspy.Signature):
@@ -51,6 +54,16 @@ class Decompose(dspy.Signature):
     PARTITION (critical): the steps must exactly PARTITION the content — every part belongs
     to EXACTLY ONE step, no repeats and no omissions; reading the steps in order, with
     nothing added or removed, must reproduce the content.
+
+    EVERYTHING IN THE CONTENT IS PART OF THE PARTITION — not just the lines that look like
+    "moves". Surrounding and interleaved PROSE is included: a sentence that sets the working
+    up, a remark between two calculations, and above all a TRAILING sentence that comments on
+    the result ("The output above lists each root along with its multiplicity.", "This
+    completes the proof.") must each land in a step. A closing remark is its own final step —
+    do NOT drop it because it is commentary rather than computation. The same holds for a
+    worked session's output lines and for code: a transcript's commands AND their printed
+    results are all part of the content. If you are unsure whether something is a step, it
+    still belongs to one — omitting it breaks the partition.
 
     STEP TEXT: copy each step's text VERBATIM — reproduce all mathematics and LaTeX exactly
     as given, changing nothing. Do not summarise, paraphrase, renumber, or explain. Do not
@@ -78,7 +91,17 @@ class Module(dspy.Module):
     async def steps(self, contents: str) -> list[str]:
         """Returns the ordered verbatim steps for one procedure's content."""
         result = await self.decompose.acall(contents=contents)
-        return [step for step in (result.steps or []) if step and step.strip()]
+        steps = [step for step in (result.steps or []) if step and step.strip()]
+        # Steps must PARTITION the content, so the two character counts should be near
+        # equal; a large shortfall means the decomposition dropped text.
+        logger.debug(
+            'decompose: %d chars -> %d step(s), %d chars | from %r',
+            len(contents),
+            len(steps),
+            sum(len(step) for step in steps),
+            logs.elide(contents),
+        )
+        return steps
 
 
 def attach(
@@ -188,6 +211,22 @@ async def extract_procedures(
 
     for (entity_index, _, _), procedure in zip(tasks, attached, strict=True):
         entities[entity_index].procedures.append(procedure)
+
+    # Orphans are returned rather than dropped, but the caller currently discards them and
+    # nothing writes them to the graph — so this line is the only record that a book had a
+    # derivation with no preceding block.
+    if orphans:
+        logger.warning(
+            '%d procedure(s) attached to no block and will not be persisted',
+            len(orphans),
+        )
+    logger.info(
+        'procedure extractor: %d span(s) -> %d attached, %d orphan, %d step(s)',
+        len(procedure_spans),
+        len(attached),
+        len(orphans),
+        sum(len(procedure.steps) for procedure in built),
+    )
     return orphans
 
 

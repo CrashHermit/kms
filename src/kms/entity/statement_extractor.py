@@ -1,37 +1,43 @@
 r"""
-Statement extractor — the attribute pass over a *found* pedagogical block.
+Statement extractor — the attribute pass over a *typed* pedagogical block.
 
 One universal pass replacing the three per-type attributors (definition / theorem /
-problem). It reads a block's member nodes and fills its self-contained attributes:
+problem). It reads a block's member nodes and fills its remaining attributes:
 
-    type · label · number · title · contents
+    label · number · title · contents
 
-``type`` is the one genuinely new field: an OPEN, INDUCED string naming what kind of block
-this is (definition / theorem / example / exercise / law / …). It is not a closed enum and
-never becomes a Neo4j label — open label sets explode, so ``kind = label, type = property``
-(see ``docs/SCHEMA.md``). The extractor already reads the content to fill label/number/
-title, so typing is one more output field, not a separate classify stage.
+All four are TRANSCRIPTION rather than judgement — copy the label that leads the block, the
+reference number inside it, a short descriptive title, and assemble the contents. The block's
+kind is NOT decided here: ``role_typer`` has already established it is a block rather than a
+derivation, and ``block_typer`` has induced its open ``type``. Those are separate stages
+precisely because judging a block's kind and copying its header are different jobs, and
+fusing them made the judgement the junior partner (it typed problem-set items by their
+subject matter).
 
 What this pass no longer does, and why:
+  * NO ``type``. Induced upstream by ``block_typer``, on its own, one question per block.
   * NO ``field``. AutoMathKG's closed 7-value mathematical-field taxonomy is gone; the
     concept layer subsumes it with open, multi-granularity induced concepts.
   * NO ``bodylist``. The statement's role-labelled segmentation (premise / assumption /
     conclusion) was written to Neo4j as a JSON string and never read back by anything.
-  * NO ``proof_start`` / ``solution_start``, and no member splitting. The group finder now
-    detects the derivation as its own span, so the statement/procedure boundary is a
-    structural detection rather than a semantic call made here. This pass reads a span and
-    fills attributes; it never restructures the entity.
+  * NO ``proof_start`` / ``solution_start``, and no member splitting. The group finder cuts
+    the derivation into its own span, so the statement/procedure boundary is a structural
+    detection rather than a semantic call made here. This pass reads a span and fills
+    attributes; it never restructures the entity.
 
 Entry point ``extract_statement(entity, nodes_by_id)`` (async): writes the attributes onto
 the passed entity and returns it. Persistence-agnostic.
 """
 
 import asyncio
+import logging
 
 import dspy
 from pydantic import BaseModel
 
-from kms.core import llm, models, state
+from kms.core import llm, logs, models, state
+
+logger = logging.getLogger(__name__)
 
 
 class MemberNode(BaseModel):
@@ -45,17 +51,12 @@ class MemberNode(BaseModel):
 class Identify(dspy.Signature):
     r"""
     Read a single pedagogical BLOCK from a textbook — given as an ordered list of its member
-    nodes — and identify what kind of block it is plus its header information. This is
-    domain-neutral: the block may come from a math, physics, CS, or biology textbook.
+    nodes — and transcribe its header information. This is domain-neutral: the block may come
+    from a math, physics, CS, or biology textbook.
 
-      * type — what KIND of block this is, as a single lowercase word or short phrase.
-        Use the word the book itself uses where there is one: "definition", "theorem",
-        "proposition", "lemma", "corollary", "axiom", "example", "exercise", "problem",
-        "law", "principle", "rule", "model", "mechanism". Do NOT force it into a fixed
-        list — if a book presents a block as a "key concept" or an "investigation", say so.
-        Judge by what the block DOES: a block that states something is true is a
-        definition/theorem/law; a block that poses a task for the reader is an
-        example/exercise/problem.
+    This is TRANSCRIPTION, not judgement: copy what leads the block. What KIND of block it is
+    has already been decided by an earlier pass — do not reason about it here.
+
       * label — the block's own label as it appears at the very START of the block
         ("Example 4.1", "Theorem 2.5.8", "Definition 3.1", "Exercise 12"), INCLUDING a bare
         leading reference number carrying no word ("925.", "3.14", "2.1.12"). Read only what
@@ -73,9 +74,6 @@ class Identify(dspy.Signature):
     nodes: list[MemberNode] = dspy.InputField(
         description="The block's member nodes, in order."
     )
-    type: str = dspy.OutputField(
-        description='What kind of block this is, lowercase (definition / theorem / example / law / …).'
-    )
     label: str = dspy.OutputField(
         description="The block's label as written, or empty string."
     )
@@ -90,14 +88,13 @@ class Identify(dspy.Signature):
 class Identity(BaseModel):
     """The extraction pass's result for one block."""
 
-    type: str | None = None
     label: str | None = None
     number: str | None = None
     title: str | None = None
 
 
 class Module(dspy.Module):
-    """Runs the single attribute pass for one pedagogical block."""
+    """Runs the attribute transcription pass for one pedagogical block."""
 
     def __init__(self, language_model: dspy.LM | None = None) -> None:
         super().__init__()
@@ -105,7 +102,7 @@ class Module(dspy.Module):
         self.set_lm(language_model or llm.text_lm())
 
     async def identity(self, members: list[models.ASTNode]) -> Identity:
-        """Returns type, label, number and title for one block."""
+        """Returns the label, number and title for one block."""
         nodes = [
             MemberNode(
                 position=k,
@@ -115,18 +112,19 @@ class Module(dspy.Module):
             for k, member in enumerate(members)
         ]
         result = await self.identify.acall(nodes=nodes)
-        return Identity(
-            type=(_normalize_type(result.type) or None),
+        identity = Identity(
             label=(result.label or None),
             number=(result.number or None),
             title=(result.title or None),
         )
-
-
-def _normalize_type(raw: str | None) -> str:
-    """Lowercase and whitespace-collapse an induced type. Open vocabulary, so this only
-    normalises the spelling — it never validates against a list."""
-    return ' '.join((raw or '').split()).lower()
+        logger.debug(
+            'identify: %d node(s) -> label=%r number=%r title=%r',
+            len(members),
+            identity.label,
+            identity.number,
+            logs.elide(identity.title, 40),
+        )
+        return identity
 
 
 def members_of(
@@ -177,23 +175,22 @@ async def extract_statement(
 ) -> models.Entity:
     """Fill in the self-contained attributes on one pedagogical block, in place.
 
-    A single LLM call gives the open ``type`` plus label/number/title; ``contents`` is then
-    assembled deterministically from the members with the label peeled off. The block's
-    extent is exactly what the finder detected — this pass never splits or reorders members.
+    A single LLM call gives label/number/title; ``contents`` is then assembled
+    deterministically from the members with the label peeled off. The block's extent is
+    exactly what the finder detected — this pass never splits or reorders members.
 
     Args:
-        entity: The sparse entity from the group finder (members only).
+        entity: The block, already role-typed and type-induced.
         nodes_by_id: The full node stream keyed by stable id.
         module: The extractor module. Created fresh if None.
 
     Returns:
-        The same entity, with type, label, number, title and contents filled in.
+        The same entity, with label, number, title and contents filled in.
     """
     module = module or Module()
     members = members_of(entity, nodes_by_id)
     identity = await module.identity(members)
 
-    entity.type = identity.type
     entity.label = identity.label
     entity.number = identity.number
     entity.title = identity.title
@@ -205,9 +202,9 @@ async def extract_statement(
 
 
 class StatementExtractorNode:
-    """Fills in each found block's self-contained attributes, in place.
+    """Fills in each block's remaining attributes, in place.
 
-    Runs after the group finder, over the ``entities`` channel it produced. The per-entity
+    Runs after the block typer, over the ``entities`` channel. The per-entity
     extractions are independent, so they run concurrently; the enriched entities (mutated in
     place) are written back to the same channel."""
 
@@ -229,4 +226,7 @@ class StatementExtractorNode:
                     for entity in entities
                 )
             )
+        logger.info(
+            'statement extractor: %d block(s) attributed', len(entities)
+        )
         return {'entities': entities}
