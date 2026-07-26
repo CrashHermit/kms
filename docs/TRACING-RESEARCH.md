@@ -1,13 +1,20 @@
-# Trace capture — evaluating Arize Phoenix against `core/tracing.py`
+# Trace capture — evaluating Arize Phoenix and MLflow against `core/tracing.py`
 
 Research for a proposed migration: replace the custom DSPy trace capture (`src/kms/core/
 tracing.py`, 226 lines, zero extra dependencies) with **Arize Phoenix**, and delete the
 custom code.
 
-**Verdict: don't.** Phoenix is a good tool aimed at a different job. On the job we actually
-need it is *lossy for our specific signatures* — measurably so, not speculatively. Keep
-`tracing.py` as the dataset path. If observability is wanted later, add it **alongside**,
-and prefer MLflow.
+**Verdict, in one line: not Phoenix; MLflow eventually; keep `tracing.py` for now.**
+
+- **Phoenix — no.** Good tool, different job. It records our pydantic inputs as `repr`
+  strings that cannot be parsed back unambiguously, which is disqualifying for the one thing
+  we want traces *for*. Langfuse inherits the same flaw via the same instrumentation.
+- **MLflow — yes, but not yet.** It clears every bar Phoenix failed (structured inputs,
+  redactable images, no server needed) and adds optimiser-run tracking. Its marginal value
+  switches on when we run a first optimiser; adopting it before then buys nothing we don't
+  already have.
+- **`tracing.py` — keep.** On the narrow collection job it is at least as correct as either,
+  and it is already emitting the exact format an optimiser consumes.
 
 Everything below was measured, not read off a docs page. Probe scripts and versions are in
 the last section.
@@ -158,11 +165,34 @@ None of these is the stated goal, and none requires deleting the custom capture.
 ## Alternatives considered
 
 **MLflow** — DSPy's *officially documented* observability integration, and the only one its
-tutorial covers. `mlflow.dspy.autolog()`, local server with a SQLite backend, no account, no
-API key. Captures module flow, LM calls, latency, and can log compiled programs and optimiser
-runs (`log_traces_from_compile=True`). If we want a UI, **this is the one to add** — it tracks
-the optimisation runs the traces are being collected *for*, which Phoenix does not. Same
-caveat: it is observability, not a `dspy.Example` source.
+tutorial covers. **Probed to the same depth as Phoenix (`ml_probe.py`), and it passes the
+tests Phoenix failed.** It hooks DSPy's callback system — the same mechanism `tracing.py`
+uses — rather than wrapping at the OTel layer, which is exactly why the fidelity is better:
+
+- **Inputs are structured.** The adversarial `WindowNode` that defeated Phoenix round-trips
+  exactly: `{'position': 0, 'content': "Let role='x' content='y' denote the map.", 'role':
+  'paragraph'}`. `dspy.Example` reconstruction is lossless. **This is the blocker cleared.**
+- **Images are redactable** through `mlflow.tracing.configure(span_processors=[...])`, a
+  supported extension point. A 6-line processor swapping base64 for `'<image>'` took one
+  page-correction call from **1.2 MB to 3,445 chars** — the same thing `_plain()` does, minus
+  the maintenance. Phoenix offers no equivalent.
+- **No server required.** `sqlite:///mlruns.db` as the tracking URI logs traces fine; the
+  server is only needed for the UI.
+- Adds latency, token counts, rendered prompts, and — uniquely — **optimiser run tracking**
+  (`log_traces_from_compile=True`), the thing the traces are being collected *for*.
+
+Where it is still behind `tracing.py`:
+
+- **Stage identity is a heuristic.** Spans are named `Predict.forward` / `ChainOfThought.
+  forward` with a `signature` attribute of `'window -> reasoning, spans'` — field names, not
+  the stage. Workable while our stages have distinct field names; weaker than mapping to the
+  defining module, and it does not give per-stage files for free.
+- **Same duplicate-span fan-out** (`ChainOfThought.forward` and its inner `Predict.forward`
+  carry identical payloads) — needs the same filter `tracing.py` already applies.
+- **Async export footgun.** Traces are queued and flushed at exit; querying without
+  `mlflow.flush_trace_async_logging()` silently returns zero. Cost a debugging cycle here.
+- **122 packages / 719 MB**, and ~40–60 lines of glue to turn `search_traces()` output back
+  into per-stage `dspy.Example`s — against 226 lines that already emit exactly that.
 
 **Langfuse** — consumes the same `openinference-instrumentation-dspy`, so Findings 1–4 apply
 identically. Hosted by default; self-hosting is a docker-compose stack. No advantage here.
@@ -186,8 +216,13 @@ and that is why it fits: it makes exactly the three domain decisions Phoenix get
    optimiser-ready JSONL and have never run an optimiser. The next real step is a metric and a
    held-out set per stage, then `BootstrapFewShot`/`MIPROv2`. No observability platform moves
    that forward.
-3. **If a UI is wanted, add MLflow additively**, behind an env var next to `KMS_TRACE_DIR`,
-   never as a replacement. It is DSPy's documented choice and it tracks optimiser runs.
+3. **MLflow is a genuine option — unlike Phoenix — and the right one to adopt when we start
+   optimising.** It ties `tracing.py` on correctness (structured inputs, redactable images)
+   and beats it on everything adjacent. It is not worth adopting *today* purely to collect
+   data we already collect correctly; its marginal value switches on at the moment we run a
+   first optimiser, because `log_traces_from_compile=True` tracks those runs. At that point it
+   can genuinely **replace** `tracing.py` rather than sit beside it — which is the outcome the
+   original proposal wanted, just via a different tool and at the right time.
 4. **Revisit Phoenix if the project stops being solo**, or if LLM-as-judge eval over many book
    sweeps becomes the daily activity. Its evaluator and experiment tooling is the real draw —
    and by then, Finding 1 may be fixed upstream.
@@ -216,6 +251,10 @@ VIRTUAL_ENV=/tmp/pxtest uv pip install arize-phoenix \
 - `probe4.py` — end-to-end against a live `px.launch_app()` server, query back via
   `phoenix.client`. Note: in sandboxes, `register(protocol='http/protobuf')` and
   `NO_PROXY=localhost` are needed — the default gRPC exporter fails against the proxy.
+- `ml_probe.py` — the same three signatures under `mlflow.dspy.autolog()`: input fidelity,
+  SQLite-without-a-server, and the span-processor image redaction. Needs a separate venv
+  (`uv pip install "mlflow>=3" "dspy-ai>=3.2.1"`). Call
+  `mlflow.flush_trace_async_logging(terminate=True)` before querying or you get zero traces.
 
 Versions as tested (2026-07-26): `arize-phoenix` 19.6.0, `arize-phoenix-client` 2.13.0,
 `openinference-instrumentation-dspy` 0.1.37 (released 2026-05-18, declares `dspy>=2.6.22`,
