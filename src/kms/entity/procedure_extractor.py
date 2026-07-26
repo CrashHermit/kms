@@ -55,6 +55,16 @@ class Decompose(dspy.Signature):
     to EXACTLY ONE step, no repeats and no omissions; reading the steps in order, with
     nothing added or removed, must reproduce the content.
 
+    EVERYTHING IN THE CONTENT IS PART OF THE PARTITION — not just the lines that look like
+    "moves". Surrounding and interleaved PROSE is included: a sentence that sets the working
+    up, a remark between two calculations, and above all a TRAILING sentence that comments on
+    the result ("The output above lists each root along with its multiplicity.", "This
+    completes the proof.") must each land in a step. A closing remark is its own final step —
+    do NOT drop it because it is commentary rather than computation. The same holds for a
+    worked session's output lines and for code: a transcript's commands AND their printed
+    results are all part of the content. If you are unsure whether something is a step, it
+    still belongs to one — omitting it breaks the partition.
+
     STEP TEXT: copy each step's text VERBATIM — reproduce all mathematics and LaTeX exactly
     as given, changing nothing. Do not summarise, paraphrase, renumber, or explain. Do not
     add step labels ("Step 1:") that are not in the source.

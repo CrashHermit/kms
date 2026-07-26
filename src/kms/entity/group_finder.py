@@ -118,11 +118,25 @@ class Signature(dspy.Signature):
     Do NOT classify which kind it is — that is decided later. Just mark it "entity".
 
     role="procedure" — the WORKED DERIVATION that resolves a block: a proof, a solution, a
-    derivation, a worked calculation. Textbooks usually mark these explicitly ("Proof.",
-    "Solution.", "Proof of Theorem 2.4."). A procedure is its OWN span, ALWAYS separate from
+    derivation, a worked calculation. A procedure is its OWN span, ALWAYS separate from
     the block it derives — never merge a theorem with its proof, or an example with its
     solution, into one span. If a block has TWO derivations ("Proof 1 ...", "Proof 2 ..."),
     emit TWO procedure spans.
+
+    A MARKER IS COMMON BUT NEVER REQUIRED. Many books mark a derivation explicitly ("Proof.",
+    "Solution.", "Proof of Theorem 2.4.") — but MANY DO NOT. A worked example very often runs
+    straight from the posed task into the working with no marker word at all. The ABSENCE of
+    "Solution." IS NOT evidence that there is no procedure. Decide by what the text DOES, not
+    by whether it is labelled:
+    - POSING / STATING ("Solve $y' = y^2$, $y(0)=A$.", "Show that $f$ is bounded.", a theorem's
+      claim) → that is the entity.
+    - WORKING ("We know how to solve this equation. First assume ... so ... hence ...",
+      integrating, substituting, case-splitting, computing, concluding) → that is a PROCEDURE.
+    Cut the span AT THAT TURN — where the text stops posing or asserting and starts deriving —
+    and give the working its own procedure span. An example whose solution is "integrated"
+    into it still has a procedure: split it at the turn. Only when the block genuinely shows
+    NO working at all (a bare exercise for the reader, a definition, an unproved statement)
+    is there no procedure span.
 
     NOT SPANS AT ALL: ordinary narrative prose, section headers, figures, running text
     between blocks. Return nothing for them.
@@ -147,10 +161,12 @@ class Signature(dspy.Signature):
     - Keep subparts together: a stem with parts (a)(b)(c) or (i)(ii)(iii) is ONE block; a
       repeated base number with letter suffixes (12a, 12b, 12c) is ONE block. Do NOT split
       subparts into separate spans.
-    - A procedure span starts at its own marker node ("Proof.", "Solution.") and runs to the
-      end of the derivation.
-    - Stop at the boundary: the next block's label, a procedure marker, a section header, an
-      exercise lead-in (role "instruction"), or a clear return to ordinary narrative.
+    - A procedure span starts at its marker node ("Proof.", "Solution.") when there is one,
+      and otherwise at the FIRST node that starts working the block out — and runs to the end
+      of the derivation.
+    - Stop at the boundary: the next block's label, a procedure marker, the turn from posing
+      or stating into working, a section header, an exercise lead-in (role "instruction"), or
+      a clear return to ordinary narrative.
 
     SEPARATE BLOCKS: distinct base numbers are distinct blocks (exercise 12 and exercise 13
     are two spans, never merged). A worked example and a following exercise are two blocks.

@@ -347,6 +347,30 @@ async def probe_procedure_extractor() -> None:
         f'{len(steps)} step(s)',
     )
 
+    # A worked session plus a TRAILING remark: the closing commentary is the part that gets
+    # silently dropped, which breaks the partition (seen live on Stein's SAGE Example 2.5.4).
+    session = (
+        'sage: R.<x> = PolynomialRing(Integers(13))\n'
+        'sage: f = x^15 + 1\n'
+        'sage: f.roots()\n'
+        '[(12, 1), (10, 1), (4, 1)]\n\n'
+        'The output of the roots command above lists each root along with its '
+        'multiplicity (which is 1 in each case above).'
+    )
+    session_steps = await module.steps(session)
+    kept = norm(''.join(session_steps)) == norm(session)
+    check(
+        'procedure_extractor',
+        'keeps a trailing prose remark in the partition',
+        kept,
+        f'{len(session_steps)} step(s); '
+        + (
+            'exact'
+            if kept
+            else f'{len(norm("".join(session_steps)))} vs {len(norm(session))} chars'
+        ),
+    )
+
 
 # --- 8. instruction_distributor: extent a range parser cannot get --------------------
 

@@ -59,6 +59,23 @@ class Identify(dspy.Signature):
         Judge by what the block DOES: a block that states something is true is a
         definition/theorem/law; a block that poses a task for the reader is an
         example/exercise/problem.
+
+        TYPE THE BLOCK, NOT ITS SUBJECT MATTER. Judge what the block IS in the book, never
+        what its content is about. A block whose body happens to be a mathematical assertion
+        is NOT thereby a theorem — an exercise reading "For matrix $A$ to be invertible it is
+        necessary and sufficient that $\det(A) \neq 0$" is an EXERCISE (the reader is being
+        asked to do something with that sentence), and a quoted line of prose given as an
+        exercise item is an EXERCISE, not a "quote". Likewise a bare expression with no
+        instruction of its own — "$P \vee (Q \Rightarrow R)$", "$y = \sqrt{x}$" — is an
+        EXERCISE: it is an item in a problem set whose shared directive sits in a lead-in you
+        cannot see. Do not call it an "example".
+
+        EXAMPLE vs EXERCISE — the test is whether the WORKING IS SHOWN, not the phrasing:
+        - "example" — the book works it out FOR the reader (it is labelled "Example ...",
+          and/or a solution/derivation is present or immediately follows).
+        - "exercise" / "problem" — it is posed FOR THE READER to do, with no working shown.
+          A block led by a BARE NUMBER with no type word ("1.", "12.", "2.1.12") is an
+          exercise, not an example.
       * label — the block's own label as it appears at the very START of the block
         ("Example 4.1", "Theorem 2.5.8", "Definition 3.1", "Exercise 12"), INCLUDING a bare
         leading reference number carrying no word ("925.", "3.14", "2.1.12"). Read only what

@@ -49,11 +49,13 @@ their own `:Source`** — closing that is `CONCEPT-LAYER.md`, and it is the high
 fixture books ran end to end. The structural contracts hold exactly (0 dangling refs, 0 span
 overlaps, 0 duplicate-member entities, 8/8 procedures an exact verbatim partition), theorem+proof
 came out as two attached spans 4/4 on Stein, and the open `type` induces non-math genres (`law`,
-`mechanism`) on a direct probe. Two behavioural gaps are open: **unmarked derivations produce no
-procedure spans** (Lebl: 0 procedures despite three worked examples — deterministic across 3 runs,
-so that book's procedural spine is empty), and **`type` keys off a block's embedded content**
-(Hammack: 14/16 exercises typed theorem/example/quote). The graph *write* path is still unverified —
-the Aura credential is stale (see "Known issues").
+`mechanism`) on a direct probe. Two behavioural gaps were found and **fixed in the prompts** (2026-07-26,
+Signature text only — no new functions, fields, or stage reordering): unmarked derivations now
+produce procedure spans (Lebl 0 → 3), and `type` is judged on the block rather than its subject
+matter (Hammack 2/16 → 15/16 correctly typed). Across the five books that took procedures from
+**8 → 15** and steps from **37 → 62**, with every partition still exact (15/15) and every
+structural invariant still zero. The graph *write* path is still unverified — the Aura credential
+is stale (see "Known issues").
 
 ---
 
@@ -179,13 +181,10 @@ them as the regression test for a fix). Caches are disabled inside it, so every 
 
 ## Next steps (suggested order)
 
-1. **Teach the group finder to cut unmarked derivations.** *(Was: re-run the fixture books — done
-   2026-07-25, see `robustness_test/ENTITY-REBUILD-VALIDATION.md`.)* The finder only detects a
-   procedure where the book marks one (`Proof.`, `Solution.`). Lebl marks nothing, so it yields 0
-   procedure spans and its worked examples decompose into no steps at all — the same empty
-   procedural spine the rebuild set out to remove, reached a different way. The cut is available:
-   the derivation already sits in its own nodes. This is the drift risk item 3 predicts, and a
-   worked example with no procedure is a countable regression metric.
+1. **Build the concept layer** (`CONCEPT-LAYER.md`). *(The two entity-layer findings from the
+   2026-07-25 sweep were fixed in the prompts on 2026-07-26 — see
+   `robustness_test/ENTITY-REBUILD-VALIDATION.md`.)* It is the only connective tissue between
+   blocks, so until it lands the graph has no cross-book structure at all.
 2. **Build the concept layer** (`CONCEPT-LAYER.md`). It is the only connective tissue between
    blocks now, so until it lands the graph has no cross-book structure at all. Conceptualization is
    probe-validated and needs no corpus-global pass.
@@ -262,13 +261,12 @@ the whole run.
 - **Validation corpus is still small** — Hefferon §III.1 plus the twelve fixture books. Widen to
   more books/sections and inspect `document.md` alongside the persisted `:Node` + `:Entity` +
   `:Procedure`/`:Act` graph.
-- **Unmarked derivations are invisible to the group finder** — next step 1. Deterministic on Lebl
-  (0 procedure spans, 3/3 runs).
-- **`type` keys off a block's embedded content, not its nature.** Hammack: 14/16 exercises typed
-  `theorem`/`example`/`quote`, because `statement_extractor` sees only the block's own member nodes
-  and runs *before* `instruction_distributor`, which holds the governing lead-in. The run has the
-  disambiguating evidence and types the blocks anyway. This is the baseline's old `field` gap #3
-  moved onto `type`, where it matters much more.
+- **Residual typing errors (~1/16).** The 2026-07-26 prompt fix took Hammack from 14/16 mis-typed
+  to 1/16, but one exercise whose body is a mathematical assertion is still typed `theorem`. The
+  statement extractor still sees only the block's own member nodes — it now has explicit guidance
+  to type the block rather than its subject matter, which is enough in almost every case.
+- **Span boundaries shift a little between runs.** The 2026-07-26 re-run moved Morris 10 → 9 blocks
+  and Levin 7 → 8. No invariant broke; treat small block-count deltas as normal, not as regressions.
 - **The Neo4j credential is stale**, so the graph *write* path is unverified. Bolt is blocked as
   documented; the HTTP transport reaches Aura and returns `Unauthorized: Invalid credential`. Note
   `NEO4J_*` set-but-invalid is worse than unset — the persisters gate only on `NEO4J_URI` being

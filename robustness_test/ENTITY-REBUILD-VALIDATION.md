@@ -32,6 +32,52 @@ rebuild was principally for.
 
 ---
 
+## Update 2026-07-26 — both findings fixed, in the prompts only
+
+Both findings were resolved by editing **Signature text only**: no new functions, no new input
+fields, no stage reordering. Three docstrings changed
+(`group_finder.Signature`, `statement_extractor.Identify`, `procedure_extractor.Decompose`);
+the diff is 3 files, prompt text.
+
+| Measure (5 books) | Before | After |
+|---|--:|--:|
+| Procedures found | 8 | **15** |
+| `:Act` steps | 37 | **62** |
+| Verbatim-exact partitions | 8/8 | **15/15** |
+| Module probes passing | 14/16 | **17/17** |
+| Dangling / overlaps / dupes / bad-attach / orphans / absorbed lead-ins | 0 | **0** |
+
+- **Finding 1 (unmarked derivations).** The finder's Signature said derivations are "usually
+  marked explicitly"; it now says a marker is *common but never required*, and to cut at the
+  turn from **posing/stating** into **working**. Lebl — the book that defined this finding —
+  goes from **0 to 3** procedures, one per worked example. Stein gains 2 (its SAGE sessions,
+  which genuinely do work the example out) while keeping all 4 proofs exact. Hammack stays at
+  **0**, which remains correct: a pure exercise set has nothing worked out. The fix adds
+  procedures where there is working, not everywhere.
+- **Finding 2 (`type` keys off embedded content).** `Identify` now says to type the block, not
+  its subject matter, with the Hammack failures as worked counter-examples, plus an
+  example-vs-exercise test based on *whether the working is shown*. Hammack goes from **2/16**
+  correctly typed to **15/16**. Notably this did **not** need the lead-in threaded in — the
+  earlier recommendation to add that plumbing was the wrong shape.
+
+**A regression the fix exposed, and its fix.** Once Stein's SAGE examples had procedures for
+the first time, one decomposition dropped its trailing sentence ("The output of the roots
+command above lists each root…") — 94 of 192 characters, a partition violation. `Decompose`
+now states that surrounding and trailing prose is part of the partition and a closing remark
+is its own final step. That case is pinned in `module_probes.py`. All 15 procedures are exact.
+
+**What is still imperfect:**
+
+- **1 of 16** Hammack items is still typed `theorem` ("If a function has a constant derivative
+  then it is linear, and conversely") — down from 14, but not 0.
+- Span boundaries moved slightly on two books: Morris 10 → 9 blocks (one absorbed), Levin
+  7 → 8. Morris also *gained* correctness — an exercise previously typed `definition` is now
+  `exercise`.
+- Morris's exercises number 1, 2, 3, 4, 4, 6. This duplicate **predates** these changes (it is
+  in the original run too) and is the known `number` format sensitivity, not a new fault.
+
+---
+
 ## Method
 
 Five of the six `robustness_test/books/` slices, chosen to hit the changed stages:
