@@ -26,6 +26,14 @@ mistral = [
   "pillow>=10",
 ]
 
+# Trace capture for prompt optimisation (`core.tracing` / `core.datasets`). Heavy — it
+# pulls a web stack and pandas — and only needed when KMS_TRACE_DIR is set, so it stays
+# out of the light core and the pipeline degrades to an untraced run without it:
+#   uv sync --extra mlflow
+mlflow = [
+  "mlflow>=3",
+]
+
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.9"]
 

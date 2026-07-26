@@ -4,17 +4,25 @@ Research for a proposed migration: replace the custom DSPy trace capture (`src/k
 tracing.py`, 226 lines, zero extra dependencies) with **Arize Phoenix**, and delete the
 custom code.
 
-**Verdict, in one line: not Phoenix; MLflow eventually; keep `tracing.py` for now.**
+**Verdict: not Phoenix; MLflow. Adopted — this doc is the record of why, not a proposal.**
 
 - **Phoenix — no.** Good tool, different job. It records our pydantic inputs as `repr`
   strings that cannot be parsed back unambiguously, which is disqualifying for the one thing
   we want traces *for*. Langfuse inherits the same flaw via the same instrumentation.
-- **MLflow — yes, but not yet.** It clears every bar Phoenix failed (structured inputs,
-  redactable images, no server needed) and adds optimiser-run tracking. Its marginal value
-  switches on when we run a first optimiser; adopting it before then buys nothing we don't
-  already have.
-- **`tracing.py` — keep.** On the narrow collection job it is at least as correct as either,
-  and it is already emitting the exact format an optimiser consumes.
+- **MLflow — adopted.** It clears every bar Phoenix failed (structured inputs, redactable
+  images, no server needed) and adds optimiser-run tracking. `core/tracing.py` now wraps
+  `mlflow.dspy.autolog()`, and `core/datasets.py` reads the traces back as `dspy.Example`s.
+- **The JSONL recorder — gone.** Its serialiser, file handling, locking and input/output
+  pairing were all replaced by MLflow. What survived is the ~35 lines of stage resolution
+  (finding 3 below), because that solves a DSPy problem MLflow has no answer for.
+
+**Research note.** The original recommendation here was "MLflow eventually, not yet" — the
+reasoning being that capture was never the bottleneck. That was overridden deliberately: the
+call was to take the cleaner tool now rather than carry hand-rolled code until the first
+optimiser run. The finding that *did* change the design is finding 3: reading
+`instance.signature.__module__` in the tagger looks correct and silently mislabels ten of the
+twelve stages, because `ChainOfThought` rewrites the signature. The instructions fallback is
+load-bearing, not a nicety.
 
 Everything below was measured, not read off a docs page. Probe scripts and versions are in
 the last section.

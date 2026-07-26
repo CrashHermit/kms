@@ -44,9 +44,10 @@ is currently dark**: its only source was the deleted `field` taxonomy, so nothin
   the backward-only dependency rule). Packages:
   - `core/` — shared center that every stage depends on and that depends on no stage:
     `models.py` (domain data, dspy/langgraph-free), `state.py` (the LangGraph `State`),
-    `llm.py` (LM config), `logs.py` (log formatting helpers), `tracing.py` (per-call JSONL
-    capture for prompt optimisation — hooks DSPy's callback system, so no stage module
-    imports it and a new stage is traced the day it is written).
+    `llm.py` (LM config), `logs.py` (log formatting helpers), `tracing.py` (per-call MLflow
+    capture for prompt optimisation — `mlflow.dspy.autolog()` plus a stage tagger and an
+    image redactor, so no stage module imports it and a new stage is traced the day it is
+    written), `datasets.py` (reads those traces back as `dspy.Example`s per stage).
   - `ingestion/` — phase 1 (backbone `segments`): `ocr.py` (Mistral front-end), `corrector.py`,
     `extractor.py` (purely structural), `seam_merger.py`. Map-reduce `dispatch → worker → collect`.
   - `entity/` — phase 2 (backbone `nodes`), all plain sequential nodes: `splitter.py`,
@@ -77,14 +78,18 @@ is currently dark**: its only source was the deleted `field` taxonomy, so nothin
 ## Commands
 
 - Deps: `uv sync` (light CPU core) · `uv sync --extra mistral` (adds `pypdfium2` + `pillow`,
-  used to render page images for the correction pass). **No GPU anywhere.**
+  used to render page images for the correction pass) · `uv sync --extra mlflow` (adds trace
+  capture; heavy, so it stays out of the core and a run without it is simply untraced).
+  **No GPU anywhere.**
 - Logs: every stage logs one INFO line summarising what it produced; `KMS_LOG_LEVEL=DEBUG` adds
   one line per DSPy call (inputs' shape + elided outputs, ~70 lines/book). Loggers are named after
   their modules, so a single stage can be turned up on its own.
-- Traces: `KMS_TRACE_DIR=traces/<book>` captures every DSPy call as `<stage>.jsonl` lines of
-  `{stage, inputs, outputs}` — load straight into `dspy.Example` for optimisation. Automatic for
-  every stage; nothing is instrumented.
-- Tests: `PYTHONPATH=src uv run pytest -q` (175 tests, 3 skipped) — `conftest` stubs the heavy
+- Traces: `KMS_TRACE_DIR=traces/<book>` captures every DSPy call into an MLflow store at
+  `<book>/mlruns.db`; `core.datasets.examples_by_stage(dir)` loads it back as `dspy.Example`s
+  per stage, and `mlflow ui --backend-store-uri sqlite:///<book>/mlruns.db` reads the same
+  store. Automatic for every stage; nothing is instrumented. Traces export asynchronously —
+  `run()` flushes, a direct graph driver must call `tracing.flush()` itself.
+- Tests: `PYTHONPATH=src uv run pytest -q` (181 tests, 3 skipped) — `conftest` stubs the heavy
   deps, so it runs anywhere, no keys needed. The Neo4j integration test is opt-in
   (`KMS_NEO4J_IT=1`).
 - Run (full pipeline): `PYTHONPATH=src uv run --extra mistral python -m kms.cli book.pdf out/`,

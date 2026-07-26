@@ -1,52 +1,13 @@
-"""Trace capture: value serialisation, stage naming, and the record-pairing recorder.
+"""Trace capture: stage naming, image redaction, and the enable/flush hooks.
 
-Everything here runs without dspy callbacks firing — the recorder's two hooks are called
-directly with stand-in objects, so the pairing logic is tested without an LLM.
+MLflow owns storage now, so there is no recorder to exercise — what is left is the two
+things MLflow does not solve (which stage a span belongs to, and keeping page images out
+of the store) plus the guards that keep capture from ever breaking a run. Nothing here
+needs mlflow installed: the tagger and the span processor are driven directly with
+stand-in objects.
 """
 
-import json
-
 from kms.core import tracing
-
-# --- value serialisation ---
-
-
-class _Model:
-    """Stands in for a pydantic boundary DTO (the window/member models)."""
-
-    def model_dump(self):
-        return {'position': 0, 'content': 'x'}
-
-
-class Image:
-    """Stands in for dspy.Image, which `_plain` matches by class name so that `core`
-    need not import a dspy symbol the test stub may not define."""
-
-
-def test_plain_passes_through_json_natives():
-    assert tracing._plain('a') == 'a'
-    assert tracing._plain(3) == 3
-    assert tracing._plain(True) is True
-    assert tracing._plain(None) is None
-
-
-def test_plain_unwraps_a_pydantic_model():
-    assert tracing._plain(_Model()) == {'position': 0, 'content': 'x'}
-
-
-def test_plain_replaces_an_image_with_a_placeholder():
-    # the bytes are large and reconstructable from the PDF; the text signal is what trains
-    assert tracing._plain(Image()) == '<image>'
-
-
-def test_plain_recurses_into_lists_and_dicts():
-    assert tracing._plain([_Model()]) == [{'position': 0, 'content': 'x'}]
-    assert tracing._plain({'k': [1, 'a']}) == {'k': [1, 'a']}
-
-
-def test_plain_falls_back_to_str_for_anything_else():
-    assert tracing._plain(object()).startswith('<object')
-
 
 # --- stage naming ---
 
@@ -74,7 +35,8 @@ def test_stage_falls_back_to_unknown_for_an_unmatched_signature():
 
 def test_stage_of_a_real_signature_resolves_by_instructions():
     # ChainOfThought rebuilds the signature to add `reasoning`, losing __module__ but
-    # copying the instructions verbatim — that is what the registry matches on.
+    # copying the instructions verbatim — that is what the registry matches on. Ten of the
+    # twelve stages go through ChainOfThought, so this path carries most of the pipeline.
     from kms.entity import role_typer
 
     class Rebuilt:
@@ -85,11 +47,70 @@ def test_stage_of_a_real_signature_resolves_by_instructions():
     assert tracing._stage_of(Rebuilt) == 'role_typer'
 
 
-# --- the recorder ---
+# --- image redaction ---
+
+
+class Image:
+    """Stands in for dspy.Image, which `_is_image` matches by class name so that `core`
+    need not import a dspy symbol the test stub may not define."""
+
+
+class _Span:
+    """Stands in for an MLflow span: inputs in, `set_inputs` to rewrite them."""
+
+    def __init__(self, inputs):
+        self.inputs = inputs
+
+    def set_inputs(self, value):
+        self.inputs = value
+
+
+def test_is_image_matches_a_dspy_image_and_its_serialised_forms():
+    assert tracing._is_image(Image())
+    assert tracing._is_image(
+        '<<CUSTOM-TYPE-START-IDENTIFIER>>[{"type": "image_url", "image_url": {}}]'
+    )
+    assert tracing._is_image('data:image/png;base64,iVBORw0KGgo=')
+
+
+def test_is_image_does_not_match_prose_that_merely_mentions_base64():
+    # a page of a textbook *about* base64 is a training example, not an image
+    assert not tracing._is_image(
+        'A base64, encoding maps three octets to four characters.'
+    )
+    assert not tracing._is_image('The image_url field is optional.')
+
+
+def test_strip_images_replaces_only_the_image_input():
+    span = _Span({'page_image': Image(), 'transcription': 'Theorem 1.l'})
+    tracing._strip_images(span)
+    assert span.inputs == {
+        'page_image': '<image>',
+        'transcription': 'Theorem 1.l',
+    }
+
+
+def test_strip_images_leaves_an_image_free_span_untouched():
+    original = {'current_nodes': [{'position': 0, 'content': 'x'}]}
+    span = _Span(dict(original))
+    tracing._strip_images(span)
+    assert span.inputs == original
+
+
+def test_strip_images_never_raises_on_a_hostile_span():
+    class Hostile:
+        @property
+        def inputs(self):
+            raise RuntimeError('boom')
+
+    tracing._strip_images(Hostile())  # must not propagate
+
+
+# --- the tagger ---
 
 
 class _Predict:
-    """A predictor: exposes `.signature`, so it is the one that gets recorded."""
+    """A predictor: exposes `.signature`, so it is the one whose span gets tagged."""
 
     signature = _Signature
 
@@ -98,63 +119,44 @@ class _Wrapper:
     """A ChainOfThought-like wrapper: no `.signature`, so it must be skipped."""
 
 
-class _Prediction(dict):
-    """Stands in for dspy.Prediction, which exposes its fields via keys()."""
-
-
-def _recorder(tmp_path):
-    return tracing._Recorder(tmp_path)
-
-
-def test_records_one_line_pairing_inputs_with_outputs(tmp_path):
-    recorder = _recorder(tmp_path)
-    recorder.on_module_start(
-        'c1', _Predict(), {'args': (), 'kwargs': {'contents': 'proof text'}}
+def test_the_tagger_skips_a_wrapper_without_a_signature(monkeypatch):
+    # ChainOfThought fires a callback AND wraps an inner Predict; tagging both would put
+    # the stage on two spans for one logical call.
+    calls = []
+    monkeypatch.setattr(
+        tracing, '_stage_of', lambda sig: calls.append(sig) or 'x'
     )
-    recorder.on_module_end('c1', _Prediction(role='procedure'))
-
-    lines = (tmp_path / 'group_finder.jsonl').read_text().splitlines()
-    assert len(lines) == 1
-    record = json.loads(lines[0])
-    assert record['stage'] == 'group_finder'
-    assert record['inputs'] == {'contents': 'proof text'}
-    assert record['outputs'] == {'role': 'procedure'}
+    tracing._StageTagger().on_module_start('c1', _Wrapper(), {})
+    assert calls == []
 
 
-def test_a_wrapper_without_a_signature_is_not_recorded(tmp_path):
-    # ChainOfThought fires a callback AND wraps an inner Predict; recording both would
-    # double every line.
-    recorder = _recorder(tmp_path)
-    recorder.on_module_start('c1', _Wrapper(), {'kwargs': {'a': 1}})
-    recorder.on_module_end('c1', _Prediction(role='entity'))
-    assert not list(tmp_path.glob('*.jsonl'))
+def test_the_tagger_never_raises_when_mlflow_is_absent():
+    # capture is a convenience; it must never break a run
+    tracing._StageTagger().on_module_start('c1', _Predict(), {'kwargs': {}})
 
 
-def test_a_failed_call_is_not_recorded(tmp_path):
-    recorder = _recorder(tmp_path)
-    recorder.on_module_start('c1', _Predict(), {'kwargs': {'a': 1}})
-    recorder.on_module_end('c1', None, ValueError('boom'))
-    assert not list(tmp_path.glob('*.jsonl'))
-
-
-def test_an_unpaired_end_is_ignored(tmp_path):
-    recorder = _recorder(tmp_path)
-    recorder.on_module_end('never-started', _Prediction(role='entity'))
-    assert not list(tmp_path.glob('*.jsonl'))
-
-
-def test_each_stage_gets_its_own_file_and_appends(tmp_path):
-    recorder = _recorder(tmp_path)
-    for call_id in ('c1', 'c2'):
-        recorder.on_module_start(call_id, _Predict(), {'kwargs': {'a': 1}})
-        recorder.on_module_end(call_id, _Prediction(x='y'))
-    assert len((tmp_path / 'group_finder.jsonl').read_text().splitlines()) == 2
-    assert recorder.written == 2
+# --- enable / flush ---
 
 
 def test_enable_from_env_is_a_noop_when_unset(monkeypatch):
     monkeypatch.delenv(tracing.TRACE_DIR_ENV, raising=False)
-    tracing._recorder = None
+    monkeypatch.setattr(tracing, '_enabled', False)
     tracing.enable_from_env()
-    assert tracing._recorder is None
-    assert tracing.written() == 0
+    assert tracing._enabled is False
+
+
+def test_enable_is_idempotent(monkeypatch, tmp_path):
+    monkeypatch.setattr(tracing, '_enabled', True)
+    tracing.enable(tmp_path)  # already on: must not re-register hooks
+    assert tracing._enabled is True
+
+
+def test_flush_is_a_noop_when_capture_is_off(monkeypatch):
+    monkeypatch.setattr(tracing, '_enabled', False)
+    tracing.flush()  # must not import mlflow or raise
+
+
+def test_store_uri_is_a_sqlite_file_inside_the_directory(tmp_path):
+    uri = tracing.store_uri(tmp_path)
+    assert uri.startswith('sqlite:///')
+    assert uri.endswith('mlruns.db')

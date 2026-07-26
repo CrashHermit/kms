@@ -1,45 +1,59 @@
 r"""
-Trace capture — records every DSPy call's inputs and outputs as JSONL, for prompt
-optimisation and offline inspection.
+Trace capture — records every DSPy call through MLflow, for prompt optimisation, offline
+inspection, and run-to-run comparison.
 
-WHY IT EXISTS. The stage logs (``core.logs``) are for reading; this is for *data*. Prompt
-tuning without captured I/O is guesswork — the 2026-07-26 session tuned three Signatures by
-hand across six full book sweeps and hit visible whack-a-mole (fixing one book's cut broke
+WHY MLFLOW. The stage logs (``core.logs``) are for reading; this is for *data*. Prompt tuning
+without captured I/O is guesswork — the 2026-07-26 session tuned three Signatures by hand
+across six full book sweeps and hit visible whack-a-mole (fixing one book's cut broke
 another's), which is the classic symptom of tuning with no held-out set. A DSPy optimiser
-needs ``dspy.Example``\ s, and an example is exactly one call's inputs paired with its
-outputs.
+needs ``dspy.Example``\ s, and an example is exactly one call's inputs paired with its outputs.
 
-STREAMLINED: NOTHING IS INSTRUMENTED. The retired ``tracing.record()`` scheme needed an
-explicit call inside every module, so a new stage silently produced no traces until someone
-remembered to wire it up. This hooks DSPy's own callback system instead
-(``dspy.settings.callbacks``), so **every stage is captured automatically and no stage module
-imports or mentions tracing at all**. A stage added tomorrow is traced the day it is written.
+This replaced a hand-rolled JSONL recorder. MLflow is DSPy's officially documented integration
+and, unlike the OpenTelemetry-based platforms, it hooks DSPy's *callback* system — so pydantic
+boundary DTOs arrive as structured dicts rather than ``repr`` strings and survive the round
+trip back into a ``dspy.Example`` losslessly. It needs no server (SQLite is enough), no
+account, and it tracks optimiser runs, which is what the traces are collected *for*.
+``docs/TRACING-RESEARCH.md`` has the measurements behind that choice.
 
-Only ``dspy.Predict`` instances are recorded. A ``ChainOfThought`` fires a callback too and
-wraps exactly one inner ``Predict``, so recording both would double every line; the inner
-predictor is the one that carries the real signature, and it is the one kept.
+STILL NOTHING IS INSTRUMENTED. ``mlflow.dspy.autolog()`` plus the two hooks below are global,
+so **every stage is captured automatically and no stage module imports or mentions tracing at
+all**. A stage added tomorrow is traced the day it is written.
 
-USAGE. Set ``KMS_TRACE_DIR`` and run the pipeline — ``run()`` enables capture when the
-variable is set, so both the CLI and library callers get it:
+TWO THINGS MLFLOW DOES NOT SOLVE, and why the small amount of code here exists:
 
-    KMS_TRACE_DIR=traces/stein PYTHONPATH=src uv run --extra mistral \
+1. *Stage identity.* MLflow names every span ``Predict.forward`` and records a ``signature``
+   attribute of field names (``'window -> reasoning, spans'``), not the stage. Worse, a
+   ``ChainOfThought`` rebuilds its signature, so the inner predictor reports dspy's own
+   module. ``_StageTagger`` resolves the real stage at capture time — where ``instructions``
+   is a live string rather than something to parse back out of a repr — and writes it to the
+   span as ``kms.stage``. ``core.datasets`` then reads that attribute and nothing else.
+2. *Page images.* Autolog embeds the whole base64 payload (~1.2 MB per corrected page).
+   ``_strip_images`` is a span processor — MLflow's supported extension point — that swaps it
+   for ``'<image>'``. The bytes are reconstructable from the input PDF, and the trainable text
+   signal (transcription -> corrected) is kept in full.
+
+USAGE. Set ``KMS_TRACE_DIR`` and run the pipeline — ``run()`` enables capture when the variable
+is set, so both the CLI and library callers get it:
+
+    KMS_TRACE_DIR=traces/stein PYTHONPATH=src uv run --extra mlflow --extra mistral \
         python -m kms.cli book.pdf out/
 
-Output is one file per stage, ``<dir>/<stage>.jsonl``, each line::
+Traces land in ``<dir>/mlruns.db`` under an experiment named after the directory. To read
+them, either point the UI at the same store::
 
-    {"stage": "group_finder", "inputs": {...}, "outputs": {...}}
+    mlflow ui --backend-store-uri sqlite:///traces/stein/mlruns.db
 
-``outputs`` includes the ``reasoning`` field for ``ChainOfThought`` stages, which is signal
-worth keeping. Page images are recorded as a ``'<image>'`` placeholder rather than their
-bytes: the image is large and reconstructable from the input PDF, and the trainable text
-signal (transcription -> corrected) is captured in full.
+or load them straight into ``dspy.Example``\ s with ``core.datasets.examples_by_stage``.
+``KMS_MLFLOW_URI`` overrides the store outright (any MLflow tracking URI, including a remote
+server), in which case ``KMS_TRACE_DIR`` only names the experiment.
+
+Traces export asynchronously, so a short run can exit before its queue drains — ``flush()``
+is called at the end of ``run()``. Query a store without flushing first and you get nothing.
 """
 
 import contextlib
-import json
 import os
 import sys
-import threading
 from pathlib import Path
 
 # DSPy's callback base. Guarded like the optional imports in ``core.llm`` — the test suite
@@ -51,39 +65,10 @@ except ImportError:  # pragma: no cover - only when dspy is stubbed/absent
     BaseCallback = object
 
 TRACE_DIR_ENV = 'KMS_TRACE_DIR'
+URI_ENV = 'KMS_MLFLOW_URI'
+STAGE_ATTR = 'kms.stage'
 
-_recorder: '_Recorder | None' = None
-
-
-def _plain(value: object) -> object:
-    """Convert one traced value into something ``json.dumps`` accepts.
-
-    Pydantic boundary models (the window/member DTOs every stage passes) become plain
-    dicts, images become a placeholder, and anything else unrecognised falls back to its
-    string form so a trace line is never lost to a serialisation error.
-    """
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    if type(value).__name__ == 'Image':  # dspy.Image — bytes are not trace data
-        return '<image>'
-    if hasattr(value, 'model_dump'):  # pydantic BaseModel
-        with contextlib.suppress(Exception):
-            return value.model_dump()
-    if isinstance(value, dict):
-        return {str(key): _plain(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple, set)):
-        return [_plain(item) for item in value]
-    return str(value)
-
-
-def _signature_of(instance: object) -> object | None:
-    """The signature a ``dspy.Predict`` was built from, or None for anything else.
-
-    ``Predict`` exposes ``.signature`` directly; ``ChainOfThought`` deliberately does not
-    (it holds an inner ``Predict``), which is what makes this the filter that keeps one
-    record per logical call.
-    """
-    return getattr(instance, 'signature', None)
+_enabled = False
 
 
 def _stage_of(signature: object) -> str:
@@ -126,88 +111,108 @@ def _by_instructions() -> dict[str, str]:
     return registry
 
 
-class _Recorder(BaseCallback):
-    """Writes one JSONL line per DSPy predictor call, grouped into a file per stage."""
+def _is_image(value: object) -> bool:
+    """Whether a traced input value carries base64 image bytes.
 
-    def __init__(self, directory: Path) -> None:
-        self.directory = directory
-        self._pending: dict[str, tuple[str, dict]] = {}
-        self._lock = threading.Lock()
-        self.written = 0
+    Matched on content as well as type, because by the time autolog serialises the call a
+    ``dspy.Image`` has already become the string form of its chat-content payload. The
+    patterns are deliberately narrow — a bare ``'base64,'`` would also match a page of a
+    textbook *about* base64, and silently destroy that training example.
+    """
+    if type(value).__name__ == 'Image':  # dspy.Image, before serialisation
+        return True
+    text = str(value)
+    if 'CUSTOM-TYPE-START' in text and 'image_url' in text:
+        return True
+    return 'data:image/' in text and ';base64,' in text
+
+
+class _StageTagger(BaseCallback):
+    """Writes the resolved stage onto the MLflow span for each predictor call.
+
+    Only ``dspy.Predict`` instances carry a ``.signature``; a ``ChainOfThought`` fires the
+    callback too but delegates to exactly one inner ``Predict``, so keying on the signature
+    tags one span per logical call — the same filter that kept the retired JSONL recorder
+    from doubling every line.
+    """
 
     def on_module_start(
         self, call_id: str, instance: object, inputs: dict
     ) -> None:
-        """Hold a predictor call's inputs until its outputs arrive."""
-        signature = _signature_of(instance)
+        signature = getattr(instance, 'signature', None)
         if signature is None:
-            return  # a ChainOfThought wrapper; its inner Predict is the one recorded
-        # DSPy hands the call through as {'args': (...), 'kwargs': {...}}; every stage in
-        # this package calls its predictor with keyword arguments only.
-        named = inputs.get('kwargs') if isinstance(inputs, dict) else None
-        with self._lock:
-            self._pending[call_id] = (
-                _stage_of(signature),
-                named if isinstance(named, dict) else inputs,
-            )
-
-    def on_module_end(
-        self,
-        call_id: str,
-        outputs: object | None,
-        exception: Exception | None = None,
-    ) -> None:
-        """Pair the outputs with their held inputs and append the trace line."""
-        with self._lock:
-            held = self._pending.pop(call_id, None)
-        if held is None or exception is not None or outputs is None:
-            return
-        stage, inputs = held
-        keys = getattr(outputs, 'keys', None)
-        record = {
-            'stage': stage,
-            'inputs': {
-                str(key): _plain(value) for key, value in inputs.items()
-            },
-            'outputs': {key: _plain(outputs[key]) for key in keys()}
-            if callable(keys)
-            else _plain(outputs),
-        }
-        self._append(stage, record)
-
-    def _append(self, stage: str, record: dict) -> None:
-        """Append one record to the stage's JSONL file, creating it if needed."""
+            return  # a ChainOfThought wrapper; its inner Predict is the tagged one
         with contextlib.suppress(Exception):  # tracing must never break a run
-            self.directory.mkdir(parents=True, exist_ok=True)
-            line = json.dumps(record, ensure_ascii=False)
-            with self._lock:
-                with open(
-                    self.directory / f'{stage}.jsonl', 'a', encoding='utf-8'
-                ) as handle:
-                    handle.write(line + '\n')
-                self.written += 1
+            import mlflow
+
+            span = mlflow.get_current_active_span()
+            if span is not None:
+                span.set_attribute(STAGE_ATTR, _stage_of(signature))
+
+
+def _strip_images(span: object) -> None:
+    """Replace base64 image payloads in a span's inputs with a ``'<image>'`` placeholder.
+
+    Registered as an MLflow span processor, so it runs on every span with no stage-side
+    involvement. Only inputs are rewritten: no stage returns an image.
+    """
+    with contextlib.suppress(Exception):  # tracing must never break a run
+        inputs = span.inputs
+        if not isinstance(inputs, dict):
+            return
+        cleaned = {
+            key: '<image>' if _is_image(value) else value
+            for key, value in inputs.items()
+        }
+        if cleaned != inputs:
+            span.set_inputs(cleaned)
+
+
+def store_uri(directory: str | Path) -> str:
+    """The MLflow tracking URI backing ``directory`` — a SQLite file inside it.
+
+    SQLite rather than the default ``./mlruns`` file store because MLflow's tracing tables
+    need a database backend; this keeps a book's traces self-contained in one directory.
+    """
+    path = Path(directory).resolve()
+    return f'sqlite:///{path / "mlruns.db"}'
 
 
 def enable(directory: str | Path) -> None:
-    """Start capturing every DSPy call into ``directory`` as one JSONL file per stage.
+    """Start capturing every DSPy call into ``directory``'s MLflow store.
 
-    Idempotent: calling it twice keeps a single recorder, so a library caller that enables
-    tracing and then runs several books does not double every line.
+    Idempotent: calling it twice keeps a single set of hooks, so a library caller that
+    enables tracing and then runs several books does not double every span.
 
     Args:
-        directory: Where the per-stage JSONL files are written. Created on first write.
+        directory: Where the trace store lives, and the experiment name. Created on first
+            write. Overridden as a *store* by ``KMS_MLFLOW_URI``, which still takes the
+            experiment name from here.
     """
-    global _recorder
-    if _recorder is not None:
+    global _enabled
+    if _enabled:
+        return
+    try:
+        import mlflow
+    except ImportError:  # pragma: no cover - the mlflow extra is optional
         return
     if BaseCallback is object:  # dspy stubbed or absent — nothing to hook
         return
     import dspy
 
-    _recorder = _Recorder(Path(directory))
-    dspy.settings.configure(
-        callbacks=[*(dspy.settings.callbacks or []), _recorder]
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    mlflow.set_tracking_uri(
+        (os.environ.get(URI_ENV) or '').strip() or store_uri(directory)
     )
+    mlflow.set_experiment(directory.name or 'kms')
+    mlflow.tracing.configure(span_processors=[_strip_images])
+    mlflow.dspy.autolog()
+    # Registered after autolog so the span exists by the time the tagger runs.
+    dspy.settings.configure(
+        callbacks=[*(dspy.settings.callbacks or []), _StageTagger()]
+    )
+    _enabled = True
 
 
 def enable_from_env() -> None:
@@ -220,6 +225,15 @@ def enable_from_env() -> None:
         enable(directory)
 
 
-def written() -> int:
-    """How many trace lines the active recorder has written (0 when disabled)."""
-    return _recorder.written if _recorder else 0
+def flush() -> None:
+    """Drain MLflow's async export queue so a just-finished run is queryable.
+
+    A no-op when capture is off. Without this a short run can exit — or a caller can query
+    the store — before the queue has drained, and the traces silently appear to be missing.
+    """
+    if not _enabled:
+        return
+    with contextlib.suppress(Exception):
+        import mlflow
+
+        mlflow.flush_trace_async_logging(terminate=True)
