@@ -10,7 +10,7 @@ and cannot be parsed back (``docs/TRACING-RESEARCH.md``, finding 1).
 
 A trace is one stage call, and its spans nest::
 
-    GroupFinder.forward       <- root: the stage, named after its dspy.Module subclass
+    PedagogicalComponentFinder.forward       <- root: the stage, named after its dspy.Module subclass
       ChainOfThought.forward
         Predict.forward       <- the field-keyed inputs/outputs an Example is built from
           ChatAdapter.format
@@ -18,7 +18,7 @@ A trace is one stage call, and its spans nest::
           ChatAdapter.parse
 
 So the two questions have two different answers in the same trace: the **root** span names
-the stage (``GroupFinder`` -> ``group_finder``), and the innermost ``Predict.forward`` span
+the stage (``PedagogicalComponentFinder`` -> ``pedagogical_component_finder``), and the innermost ``Predict.forward`` span
 carries the signature's fields. Taking exactly one ``Predict`` span per trace is what keeps
 the adapter/LM fan-out — and ``ChainOfThought``'s duplicate wrapper — out of the dataset.
 
@@ -29,7 +29,7 @@ every stage class round-trips to its own module name.
     from kms.core import datasets
 
     by_stage = datasets.examples_by_stage('traces/stein')
-    trainset = by_stage['group_finder']
+    trainset = by_stage['pedagogical_component_finder']
 
 Outputs keep the ``reasoning`` field for ``ChainOfThought`` stages, which is signal worth
 training on. Inputs become the example's input keys, so an example is ready for
@@ -68,7 +68,7 @@ def _load_traces(source: str | Path) -> list:
 
 
 def stage_name(class_name: str) -> str:
-    """The stage a dspy.Module subclass belongs to: ``'GroupFinder'`` -> ``'group_finder'``.
+    """The stage a dspy.Module subclass belongs to: ``'PedagogicalComponentFinder'`` -> ``'pedagogical_component_finder'``.
 
     The inverse of the naming contract, and the only place it is encoded.
     """

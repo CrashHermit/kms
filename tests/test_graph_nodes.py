@@ -43,16 +43,14 @@ def test_node_properties_keep_index_zero():
     assert props['index'] == 0  # a falsy-but-valid value is kept
 
 
-def test_node_properties_never_persist_the_transient_role():
-    # `role` is pipeline state — the instruction finder writes it, the group finder and the
-    # instruction distributor read it, and nothing reads it back from the graph. So it stays
-    # out of the deliverable (docs/SCHEMA.md, principle 1).
+def test_node_properties_omits_the_removed_role_field():
+    # `role` was a transient pipeline field, now removed from ASTNode entirely.
+    # The property map should have no `role` key.
     node = models.ASTNode(
         type=models.NodeType.LIST,
         content='1. do it',
         id=5,
         segment_index=1,
-        role='instruction',
     )
     assert 'role' not in node_properties(node, 'book.pdf')
 
@@ -62,6 +60,10 @@ def test_node_label_is_the_capitalized_type():
     assert (
         node_label(models.ASTNode(type=models.NodeType.PARAGRAPH))
         == 'Paragraph'
+    )
+    assert (
+        node_label(models.ASTNode(type=models.NodeType.INSTRUCTION))
+        == 'Instruction'
     )
 
 

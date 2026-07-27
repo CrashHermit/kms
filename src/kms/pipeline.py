@@ -10,10 +10,11 @@ ordered backbone before the next stage runs. The entity stages are plain sequent
 nodes (a growing look-ahead cursor cannot be sharded).
 
 Stage order:
-    corrector -> extractor -> seam_merger (even, odd) -> splitter -> instruction_finder
-              -> node_persister -> group_finder -> role_typer -> block_typer
-              -> statement_extractor -> procedure_extractor -> instruction_distributor
-              -> entity_persister
+    corrector -> extractor -> seam_merger (even, odd) -> splitter
+              -> instruction_finder -> instruction_distributor
+              -> node_persister -> pedagogical_component_finder -> role_typer
+              -> statement_extractor -> procedure_extractor
+
 
 Two phases split at the seam merger. Ingestion is per-page: `segments` (already carrying
 Mistral's markdown + figures) is the backbone, and the corrector proofreads each page's
@@ -22,12 +23,14 @@ nodes. The seam merger heals nodes split across page breaks and then flattens th
 backbone into the global ordered `nodes` list (stable ids + segment_index). The splitter then
 normalises that stream — it rewrites any node that packs several exercises into one node per
 exercise (embedded lead-ins broken out onto their own nodes too) — so the finder sees atomic
-exercises. The instruction finder then tags every lead-in node `role="instruction"` over that
-atomic stream, one uniform pass. The node persister then writes the finalized stream to Neo4j as
-the graph's provenance layer (a `:Source` root with its `:Node` chain); it runs after the splitter
-so the persisted ids match the overlay's `members`, and is a no-op when Neo4j isn't configured.
+exercises. The instruction finder then tags every lead-in node with type INSTRUCTION;
+the instruction distributor prepends each lead-in's directive onto the governed exercise
+nodes and removes the lead-ins from the stream. The node persister then writes the finalized
+stream to Neo4j as the graph's provenance layer (a `:Source` root with its `:Node` chain);
+it runs after these stream mutations so the persisted ids match the overlay's `members`
+and instruction nodes are excluded.
 
-One entity chain then runs, each stage asking ONE question. The group finder walks `nodes` once and
+One entity chain then runs, each stage asking ONE question. The pedagogical component finder walks `nodes` once and
 cuts it into UNTYPED spans — boundaries only, including the cut between a statement and the working
 that resolves it, so the old semantic proof/solution boundary call is now a structural detection.
 The role typer then labels each span `entity` (a block) or `procedure` (a derivation); the block
@@ -37,9 +40,7 @@ this way because fusing these questions made each one worse — the finder read 
 marker as "no derivation", and a shared type/label call typed problem-set items by their subject
 matter. The procedure extractor then decomposes every procedure span into verbatim ordered steps and
 attaches it to the block it derives. Decomposition is universal: a solution's steps are as real as a
-proof's. The
-instruction distributor then stamps `instruction` from the lead-in tags (the shared directive of a
-grouped-exercise run), which is what makes an atomic exercise mean anything on its own.
+proof's.
 
 The entity persister is the terminal stage: it orders the overlay into one document-ordered,
 globally-id'd list and upserts it as the graph's `:Entity` layer (rooted under the `:Source`,
@@ -55,16 +56,15 @@ from typing import TYPE_CHECKING
 from langgraph.graph import END, START, StateGraph
 
 from kms.core import state, tracing
-from kms.entity.block_typer import BlockTyperNode
-from kms.entity.group_finder import GroupFinderNode
-from kms.entity.instruction_distributor import InstructionDistributorNode
-from kms.entity.instruction_finder import InstructionFinderNode
-from kms.entity.procedure_extractor import ProcedureExtractorNode
-from kms.entity.role_typer import RoleTyperNode
-from kms.entity.splitter import SplitterNode
-from kms.entity.statement_extractor import StatementExtractorNode
+from kms.ingestion.pedagogical_component_finder import PedagogicalComponentFinderNode
+from kms.ingestion.instruction_distributor import InstructionDistributorNode
+from kms.ingestion.procedure_extractor import ProcedureExtractorNode
+from kms.ingestion.role_typer import RoleTyperNode
+from kms.ingestion.splitter import SplitterNode
+from kms.ingestion.instruction_finder import InstructionFinderNode
+from kms.ingestion.statement_extractor import StatementExtractorNode
 from kms.graph.db import close_driver
-from kms.graph.persister import EntityPersisterNode, NodePersisterNode
+from kms.graph.persister import NodePersisterNode
 from kms.ingestion.corrector import CorrectorNode
 from kms.ingestion.extractor import ExtractorNode
 from kms.ingestion.seam_merger import SeamMergerNode
@@ -80,7 +80,7 @@ def build_graph() -> 'CompiledStateGraph':
     A single straight path: the correction pass proofreads each Mistral-transcribed
     page against its image, the extractor parses the corrected markdown into structural
     nodes, the seam merger heals page-split nodes and flattens to the global stream, and
-    the group finder then cuts that stream into untyped spans for the role typer, the block
+    the pedagogical component finder then cuts that stream into untyped spans for the role typer, the block
     typer and the two extractors to classify and fill in.
     """
     # Hooked here rather than in run(), so EVERY entry point traces — a caller that drives
@@ -94,13 +94,11 @@ def build_graph() -> 'CompiledStateGraph':
     splitter = SplitterNode()
     instruction_finder = InstructionFinderNode()
     node_persister = NodePersisterNode()
-    group_finder = GroupFinderNode()
+    pedagogical_component_finder = PedagogicalComponentFinderNode()
     role_typer = RoleTyperNode()
-    block_typer = BlockTyperNode()
     statement_extractor = StatementExtractorNode()
     procedure_extractor = ProcedureExtractorNode()
     instruction_distributor = InstructionDistributorNode()
-    entity_persister = EntityPersisterNode()
 
     graph = StateGraph(state.State)
 
@@ -115,14 +113,12 @@ def build_graph() -> 'CompiledStateGraph':
     graph.add_node('seam_odd_collect', seam.odd_collect)
     graph.add_node('splitter', splitter.run)
     graph.add_node('instruction_finder', instruction_finder.run)
+    graph.add_node('instruction_distributor', instruction_distributor.run)
     graph.add_node('node_persister', node_persister.run)
-    graph.add_node('group_finder', group_finder.run)
+    graph.add_node('pedagogical_component_finder', pedagogical_component_finder.run)
     graph.add_node('role_typer', role_typer.run)
-    graph.add_node('block_typer', block_typer.run)
     graph.add_node('statement_extractor', statement_extractor.run)
     graph.add_node('procedure_extractor', procedure_extractor.run)
-    graph.add_node('instruction_distributor', instruction_distributor.run)
-    graph.add_node('entity_persister', entity_persister.run)
 
     # A stage's dispatch is a conditional edge off the previous collect: it either fans
     # out Sends to the worker or short-circuits straight to its own collect.
@@ -153,35 +149,30 @@ def build_graph() -> 'CompiledStateGraph':
     )
     graph.add_edge('seam_odd_worker', 'seam_odd_collect')
 
-    # The splitter runs once after the seam collect, normalising the node stream so each
-    # exercise (and each embedded lead-in) is its own node before the finder walks it.
     graph.add_edge('seam_odd_collect', 'splitter')
 
-    # The instruction finder then tags every lead-in node `role="instruction"` over the
-    # now-atomic stream — one uniform pass, standalone and embedded lead-ins alike.
+    # The instruction finder tags exercise lead-in nodes with type INSTRUCTION.
+    # The instruction distributor prepends each lead-in's directive onto its governed
+    # exercises and removes the instruction nodes from the stream.
     graph.add_edge('splitter', 'instruction_finder')
+    graph.add_edge('instruction_finder', 'instruction_distributor')
 
-    # Persist the finalized node stream as the graph's provenance layer BEFORE the finder runs.
-    # It sits after the splitter (which re-ids the stream) and the instruction finder so the
-    # persisted node ids match the overlay's members. A no-op when Neo4j isn't configured.
-    graph.add_edge('instruction_finder', 'node_persister')
+    # Persist the finalized node stream as the graph's provenance layer.
+    # It sits after the splitter, instruction finder, and instruction distributor
+    # (which all mutate the stream) so the persisted node ids match the overlay's members
+    # and instruction nodes are excluded.
+    graph.add_edge('instruction_distributor', 'node_persister')
 
     # One entity chain, sequential. The finder's cursor-walk is not shardable, and the two
     # extractors both write the `entities` channel, so sequencing avoids a reducer clash for no
-    # meaningful latency cost. The instruction distributor runs last because it reads each block's
-    # contents/number (which the statement extractor fills) to judge governance.
-    graph.add_edge('node_persister', 'group_finder')
-    graph.add_edge('group_finder', 'role_typer')
-    graph.add_edge('role_typer', 'block_typer')
-    graph.add_edge('block_typer', 'statement_extractor')
+    # meaningful latency cost. The instruction distributor runs last because it reads each
+    # block's contents/number (which the statement extractor fills) to judge governance.
+    graph.add_edge('node_persister', 'pedagogical_component_finder')
+    graph.add_edge('pedagogical_component_finder', 'role_typer')
+    graph.add_edge('role_typer', 'statement_extractor')
     graph.add_edge('statement_extractor', 'procedure_extractor')
-    graph.add_edge('procedure_extractor', 'instruction_distributor')
-    graph.add_edge('instruction_distributor', 'entity_persister')
+    graph.add_edge('procedure_extractor', END)
 
-    # The entity persister orders the overlay into one document-ordered list and upserts it as the
-    # graph's `:Entity` layer plus the procedural layer on top (a no-op when Neo4j isn't
-    # configured). It is the pipeline's terminal stage.
-    graph.add_edge('entity_persister', END)
 
     return graph.compile()
 

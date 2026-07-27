@@ -12,14 +12,16 @@ This file is the quick reference.
 The extraction front-end is **Mistral OCR + a vision correction pass** (no GPU), validated on
 adversarial pages. The **entity layer was rebuilt** to be domain-general: the AutoMathKG
 structures are gone (see `docs/REBUILD.md`), and nine per-type modules collapsed into one chain —
-**group finder → role typer → block typer → statement extractor → procedure extractor**, each
+**pedagogical component finder → role typer → block typer → statement extractor → procedure extractor**, each
 stage asking exactly ONE question.
 
-- The **group finder** walks the node stream once and cuts it into **untyped** spans — boundaries
+- The **instruction finder** tags exercise lead-in nodes with ``NodeType.INSTRUCTION``;
+  the **instruction distributor** prepends their directive onto governed exercises and
+  removes the lead-ins from the stream — all before the PCF runs.
+- The **pedagogical component finder** walks the node stream once and cuts it into **untyped** spans — boundaries
   only. A theorem and its proof are **two adjacent spans**, so the statement/derivation boundary
   is a structural detection, not a semantic call; the cut lands where the text stops posing or
-  asserting and starts working, marked (`Proof.`) or not. One partition — a node belongs to at
-  most one span.
+  asserting and starts working, marked (`Proof.`) or not. Spans may overlap.
 - The **role typer** makes one closed, binary call per span: `entity` (a block) or `procedure`
   (the derivation that resolves one). A span that opens with its own label is a block whatever
   follows it; an unlabelled computation session is the working.
@@ -49,13 +51,15 @@ is currently dark**: its only source was the deleted `field` taxonomy, so nothin
     stage module imports it and a new stage is traced the day it is written),
     `datasets.py` (reads those traces back as `dspy.Example`s per stage).
   - `ingestion/` — phase 1 (backbone `segments`): `ocr.py` (Mistral front-end), `corrector.py`,
-    `extractor.py` (purely structural), `seam_merger.py`. Map-reduce `dispatch → worker → collect`.
-  - `entity/` — phase 2 (backbone `nodes`), all plain sequential nodes: `splitter.py`,
-    `instruction_finder.py`, `group_finder.py`, `role_typer.py`, `block_typer.py`,
-    `statement_extractor.py`, `procedure_extractor.py`, `instruction_distributor.py`.
-    One question per stage: the finder cuts boundaries, `role_typer` says block-or-derivation
-    (closed, binary), `block_typer` induces the open `type`, and the statement extractor
-    transcribes label/number/title/contents.
+    `extractor.py` (purely structural), `seam_merger.py`, `splitter.py` (exercise splitting),
+    `instruction_finder.py` (lead-in tagging), `instruction_distributor.py` (directive prepend).
+    Map-reduce `dispatch → worker → collect` for corrector/extractor/seam; plain sequential for the rest.
+  - `entity/` — phase 2 (backbone `nodes`), all plain sequential nodes: `instruction_finder.py`,
+    `instruction_distributor.py`, `pedagogical_component_finder.py`, `role_typer.py`,
+    `block_typer.py`, `statement_extractor.py`, `procedure_extractor.py`.
+    The instruction finder tags exercise lead-ins with type INSTRUCTION; the instruction
+    distributor prepends their directives onto governed exercises and removes them;
+    then the PCF cuts the cleaned stream into spans.
   - `graph/` — phase 3 (Neo4j): `db.py` (async driver, the only neo4j import; plus an
     `NEO4J_TRANSPORT=http` HTTPS Query-API transport for sandboxes where Bolt/7687 is blocked),
     `nodes.py` (ASTNode→`:Node`), `entities.py` (Entity→bare `:Entity`),
@@ -66,14 +70,8 @@ is currently dark**: its only source was the deleted `field` taxonomy, so nothin
   - `output/` — `assembler.py` (runs after the graph).
 - `pipeline.py` wires the graph; `cli.py` is the `__main__` entry; `kms/__init__.py` exposes `run`.
 - Flow: `ocr → corrector → extractor → seam_merger → splitter → instruction_finder →
-  node_persister → group_finder → role_typer → block_typer → statement_extractor →
-  procedure_extractor → instruction_distributor → entity_persister`. Two phases split at `seam_merger`: per-page
-  ingestion (backbone `segments`) → flat global node stream (backbone `nodes`, stable ids). The
-  splitter makes each exercise its own node; the instruction finder then tags lead-ins
-  `role="instruction"` over that atomic stream. `node_persister` writes the stream as the
-  `:Source`/`:Node` provenance layer; `entity_persister` orders the overlay and writes the
-  `:Entity` and `:Procedure`/`:Act` layers. Both persist only when Neo4j is configured
-  (`NEO4J_*`) and are no-ops otherwise, so a DB-less run still produces `document.md`.
+  instruction_distributor → node_persister → pedagogical_component_finder → role_typer →
+  block_typer → statement_extractor → procedure_extractor → entity_persister`.
 
 ## Commands
 

@@ -36,7 +36,7 @@ import logging
 import dspy
 
 from kms.core import llm, logs, models, state
-from kms.entity import statement_extractor
+from kms.ingestion import statement_extractor
 
 logger = logging.getLogger(__name__)
 

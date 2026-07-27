@@ -5,7 +5,7 @@ the splits per window."""
 import asyncio
 
 from kms.core import models
-from kms.entity.splitter import (
+from kms.ingestion.splitter import (
     NodeSplit,
     SplitExercise,
     SplitterNode,
@@ -68,8 +68,6 @@ def test_splits_a_packed_node():
         'ordinary prose',
     ]
     assert all(n.segment_index == 0 for n in out)
-    # The splitter never tags — that is the instruction finder's job.
-    assert [n.role for n in out] == [None, None, None, None]
     # A split piece inherits the parent node's structural type.
     assert (
         out[1].type == models.NodeType.LIST
@@ -78,8 +76,7 @@ def test_splits_a_packed_node():
 
 
 def test_an_embedded_lead_in_is_broken_out_as_its_own_node():
-    # A packed node whose middle piece is a lead-in (empty number) lands on its own node,
-    # untagged — the instruction finder tags it in the next stage.
+    # A packed node whose middle piece is a lead-in (empty number) lands on its own node.
     split = NodeSplit(
         position=1,
         exercises=[
@@ -98,7 +95,6 @@ def test_an_embedded_lead_in_is_broken_out_as_its_own_node():
         '4 matrix B',
         'ordinary prose',
     ]
-    assert [n.role for n in out] == [None, None, None, None, None]
 
 
 def test_single_exercise_is_not_split():
@@ -115,10 +111,10 @@ def test_single_exercise_is_not_split():
 
 def test_no_verdict_passes_the_stream_through_unchanged():
     out = asyncio.run(split_exercises(_nodes(), module=_ScriptedSplitter([[]])))
-    assert [(n.id, n.content, n.role) for n in out] == [
-        (0, 'In Exercises 3-4, compute the determinant.', None),
-        (1, '3 matrix A\n4 matrix B', None),
-        (2, 'ordinary prose', None),
+    assert [(n.id, n.content) for n in out] == [
+        (0, 'In Exercises 3-4, compute the determinant.'),
+        (1, '3 matrix A\n4 matrix B'),
+        (2, 'ordinary prose'),
     ]
 
 

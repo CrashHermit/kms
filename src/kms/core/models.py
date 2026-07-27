@@ -17,7 +17,7 @@ single source of truth.
 Persisted vs. transient (see ``docs/SCHEMA.md``): these models are the pipeline's *working
 state*, and the graph is the deliverable. A field is persisted only if something reads it
 back from the graph; fields that exist purely to pass information between stages are
-transient and are labelled as such below (currently ``ASTNode.role`` and all of
+transient and are labelled as such below (currently all of ``Segment``).
 ``Segment``).
 """
 
@@ -45,13 +45,16 @@ class NodeType(StrEnum):
     IMAGE = 'image'
     CAPTION = 'caption'
     HEADER = 'header'
+    INSTRUCTION = 'instruction'  # exercise lead-in, set by the instruction finder
+    STATEMENT = 'statement'  # placeholder statement node, set when a procedure is orphaned
+    PROCEDURE = 'procedure'  # placeholder procedure node, set when a statement lacks a derivation
 
 
 @dataclass(slots=True)
 class Procedure:
     """One worked derivation of an entity — a proof, a solution, a derivation.
 
-    Found as its own span by the group finder (so it carries ``members``, its own node
+    Found as its own span by the pedagogical component finder (so it carries ``members``, its own node
     ids, and gets real ``:DERIVED_FROM`` provenance) and decomposed into ordered ``steps``
     by the procedure extractor. Decomposition is universal: every procedure decomposes,
     whatever it derives.
@@ -136,13 +139,11 @@ class ASTNode:
     node, and `segment_index` is retained only so the assembler can resolve `![N]()`
     picture placeholders against the right page's pictures.
 
-    `role` is TRANSIENT — pipeline state, never persisted. The instruction finder stamps
-    "instruction" on exercise lead-in nodes; the group finder reads it to treat those nodes
-    as hard boundaries, and the instruction distributor reads it to find the lead-ins whose
-    directive it propagates. Nothing reads it back from the graph, so it stays out of the
-    node's Neo4j property map. It is kept off `type` deliberately: `type` is the purely
-    structural taxonomy the extractor emits, `role` is a later entity-layer hint riding
-    along on the node.
+    `role` was TRANSIENT — pipeline state, never persisted. The instruction finder stamped
+    "instruction" on exercise lead-in nodes; the group finder read it to treat those nodes
+    as hard boundaries, and the instruction distributor read it to find the lead-ins whose
+    directive it propagates. The instruction finder is retired and lead-ins are now their own
+    spans from the pedagogical component finder, so the field is removed.
     """
 
     type: NodeType | None = None
@@ -152,9 +153,6 @@ class ASTNode:
     )
     segment_index: int | None = (
         None  # originating page, for picture resolution after flattening
-    )
-    role: str | None = (
-        None  # TRANSIENT: "instruction" lead-in marker, set by the instruction finder
     )
 
 

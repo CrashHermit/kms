@@ -2,7 +2,7 @@
 Logging helpers shared by the pipeline's stages.
 
 Every stage logs through the standard library under its own module name
-(``logging.getLogger(__name__)`` → ``kms.entity.group_finder``, …), so a run can be
+(``logging.getLogger(__name__)`` → ``kms.entity.pedagogical_component_finder``, …), so a run can be
 filtered per stage without any custom machinery. This module holds only the formatting
 helpers that would otherwise be copy-pasted into each one.
 

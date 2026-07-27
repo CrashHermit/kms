@@ -37,18 +37,18 @@ logger = logging.getLogger(__name__)
 
 # The two roles. Closed and binary — NOT the open `type` vocabulary, which block_typer
 # induces downstream.
-ENTITY_ROLE = 'entity'
+STATEMENT_ROLE = 'statement'
 PROCEDURE_ROLE = 'procedure'
-SPAN_ROLES = [ENTITY_ROLE, PROCEDURE_ROLE]
+SPAN_ROLES = [STATEMENT_ROLE, PROCEDURE_ROLE]
 
 
 class Classify(dspy.Signature):
     r"""
     Decide whether one span of textbook text is a BLOCK or a DERIVATION. Answer with exactly
-    one word: "entity" or "procedure". This is domain-neutral — the text may come from a
+    one word: "statement" or "procedure". This is domain-neutral — the text may come from a
     math, physics, CS, or biology textbook.
 
-    "entity" — a BLOCK. The text POSES or ASSERTS something. It is one of:
+    "statement" — a BLOCK. The text POSES or ASSERTS something. It is one of:
     - a DECLARATIVE STATEMENT: a definition, theorem, proposition, lemma, corollary, axiom,
       or a domain's law / model / rule / principle. It says that something IS SO.
     - a POSED TASK: a worked example's statement ("Example 4.2. Compute $\int_0^1 x^2 dx$."),
@@ -81,7 +81,7 @@ class Classify(dspy.Signature):
     ITS OWN LABEL MAKES IT A BLOCK — CHECK THIS FIRST. If the text OPENS with a label naming
     it as a unit of the book — "Definition 2.5.1", "SAGE Example 2.5.4.", "Theorem 3.4",
     "Lemma 1.2", "Example 6.7", or a bare leading number ("12.", "949", "2.1.12") — the answer
-    is "entity", WHATEVER FOLLOWS THAT LABEL. A labelled example that goes on to work itself
+    is "statement", WHATEVER FOLLOWS THAT LABEL. A labelled example that goes on to work itself
     out, or that contains a worked session and its printed output, is STILL a block: books
     label blocks, not derivations. A derivation never carries a block label of its own — it
     either opens with a derivation marker ("Proof.", "Solution.") or is unlabelled text
@@ -91,27 +91,27 @@ class Classify(dspy.Signature):
     when everything after it is a bare expression with no words. In a problem set the items
     run "949 25 - 7", "952 x + 8", "957 6 · 3 + 5", "963 20 ÷ (4 + 6) · 5" — a number, then
     the thing the reader must evaluate. Every one of those is an EXERCISE, so the answer is
-    "entity". Do NOT read the arithmetic as "computing" and call it a derivation: nothing is
+    "statement". Do NOT read the arithmetic as "computing" and call it a derivation: nothing is
     being worked out, the expression is the task itself and no result is shown. An unnumbered
     expression that PRODUCES a result ("= 18", "so $x = 4$") is different — that is working.
 
     OTHERWISE, THE TEST IS WHAT THE TEXT DOES, NOT HOW IT IS LABELLED. A "Proof." or
     "Solution." marker means "procedure", but MOST derivations in some books carry no marker
     at all — a worked example's solution frequently just runs on from the statement. For
-    UNLABELLED text, never answer "entity" only because a marker word is missing. Conversely,
+    UNLABELLED text, never answer "statement" only because a marker word is missing. Conversely,
     a block that merely MENTIONS a method ("Use the power rule to compute the following.") is
-    still posing a task, so it is "entity".
+    still posing a task, so it is "statement".
 
     Judge the span in front of you on its own terms. If it both states something and then
     works it out, answer "procedure" only if the working is the bulk of it; a statement with
-    a trailing clause is still "entity".
+    a trailing clause is still "statement".
     """
 
     contents: str = dspy.InputField(
         description="The span's text (markdown + LaTeX), in document order."
     )
     role: str = dspy.OutputField(
-        description='Exactly one of "entity" (a block that poses or asserts) or "procedure" '
+        description='Exactly one of "statement" (a statement that poses or asserts) or "procedure" '
         '(a derivation that works something out).'
     )
 
@@ -125,12 +125,12 @@ class RoleTyper(dspy.Module):
         self.set_lm(language_model or llm.text_lm())
 
     async def aforward(self, contents: str) -> str:
-        """Returns the span's role, falling back to ``entity`` for an unusable answer."""
+        """Returns the span's role, falling back to ``statement`` for an unusable answer."""
         result = await self.classify.acall(contents=contents)
         raw = ' '.join((result.role or '').split()).lower()
-        # `entity` is the fallback: it is the far more common role, and a block wrongly
+        # `statement` is the fallback: it is the far more common role, and a block wrongly
         # demoted to a derivation would be attached to (and hidden under) its neighbour.
-        role = raw if raw in SPAN_ROLES else ENTITY_ROLE
+        role = raw if raw in SPAN_ROLES else STATEMENT_ROLE
         logger.debug(
             'role: %s%s | from %r',
             role,

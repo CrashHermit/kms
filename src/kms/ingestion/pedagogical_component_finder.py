@@ -1,6 +1,6 @@
 r"""
-Group finder — a cursor-walk over the flat structural node stream that cuts it into the
-spans the pedagogical units occupy.
+Pedagogical component finder — a cursor-walk over the flat structural node stream that cuts
+it into the spans the pedagogical units occupy.
 
 The BOUNDARY stage of the entity layer, and only that: it says where each unit starts and
 stops, never what any of them is. Three passes downstream answer that, one question each —
@@ -38,22 +38,24 @@ Design commitments:
     textbooks — math, physics, CS and biology all carry definitions, statements of fact,
     worked examples and exercises — so the finder is domain-free.
   * BOUNDARIES ONLY, NO CLASSIFICATION. The walk emits untyped spans. Whether a span is a
-    block or the derivation that resolves one is ``role_typer``'s question, and which kind
-    of block it is is ``block_typer``'s. Note the cut between a statement and its
-    derivation is still made HERE — that is a boundary, not a label.
+    block (definition, theorem, example, exercise, law, …) or a worked derivation
+    (proof, solution, calculation) is
+    ``role_typer``'s question, and which kind of block it is is ``block_typer``'s. Note the
+    cut between a statement and its derivation is still made HERE — that is a boundary, not
+    a label.
+    is retired.
   * A STATEMENT AND ITS DERIVATION ARE TWO SPANS. A theorem and its proof are adjacent
     spans, not one fused span split later. The cut is structural: it lands where the text
     stops posing or asserting and starts working, whether or not the book marks it
     ("Proof.", "Solution."). This replaces the old per-type attributors' semantic
     ``proof_start`` / ``solution_start`` call with a detection.
-  * SPANS ARE A SPARSE OVERLAY, and ONE PARTITION. Nodes keep their stable ids; a span
-    just records the node ids that are its members. Nothing about the node list is mutated
-    or renumbered, so the forward walk emits spans already in document order. Unlike the
-    three per-type finders this replaces, a node now belongs to at most one span.
+  * SPANS ARE A SPARSE OVERLAY. Nodes keep their stable ids; a span just records the
+    node ids that are its members. Nothing about the node list is mutated or renumbered.
+    Spans may overlap — a long paragraph can straddle two units.
 
-``GroupFinderNode`` (bottom of this file) runs the walk and writes the untyped spans to the
-``spans`` channel, which ``role_typer`` then splits into the entity overlay and the
-procedure spans.
+``PedagogicalComponentFinderNode`` (bottom of this file) runs the walk and writes the
+untyped spans to the ``spans`` channel, which ``role_typer`` then splits into the entity
+overlay and the procedure spans.
 """
 
 import logging
@@ -75,13 +77,11 @@ MAX_LOOKAHEAD_BUDGET = 8000
 
 
 class WindowNode(BaseModel):
-    """One look-ahead node as the LLM sees it: a local position, its content, and its role
-    annotation (the instruction finder marks an exercise lead-in with role "instruction")."""
+    """One look-ahead node as the LLM sees it: a local position and its content."""
 
     position: int
     type: str
     content: str | None = None
-    role: str = ''
 
 
 class Span(BaseModel):
@@ -99,15 +99,15 @@ class Span(BaseModel):
 
 class Signature(dspy.Signature):
     r"""
-    Find the BOUNDARIES of the pedagogical units in a run of textbook nodes, and return each
+    Find the BOUNDARIES of every pedagogical unit in a run of textbook nodes, and return each
     unit as a span of node positions. Anchor on the node that opens a unit, gather the run of
     nodes that belongs to it, stop where the next one begins. This is domain-neutral — it
     applies to ANY textbook (math, physics, CS, biology), not just math.
 
     This task is PURELY STRUCTURAL: say WHERE the units start and stop, never WHAT they are.
-    Do not classify, label, or name them — a later pass decides whether a span is a block or
-    the derivation that resolves one, and which kind of block it is. Your only job is to cut
-    the stream in the right places.
+    Do not classify, label, or name them — a later pass decides what kind of span each is.
+    Your only job is to cut the stream in the right places. FIND EVERYTHING: a missed unit is
+    a deleted unit.
 
     WHAT COUNTS AS A UNIT. Emit a span for each of these:
     - a DECLARATIVE STATEMENT: a definition, theorem, proposition, lemma, corollary, axiom,
@@ -173,14 +173,6 @@ class Signature(dspy.Signature):
     NOT SPANS AT ALL: ordinary narrative prose, section headers, figures, running text
     between blocks. Return nothing for them.
 
-    EXERCISE LEAD-INS ARE BOUNDARIES, NEVER MEMBERS. A grouped-exercise LEAD-IN — a directive
-    that introduces a run of exercises and states a shared instruction ("For the following
-    exercises, find the domain and range.", "In Exercises 3-8, graph the given relation.") — is
-    NOT a block and is NEVER part of any span. Such a node has NO number of its own and is
-    marked with role "instruction"; treat it exactly like a section header — a boundary. The
-    exercises it governs are SEPARATE blocks that FOLLOW it: begin the first one at the first
-    exercise node AFTER the lead-in, never at the lead-in itself, and never extend a preceding
-    span forward to absorb it.
 
     EXTENT (what nodes a span includes):
     - START at the block's OWN label/heading. A block usually opens with a short label that
@@ -197,8 +189,7 @@ class Signature(dspy.Signature):
       and otherwise at the FIRST node that starts working the unit out — and runs to the end
       of the derivation.
     - Stop at the boundary: the next unit's label, a derivation marker, the turn from posing
-      or stating into working, a section header, an exercise lead-in (role "instruction"), or
-      a clear return to ordinary narrative.
+      or stating into working, a section header, or a clear return to ordinary narrative.
 
     SEPARATE UNITS: distinct base numbers are distinct units (exercise 12 and exercise 13
     are two spans, never merged). A worked example and a following exercise are two units.
@@ -206,25 +197,27 @@ class Signature(dspy.Signature):
     POSITIONS:
     - Emit spans over the given nodes ONLY, using their `position` values; a span is the
       inclusive [start, end] range it occupies.
-    - Spans must NOT overlap: every node belongs to at most one span.
-    - Return the spans in document order.
+    - Return the spans in document order. A node MAY belong to more than one span
+      (a long paragraph that straddles two units, a caption shared by a figure and the
+      example that follows it).
     - Include a span even if it is unfinished at the last given node — still emit it,
       spanning it out to that last node.
     - If there are no units in the window, return an empty list.
     """
 
     current_nodes: list[WindowNode] = dspy.InputField(
-        description="The look-ahead window's nodes, in order, each with a local position and a role "
-        '(role "instruction" marks an exercise lead-in — a boundary, never part of a span). '
+        description="The look-ahead window's nodes, in order, each with a local position. "
         'Emit spans over these only.'
     )
     spans: list[Span] = dspy.OutputField(
-        description='The pedagogical units found in current_nodes, as position spans, in '
-        'document order. Boundaries only — do NOT classify them. Empty list if none.'
+        description='Every pedagogical unit found in current_nodes, as position spans, in '
+        'document order — declarative statements, worked examples, exercises, '
+        'instructions, and worked derivations alike. Boundaries only — do NOT '
+        'classify them. Empty list if none.'
     )
 
 
-class GroupFinder(dspy.Module):
+class PedagogicalComponentFinder(dspy.Module):
     """Finds the pedagogical units' span boundaries in the node stream."""
 
     def __init__(self, language_model: dspy.LM | None = None) -> None:
@@ -245,29 +238,22 @@ class GroupFinder(dspy.Module):
         return spans
 
 
-def _clean_spans(spans: list[Span], last_local: int) -> list[Span]:
-    """Clamp spans into the window, drop overlaps, and sort.
+def _normalize_spans(spans: list[Span], last_local: int) -> list[Span]:
+    """Clamp spans into the window and sort by start position.
 
-    Overlap is resolved greedily in document order (the first span wins), enforcing the
-    one partition the schema requires."""
+    Overlaps are preserved — a node may belong to more than one span."""
     clamped: list[Span] = []
     for span in spans:
         start = min(max(span.start, 0), last_local)
         end = min(max(span.end, start), last_local)
         clamped.append(Span(start=start, end=end))
     clamped.sort(key=lambda span: (span.start, span.end))
-
-    kept: list[Span] = []
-    for span in clamped:
-        if kept and span.start <= kept[-1].end:
-            continue  # overlaps an already-kept span — one node, one span
-        kept.append(span)
-    return kept
+    return clamped
 
 
 async def find_spans(
     nodes: list[models.ASTNode],
-    module: GroupFinder | None = None,
+    module: PedagogicalComponentFinder | None = None,
     budget: int = LOOKAHEAD_BUDGET,
     max_budget: int = MAX_LOOKAHEAD_BUDGET,
 ) -> list[list[int]]:
@@ -291,7 +277,7 @@ async def find_spans(
         The spans in document order, each a list of member node ids. UNTYPED — whether a
         span is a block or the derivation that resolves one is decided by ``role_typer``.
     """
-    module = module or GroupFinder()
+    module = module or PedagogicalComponentFinder()
     spans_out: list[list[int]] = []
     cursor, node_count = 0, len(nodes)
 
@@ -309,12 +295,11 @@ async def find_spans(
                         position=k,
                         type=(node.type.value if node.type else ''),
                         content=node.content,
-                        role=(node.role or ''),
                     )
                     for k, node in enumerate(window)
                 ]
             )
-            clean = _clean_spans(spans, last_local)
+            clean = _normalize_spans(spans, last_local)
 
             if not clean:
                 cursor = end  # only prose in this window — skip it
@@ -363,7 +348,9 @@ async def find_spans(
             break
 
     logger.info(
-        'group finder: %d nodes -> %d span(s)', node_count, len(spans_out)
+        'pedagogical component finder: %d nodes -> %d span(s)',
+        node_count,
+        len(spans_out),
     )
     return spans_out
 
@@ -371,15 +358,15 @@ async def find_spans(
 # --- LangGraph node: emit the found blocks and procedure spans onto their channels ---
 
 
-class GroupFinderNode:
+class PedagogicalComponentFinderNode:
     """Walks the flat node stream and writes the untyped unit spans.
 
     The walk is one sequential unit (a growing look-ahead cursor cannot be sharded), so
     this is a plain graph node rather than the map-reduce dispatch/worker/collect shape
     the parallel stages use."""
 
-    def __init__(self, module: GroupFinder | None = None) -> None:
-        self.module = module or GroupFinder()
+    def __init__(self, module: PedagogicalComponentFinder | None = None) -> None:
+        self.module = module or PedagogicalComponentFinder()
 
     async def run(self, state: state.State) -> dict:
         """Walks the node stream and writes the untyped spans."""

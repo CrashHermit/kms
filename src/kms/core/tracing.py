@@ -20,9 +20,9 @@ so **every stage is captured automatically and no stage module imports or mentio
 all**. A stage added tomorrow is traced the day it is written.
 
 STAGE IDENTITY IS FREE, AND IT IS A NAMING CONTRACT. MLflow names each trace's root span
-after the ``dspy.Module`` subclass that was called — ``GroupFinder.forward`` — so the stage
-*is* the class name, and nothing here has to track it. That only works because every stage's
-module class is named for its stage: they were uniformly called ``Module`` until this was
+after the ``dspy.Module`` subclass that was called — ``PedagogicalComponentFinder.forward`` — so
+the stage *is* the class name, and nothing here has to track it. That only works because every
+stage's module class is named for its stage: they were uniformly called ``Module`` until this was
 adopted, which made every root span read ``Module.forward``. ``core.datasets`` maps the name
 back to a stage name, and ``tests/test_datasets.py`` pins the convention so a future stage
 cannot quietly break it. An earlier revision tagged spans from a DSPy callback instead; that

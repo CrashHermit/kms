@@ -15,17 +15,18 @@ import sys
 import dspy
 
 from kms.core import models
-from kms.entity import (
-    block_typer,
-    group_finder,
+from kms.ingestion import (
+    corrector,
+    extractor,
     instruction_distributor,
     instruction_finder,
+    pedagogical_component_finder,
     procedure_extractor,
     role_typer,
+    seam_merger,
     splitter,
     statement_extractor,
 )
-from kms.ingestion import corrector, extractor, seam_merger
 
 RESULTS: list[tuple[str, str, bool, str]] = []
 
@@ -64,7 +65,7 @@ async def probe_extractor() -> None:
         '1. Show $f(x)=x^2$ is continuous.\n'
         '2. Show $f(x)=1/x$ is not continuous at $0$.\n'
     )
-    out = await extractor.Module().aforward(segment_markdown=markdown)
+    out = await extractor.Extractor().aforward(segment_markdown=markdown)
     kinds = {str(n.type) for n in out}
     structural = {t.value for t in models.NodeType}
     check(
@@ -87,7 +88,7 @@ async def probe_extractor() -> None:
 
 async def probe_seam() -> None:
     print('\n=== seam_merger ===')
-    module = seam_merger.Module()
+    module = seam_merger.SeamMerger()
 
     split = await module.aforward(
         top_bottom_edge_node=seam_merger.SeamNodeDTO(
@@ -131,7 +132,7 @@ async def probe_seam() -> None:
 
 async def probe_splitter() -> None:
     print('\n=== splitter ===')
-    module = splitter.Module()
+    module = splitter.Splitter()
 
     packed = nodes(
         (
@@ -191,7 +192,7 @@ async def probe_splitter() -> None:
 
 async def probe_instruction_finder() -> None:
     print('\n=== instruction_finder ===')
-    module = instruction_finder.Module()
+    module = instruction_finder.InstructionFinder()
     stream = nodes(
         ('header', '2.4 Exercises'),
         ('paragraph', 'In Exercises 3-8, graph the given relation.'),
@@ -217,13 +218,13 @@ async def probe_instruction_finder() -> None:
     )
 
 
-# --- 5. group_finder: cuts the statement/derivation boundary, marked or not ------------
+# --- 5. pedagogical_component_finder: cuts the statement/derivation boundary, marked or not ------------
 
 
-async def probe_group_finder() -> None:
+async def probe_pedagogical_component_finder() -> None:
     """The finder emits UNTYPED spans now: assert it CUTS in the right place."""
-    print('\n=== group_finder ===')
-    module = group_finder.Module()
+    print('\n=== pedagogical_component_finder ===')
+    module = pedagogical_component_finder.PedagogicalComponentFinder()
 
     marked = nodes(
         (
@@ -239,9 +240,9 @@ async def probe_group_finder() -> None:
             'Given $\\epsilon>0$ there is $N$ with $a_N > L-\\epsilon$. Hence $a_n \\to L$. $\\square$',
         ),
     )
-    spans = await group_finder.find_spans(marked, module=module)
+    spans = await pedagogical_component_finder.find_spans(marked, module=module)
     check(
-        'group_finder',
+        'pedagogical_component_finder',
         'MARKED derivation -> cut into two spans',
         len(spans) == 2,
         f'{len(spans)} span(s): {spans}',
@@ -258,9 +259,9 @@ async def probe_group_finder() -> None:
             'If $A = 0$ then $y = 0$ is a solution. The solution blows up at $x=1/A$.',
         ),
     )
-    spans2 = await group_finder.find_spans(unmarked, module=module)
+    spans2 = await pedagogical_component_finder.find_spans(unmarked, module=module)
     check(
-        'group_finder',
+        'pedagogical_component_finder',
         'UNMARKED derivation -> cut into two spans',
         len(spans2) >= 2,
         f'{len(spans2)} span(s): {spans2}',
@@ -276,9 +277,9 @@ async def probe_group_finder() -> None:
         ),
         ('paragraph', 'We now turn to the question of existence.'),
     )
-    spans3 = await group_finder.find_spans(bare, module=module)
+    spans3 = await pedagogical_component_finder.find_spans(bare, module=module)
     check(
-        'group_finder',
+        'pedagogical_component_finder',
         'a bare labelled definition still gets its own span',
         any(0 in span for span in spans3),
         f'{len(spans3)} span(s): {spans3}',
@@ -290,12 +291,12 @@ async def probe_group_finder() -> None:
 
 async def probe_role_typer() -> None:
     print('\n=== role_typer ===')
-    module = role_typer.Module()
+    module = role_typer.RoleTyper()
 
     cases = [
         (
             'a stated theorem',
-            'entity',
+            'statement',
             '**Theorem 2.1.** Every bounded monotone sequence converges.',
         ),
         (
@@ -312,19 +313,19 @@ async def probe_role_typer() -> None:
         ),
         (
             'a posed exercise',
-            'entity',
+            'statement',
             "12. Sketch the slope field for $y' = e^{x-y}$.",
         ),
         (
             'a bare definition',
-            'entity',
+            'statement',
             '**Definition 3.7.** A set is *compact* if every open cover has a finite subcover.',
         ),
         # Regression: a LABELLED example containing a worked session was read as a
         # derivation, demoting Stein's SAGE examples into procedures of the block above.
         (
             'a LABELLED example holding a worked session',
-            'entity',
+            'statement',
             '*SAGE Example 2.5.4.* We use Sage to find the roots of a polynomial.\n\n'
             'sage: f = x^15 + 1\nsage: f.roots()\n[(12, 1), (10, 1), (4, 1)]',
         ),
@@ -356,17 +357,17 @@ async def probe_role_typer() -> None:
         # their neighbour and lost as blocks entirely (OpenStax ea2e, 15 of them).
         (
             'a numbered exercise that is a bare expression',
-            'entity',
+            'statement',
             '949 25 - 7',
         ),
         (
             'a numbered exercise with an unpunctuated number',
-            'entity',
+            'statement',
             '963 20 ÷ (4 + 6) · 5',
         ),
     ]
     for name, expected, text in cases:
-        got = await module.role(text)
+        got = await module.aforward(contents=text)
         check(
             'role_typer',
             f'{name} -> {expected}',
@@ -375,63 +376,12 @@ async def probe_role_typer() -> None:
         )
 
 
-# --- 6. block_typer + statement_extractor: typing and the number hazard ---------------
-
-
-async def probe_block_typer() -> None:
-    print('\n=== block_typer ===')
-    module = block_typer.Module()
-
-    law = nodes(
-        ('header', "Law 4.1 (Ohm's Law)."),
-        (
-            'paragraph',
-            'The current through a conductor is proportional to the voltage across it, $V = IR$.',
-        ),
-    )
-    induced = await module.block_type(law)
-    check(
-        'block_typer',
-        'induces an open non-math type',
-        induced not in ('', None, 'theorem', 'definition', 'example'),
-        f'type={induced!r}',
-    )
-
-    bare = nodes(('paragraph', '$P \\vee (Q \\Rightarrow R)$'))
-    induced2 = await module.block_type(bare)
-    check(
-        'block_typer',
-        'types a bare formula exercise as an exercise',
-        induced2 in ('exercise', 'problem'),
-        f'type={induced2!r}',
-    )
-
-    # As the item actually appears in Hammack: a leading exercise number, then a sentence
-    # that is itself a mathematical claim. The block is an exercise; its subject matter is a
-    # theorem. (Stripped of its number the same sentence is genuinely ambiguous — a human
-    # would read it as a theorem too — so that form is deliberately NOT asserted here.)
-    assertion = nodes(
-        (
-            'paragraph',
-            '1. For matrix $A$ to be invertible, it is necessary and sufficient '
-            'that $\\det(A) \\neq 0$.',
-        ),
-    )
-    induced3 = await module.block_type(assertion)
-    check(
-        'block_typer',
-        'types an exercise whose body is an assertion as an exercise',
-        induced3 in ('exercise', 'problem'),
-        f'type={induced3!r} (subject matter is a theorem; the block is an exercise)',
-    )
-
-
 # --- 6. statement_extractor: the documented number hazard ---------------------------
 
 
 async def probe_statement_extractor() -> None:
     print('\n=== statement_extractor ===')
-    module = statement_extractor.Module()
+    module = statement_extractor.StatementExtractor()
 
     cross_ref = nodes(
         (
@@ -439,7 +389,7 @@ async def probe_statement_extractor() -> None:
             '2.1.12 Prove Proposition 2.1.13 using the result of Theorem 2.1.9.',
         )
     )
-    identity = await module.identity(cross_ref)
+    identity = await module.aforward(members=cross_ref)
     check(
         'statement_extractor',
         "takes the block's OWN number, not an in-text cross-reference",
@@ -453,13 +403,13 @@ async def probe_statement_extractor() -> None:
 
 async def probe_procedure_extractor() -> None:
     print('\n=== procedure_extractor ===')
-    module = procedure_extractor.Module()
+    module = procedure_extractor.ProcedureExtractor()
     contents = (
         '*Proof.* We induct on $n$. For $n=1$ the claim is immediate. '
         'Assume it holds for $n=k$. Then $\\sum_{i=1}^{k+1} i = \\frac{k(k+1)}{2} + (k+1)$. '
         'Simplifying gives $\\frac{(k+1)(k+2)}{2}$, which is the claim for $n=k+1$. $\\square$'
     )
-    steps = await module.steps(contents)
+    steps = await module.aforward(contents=contents)
     joined = ''.join(steps)
 
     def norm(text: str) -> str:
@@ -495,7 +445,7 @@ async def probe_procedure_extractor() -> None:
         'The output of the roots command above lists each root along with its '
         'multiplicity (which is 1 in each case above).'
     )
-    session_steps = await module.steps(session)
+    session_steps = await module.aforward(contents=session)
     kept = norm(''.join(session_steps)) == norm(session)
     check(
         'procedure_extractor',
@@ -515,7 +465,7 @@ async def probe_procedure_extractor() -> None:
 
 async def probe_distributor() -> None:
     print('\n=== instruction_distributor ===')
-    module = instruction_distributor.Module()
+    module = instruction_distributor.InstructionDistributor()
     following = [
         instruction_distributor.WindowProblem(
             position=0,
@@ -531,7 +481,7 @@ async def probe_distributor() -> None:
             position=2, number='14', text='Compute $\\int_0^1 x^3 dx$.'
         ),
     ]
-    instruction, governed = await module.govern(
+    instruction, governed = await module.aforward(
         lead_in='Prove each of the following.', following=following
     )
     check(
@@ -569,7 +519,7 @@ async def probe_corrector(pdf: str, out_dir: str) -> None:
         print('  [SKIP] no injection target on this page')
         return
 
-    out = await corrector.Module().aforward(
+    out = await corrector.Corrector().aforward(
         page_image=corrector._load_dspy_image(segment.image_path),
         transcription=corrupted,
     )
@@ -594,9 +544,8 @@ async def main() -> None:
     await probe_seam()
     await probe_splitter()
     await probe_instruction_finder()
-    await probe_group_finder()
+    await probe_pedagogical_component_finder()
     await probe_role_typer()
-    await probe_block_typer()
     await probe_statement_extractor()
     await probe_procedure_extractor()
     await probe_distributor()

@@ -3,7 +3,7 @@
 Logging: every stage logs one INFO line summarising what it produced, and one DEBUG line
 per DSPy call with that call's inputs' shape and its (elided) outputs. INFO is the default;
 set ``KMS_LOG_LEVEL=DEBUG`` for the per-call detail. The stage loggers are named after their
-modules (``kms.entity.group_finder``, …), so a single stage can be turned up on its own.
+modules (``kms.entity.pedagogical_component_finder``, …), so a single stage can be turned up on its own.
 """
 
 import asyncio

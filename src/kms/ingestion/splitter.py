@@ -15,8 +15,7 @@ place, by one node per exercise (its reference number kept as literal leading te
 kept nested, incidental markers like a "✓" recommended glyph kept verbatim for provenance). A
 single isolated exercise or a worked example is left untouched — only GROUPS are split. A
 shared-instruction lead-in embedded between the exercises is broken out onto its own node too,
-so it becomes atomic; TAGGING lead-ins is a separate stage (``instruction_finder``) that runs
-right after this one, over the already-atomic stream.
+so it becomes atomic for the pedagogical component finder downstream.
 
 Because the decision is per-node (a node either is or isn't a composite list) and a node's
 content is always wholly inside some window, there is no cross-window banking to get right: the
@@ -24,8 +23,8 @@ walk gathers every split keyed by the original node id, then rebuilds the stream
 re-assigns ids. `segment_index` is inherited by each split piece, so picture resolution at assembly
 is unaffected.
 
-Wired in by ``SplitterNode`` (bottom of file): it runs right after the seam merger and before
-the instruction finder, overwriting the `nodes` channel with the normalized stream.
+Wired in by ``SplitterNode`` (bottom of file): it runs right after the seam merger,
+overwriting the `nodes` channel with the normalized stream.
 """
 
 import logging
@@ -34,7 +33,7 @@ import dspy
 from pydantic import BaseModel, Field
 
 from kms.core import llm, models, state
-from kms.core.walker import estimate_tokens, window_from
+from kms.core.walker import window_from
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +41,6 @@ logger = logging.getLogger(__name__)
 # node and always fits whole (min-one-node), so the budget only needs to be large enough to
 # hold that node; a single list is all one split call needs to see.
 LOOKAHEAD_BUDGET = 2000
-
 
 
 class WindowNode(BaseModel):
@@ -70,10 +68,10 @@ class NodeSplit(BaseModel):
     """A single node that packs two or more numbered exercises, and its split pieces."""
 
     position: int = Field(
-        description='The window position of the node that packs the exercises.'
+        description="The window position of the node that packs the exercises."
     )
     exercises: list[SplitExercise] = Field(
-        description='The individual exercises it holds, in order (two or more).'
+        description="The individual exercises it holds, in order (two or more)."
     )
 
 
@@ -96,8 +94,7 @@ class Signature(dspy.Signature):
     BREAK OUT AN EMBEDDED LEAD-IN: if a piece BETWEEN the exercises is a shared-instruction
     lead-in (no number of its own, a directive for the run that follows it, e.g. "9-16 Sketch
     the polar curve."), return it as its OWN item with an EMPTY `number` and its verbatim text as
-    `content`, so it lands on its own node. Do NOT tag it and do NOT fold it into an exercise —
-    a later pass decides which nodes are lead-ins.
+    `content`, so it lands on its own node as atomic input for the pedagogical component finder.
 
     Every character of the node must land in exactly one item, in order. A node holding only ONE
     exercise is NOT a split — leave it out. Worked examples, definitions, theorems, prose, and
@@ -110,16 +107,14 @@ class Signature(dspy.Signature):
         description="The look-ahead window's nodes, in order, each with a local position."
     )
     splits: list[NodeSplit] = dspy.OutputField(
-        description='Nodes that pack two or more exercises, each split into its individual exercises.'
+        description="Nodes that pack two or more exercises, each split into its individual exercises."
     )
 
 
 class Decision(BaseModel):
     """The splitter's per-window verdict, positions already resolved to real node ids."""
 
-    splits: dict[
-        int, list[SplitExercise]
-    ] = {}  # node id -> its exercise pieces
+    splits: dict[int, list[SplitExercise]] = {}  # node id -> its exercise pieces
 
 
 class Splitter(dspy.Module):
@@ -130,20 +125,18 @@ class Splitter(dspy.Module):
         self.splitter = dspy.ChainOfThought(Signature)
         self.set_lm(language_model or llm.text_lm())
 
-    async def aforward(
-        self, current_nodes: list[WindowNode]
-    ) -> list[NodeSplit]:
+    async def aforward(self, current_nodes: list[WindowNode]) -> list[NodeSplit]:
         """Returns the split decisions for the given window of nodes."""
         result = await self.splitter.acall(current_nodes=current_nodes)
         splits = list(result.splits or [])
         # Whether a given packed node splits is the stage's known run-to-run variance
         # (docs/HANDOFF.md, known issues), so log the per-window verdict.
         logger.debug(
-            'split: %d nodes in, %d split(s) out%s',
+            "split: %d nodes in, %d split(s) out%s",
             len(current_nodes),
             len(splits),
-            ''.join(
-                f' | position {split.position} -> {len(split.exercises)} piece(s)'
+            "".join(
+                f" | position {split.position} -> {len(split.exercises)} piece(s)"
                 for split in splits
             ),
         )
@@ -167,7 +160,7 @@ async def _gather_decisions(
             [
                 WindowNode(
                     position=k,
-                    type=(node.type.value if node.type else ''),
+                    type=(node.type.value if node.type else ""),
                     content=node.content,
                 )
                 for k, node in enumerate(window)
@@ -179,8 +172,7 @@ async def _gather_decisions(
             items = [
                 exercise
                 for exercise in split_result.exercises
-                if (exercise.content or '').strip()
-                or (exercise.number or '').strip()
+                if (exercise.content or "").strip() or (exercise.number or "").strip()
             ]
             if (
                 node_id is not None and len(items) >= 2
@@ -190,9 +182,7 @@ async def _gather_decisions(
     return decision
 
 
-def _rebuild(
-    nodes: list[models.ASTNode], decision: Decision
-) -> list[models.ASTNode]:
+def _rebuild(nodes: list[models.ASTNode], decision: Decision) -> list[models.ASTNode]:
     """Materialise the normalised stream: replace each split node with one node per piece,
     pass everything else through, and re-assign ids.
 
@@ -204,9 +194,9 @@ def _rebuild(
         pieces = decision.splits.get(node.id)
         if pieces:
             for item in pieces:
-                number = (item.number or '').strip()
-                body = (item.content or '').strip()
-                content = f'{number} {body}'.strip() if number else body
+                number = (item.number or "").strip()
+                body = (item.content or "").strip()
+                content = f"{number} {body}".strip() if number else body
                 out.append(
                     models.ASTNode(
                         type=node.type,
@@ -234,7 +224,7 @@ async def split_exercises(
     decision = await _gather_decisions(nodes, module, budget)
     rebuilt = _rebuild(nodes, decision)
     logger.info(
-        'splitter: %d node(s) -> %d (%d packed node(s) split)',
+        "splitter: %d node(s) -> %d (%d packed node(s) split)",
         len(nodes),
         len(rebuilt),
         len(decision.splits),
@@ -258,7 +248,5 @@ class SplitterNode:
 
     async def run(self, state: state.State) -> dict:
         """Normalises the node stream so each exercise is its own node."""
-        nodes = await split_exercises(
-            state.get('nodes', []), module=self.module
-        )
-        return {'nodes': nodes}
+        nodes = await split_exercises(state.get("nodes", []), module=self.module)
+        return {"nodes": nodes}

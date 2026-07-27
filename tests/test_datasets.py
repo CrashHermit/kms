@@ -45,7 +45,7 @@ def _call(stage_class, inputs, outputs):
 
 
 def test_stage_name_snake_cases_a_module_class():
-    assert datasets.stage_name('GroupFinder') == 'group_finder'
+    assert datasets.stage_name('PedagogicalComponentFinder') == 'pedagogical_component_finder'
     assert datasets.stage_name('Corrector') == 'corrector'
     assert datasets.stage_name('InstructionDistributor') == (
         'instruction_distributor'
@@ -79,7 +79,7 @@ def test_every_stage_class_is_named_for_its_module():
     stages = _stage_modules()
     if not stages:
         pytest.skip('dspy is stubbed; stage classes are not importable')
-    assert len(stages) >= 11
+    assert len(stages) >= 10
     for module_name, klass in stages:
         assert (
             datasets.stage_name(klass.__name__)
@@ -109,11 +109,11 @@ def test_every_stage_entry_point_is_aforward():
 
 def test_the_stage_comes_from_the_root_span_and_the_example_from_predict():
     calls = datasets._calls(
-        [_call('GroupFinder', {'current_nodes': []}, {'spans': []})]
+        [_call('PedagogicalComponentFinder', {'current_nodes': []}, {'spans': []})]
     )
     assert len(calls) == 1
     stage, span = calls[0]
-    assert stage == 'group_finder'
+    assert stage == 'pedagogical_component_finder'
     assert span.name == 'Predict.forward'  # not the root, not the adapters
 
 
@@ -124,7 +124,7 @@ def test_a_trace_without_a_root_is_skipped():
 
 def test_a_trace_with_no_predict_span_is_skipped():
     # a stage that short-circuits before calling its predictor has nothing to learn from
-    trace = _Trace(_Span('GroupFinder.forward', parent_id=None, inputs={}))
+    trace = _Trace(_Span('PedagogicalComponentFinder.forward', parent_id=None, inputs={}))
     assert datasets._calls([trace]) == []
 
 
@@ -136,14 +136,14 @@ def test_examples_are_grouped_by_stage(monkeypatch):
         datasets,
         '_load_traces',
         lambda source: [
-            _call('GroupFinder', {'current_nodes': [1]}, {'spans': []}),
-            _call('GroupFinder', {'current_nodes': [2]}, {'spans': []}),
-            _call('RoleTyper', {'contents': 'c'}, {'role': 'entity'}),
+            _call('PedagogicalComponentFinder', {'current_nodes': [1]}, {'spans': []}),
+            _call('PedagogicalComponentFinder', {'current_nodes': [2]}, {'spans': []}),
+            _call('RoleTyper', {'contents': 'c'}, {'role': 'statement'}),
         ],
     )
     by_stage = datasets.examples_by_stage('traces/book')
-    assert sorted(by_stage) == ['group_finder', 'role_typer']
-    assert len(by_stage['group_finder']) == 2
+    assert sorted(by_stage) == ['pedagogical_component_finder', 'role_typer']
+    assert len(by_stage['pedagogical_component_finder']) == 2
 
 
 def test_an_example_marks_the_calls_inputs_as_input_keys(monkeypatch):
@@ -154,7 +154,7 @@ def test_an_example_marks_the_calls_inputs_as_input_keys(monkeypatch):
             _call(
                 'RoleTyper',
                 {'contents': 'Theorem 1.1'},
-                {'reasoning': 'it asserts', 'role': 'entity'},
+                {'reasoning': 'it asserts', 'role': 'statement'},
             )
         ],
     )
@@ -163,7 +163,7 @@ def test_an_example_marks_the_calls_inputs_as_input_keys(monkeypatch):
     # ChainOfThought's reasoning is signal worth training on, so it stays a label
     assert example.labels().toDict() == {
         'reasoning': 'it asserts',
-        'role': 'entity',
+        'role': 'statement',
     }
 
 
@@ -174,7 +174,7 @@ def test_a_half_recorded_call_is_dropped(monkeypatch):
         '_load_traces',
         lambda source: [
             _call('RoleTyper', {'contents': 'c'}, None),
-            _call('RoleTyper', None, {'role': 'entity'}),
+            _call('RoleTyper', None, {'role': 'statement'}),
         ],
     )
     assert datasets.examples_by_stage('traces/book') == {}
@@ -185,12 +185,10 @@ def test_stage_counts_summarises_a_sweep(monkeypatch):
         datasets,
         '_load_traces',
         lambda source: [
-            _call('RoleTyper', {'contents': 'a'}, {'role': 'entity'}),
+            _call('RoleTyper', {'contents': 'a'}, {'role': 'statement'}),
             _call('RoleTyper', {'contents': 'b'}, {'role': 'procedure'}),
-            _call('BlockTyper', {'contents': 'c'}, {'type': 'theorem'}),
         ],
     )
     assert datasets.stage_counts('traces/book') == {
-        'block_typer': 1,
         'role_typer': 2,
     }

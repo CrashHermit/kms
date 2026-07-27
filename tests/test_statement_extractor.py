@@ -6,7 +6,7 @@ this tests everything around it."""
 import asyncio
 
 from kms.core import models
-from kms.entity import statement_extractor
+from kms.ingestion import statement_extractor
 
 
 def _nodes():

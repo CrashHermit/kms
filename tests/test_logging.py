@@ -3,18 +3,17 @@
 The pipeline previously emitted a single line for a whole run, which made a live
 validation sweep reconstruct stage behaviour from the LangGraph State and the DSPy cache
 (see ``robustness_test/ENTITY-REBUILD-VALIDATION.md``). These tests pin the summaries that
-replaced that, in particular the two counts that make a bad run diagnosable: the group
-finder's procedure-span count and the statement extractor's induced-type histogram.
+replaced that, in particular the two counts that make a bad run diagnosable: the
+pedagogical component finder's procedure-span count and the statement extractor's
+induced-type histogram.
 """
 
 import asyncio
 import logging
 
 from kms.core import logs, models
-from kms.entity.block_typer import BlockTyperNode
-from kms.entity.group_finder import Span, find_spans
-from kms.entity.instruction_finder import tag_instructions
-from kms.entity.role_typer import RoleTyperNode
+from kms.ingestion.pedagogical_component_finder import Span, find_spans
+from kms.ingestion.role_typer import RoleTyperNode
 from kms.ingestion.seam_merger import SeamMergerNode
 
 # --- logs.elide ---
@@ -68,9 +67,9 @@ class _ScriptedFinder:
         return self._scripted.pop(0) if self._scripted else []
 
 
-def test_group_finder_logs_the_span_count(caplog):
+def test_pedagogical_component_finder_logs_the_span_count(caplog):
     module = _ScriptedFinder([[Span(start=0, end=0), Span(start=1, end=1)], []])
-    with caplog.at_level(logging.INFO, logger='kms.entity.group_finder'):
+    with caplog.at_level(logging.INFO, logger='kms.ingestion.pedagogical_component_finder'):
         asyncio.run(
             find_spans(_nodes('Theorem 1', 'Proof.', 'tail'), module=module)
         )
@@ -88,8 +87,8 @@ class _ScriptedRoles:
 def test_role_typer_logs_the_block_derivation_split(caplog):
     # "blocks found but zero derivations" is the signature of an unmarked-derivation miss,
     # so the two counts must be reported separately.
-    node = RoleTyperNode(module=_ScriptedRoles(['entity', 'procedure']))
-    with caplog.at_level(logging.INFO, logger='kms.entity.role_typer'):
+    node = RoleTyperNode(module=_ScriptedRoles(['statement', 'procedure']))
+    with caplog.at_level(logging.INFO, logger='kms.ingestion.role_typer'):
         out = asyncio.run(
             node.run({'nodes': _nodes('a', 'b'), 'spans': [[0], [1]]})
         )
@@ -98,41 +97,10 @@ def test_role_typer_logs_the_block_derivation_split(caplog):
 
 
 def test_role_typer_logs_zero_derivations(caplog):
-    node = RoleTyperNode(module=_ScriptedRoles(['entity']))
-    with caplog.at_level(logging.INFO, logger='kms.entity.role_typer'):
+    node = RoleTyperNode(module=_ScriptedRoles(['statement']))
+    with caplog.at_level(logging.INFO, logger='kms.ingestion.role_typer'):
         asyncio.run(node.run({'nodes': _nodes('a'), 'spans': [[0]]}))
     assert '1 block(s), 0 derivation(s)' in caplog.text
-
-
-class _ScriptedTypes:
-    def __init__(self, types):
-        self._types = list(types)
-
-    async def acall(self, members):
-        return self._types.pop(0)
-
-
-def test_block_typer_logs_the_induced_type_histogram(caplog):
-    entities = [models.Entity(members=[0]), models.Entity(members=[1])]
-    node = BlockTyperNode(module=_ScriptedTypes(['theorem', 'theorem']))
-    with caplog.at_level(logging.INFO, logger='kms.entity.block_typer'):
-        asyncio.run(node.run({'nodes': _nodes('a', 'b'), 'entities': entities}))
-    assert '2 block(s) typed | theorem=2' in caplog.text
-
-
-class _ScriptedTagger:
-    def __init__(self, positions):
-        self._positions = list(positions)
-
-    async def aforward(self, current_nodes):
-        return self._positions.pop(0) if self._positions else []
-
-
-def test_instruction_finder_logs_the_tagged_lead_in_count(caplog):
-    nodes = _nodes('For the following exercises, graph.', '1. graph it')
-    with caplog.at_level(logging.INFO, logger='kms.entity.instruction_finder'):
-        asyncio.run(tag_instructions(nodes, module=_ScriptedTagger([[0]])))
-    assert '2 node(s) -> 1 lead-in(s) tagged' in caplog.text
 
 
 def test_seam_merger_logs_the_flattened_stream_size(caplog):

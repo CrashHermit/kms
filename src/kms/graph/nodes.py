@@ -72,10 +72,7 @@ def node_properties(node: models.ASTNode, source: str) -> dict:
     the markdown content, and provenance (document-order ``index`` + originating ``segment_index``).
     None-valued fields are omitted rather than written as nulls. Precondition: ``node.id`` is set
     (true once the stream is flattened).
-
-    ``role`` is deliberately absent: it is TRANSIENT pipeline state (the instruction finder's
-    lead-in marker, read by the group finder and the instruction distributor) and nothing reads it
-    back from the graph, so it stays out of the deliverable (``docs/SCHEMA.md``, principle 1)."""
+    """
     props = {
         'uuid': node_uuid(source, node.id),
         'source': source_uuid(source),  # links back to the :Source node

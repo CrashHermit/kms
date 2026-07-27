@@ -1,6 +1,6 @@
 # Entity-layer rebuild — first live validation
 
-**Date:** 2026-07-25 · **Scope:** the stages changed by #21 (`group_finder →
+**Date:** 2026-07-25 · **Scope:** the stages changed by #21 (`pedagogical_component_finder →
 statement_extractor → procedure_extractor`) and the graph tier they feed.
 **Status of the thing under test before this run:** unit-green, compiling, and *never run
 against a real PDF* — HANDOFF next step 1.
@@ -131,7 +131,7 @@ repeated runs.
 The entity layer was refactored from three stages into five, each asking a single question:
 
 ```
-group_finder        -> spans (boundaries only, untyped)
+pedagogical_component_finder        -> spans (boundaries only, untyped)
 role_typer     NEW  -> entity | procedure          (closed, binary)
 block_typer    NEW  -> type                        (open, induced)
 statement_extractor -> label, number, title, contents   (transcription)
@@ -213,7 +213,7 @@ single-stage prompt problem rather than a whole-chain one.
 
 Both findings were resolved by editing **Signature text only**: no new functions, no new input
 fields, no stage reordering. Three docstrings changed
-(`group_finder.Signature`, `statement_extractor.Identify`, `procedure_extractor.Decompose`);
+(`pedagogical_component_finder.Signature`, `statement_extractor.Identify`, `procedure_extractor.Decompose`);
 the diff is 3 files, prompt text.
 
 | Measure (5 books) | Before | After |
@@ -522,8 +522,8 @@ fast regression tests for a fix.
 | `splitter` | leaves a single worked example unsplit | pass |
 | `splitter` | breaks an embedded lead-in onto its own piece | pass |
 | `instruction_finder` | tags the lead-in and nothing else | pass |
-| `group_finder` | **marked** derivation → separate procedure span | pass |
-| `group_finder` | **unmarked** derivation → procedure span | **FAIL** (Finding 1) |
+| `pedagogical_component_finder` | **marked** derivation → separate procedure span | pass |
+| `pedagogical_component_finder` | **unmarked** derivation → procedure span | **FAIL** (Finding 1) |
 | `statement_extractor` | takes the block's own number, not an in-text cross-reference | pass |
 | `statement_extractor` | induces an open non-math type (`law`) | pass |
 | `statement_extractor` | types a bare-formula exercise as an exercise | **FAIL** (Finding 2) |
@@ -573,7 +573,7 @@ captured 227 trainable `{stage, inputs, outputs}` trace lines; **this one captur
 | `statement_extractor.Identify` | 30 |
 | `ingestion.extractor` | 8 |
 | `ingestion.seam_merger` | 8 |
-| `entity.group_finder` | 7 |
+| `entity.pedagogical_component_finder` | 7 |
 | `entity.splitter` | 7 |
 | `ingestion.corrector` | 7 |
 | `procedure_extractor.Decompose` | 6 |

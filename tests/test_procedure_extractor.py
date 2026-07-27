@@ -4,7 +4,7 @@ and the graph-node wrapper. The LLM decomposition call is stubbed."""
 import asyncio
 
 from kms.core import models
-from kms.entity import procedure_extractor
+from kms.ingestion import procedure_extractor
 
 
 def _nodes():

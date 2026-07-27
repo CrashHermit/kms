@@ -1,5 +1,5 @@
-"""Group finder: the core cursor-walk banking rule, the statement/derivation cut, the
-one-partition guarantee, and the graph-node wrapper.
+"""Pedagogical component finder: the core cursor-walk banking rule, the statement/derivation cut,
+and the graph-node wrapper.
 
 The finder emits UNTYPED spans — whether a span is a block or a derivation is `role_typer`'s
 question, so nothing here asserts a role."""
@@ -7,10 +7,10 @@ question, so nothing here asserts a role."""
 import asyncio
 
 from kms.core import models
-from kms.entity.group_finder import (
-    GroupFinderNode,
+from kms.ingestion.pedagogical_component_finder import (
+    PedagogicalComponentFinderNode,
     Span,
-    _clean_spans,
+    _normalize_spans,
     find_spans,
 )
 
@@ -74,31 +74,35 @@ def test_on_prose_only_stream_returns_nothing():
     assert asyncio.run(find_spans(_nodes(), module=module)) == []
 
 
-# --- span cleaning: clamping and one partition ---
+# --- span normalisation: clamping, sorting, overlaps preserved ---
 
 
-def test_clean_spans_clamps_into_the_window():
-    cleaned = _clean_spans([Span(start=-5, end=99)], 2)
+def test_normalize_spans_clamps_into_the_window():
+    cleaned = _normalize_spans([Span(start=-5, end=99)], 2)
     assert (cleaned[0].start, cleaned[0].end) == (0, 2)
 
 
-def test_clean_spans_drops_overlaps_so_a_node_belongs_to_one_span():
-    cleaned = _clean_spans(
+def test_normalize_spans_preserves_overlaps():
+    cleaned = _normalize_spans(
         [
             Span(start=0, end=2),
-            Span(start=1, end=3),  # overlaps — dropped
+            Span(start=1, end=3),
             Span(start=3, end=3),
         ],
         3,
     )
-    assert [(span.start, span.end) for span in cleaned] == [(0, 2), (3, 3)]
+    assert [(span.start, span.end) for span in cleaned] == [
+        (0, 2),
+        (1, 3),
+        (3, 3),
+    ]
 
 
 # --- graph node ---
 
 
 def test_node_run_writes_the_spans_channel():
-    node = GroupFinderNode(
+    node = PedagogicalComponentFinderNode(
         module=_ScriptedFinder(
             [[Span(start=1, end=1), Span(start=2, end=2)], []]
         )
@@ -109,5 +113,5 @@ def test_node_run_writes_the_spans_channel():
 
 
 def test_node_run_on_empty_stream_yields_an_empty_channel():
-    node = GroupFinderNode(module=_ScriptedFinder([]))
+    node = PedagogicalComponentFinderNode(module=_ScriptedFinder([]))
     assert asyncio.run(node.run({'nodes': []})) == {'spans': []}
