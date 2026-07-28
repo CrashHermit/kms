@@ -150,6 +150,26 @@ def corrector_lm() -> dspy.LM:
 
 
 @lru_cache(maxsize=1)
+def prompt_optimizer_lm() -> dspy.LM:
+    """DeepSeek V4 Pro for MIPROv2 prompt-model (instruction generation).
+
+    Prompt optimisation is a meta-level creative task — writing better
+    instructions — so it gets the same Pro model as the metrics judge.
+    Override with ``PROMPT_OPTIMIZER_MODEL``.
+    """
+    return dspy.LM(
+        os.environ.get(
+            'PROMPT_OPTIMIZER_MODEL', 'deepseek/deepseek-v4-pro'
+        ),
+        api_key=_require_key(DEEPSEEK_ENV_KEY, 'sk-...'),
+        temperature=0.0,
+        max_tokens=128000,
+        cache=False,
+        extra_body={'thinking': {'type': 'disabled'}},
+    )
+
+
+@lru_cache(maxsize=1)
 def corrector_judge_lm() -> dspy.LM:
     """MiMo-V2.5 (via OpenRouter) for judging the corrector's output against the page image.
 

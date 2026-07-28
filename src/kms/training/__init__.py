@@ -4,7 +4,8 @@ bridge from captured traces (``core.tracing`` / ``core.datasets``) to DSPy's
 
 The ``KMS_OPTIMIZED_DIR`` env var points at a directory of compiled-stage JSON
 files. When set, the pipeline loads them automatically at startup so production
-runs pick up the optimised prompts with no code changes."""
+runs pick up the optimised prompts with no code changes.
+"""
 
 import os
 from pathlib import Path

@@ -1,20 +1,25 @@
-r"""Run a DSPy optimiser over one or more stages' captured traces.
+r"""Run MIPROv2 over one or more stages' captured traces.
 
 Load every stage's examples from a trace directory (see ``core.tracing`` and
-``core.datasets``), split train/holdout, compile the stage with
-``BootstrapFewShot`` using its corresponding LLM-judge metric (from
+``core.datasets``), split train/holdout, compile the stage with ``MIPROv2``
+using its corresponding discrete-error judge metric (from
 ``training.metrics``), save the compiled result, and print before/after scores.
+
+MIPROv2 does instruction optimisation — it generates candidate prompts and
+selects the one that scores highest on the held-out set. This is the right
+optimiser for every stage: the corrector has too-large outputs for few-shot
+demos to help, and the classification/extraction stages benefit from
+instruction tuning more than demo selection.
 
 Usage::
 
-    PYTHONPATH=src uv run python -m kms.training.optimize traces/stein-train --output optimized/
+    PYTHONPATH=src uv run python -m kms.training.optimize \
+        traces/stein-train --output optimized/
 
 This optimises every stage that has examples in the trace directory. Pass
-``--stage corrector`` to target a single stage, or ``--stage corrector extractor``
-for a few.
+``--stage corrector`` to target a single stage, or
+``--stage corrector extractor`` for a few.
 """
-
-from __future__ import annotations
 
 import argparse
 import random
@@ -22,9 +27,9 @@ from pathlib import Path
 from typing import Any
 
 import dspy
-from dspy.teleprompt import BootstrapFewShot
+from dspy.teleprompt import MIPROv2
 
-from kms.core import datasets
+from kms.core import datasets, llm
 from kms.training import metrics
 
 # Stage name -> (module path, class name) for dynamic import.
@@ -50,13 +55,18 @@ _STAGE_CLASS: dict[str, tuple[str, str]] = {
 
 _HOLDOUT_FRACTION = 0.3
 _RANDOM_SEED = 42
+_NUM_CANDIDATES = 10
+
+# Stages whose outputs are too large for few-shot demos to help. For these
+# MIPROv2 does pure instruction optimisation (no bootstrapped demos).
+_NO_DEMO_STAGES = frozenset({'corrector'})
 
 
 def _import_stage(stage: str) -> type:
     """Import and return a stage's ``dspy.Module`` subclass."""
-    module_path, class_name = _STAGE_CLASS[stage]
     import importlib
 
+    module_path, class_name = _STAGE_CLASS[stage]
     module = importlib.import_module(module_path)
     cls = getattr(module, class_name)
     if not issubclass(cls, dspy.Module):
@@ -102,7 +112,7 @@ def optimize_stage(
     examples: list[dspy.Example],
     output_dir: str | Path,
 ) -> dict[str, float]:
-    """Compile *stage* with ``BootstrapFewShot``, save, and return scores.
+    """Compile *stage* with MIPROv2, save, and return scores.
 
     Returns ``{'baseline': float, 'optimized': float}``.
     """
@@ -116,14 +126,21 @@ def optimize_stage(
     baseline = _evaluate(module_cls(), holdout, metric)
     print(f'  {stage}: {len(trainset)} train / {len(holdout)} holdout')
 
-    optimizer = BootstrapFewShot(
+    use_demos = stage not in _NO_DEMO_STAGES
+    optimizer = MIPROv2(
         metric=metric,
-        max_bootstrapped_demos=4,
-        max_labeled_demos=8,
+        prompt_model=llm.prompt_optimizer_lm(),
+        num_candidates=_NUM_CANDIDATES,
+        max_bootstrapped_demos=4 if use_demos else 0,
+        max_labeled_demos=4 if use_demos else 0,
+        auto='light',
+        seed=_RANDOM_SEED,
+        verbose=False,
     )
     compiled = optimizer.compile(
         student=module_cls(),
         trainset=trainset,
+        valset=holdout,
     )
 
     optimized = _evaluate(compiled, holdout, metric)
@@ -131,7 +148,11 @@ def optimize_stage(
 
     path = output_dir / f'{stage}.json'
     compiled.save(str(path))
-    print(f'  {stage}: {baseline:.2f} → {optimized:.2f}  (Δ{"+ " if delta >= 0 else ""}{delta:.2f})  saved {path}')
+    print(
+        f'  {stage}: {baseline:.2f} -> {optimized:.2f}  '
+        f'(Delta {"+ " if delta >= 0 else ""}{delta:.2f})  '
+        f'saved {path}'
+    )
 
     return {'baseline': baseline, 'optimized': optimized}
 
@@ -155,7 +176,10 @@ def optimize_all(
 
     results: dict[str, dict[str, float]] = {}
     total_examples = sum(len(v) for v in by_stage.values())
-    print(f'{total_examples} example(s) across {len(by_stage)} stage(s) in {trace_dir}')
+    print(
+        f'{total_examples} example(s) across {len(by_stage)} stage(s) '
+        f'in {trace_dir}'
+    )
 
     for stage in candidates:
         examples = by_stage.get(stage, [])
@@ -170,8 +194,10 @@ def optimize_all(
         for stage, scores in results.items():
             delta = scores['optimized'] - scores['baseline']
             print(
-                f'  {stage:35s}  {scores["baseline"]:.2f} → {scores["optimized"]:.2f}  '
-                f'(Δ{"+ " if delta >= 0 else ""}{delta:.2f})'
+                f'  {stage:35s}  '
+                f'{scores["baseline"]:.2f} -> '
+                f'{scores["optimized"]:.2f}  '
+                f'(Delta {"+ " if delta >= 0 else ""}{delta:.2f})'
             )
 
     return results
