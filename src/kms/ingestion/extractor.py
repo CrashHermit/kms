@@ -17,11 +17,29 @@ from kms.core import llm, logs, models, state
 logger = logging.getLogger(__name__)
 
 
-class DSPyModel(BaseModel):
-    """A single extracted block node from the LLM — type and raw content."""
+_TYPE_MAP: dict[str, type[models.ASTNode]] = {
+    'paragraph': models.ParagraphNode,
+    'math': models.MathNode,
+    'code': models.CodeNode,
+    'list': models.ListNode,
+    'table': models.TableNode,
+    'image': models.ImageNode,
+    'caption': models.CaptionNode,
+    'header': models.HeaderNode,
+}
 
-    type: models.NodeType = Field(
-        description='The block type of the node — must be one of the models.NodeType values.'
+
+def _node_for(type_str: str, content: str | None) -> models.ASTNode:
+    """Create the right ASTNode subclass for a type string from the LLM."""
+    cls = _TYPE_MAP.get(type_str, models.ParagraphNode)
+    return cls(content=content)
+
+
+class DSPyModel(BaseModel):
+    """A single extracted block node from the LLM — type string and raw content."""
+
+    type: str = Field(
+        description='The block type: paragraph, math, code, list, table, image, caption, or header.'
     )
     content: str | None = Field(
         default=None, description='The content of the node'
@@ -135,8 +153,7 @@ class ExtractorNode:
         segment: models.Segment = state['segment']
         extracted = await self.module.aforward(segment_markdown=segment.content)
         nodes = [
-            models.ASTNode(type=node.type, content=node.content)
-            for node in extracted
+            _node_for(node.type, node.content) for node in extracted
         ]
         return {'extract_results': [(segment.index, nodes)]}
 

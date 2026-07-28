@@ -1,35 +1,48 @@
 """
-Pipeline stages that persist the graph to Neo4j: the structural node stream (provenance layer).
+Pipeline stage that persists the full graph to Neo4j at the end of the run.
 
-``NodePersisterNode`` runs after the splitter, instruction finder and instruction distributor
-(the last stages to mutate the node stream) and before the group finder, so the ``:Source`` root
-and its ``:Node`` chain exist in the graph before any entity work builds on top of them. The node
-ids it persists are the final ids the overlay's ``members`` reference, which is why it sits after
-the stream-mutating stages, not after the seam merger. Instruction nodes have already been removed
-by the distributor, so they are never persisted.
+``IngestionPersisterNode`` runs after the procedure extractor, once the
+``:Source``/``:Node`` provenance tier and the ``:Statement``/``:Procedure``
+overlay are complete in memory. It writes everything in one pass.
 
-The entity and procedural layers are currently dark — they will be rewritten to follow
-AutoSchemaKG's triple-extraction approach.
-
-The persister is gated on configuration: if no Neo4j target is wired (``NEO4J_URI`` unset) or the
-run carries no ``source``, it is a no-op — DB-less runs (and the test suite) still complete end to
-end, they just don't persist. The schema bootstrap is idempotent, so running it per book is safe.
+The persister is gated on configuration: if no Neo4j target is wired
+(``NEO4J_URI`` unset) or the run carries no ``source``, it is a no-op.
 """
 
 from kms.core import models, state
 from kms.graph import db, schema, writer
 
 
-class NodePersisterNode:
-    """Sequential stage: upsert the run's node stream as the graph's provenance layer."""
+class IngestionPersisterNode:
+    """Terminal stage: upserts the ``:Source``/``:Node`` provenance tier
+    and the ``:Statement``/``:Procedure`` overlay."""
 
     async def run(self, state: state.State) -> dict:
-        """Upsert the run's node stream as the graph's provenance layer."""
-        source = state.get('source')
+        """Persist everything."""
+        source = state.get("source")
         if not db.is_configured() or not source:
             return {}
         await schema.ensure_schema()
+
+        nodes = state.get('nodes', [])
         await writer.persist_nodes(
-            state.get('nodes', []), source, state.get('source_metadata')
+            nodes, source, state.get('source_metadata')
         )
+
+        # Build ordered statement list from state.
+        statement_ids = state.get('statement_ids', [])
+        nodes_by_id = {
+            node.id: node
+            for node in nodes
+            if node.id is not None
+        }
+        statements: list[models.StatementNode] = []
+        for sid in statement_ids:
+            node = nodes_by_id.get(sid)
+            if isinstance(node, models.StatementNode):
+                statements.append(node)
+
+        await writer.persist_statements(statements, source)
+        await writer.persist_procedures(statements, source)
+        await writer.persist_chain(nodes, statements, source)
         return {}

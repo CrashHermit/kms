@@ -61,10 +61,8 @@ def source_properties(
 
 
 def node_label(node: models.ASTNode) -> str | None:
-    """The per-type label for a structural node (``models.NodeType.MATH`` -> ``"Math"``), or None if the
-    node has no type. Applied ALONGSIDE the base ``:Node`` label, never instead of it. The
-    models.NodeType values are single lowercase words, so capitalizing yields a valid Neo4j label."""
-    return node.type.value.capitalize() if node.type else None
+    """The per-type label for a structural node, derived from the class name."""
+    return type(node).__name__.removesuffix('Node')
 
 
 def node_properties(node: models.ASTNode, source: str) -> dict:
@@ -76,7 +74,7 @@ def node_properties(node: models.ASTNode, source: str) -> dict:
     props = {
         'uuid': node_uuid(source, node.id),
         'source': source_uuid(source),  # links back to the :Source node
-        'type': node.type.value if node.type else None,
+        'type': node.kind,
         'content': node.content,
         'index': node.id,
         'segment_index': node.segment_index,

@@ -1,27 +1,24 @@
 """
-Persist the structural node stream and the entity overlay into Neo4j — the I/O half of the graph.
+Persist the structural node stream and the statement/procedure overlay into
+Neo4j.
 
-``persist_nodes`` writes the ``:Node`` layer: one ``:Source`` vertex for the book, one vertex per
-``models.ASTNode`` (base ``:Node`` label + its per-type label), all MERGEd on their deterministic uuids so
-re-running a book is idempotent, then wires them up — ``(:Source)-[:HEAD]->`` the first node and
-``:NEXT`` edges threading the rest in document order so the stream hangs off the source and is
-walkable in Cypher. ``persist_entities`` writes the ``:Entity`` overlay on top: one vertex per pedagogical block (a bare
-``:Entity`` label — ``type`` is an open property, never a label), carrying a ``source`` property
-linking back to the book, and linked to the structural chunks it was built from via ``:DERIVED_FROM``.
-``persist_procedures`` writes the procedural layer: one ``:Procedure`` per derivation hung off its
-entity via ``:HAS_PROCEDURE`` and linked to its own source chunks via ``:DERIVED_FROM``, and one
-``:Act`` per step threaded ``:FIRST``/``:THEN`` (see ``graph.procedures``).
+``persist_nodes`` upserts ``:Source`` and ``:Node`` vertices (no edges).
 
-The concept layer is currently dark — its only source was the deleted ``field`` taxonomy — so there
-is no ``persist_concepts`` here yet; ``graph.concepts`` keeps the hub identity scheme the
-conceptualization pass will write through. The reference/canonical layers are gone entirely.
+``persist_chain`` writes the merged walkable chain: ``:HEAD`` from
+``:Source`` to the first element, then ``:NEXT`` threading non-absorbed
+prose :Node and :Statement vertices in document order. Absorbed raw
+nodes are persisted but skipped in the chain.
 
-Writes are batched: Cypher can't parameterize a label, but the structural node labels come from a
-closed enum (``models.NodeType``), so grouping by label and interpolating it is safe and turns the
-whole stream into one MERGE per label plus a couple for the source/edges — no per-vertex
-round-trips. Entities, procedures and acts each carry a single fixed label, so each is one batched
-MERGE. The pure planning (grouping, edge pairs, head) is factored out and unit-tested; only the
-``session.run`` calls need a live database.
+``persist_statements`` writes the ``:Statement`` overlay and
+``:HAS_STATEMENT`` edges from ``:Source``.
+
+``persist_procedures`` writes ``:Procedure`` vertices and
+``:HAS_PROCEDURE`` edges from their statements. ``:Act`` step chains are
+declared but not yet written.
+
+Writes are batched: structural node labels are grouped by their per-type
+label and each batch is one MERGE. Statements, procedures and acts each
+carry a single fixed label, so each is one batched MERGE.
 """
 
 from collections import defaultdict
@@ -29,7 +26,6 @@ from typing import Any
 
 from kms.core import models
 from kms.graph.db import database, driver
-from kms.graph.entities import ENTITY_LABEL, entity_properties, entity_uuid
 from kms.graph.nodes import (
     NODE_LABEL,
     SOURCE_LABEL,
@@ -39,13 +35,17 @@ from kms.graph.nodes import (
     source_properties,
     source_uuid,
 )
+from kms.graph.statements import (
+    STATEMENT_LABEL,
+    statement_properties,
+    statement_uuid,
+)
 from kms.graph.procedures import (
     ACT_LABEL,
     PROCEDURE_LABEL,
     act_rows,
     first_pairs,
     has_procedure_pairs,
-    procedure_member_pairs,
     procedure_rows,
     then_pairs,
 )
@@ -54,29 +54,12 @@ from kms.graph.procedures import (
 def node_batches(
     nodes: list[models.ASTNode], source: str
 ) -> dict[str | None, list[dict]]:
-    """Group the nodes' property maps by their per-type label, so each label is one batched
-    MERGE. The ``None`` bucket holds any typeless node (base ``:Node`` label only)."""
+    """Group the nodes' property maps by their per-type label, so each
+    label is one batched MERGE."""
     batches: dict[str | None, list[dict]] = defaultdict(list)
     for node in nodes:
         batches[node_label(node)].append(node_properties(node, source))
     return dict(batches)
-
-
-def next_pairs(nodes: list[models.ASTNode], source: str) -> list[dict]:
-    """The ``{from, to}`` uuid pairs for the ``:NEXT`` chain: consecutive nodes in the
-    document-ordered stream. Empty for a stream of fewer than two nodes."""
-    return [
-        {'from': node_uuid(source, a.id), 'to': node_uuid(source, b.id)}
-        for a, b in zip(
-            nodes, nodes[1:], strict=False
-        )  # deliberately uneven: consecutive pairs
-    ]
-
-
-def head_uuid(nodes: list[models.ASTNode], source: str) -> str | None:
-    """The uuid of the stream's first node — the ``:HEAD`` the source hangs off — or None if the
-    stream is empty."""
-    return node_uuid(source, nodes[0].id) if nodes else None
 
 
 async def persist_nodes(
@@ -84,16 +67,15 @@ async def persist_nodes(
     source: str,
     metadata: dict[str, Any] | None = None,
 ) -> None:
-    """Upsert the book's ``:Source`` root, its structural node stream, the ``:HEAD`` link, and the
-    ``:NEXT`` chain. Idempotent: every MERGE keys on a deterministic uuid, so re-persisting the same
-    ``source`` updates in place. A no-op for an empty stream. ``source`` is the book identity and
-    ``metadata`` its optional attributes; every node's id must be assigned (post-flatten)."""
+    """Upsert the book's ``:Source`` root and its ``:Node`` vertices.
+
+    Vertices only — no ``:NEXT`` or ``:HEAD`` edges (those are written
+    by ``persist_chain`` with the merged statement/prose ordering).
+    """
     if not nodes:
         return
     source_props = source_properties(source, metadata)
     batches = node_batches(nodes, source)
-    pairs = next_pairs(nodes, source)
-    head = head_uuid(nodes, source)
 
     async with driver().session(database=database()) as session:
         await session.run(
@@ -102,117 +84,193 @@ async def persist_nodes(
             props=source_props,
         )
         for label, rows in batches.items():
-            query = f'UNWIND $rows AS row MERGE (n:{NODE_LABEL} {{uuid: row.uuid}}) SET n += row'
+            query = (
+                f'UNWIND $rows AS row '
+                f'MERGE (n:{NODE_LABEL} {{uuid: row.uuid}}) SET n += row'
+            )
             if label:
                 query += f' SET n:{label}'
             await session.run(query, rows=rows)
 
-        await session.run(
-            f'MATCH (s:{SOURCE_LABEL} {{uuid: $src}}), (n:{NODE_LABEL} {{uuid: $head}}) '
-            f'MERGE (s)-[:HEAD]->(n)',
-            src=source_props['uuid'],
-            head=head,
+
+def _merged_chain(
+    nodes: list[models.ASTNode],
+    statements: list[models.StatementNode],
+    source: str,
+) -> list[dict]:
+    """Build the ``{from, to}`` uuid pairs for the merged ``:NEXT`` chain.
+
+    Walks the raw node stream in document order, skipping nodes absorbed
+    into statements, and slotting ``:Statement`` nodes in their place.
+    Returns uuid pairs for consecutive elements in the merged chain.
+    """
+    # Which node ids are absorbed into a statement.
+    absorbed: set[int] = set()
+    for stmt in statements:
+        for mid in stmt.statement_of or []:
+            absorbed.add(mid)
+
+    # Map statement first-node id -> statement entity (for its graph uuid).
+    stmt_by_first: dict[int, models.StatementNode] = {}
+    for stmt in statements:
+        first = (stmt.statement_of or [None])[0]
+        if first is not None:
+            stmt_by_first[first] = stmt
+
+    # Walk nodes, emit chain elements.
+    chain: list[dict] = []
+    for node in nodes:
+        nid = node.id
+        if nid is None:
+            continue
+        if nid in stmt_by_first:
+            chain.append(
+                {
+                    'kind': 'statement',
+                    'uuid': statement_uuid(source, stmt_by_first[nid].id),
+                }
+            )
+            continue
+        if nid in absorbed:
+            continue
+        chain.append(
+            {
+                'kind': 'node',
+                'uuid': node_uuid(source, nid),
+            }
         )
+
+    return [
+        {'from': a['uuid'], 'to': b['uuid']}
+        for a, b in zip(chain, chain[1:], strict=False)
+    ]
+
+
+def _merged_head(
+    nodes: list[models.ASTNode],
+    statements: list[models.StatementNode],
+    source: str,
+) -> str | None:
+    """The uuid of the first element in the merged chain, or None if empty."""
+    absorbed: set[int] = set()
+    for stmt in statements:
+        for mid in stmt.statement_of or []:
+            absorbed.add(mid)
+    stmt_by_first: dict[int, models.StatementNode] = {}
+    for stmt in statements:
+        first = (stmt.statement_of or [None])[0]
+        if first is not None:
+            stmt_by_first[first] = stmt
+
+    for node in nodes:
+        nid = node.id
+        if nid is None:
+            continue
+        if nid in stmt_by_first:
+            return statement_uuid(source, stmt_by_first[nid].id)
+        if nid not in absorbed:
+            return node_uuid(source, nid)
+    return None
+
+
+async def persist_chain(
+    nodes: list[models.ASTNode],
+    statements: list[models.StatementNode],
+    source: str,
+) -> None:
+    """Write the merged ``:NEXT`` chain and ``:HEAD`` edge.
+
+    The chain mixes non-absorbed prose ``:Node`` vertices with
+    ``:Statement`` vertices in document order. Absorbed raw nodes are
+    skipped — they still exist in the graph for provenance but are not
+    in the walkable chain.
+    """
+    if not nodes:
+        return
+    pairs = _merged_chain(nodes, statements, source)
+    head = _merged_head(nodes, statements, source)
+    source_key = source_uuid(source)
+
+    async with driver().session(database=database()) as session:
+        if head:
+            await session.run(
+                f'MATCH (s:{SOURCE_LABEL} {{uuid: $src}}), '
+                f'(n {{uuid: $head}}) '
+                f'MERGE (s)-[:HEAD]->(n)',
+                src=source_key,
+                head=head,
+            )
         if pairs:
             await session.run(
                 f'UNWIND $pairs AS pair '
-                f'MATCH (a:{NODE_LABEL} {{uuid: pair.from}}), (b:{NODE_LABEL} {{uuid: pair.to}}) '
+                f'MATCH (a {{uuid: pair.from}}), '
+                f'(b {{uuid: pair.to}}) '
                 f'MERGE (a)-[:NEXT]->(b)',
                 pairs=pairs,
             )
 
 
-def entity_rows(entities: list[models.Entity], source: str) -> list[dict]:
-    """Every entity's property map, one flat list. Entities carry a single ``:Entity`` label —
-    ``type`` is an open induced property, never a label — so one batched MERGE writes them all."""
-    return [entity_properties(entity, source) for entity in entities]
-
-
-def member_pairs(entities: list[models.Entity], source: str) -> list[dict]:
-    """The ``{entity, node}`` uuid pairs for the ``:DERIVED_FROM`` edges: one per (entity, member) so
-    an entity links to every source chunk it was built from. A member id resolves to the ``:Node``
-    layer's own deterministic ``node_uuid``, so the edge lands on the real provenance chunk."""
+def statement_rows(
+    statements: list[models.StatementNode], source: str
+) -> list[dict]:
+    """Every statement's property map, one flat list."""
     return [
-        {
-            'entity': entity_uuid(source, entity.id),
-            'node': node_uuid(source, member),
-        }
-        for entity in entities
-        for member in entity.members
+        statement_properties(stmt, source) for stmt in statements
     ]
 
 
-async def persist_entities(entities: list[models.Entity], source: str) -> None:
-    """Upsert the book's ``:Entity`` overlay: one vertex per pedagogical block (a bare ``:Entity``
-    label), carrying a ``source`` property linking back to the already-persisted ``:Source``, and
-    linked to its structural chunks via ``:DERIVED_FROM``. Idempotent — every MERGE keys on a
-    deterministic uuid, so re-persisting the same ``source`` updates in place. A no-op for an empty
-    overlay. The ``:Source`` and ``:Node`` vertices are expected to already exist (the node
-    persister runs first); the MATCHes here attach to them rather than creating them. Every entity's
-    id must be assigned (post-flatten)."""
-    if not entities:
+async def persist_statements(
+    statements: list[models.StatementNode], source: str
+) -> None:
+    """Upsert the book's ``:Statement`` overlay, rooted under the
+    already-persisted ``:Source`` via ``:HAS_STATEMENT``."""
+    if not statements:
         return
-    rows = entity_rows(entities, source)
-    pairs = member_pairs(entities, source)
+    rows = statement_rows(statements, source)
 
     async with driver().session(database=database()) as session:
         await session.run(
-            f'UNWIND $rows AS row MERGE (e:{ENTITY_LABEL} {{uuid: row.uuid}}) SET e += row',
+            f'UNWIND $rows AS row '
+            f'MERGE (s:{STATEMENT_LABEL} {{uuid: row.uuid}}) '
+            f'SET s += row',
             rows=rows,
         )
-        if pairs:
-            await session.run(
-                f'UNWIND $pairs AS pair '
-                f'MATCH (e:{ENTITY_LABEL} {{uuid: pair.entity}}), (n:{NODE_LABEL} {{uuid: pair.node}}) '
-                f'MERGE (e)-[:DERIVED_FROM]->(n)',
-                pairs=pairs,
-            )
 
 
 async def persist_procedures(
-    entities: list[models.Entity], source: str
+    statements: list[models.StatementNode], source: str
 ) -> None:
-    """Upsert the procedural layer: one ``:Procedure`` per derivation (a bare ``:Procedure``
-    label), hung off its entity via ``:HAS_PROCEDURE`` and linked to its own source chunks via
-    ``:DERIVED_FROM``; one ``:Act`` per step, threaded ``:FIRST`` from the procedure and ``:THEN``
-    along the steps. Idempotent — every MERGE keys on a deterministic uuid. A no-op when no entity
-    carries a derivation. The ``:Entity`` and ``:Node`` vertices are expected to already exist (the
-    node and entity persisters run first); the MATCHes attach to them. Every entity's id must be
-    assigned (post-flatten)."""
-    procedure_batch = procedure_rows(entities, source)
+    """Upsert the procedural layer: one ``:Procedure`` per derivation hung
+    off its statement via ``:HAS_PROCEDURE``."""
+    procedure_batch = procedure_rows(statements, source)
     if not procedure_batch:
         return
-    acts = act_rows(entities, source)
-    owners = has_procedure_pairs(entities, source)
-    members = procedure_member_pairs(entities, source)
-    firsts = first_pairs(entities, source)
-    thens = then_pairs(entities, source)
+    acts = act_rows(statements, source)
+    owners = has_procedure_pairs(statements, source)
+    firsts = first_pairs(statements, source)
+    thens = then_pairs(statements, source)
 
     async with driver().session(database=database()) as session:
         await session.run(
-            f'UNWIND $rows AS row MERGE (p:{PROCEDURE_LABEL} {{uuid: row.uuid}}) SET p += row',
+            f'UNWIND $rows AS row '
+            f'MERGE (p:{PROCEDURE_LABEL} {{uuid: row.uuid}}) '
+            f'SET p += row',
             rows=procedure_batch,
         )
         if acts:
             await session.run(
-                f'UNWIND $rows AS row MERGE (a:{ACT_LABEL} {{uuid: row.uuid}}) SET a += row',
+                f'UNWIND $rows AS row '
+                f'MERGE (a:{ACT_LABEL} {{uuid: row.uuid}}) '
+                f'SET a += row',
                 rows=acts,
             )
         await session.run(
             f'UNWIND $pairs AS pair '
-            f'MATCH (e:{ENTITY_LABEL} {{uuid: pair.entity}}), '
+            f'MATCH (s:{STATEMENT_LABEL} {{uuid: pair.statement}}), '
             f'(p:{PROCEDURE_LABEL} {{uuid: pair.procedure}}) '
-            f'MERGE (e)-[:HAS_PROCEDURE]->(p)',
+            f'MERGE (s)-[:HAS_PROCEDURE]->(p)',
             pairs=owners,
         )
-        if members:
-            await session.run(
-                f'UNWIND $pairs AS pair '
-                f'MATCH (p:{PROCEDURE_LABEL} {{uuid: pair.procedure}}), '
-                f'(n:{NODE_LABEL} {{uuid: pair.node}}) '
-                f'MERGE (p)-[:DERIVED_FROM]->(n)',
-                pairs=members,
-            )
         if firsts:
             await session.run(
                 f'UNWIND $pairs AS pair '
@@ -224,7 +282,8 @@ async def persist_procedures(
         if thens:
             await session.run(
                 f'UNWIND $pairs AS pair '
-                f'MATCH (a:{ACT_LABEL} {{uuid: pair.from}}), (b:{ACT_LABEL} {{uuid: pair.to}}) '
+                f'MATCH (a:{ACT_LABEL} {{uuid: pair.from}}), '
+                f'(b:{ACT_LABEL} {{uuid: pair.to}}) '
                 f'MERGE (a)-[:THEN]->(b)',
                 pairs=thens,
             )

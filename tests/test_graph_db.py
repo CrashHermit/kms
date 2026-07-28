@@ -7,16 +7,7 @@ import json
 import httpx
 import pytest
 
-from kms.graph.db import (
-    HttpQueryDriver,
-    HttpQueryError,
-    _http_base_url,
-    _use_http,
-    close_driver,
-    database,
-    driver,
-    is_configured,
-)
+from kms.graph import db
 
 _CONN_ENV = {
     'NEO4J_URI': 'bolt://localhost:7687',
@@ -32,42 +23,42 @@ def _set_conn(monkeypatch):
 
 def test_is_configured_tracks_the_uri_env(monkeypatch):
     monkeypatch.delenv('NEO4J_URI', raising=False)
-    assert is_configured() is False
+    assert db.is_configured() is False
     monkeypatch.setenv('NEO4J_URI', 'bolt://localhost:7687')
-    assert is_configured() is True
+    assert db.is_configured() is True
 
 
 def test_database_defaults_to_neo4j_and_honours_override(monkeypatch):
     monkeypatch.delenv('NEO4J_DATABASE', raising=False)
-    assert database() == 'neo4j'
+    assert db.database() == 'neo4j'
     monkeypatch.setenv('NEO4J_DATABASE', 'kms')
-    assert database() == 'kms'
+    assert db.database() == 'kms'
 
 
 def test_driver_raises_a_clear_error_when_unconfigured(monkeypatch):
     for k in _CONN_ENV:
         monkeypatch.delenv(k, raising=False)
-    asyncio.run(close_driver())  # ensure no singleton lingers from another test
+    asyncio.run(db.close_driver())  # ensure no singleton lingers from another test
     with pytest.raises(RuntimeError, match='NEO4J_URI is not set'):
-        driver()
+        db.driver()
 
 
 def test_driver_is_a_reused_singleton_until_closed(monkeypatch):
     _set_conn(monkeypatch)
     try:
-        first = driver()
-        assert driver() is first  # same pooled instance, not rebuilt per call
+        first = db.driver()
+        assert db.driver() is first  # same pooled instance, not rebuilt per call
     finally:
-        asyncio.run(close_driver())
+        asyncio.run(db.close_driver())
 
 
 def test_close_driver_is_a_safe_noop_when_nothing_opened(monkeypatch):
     _set_conn(monkeypatch)
-    asyncio.run(close_driver())  # never opened -> must not raise
-    opened = driver()
-    asyncio.run(close_driver())  # closing a real one resets the singleton
-    assert driver() is not opened  # a fresh instance after close
-    asyncio.run(close_driver())
+    asyncio.run(db.close_driver())  # never opened -> must not raise
+    opened = db.driver()
+    asyncio.run(db.close_driver())  # closing a real one resets the singleton
+    assert db.driver() is not opened  # a fresh instance after close
+    asyncio.run(db.close_driver())
 
 
 # --- HTTP Query-API transport: selection, URL derivation, and request/response shaping ---
@@ -78,37 +69,43 @@ def test_transport_env_selects_http_over_a_bolt_uri(monkeypatch):
     # from the same host (the Bolt-blocked-sandbox path: flip one env var, keep the URI).
     monkeypatch.setenv('NEO4J_URI', 'neo4j+s://abc123.databases.neo4j.io')
     monkeypatch.setenv('NEO4J_TRANSPORT', 'http')
-    assert _use_http() is True
-    assert _http_base_url() == 'https://abc123.databases.neo4j.io'
+    assert db._use_http() is True
+    assert (
+        db._http_base_url()
+        == 'https://abc123.databases.neo4j.io'
+    )
 
 
 def test_transport_is_inferred_from_an_https_uri_scheme(monkeypatch):
     monkeypatch.delenv('NEO4J_TRANSPORT', raising=False)
     monkeypatch.setenv('NEO4J_URI', 'https://abc123.databases.neo4j.io')
-    assert _use_http() is True
-    assert _http_base_url() == 'https://abc123.databases.neo4j.io'
+    assert db._use_http() is True
+    assert (
+        db._http_base_url()
+        == 'https://abc123.databases.neo4j.io'
+    )
 
 
 def test_bolt_stays_the_default_transport(monkeypatch):
     monkeypatch.delenv('NEO4J_TRANSPORT', raising=False)
     monkeypatch.setenv('NEO4J_URI', 'neo4j+s://abc123.databases.neo4j.io')
-    assert _use_http() is False
+    assert db._use_http() is False
 
 
 def test_driver_returns_the_http_facade_when_selected(monkeypatch):
     _set_conn(monkeypatch)
     monkeypatch.setenv('NEO4J_TRANSPORT', 'http')
-    asyncio.run(close_driver())
+    asyncio.run(db.close_driver())
     try:
-        assert isinstance(driver(), HttpQueryDriver)
+        assert isinstance(db.driver(), db.HttpQueryDriver)
     finally:
-        asyncio.run(close_driver())
+        asyncio.run(db.close_driver())
 
 
-def _mock_driver(handler) -> HttpQueryDriver:
+def _mock_driver(handler) -> db.HttpQueryDriver:
     """An HttpQueryDriver whose client answers from a handler instead of the network, so the
     request-shaping and response-parsing are testable with no server."""
-    d = HttpQueryDriver('https://host.databases.neo4j.io', ('neo4j', 'pw'))
+    d = db.HttpQueryDriver('https://host.databases.neo4j.io', ('neo4j', 'pw'))
     d._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     return d
 
@@ -165,7 +162,7 @@ def test_http_run_raises_neo4j_error_with_its_code():
         finally:
             await d.close()
 
-    with pytest.raises(HttpQueryError, match='Unauthorized'):
+    with pytest.raises(db.HttpQueryError, match='Unauthorized'):
         asyncio.run(scenario())
 
 

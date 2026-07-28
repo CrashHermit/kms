@@ -43,7 +43,7 @@ attaches it to the block it derives. Decomposition is universal: a solution's st
 proof's.
 
 The entity persister is the terminal stage: it orders the overlay into one document-ordered,
-globally-id'd list and upserts it as the graph's `:Entity` layer (rooted under the `:Source`,
+globally-id'd list and upserts it as the graph's ``:Statement`` layer (rooted under the ``:Source``),
 linked back to its member `:Node` chunks), then the procedural layer (`:Procedure` per derivation,
 `:Act` per step, threaded `:FIRST`/`:THEN`). A no-op when Neo4j isn't configured. The concept layer
 is currently dark. After the graph returns, `run()` only assembles the markdown document: assembly
@@ -56,19 +56,20 @@ from typing import TYPE_CHECKING
 from langgraph.graph import END, START, StateGraph
 
 from kms.core import state, tracing
-from kms.ingestion.pedagogical_component_finder import PedagogicalComponentFinderNode
-from kms.ingestion.instruction_distributor import InstructionDistributorNode
-from kms.ingestion.procedure_extractor import ProcedureExtractorNode
-from kms.ingestion.role_typer import RoleTyperNode
-from kms.ingestion.splitter import SplitterNode
-from kms.ingestion.instruction_finder import InstructionFinderNode
-from kms.ingestion.statement_extractor import StatementExtractorNode
-from kms.graph.db import close_driver
-from kms.graph.persister import NodePersisterNode
-from kms.ingestion.corrector import CorrectorNode
-from kms.ingestion.extractor import ExtractorNode
-from kms.ingestion.seam_merger import SeamMergerNode
-from kms.output.assembler import assemble
+from kms.graph import db, persister
+from kms.ingestion import (
+    corrector,
+    extractor,
+    instruction_distributor,
+    instruction_finder,
+    pedagogical_component_finder,
+    procedure_extractor,
+    role_typer,
+    seam_merger,
+    splitter,
+    statement_extractor,
+)
+from kms.output import assembler
 
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
@@ -88,48 +89,63 @@ def build_graph() -> 'CompiledStateGraph':
     # a no-op unless KMS_TRACE_DIR is set.
     tracing.enable_from_env()
 
-    corrector = CorrectorNode()
-    extractor = ExtractorNode()
-    seam = SeamMergerNode()
-    splitter = SplitterNode()
-    instruction_finder = InstructionFinderNode()
-    node_persister = NodePersisterNode()
-    pedagogical_component_finder = PedagogicalComponentFinderNode()
-    role_typer = RoleTyperNode()
-    statement_extractor = StatementExtractorNode()
-    procedure_extractor = ProcedureExtractorNode()
-    instruction_distributor = InstructionDistributorNode()
+    corrector_node = corrector.CorrectorNode()
+    extractor_node = extractor.ExtractorNode()
+    seam_node = seam_merger.SeamMergerNode()
+    splitter_node = splitter.SplitterNode()
+    instruction_finder_node = instruction_finder.InstructionFinderNode()
+    node_persister_node = persister.IngestionPersisterNode()
+    pcf_node = pedagogical_component_finder.PedagogicalComponentFinderNode()
+    role_typer_node = role_typer.RoleTyperNode()
+    statement_extractor_node = (
+        statement_extractor.StatementExtractorNode()
+    )
+    procedure_extractor_node = (
+        procedure_extractor.ProcedureExtractorNode()
+    )
+    instruction_distributor_node = (
+        instruction_distributor.InstructionDistributorNode()
+    )
 
     graph = StateGraph(state.State)
 
     # Each stage registers its worker (Send target) and collect (drain) nodes.
-    graph.add_node('corrector_worker', corrector.worker)
-    graph.add_node('corrector_collect', corrector.collect)
-    graph.add_node('extractor_worker', extractor.worker)
-    graph.add_node('extractor_collect', extractor.collect)
-    graph.add_node('seam_even_worker', seam.even_worker)
-    graph.add_node('seam_even_collect', seam.even_collect)
-    graph.add_node('seam_odd_worker', seam.odd_worker)
-    graph.add_node('seam_odd_collect', seam.odd_collect)
-    graph.add_node('splitter', splitter.run)
-    graph.add_node('instruction_finder', instruction_finder.run)
-    graph.add_node('instruction_distributor', instruction_distributor.run)
-    graph.add_node('node_persister', node_persister.run)
-    graph.add_node('pedagogical_component_finder', pedagogical_component_finder.run)
-    graph.add_node('role_typer', role_typer.run)
-    graph.add_node('statement_extractor', statement_extractor.run)
-    graph.add_node('procedure_extractor', procedure_extractor.run)
+    graph.add_node('corrector_worker', corrector_node.worker)
+    graph.add_node('corrector_collect', corrector_node.collect)
+    graph.add_node('extractor_worker', extractor_node.worker)
+    graph.add_node('extractor_collect', extractor_node.collect)
+    graph.add_node('seam_even_worker', seam_node.even_worker)
+    graph.add_node('seam_even_collect', seam_node.even_collect)
+    graph.add_node('seam_odd_worker', seam_node.odd_worker)
+    graph.add_node('seam_odd_collect', seam_node.odd_collect)
+    graph.add_node('splitter', splitter_node.run)
+    graph.add_node('instruction_finder', instruction_finder_node.run)
+    graph.add_node(
+        'instruction_distributor',
+        instruction_distributor_node.run,
+    )
+    graph.add_node('ingestion_persister', node_persister_node.run)
+    graph.add_node(
+        'pedagogical_component_finder', pcf_node.run
+    )
+    graph.add_node('role_typer', role_typer_node.run)
+    graph.add_node(
+        'statement_extractor', statement_extractor_node.run
+    )
+    graph.add_node(
+        'procedure_extractor', procedure_extractor_node.run
+    )
 
     # A stage's dispatch is a conditional edge off the previous collect: it either fans
     # out Sends to the worker or short-circuits straight to its own collect.
     graph.add_conditional_edges(
-        START, corrector.dispatch, ['corrector_worker', 'corrector_collect']
+        START, corrector_node.dispatch, ['corrector_worker', 'corrector_collect']
     )
     graph.add_edge('corrector_worker', 'corrector_collect')
 
     graph.add_conditional_edges(
         'corrector_collect',
-        extractor.dispatch,
+        extractor_node.dispatch,
         ['extractor_worker', 'extractor_collect'],
     )
     graph.add_edge('extractor_worker', 'extractor_collect')
@@ -138,13 +154,13 @@ def build_graph() -> 'CompiledStateGraph':
     # same segment (see seam_merger's parity note).
     graph.add_conditional_edges(
         'extractor_collect',
-        seam.dispatch_even,
+        seam_node.dispatch_even,
         ['seam_even_worker', 'seam_even_collect'],
     )
     graph.add_edge('seam_even_worker', 'seam_even_collect')
     graph.add_conditional_edges(
         'seam_even_collect',
-        seam.dispatch_odd,
+        seam_node.dispatch_odd,
         ['seam_odd_worker', 'seam_odd_collect'],
     )
     graph.add_edge('seam_odd_worker', 'seam_odd_collect')
@@ -159,19 +175,14 @@ def build_graph() -> 'CompiledStateGraph':
 
     # Persist the finalized node stream as the graph's provenance layer.
     # It sits after the splitter, instruction finder, and instruction distributor
-    # (which all mutate the stream) so the persisted node ids match the overlay's members
-    # and instruction nodes are excluded.
-    graph.add_edge('instruction_distributor', 'node_persister')
-
-    # One entity chain, sequential. The finder's cursor-walk is not shardable, and the two
-    # extractors both write the `entities` channel, so sequencing avoids a reducer clash for no
-    # meaningful latency cost. The instruction distributor runs last because it reads each
-    # block's contents/number (which the statement extractor fills) to judge governance.
-    graph.add_edge('node_persister', 'pedagogical_component_finder')
+    # (which all mutate the stream) so the persisted node ids match the overlay's
+    # members and instruction nodes are excluded.
+    graph.add_edge('instruction_distributor', 'pedagogical_component_finder')
     graph.add_edge('pedagogical_component_finder', 'role_typer')
     graph.add_edge('role_typer', 'statement_extractor')
     graph.add_edge('statement_extractor', 'procedure_extractor')
-    graph.add_edge('procedure_extractor', END)
+    graph.add_edge('procedure_extractor', 'ingestion_persister')
+    graph.add_edge('ingestion_persister', END)
 
 
     return graph.compile()
@@ -191,7 +202,7 @@ async def run(
     The Mistral OCR API turns each page into reading-ordered markdown plus extracted
     figures (no GPU, no docling); the graph then corrects, parses, heals, builds the typed
     block overlay, and (when Neo4j is configured) persists the ``:Node`` provenance layer and
-    the ``:Entity`` overlay plus its procedural layer on top of it. ``pages`` (0-based) optionally limits which pages are
+    the ``:Statement`` overlay plus its procedural layer on top of it. ``pages`` (0-based) optionally limits which pages are
     sent. ``source`` is the book identity used as the graph's Neo4j key (defaults to the PDF's
     filename); ``title``/``author`` are optional book attributes stored on the ``:Source`` node.
     Graph persistence is skipped entirely when Neo4j isn't configured — a DB-less run still
@@ -217,7 +228,7 @@ async def run(
             {'recursion_limit': 1000},
         )
         nodes = result['nodes']
-        written = assemble(
+        written = assembler.assemble(
             nodes, result['segments'], output_dir=output_dir, filename=filename
         )
         return written
@@ -226,5 +237,5 @@ async def run(
         # drains and the sweep looks like it captured nothing. No-op when tracing is off.
         tracing.flush()
         await (
-            close_driver()
+            db.close_driver()
         )  # release the Neo4j connection pool (a no-op if never opened)

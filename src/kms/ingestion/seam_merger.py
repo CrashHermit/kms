@@ -108,7 +108,7 @@ def _to_seam_node_dto(node: models.ASTNode | None) -> SeamNodeDTO:
     if node is None:
         return SeamNodeDTO(content=None, types=[])
     return SeamNodeDTO(
-        content=node.content, types=[node.type] if node.type else []
+        content=node.content, types=[node.kind]
     )
 
 

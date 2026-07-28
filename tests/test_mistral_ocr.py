@@ -3,7 +3,7 @@ pure transform that turns an OCR JSON response into the pipeline's models.Segmen
 
 from pathlib import Path
 
-from kms.ingestion.ocr import _rewrite_page, build_segments
+from kms.ingestion import ocr
 
 # A 1x1 PNG, base64 — stands in for a returned figure crop.
 _PNG_B64 = (
@@ -37,7 +37,7 @@ def test_build_segments_rewrites_refs_and_saves_pictures(tmp_path):
             }
         ]
     }
-    segs = build_segments(resp, tmp_path)
+    segs = ocr.build_segments(resp, tmp_path)
     assert len(segs) == 1
     segment = segs[0]
     assert segment.index == 0
@@ -66,7 +66,7 @@ def test_unreferenced_figure_is_still_saved(tmp_path):
             }
         ]
     }
-    segs = build_segments(resp, tmp_path)
+    segs = ocr.build_segments(resp, tmp_path)
     assert len(segs[0].pictures) == 1
     assert Path(segs[0].pictures[0].image_path).exists()
 
@@ -74,7 +74,7 @@ def test_unreferenced_figure_is_still_saved(tmp_path):
 def test_non_figure_link_left_untouched(tmp_path):
     # A markdown link whose target is not an extracted figure id passes through as-is.
     md = 'see ![diagram](https://example.com/x.png) here'
-    rewritten, pics = _rewrite_page(
+    rewritten, pics = ocr._rewrite_page(
         md, [], tmp_path / 'Segments' / 'Segment_0000'
     )
     assert rewritten == md
@@ -98,7 +98,7 @@ def test_pages_are_indexed_densely(tmp_path):
             },
         ]
     }
-    segs = build_segments(resp, tmp_path)
+    segs = ocr.build_segments(resp, tmp_path)
     assert [s.index for s in segs] == [0, 1]
     assert all(len(s.pictures) == 1 for s in segs)
     assert all('![1]()' in s.content for s in segs)

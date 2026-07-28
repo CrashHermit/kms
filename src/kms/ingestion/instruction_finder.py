@@ -29,7 +29,7 @@ import dspy
 from pydantic import BaseModel
 
 from kms.core import llm, logs, models, state
-from kms.core.walker import estimate_tokens, window_from
+from kms.core.walker import window_from
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +119,7 @@ async def tag_instructions(
             [
                 WindowNode(
                     position=k,
-                    type=(node.type.value if node.type else ''),
+                    type=node.kind,
                     content=node.content,
                 )
                 for k, node in enumerate(window)
@@ -127,14 +127,18 @@ async def tag_instructions(
         )
         for position in positions:
             clamped = min(max(position, 0), last_local)
-            window[clamped].type = models.NodeType.INSTRUCTION
+            global_index = cursor + clamped
+            old = nodes[global_index]
+            nodes[global_index] = models.InstructionNode(
+                content=old.content, id=old.id, segment_index=old.segment_index
+            )
             logger.debug(
                 'lead-in at node %s: %r',
-                window[clamped].id,
-                logs.elide(window[clamped].content),
+                nodes[global_index].id,
+                logs.elide(nodes[global_index].content),
             )
         cursor = end
-    tagged = [node for node in nodes if node.type == models.NodeType.INSTRUCTION]
+    tagged = [node for node in nodes if isinstance(node, models.InstructionNode)]
     logger.info(
         'instruction finder: %d node(s) -> %d lead-in(s) tagged',
         node_count,

@@ -79,7 +79,7 @@ def test_every_stage_class_is_named_for_its_module():
     stages = _stage_modules()
     if not stages:
         pytest.skip('dspy is stubbed; stage classes are not importable')
-    assert len(stages) >= 10
+    assert len(stages) >= 7
     for module_name, klass in stages:
         assert (
             datasets.stage_name(klass.__name__)

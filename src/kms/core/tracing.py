@@ -37,7 +37,7 @@ signal (transcription -> corrected) is kept in full.
 USAGE. Set ``KMS_TRACE_DIR`` and run the pipeline — ``run()`` enables capture when the variable
 is set, so both the CLI and library callers get it:
 
-    KMS_TRACE_DIR=traces/stein PYTHONPATH=src uv run --extra mlflow --extra mistral \
+    KMS_TRACE_DIR=traces/stein PYTHONPATH=src uv run --extra mistral \
         python -m kms.cli book.pdf out/
 
 Traces land in ``<dir>/mlruns.db`` under an experiment named after the directory. To read

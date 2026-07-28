@@ -1,52 +1,12 @@
-"""Pedagogical component finder: the core cursor-walk banking rule, the statement/derivation cut,
-and the graph-node wrapper.
-
-The finder emits UNTYPED spans — whether a span is a block or a derivation is `role_typer`'s
-question, so nothing here asserts a role."""
+"""Pedagogical component finder: cursor-walk banking and span cutting."""
 
 import asyncio
 
 from kms.core import models
-from kms.ingestion.pedagogical_component_finder import (
-    PedagogicalComponentFinderNode,
-    Span,
-    _normalize_spans,
-    find_spans,
-)
-
-
-def _nodes():
-    return [
-        models.ASTNode(
-            type=models.NodeType.PARAGRAPH,
-            content='intro prose',
-            id=0,
-            segment_index=0,
-        ),
-        models.ASTNode(
-            type=models.NodeType.HEADER,
-            content='Example 1',
-            id=1,
-            segment_index=0,
-        ),
-        models.ASTNode(
-            type=models.NodeType.PARAGRAPH,
-            content='solve this',
-            id=2,
-            segment_index=0,
-        ),
-        models.ASTNode(
-            type=models.NodeType.PARAGRAPH,
-            content='more prose',
-            id=3,
-            segment_index=0,
-        ),
-    ]
+from kms.ingestion import pedagogical_component_finder
 
 
 class _ScriptedFinder:
-    """A stand-in Module whose aforward returns pre-scripted spans per call."""
-
     def __init__(self, scripted):
         self._scripted = list(scripted)
 
@@ -54,57 +14,85 @@ class _ScriptedFinder:
         return self._scripted.pop(0) if self._scripted else []
 
 
+def _nodes():
+    return [
+        models.ParagraphNode(content='intro prose', id=0),
+        models.HeaderNode(content='Example 1', id=1),
+        models.ParagraphNode(content='solve this', id=2),
+        models.ParagraphNode(content='more prose', id=3),
+    ]
+
+
 def test_banks_a_bounded_span_and_emits_member_ids():
-    # First read spans the Example (local positions 1-2); node 3 follows it, so it is
-    # bounded and banked. The cursor then advances past it and the tail read is empty.
-    module = _ScriptedFinder([[Span(start=1, end=2)], []])
-    spans = asyncio.run(find_spans(_nodes(), module=module))
-    assert spans == [[1, 2]]  # stable global ids, not positions
+    module = _ScriptedFinder(
+        [[pedagogical_component_finder.Span(start=1, end=2)], []]
+    )
+    spans = asyncio.run(
+        pedagogical_component_finder.find_spans(
+            _nodes(), module=module
+        )
+    )
+    assert spans == [[1, 2]]
 
 
 def test_statement_and_derivation_are_cut_into_separate_spans():
-    # A statement at 1 and its derivation at 2 — two adjacent spans, never fused. The cut
-    # is made here (a boundary); which one is the derivation is decided downstream.
-    module = _ScriptedFinder([[Span(start=1, end=1), Span(start=2, end=2)], []])
-    assert asyncio.run(find_spans(_nodes(), module=module)) == [[1], [2]]
+    module = _ScriptedFinder(
+        [
+            [
+                pedagogical_component_finder.Span(start=1, end=1),
+                pedagogical_component_finder.Span(start=2, end=2),
+            ],
+            [],
+        ]
+    )
+    assert asyncio.run(
+        pedagogical_component_finder.find_spans(
+            _nodes(), module=module
+        )
+    ) == [[1], [2]]
 
 
 def test_on_prose_only_stream_returns_nothing():
     module = _ScriptedFinder([[]])
-    assert asyncio.run(find_spans(_nodes(), module=module)) == []
-
-
-# --- span normalisation: clamping, sorting, overlaps preserved ---
+    assert (
+        asyncio.run(
+            pedagogical_component_finder.find_spans(
+                _nodes(), module=module
+            )
+        )
+        == []
+    )
 
 
 def test_normalize_spans_clamps_into_the_window():
-    cleaned = _normalize_spans([Span(start=-5, end=99)], 2)
+    cleaned = pedagogical_component_finder._normalize_spans(
+        [pedagogical_component_finder.Span(start=-5, end=99)], 2
+    )
     assert (cleaned[0].start, cleaned[0].end) == (0, 2)
 
 
 def test_normalize_spans_preserves_overlaps():
-    cleaned = _normalize_spans(
+    cleaned = pedagogical_component_finder._normalize_spans(
         [
-            Span(start=0, end=2),
-            Span(start=1, end=3),
-            Span(start=3, end=3),
+            pedagogical_component_finder.Span(start=0, end=2),
+            pedagogical_component_finder.Span(start=1, end=3),
+            pedagogical_component_finder.Span(start=3, end=3),
         ],
         3,
     )
-    assert [(span.start, span.end) for span in cleaned] == [
-        (0, 2),
-        (1, 3),
-        (3, 3),
-    ]
-
-
-# --- graph node ---
+    assert [(s.start, s.end) for s in cleaned] == [(0, 2), (1, 3), (3, 3)]
 
 
 def test_node_run_writes_the_spans_channel():
-    node = PedagogicalComponentFinderNode(
+    node = pedagogical_component_finder.PedagogicalComponentFinderNode(
         module=_ScriptedFinder(
-            [[Span(start=1, end=1), Span(start=2, end=2)], []]
+            [
+                [
+                    pedagogical_component_finder.Span(start=1, end=1),
+                    pedagogical_component_finder.Span(start=2, end=2),
+                ],
+                [],
+            ]
         )
     )
     out = asyncio.run(node.run({'nodes': _nodes()}))
@@ -113,5 +101,7 @@ def test_node_run_writes_the_spans_channel():
 
 
 def test_node_run_on_empty_stream_yields_an_empty_channel():
-    node = PedagogicalComponentFinderNode(module=_ScriptedFinder([]))
+    node = pedagogical_component_finder.PedagogicalComponentFinderNode(
+        module=_ScriptedFinder([])
+    )
     assert asyncio.run(node.run({'nodes': []})) == {'spans': []}

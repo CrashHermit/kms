@@ -153,9 +153,9 @@ async def _govern_one(
         last_local = len(window) - 1
         exhausted = len(window) == len(candidates)
 
-        instruction, positions = await module.acall(
-            lead_in.content or '',
-            [
+        instruction, positions = await module.aforward(
+            lead_in=lead_in.content or '',
+            following=[
                 WindowProblem(
                     position=k, content=_node_text(window[k])
                 )
@@ -198,7 +198,7 @@ async def distribute_instructions(
         The cleaned node stream — instruction nodes removed, governed exercises enriched.
     """
     lead_ins = [
-        node for node in nodes if node.type == models.NodeType.INSTRUCTION
+        node for node in nodes if isinstance(node, models.InstructionNode)
     ]
     if not lead_ins:
         logger.info(
@@ -210,7 +210,7 @@ async def distribute_instructions(
     module = module or InstructionDistributor()
 
     # Index the stream so we know what follows each lead-in.
-    position_of = {id(node): i for i, node in enumerate(nodes) if node.id is not None}
+    position_of = {node.id: i for i, node in enumerate(nodes) if node.id is not None}
     lead_positions = sorted(
         position_of.get(node.id) for node in lead_ins if node.id is not None
     )
@@ -228,20 +228,14 @@ async def distribute_instructions(
         candidates = [
             n
             for n in nodes[here + 1 : next_lead]
-            if n.type != models.NodeType.INSTRUCTION
+            if not isinstance(n, models.InstructionNode)
         ]
         await _govern_one(node, candidates, module)
 
     # Remove instruction nodes from the stream.
     cleaned = [
-        node for node in nodes if node.type != models.NodeType.INSTRUCTION
+        node for node in nodes if not isinstance(node, models.InstructionNode)
     ]
-    stamped = sum(
-        1
-        for node in cleaned
-        if node.content
-        and node.content != (nodes[pos].content if (pos := next((i for i, n in enumerate(nodes) if n.id == node.id), None)) is not None else '')
-    )
     logger.info(
         'instruction distributor: %d lead-in(s) removed, '
         '%d of %d node(s) remain',

@@ -293,7 +293,7 @@ async def find_spans(
                 [
                     WindowNode(
                         position=k,
-                        type=(node.type.value if node.type else ''),
+                        type=node.kind,
                         content=node.content,
                     )
                     for k, node in enumerate(window)

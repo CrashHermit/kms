@@ -11,7 +11,7 @@ import logging
 import os
 import sys
 
-from kms.pipeline import run
+from kms import pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=_log_level(), format='%(name)s: %(message)s')
     pdf = args[0] if args else 'test.pdf'
     out_dir = args[1] if len(args) > 1 else 'output'
-    written = asyncio.run(run(pdf, output_dir=out_dir))
+    written = asyncio.run(pipeline.run(pdf, output_dir=out_dir))
     logger.info('Wrote assembled document to: %s', written)
 
 

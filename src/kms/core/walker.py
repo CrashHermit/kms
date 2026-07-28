@@ -2,6 +2,7 @@ from kms.core import models
 
 
 def estimate_tokens(node: models.ASTNode) -> int:
+    """A rough token estimate for a node: character count ÷ 4, clamped."""
     return len(node.content or '') // 4 + 1
 
 

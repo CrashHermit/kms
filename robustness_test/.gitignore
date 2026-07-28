@@ -1,3 +1,0 @@
-# Intermediate per-page renders (Mistral page PNGs + extracted figure crops).
-# ~9.5M, not training data, and reconstructable by re-running from books/.
-runs/*/Segments/

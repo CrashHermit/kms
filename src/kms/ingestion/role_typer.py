@@ -23,7 +23,7 @@ something to work out?" — it only labels the spans it is given. A unit the boo
 out simply produces no procedure-role span, because the finder never cut one.
 
 Entry point ``type_roles(spans, nodes_by_id)`` (async): returns the ``(entities,
-procedure_spans)`` pair the rest of the entity layer consumes. Persistence-agnostic.
+procedure_ids)`` pair the rest of the pipeline consumes. Persistence-agnostic.
 """
 
 import asyncio
@@ -151,26 +151,28 @@ def contents_of(span: list[int], nodes_by_id: dict[int, models.ASTNode]) -> str:
     )
 
 
+def _mark_statement(
+    node: models.ASTNode, span: list[int]
+) -> models.StatementNode:
+    """Promote a plain node to a StatementNode carrying the span's member ids."""
+    return models.StatementNode(
+        content=node.content,
+        id=node.id,
+        segment_index=node.segment_index,
+        statement_of=span,
+    )
+
+
 async def type_roles(
     spans: list[list[int]],
     nodes_by_id: dict[int, models.ASTNode],
     module: RoleTyper | None = None,
-) -> tuple[list[models.Entity], list[list[int]]]:
-    """Split the finder's untyped spans into blocks and derivations.
+) -> tuple[list[int], list[int]]:
+    """Diagnose each group's composition and produce statement/procedure ids.
 
-    Each span is classified independently, so the calls run concurrently. Document order is
-    preserved on both sides of the split: the finder emits spans in order and this pass
-    keeps that order.
-
-    Args:
-        spans: The finder's untyped spans, each a list of member node ids.
-        nodes_by_id: The full node stream keyed by stable id.
-        module: The classifier module. Created fresh if None.
-
-    Returns:
-        An ``(entities, procedure_spans)`` pair in document order. Entities carry their
-        member node ids and nothing else — the attributes come from ``block_typer`` and
-        ``statement_extractor``.
+    Every group produces a StatementNode (real or placeholder). Groups with a
+    procedure portion get a Procedure attached (real or placeholder). Returns
+    ``(statement_ids, procedure_ids)`` — both ``list[int]`` of first-node ids.
     """
     module = module or RoleTyper()
     if not spans:
@@ -180,44 +182,54 @@ async def type_roles(
     roles = await asyncio.gather(
         *(module.acall(contents_of(span, nodes_by_id)) for span in spans)
     )
-    entities: list[models.Entity] = []
-    procedure_spans: list[list[int]] = []
+    statement_ids: list[int] = []
+    procedure_ids: list[int] = []
     for span, role in zip(spans, roles, strict=True):
+        first = span[0]
+        if first not in nodes_by_id:
+            continue
+        stmt = _mark_statement(nodes_by_id[first], span)
+        nodes_by_id[first] = stmt
+        statement_ids.append(first)
         if role == PROCEDURE_ROLE:
-            procedure_spans.append(span)
-        else:
-            entities.append(models.Entity(members=span))
+            stmt.procedures.append(models.Procedure(index=0))
+            procedure_ids.append(first)
 
     logger.info(
-        'role typer: %d span(s) -> %d block(s), %d derivation(s)',
+        'role typer: %d span(s) -> %d statement(s), %d procedure(s)',
         len(spans),
-        len(entities),
-        len(procedure_spans),
+        len(statement_ids),
+        len(procedure_ids),
     )
-    return entities, procedure_spans
+    return statement_ids, procedure_ids
 
 
 # --- LangGraph node: split the untyped spans into blocks and derivations ---
 
 
 class RoleTyperNode:
-    """Classifies each span from the group finder as a block or a derivation.
+    """Diagnoses each group's composition and creates StatementNode + optional
+    Procedure for every group.
 
-    Runs directly after the group finder, over the ``spans`` channel it wrote, and produces
-    the ``entities`` overlay plus the ``procedure_spans`` the procedure extractor consumes.
-    The per-span classifications are independent, so they run concurrently."""
+    Produces ``statement_ids`` (every group) and ``procedure_ids`` (subset
+    with procedures) for the extractors."""
 
     def __init__(self, module: RoleTyper | None = None) -> None:
         self.module = module or RoleTyper()
 
     async def run(self, state: state.State) -> dict:
-        """Splits the finder's spans into the entity overlay and the procedure spans."""
+        """Diagnose groups and produce statement/procedure ids."""
+        nodes = state.get('nodes', [])
         nodes_by_id = {
-            node.id: node
-            for node in state.get('nodes', [])
-            if node.id is not None
+            node.id: node for node in nodes if node.id is not None
         }
-        entities, procedure_spans = await type_roles(
+        statement_ids, procedure_ids = await type_roles(
             state.get('spans', []), nodes_by_id, self.module
         )
-        return {'entities': entities, 'procedure_spans': procedure_spans}
+        for i, node in enumerate(nodes):
+            if node.id is not None and node.id in nodes_by_id:
+                nodes[i] = nodes_by_id[node.id]
+        return {
+            'statement_ids': statement_ids,
+            'procedure_ids': procedure_ids,
+        }

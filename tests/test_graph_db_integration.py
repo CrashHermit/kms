@@ -22,40 +22,37 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_connectivity_round_trip_and_idempotent_schema():
-    from kms.graph.db import close_driver, database, driver, verify_connectivity
-    from kms.graph.schema import ensure_schema
+    from kms.graph import db, schema
 
     async def scenario():
         try:
-            await verify_connectivity()
-            async with driver().session(database=database()) as session:
+            await db.verify_connectivity()
+            async with db.driver().session(database=db.database()) as session:
                 result = await session.run('RETURN 1 AS n')
                 record = await result.single()
                 assert record['n'] == 1
-            await ensure_schema()
-            await ensure_schema()  # idempotent: a second pass must not raise
+            await schema.ensure_schema()
+            await schema.ensure_schema()  # idempotent: a second pass must not raise
         finally:
-            await close_driver()
+            await db.close_driver()
 
     asyncio.run(scenario())
 
 
 def test_persist_nodes_upserts_labels_and_next_chain():
     from kms.core import models
-    from kms.graph.db import close_driver, database, driver
-    from kms.graph.schema import ensure_schema
-    from kms.graph.writer import persist_nodes
+    from kms.graph import db, schema, writer
 
     source = 'integration-test-book'
     stream = [
         models.ASTNode(
-            type=models.NodeType.HEADER, content='§1', id=0, segment_index=0
+            type=models.HeaderNode, content='§1', id=0, segment_index=0
         ),
         models.ASTNode(
-            type=models.NodeType.PARAGRAPH, content='a', id=1, segment_index=0
+            type=models.ParagraphNode, content='a', id=1, segment_index=0
         ),
         models.ASTNode(
-            type=models.NodeType.MATH, content='$x$', id=2, segment_index=0
+            type=models.MathNode, content='$x$', id=2, segment_index=0
         ),
     ]
 
@@ -65,10 +62,10 @@ def test_persist_nodes_upserts_labels_and_next_chain():
     async def scenario():
         try:
             meta = {'title': 'Test Book', 'author': 'A. Mathematician'}
-            await ensure_schema()
-            await persist_nodes(stream, source, meta)
-            await persist_nodes(stream, source, meta)  # idempotent re-run
-            async with driver().session(database=database()) as session:
+            await schema.ensure_schema()
+            await writer.persist_nodes(stream, source, meta)
+            await writer.persist_nodes(stream, source, meta)  # idempotent re-run
+            async with db.driver().session(database=db.database()) as session:
                 # multi-label: the math node is reachable as :Math and carries base :Node too
                 math = await one(
                     session,
@@ -91,45 +88,38 @@ def test_persist_nodes_upserts_labels_and_next_chain():
                     head['c'] == '§1'
                 )  # title+author on the source, hangs off the first node
         finally:
-            async with driver().session(database=database()) as session:
+            async with db.driver().session(database=db.database()) as session:
                 await session.run(
                     'MATCH (n) DETACH DELETE n'
                 )  # test DB: clear the graph
-            await close_driver()
+            await db.close_driver()
 
     asyncio.run(scenario())
 
 
 def test_persist_entities_and_procedures_upsert_the_overlay_and_its_spine():
     from kms.core import models
-    from kms.graph.db import close_driver, database, driver
-    from kms.graph.schema import ensure_schema
-    from kms.graph.nodes import source_uuid
-    from kms.graph.writer import (
-        persist_entities,
-        persist_nodes,
-        persist_procedures,
-    )
+    from kms.graph import db, nodes, schema, writer
 
     source = 'integration-test-book'
     stream = [
         models.ASTNode(
-            type=models.NodeType.HEADER, content='§1', id=0, segment_index=0
+            type=models.HeaderNode, content='§1', id=0, segment_index=0
         ),
         models.ASTNode(
-            type=models.NodeType.PARAGRAPH,
+            type=models.ParagraphNode,
             content='a right triangle is …',
             id=1,
             segment_index=0,
         ),
         models.ASTNode(
-            type=models.NodeType.PARAGRAPH,
+            type=models.ParagraphNode,
             content='Theorem 1.1. $a^2+b^2=c^2$',
             id=2,
             segment_index=0,
         ),
         models.ASTNode(
-            type=models.NodeType.PARAGRAPH,
+            type=models.ParagraphNode,
             content='Proof. Drop the altitude. Then compare areas.',
             id=3,
             segment_index=0,
@@ -163,13 +153,13 @@ def test_persist_entities_and_procedures_upsert_the_overlay_and_its_spine():
 
     async def scenario():
         try:
-            await ensure_schema()
-            await persist_nodes(stream, source)
-            await persist_entities(overlay, source)
-            await persist_procedures(overlay, source)
-            await persist_entities(overlay, source)  # idempotent re-run
-            await persist_procedures(overlay, source)
-            async with driver().session(database=database()) as session:
+            await schema.ensure_schema()
+            await writer.persist_nodes(stream, source)
+            await writer.persist_entities(overlay, source)
+            await writer.persist_procedures(overlay, source)
+            await writer.persist_entities(overlay, source)  # idempotent re-run
+            await writer.persist_procedures(overlay, source)
+            async with db.driver().session(database=db.database()) as session:
                 # type is an open PROPERTY on a bare :Entity — no per-type label is minted
                 typed = await one(
                     session,
@@ -180,7 +170,7 @@ def test_persist_entities_and_procedures_upsert_the_overlay_and_its_spine():
                 )
                 # the overlay is linked to its book via the source property and points back
                 # at its member chunks
-                src_uuid = source_uuid(source)
+                src_uuid = nodes.source_uuid(source)
                 rooted = await one(
                     session,
                     f"MATCH (e:Entity {{source: '{src_uuid}'}}) RETURN count(e) AS c",
@@ -207,8 +197,8 @@ def test_persist_entities_and_procedures_upsert_the_overlay_and_its_spine():
                 assert spine['second'] == 'Then compare areas.'
                 assert proc_prov['c'] == 1
         finally:
-            async with driver().session(database=database()) as session:
+            async with db.driver().session(database=db.database()) as session:
                 await session.run('MATCH (n) DETACH DELETE n')
-            await close_driver()
+            await db.close_driver()
 
     asyncio.run(scenario())

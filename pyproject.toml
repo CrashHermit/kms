@@ -14,6 +14,7 @@ dependencies = [
   "neo4j>=6.2.0",
   "httpx>=0.27",  # graph tier's HTTP Query-API transport (Bolt fallback for HTTPS-only egress)
   "python-dotenv>=1.0",
+  "mlflow>=3",   # trace capture for prompt optimisation (core.tracing / core.datasets)
 ]
 
 [project.optional-dependencies]
@@ -26,12 +27,9 @@ mistral = [
   "pillow>=10",
 ]
 
-# Trace capture for prompt optimisation (`core.tracing` / `core.datasets`). Heavy — it
-# pulls a web stack and pandas — and only needed when KMS_TRACE_DIR is set, so it stays
-# out of the light core and the pipeline degrades to an untraced run without it:
-#   uv sync --extra mlflow
+# Trace capture was moved to core dependencies. This extra is kept empty for backwards
+# compatibility — it used to hold "mlflow>=3" before it became a core dependency.
 mlflow = [
-  "mlflow>=3",
 ]
 
 [dependency-groups]

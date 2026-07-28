@@ -4,7 +4,7 @@ import pathlib
 import tempfile
 
 from kms.core import models
-from kms.output.assembler import assemble
+from kms.output import assembler
 
 
 def _segments():
@@ -14,8 +14,8 @@ def _segments():
             image_path='p0.png',
             pictures=[],
             nodes=[
-                models.ASTNode(type=models.NodeType.HEADER, content='# Ch 1'),
-                models.ASTNode(type=models.NodeType.PARAGRAPH, content='intro'),
+                models.HeaderNode(content='# Ch 1'),
+                models.ParagraphNode(content='intro'),
             ],
         ),
         models.Segment(
@@ -23,12 +23,8 @@ def _segments():
             image_path='p1.png',
             pictures=[],
             nodes=[
-                models.ASTNode(
-                    type=models.NodeType.PARAGRAPH, content='body ![1]() fig'
-                ),
-                models.ASTNode(
-                    type=models.NodeType.PARAGRAPH, content='1. solve x'
-                ),
+                models.ParagraphNode(content='body ![1]() fig'),
+                models.ParagraphNode(content='1. solve x'),
             ],
         ),
     ]
@@ -48,7 +44,7 @@ def test_flatten_assigns_stable_ids_and_seg_index_across_pages():
 def test_assemble_walks_flat_nodes_and_passes_unmatched_placeholder():
     segs = _segments()
     flat = models.flatten_segments(segs)
-    out = assemble(flat, segs, output_dir=tempfile.mkdtemp(), filename='doc.md')
+    out = assembler.assemble(flat, segs, output_dir=tempfile.mkdtemp(), filename='doc.md')
     text = pathlib.Path(out).read_text()
     assert '# Ch 1' in text and '1. solve x' in text
     assert (

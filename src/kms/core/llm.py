@@ -98,6 +98,7 @@ def text_lm() -> dspy.LM:
         api_key=_require_key(DEEPSEEK_ENV_KEY, 'sk-...'),
         temperature=0.0,
         max_tokens=128000,
+        cache=False,
         extra_body={'thinking': {'type': 'disabled'}},
     )
 
@@ -120,5 +121,6 @@ def corrector_lm() -> dspy.LM:
         api_key=_require_key(OPENROUTER_ENV_KEY, 'sk-or-...'),
         temperature=0.0,
         max_tokens=128000,
+        cache=False,
         **_provider_routing(os.environ.get('CORRECTOR_PROVIDER', 'DeepInfra')),
     )

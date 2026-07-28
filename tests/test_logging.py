@@ -12,9 +12,11 @@ import asyncio
 import logging
 
 from kms.core import logs, models
-from kms.ingestion.pedagogical_component_finder import Span, find_spans
-from kms.ingestion.role_typer import RoleTyperNode
-from kms.ingestion.seam_merger import SeamMergerNode
+from kms.ingestion import (
+    pedagogical_component_finder,
+    role_typer,
+    seam_merger,
+)
 
 # --- logs.elide ---
 
@@ -52,9 +54,7 @@ def test_counts_renders_none_values_and_empty_input():
 
 def _nodes(*contents):
     return [
-        models.ASTNode(
-            type=models.NodeType.PARAGRAPH, content=text, id=i, segment_index=0
-        )
+        models.ParagraphNode(content=text, id=i, segment_index=0)
         for i, text in enumerate(contents)
     ]
 
@@ -68,10 +68,20 @@ class _ScriptedFinder:
 
 
 def test_pedagogical_component_finder_logs_the_span_count(caplog):
-    module = _ScriptedFinder([[Span(start=0, end=0), Span(start=1, end=1)], []])
+    module = _ScriptedFinder(
+        [
+            [
+                pedagogical_component_finder.Span(start=0, end=0),
+                pedagogical_component_finder.Span(start=1, end=1),
+            ],
+            [],
+        ]
+    )
     with caplog.at_level(logging.INFO, logger='kms.ingestion.pedagogical_component_finder'):
         asyncio.run(
-            find_spans(_nodes('Theorem 1', 'Proof.', 'tail'), module=module)
+            pedagogical_component_finder.find_spans(
+                _nodes('Theorem 1', 'Proof.', 'tail'), module=module
+            )
         )
     assert '3 nodes -> 2 span(s)' in caplog.text
 
@@ -85,28 +95,32 @@ class _ScriptedRoles:
 
 
 def test_role_typer_logs_the_block_derivation_split(caplog):
-    # "blocks found but zero derivations" is the signature of an unmarked-derivation miss,
+    # "statements found but zero derivations" is the signature of an unmarked-derivation miss,
     # so the two counts must be reported separately.
-    node = RoleTyperNode(module=_ScriptedRoles(['statement', 'procedure']))
+    node = role_typer.RoleTyperNode(
+        module=_ScriptedRoles(['statement', 'procedure'])
+    )
     with caplog.at_level(logging.INFO, logger='kms.ingestion.role_typer'):
         out = asyncio.run(
             node.run({'nodes': _nodes('a', 'b'), 'spans': [[0], [1]]})
         )
-    assert '2 span(s) -> 1 block(s), 1 derivation(s)' in caplog.text
-    assert out['procedure_spans'] == [[1]]
+    assert '2 span(s) -> 2 statement(s), 1 procedure(s)' in caplog.text
+    assert out['procedure_ids'] == [1]
 
 
 def test_role_typer_logs_zero_derivations(caplog):
-    node = RoleTyperNode(module=_ScriptedRoles(['statement']))
+    node = role_typer.RoleTyperNode(
+        module=_ScriptedRoles(['statement'])
+    )
     with caplog.at_level(logging.INFO, logger='kms.ingestion.role_typer'):
         asyncio.run(node.run({'nodes': _nodes('a'), 'spans': [[0]]}))
-    assert '1 block(s), 0 derivation(s)' in caplog.text
+    assert '1 statement(s), 0 procedure(s)' in caplog.text
 
 
 def test_seam_merger_logs_the_flattened_stream_size(caplog):
     segment = models.Segment(index=0, image_path='p0.png')
     segment.nodes = _nodes('a', 'b')
-    node = SeamMergerNode()
+    node = seam_merger.SeamMergerNode()
     with caplog.at_level(logging.INFO, logger='kms.ingestion.seam_merger'):
         result = node.odd_collect(
             {'segments': [segment], 'seam_odd_results': []}

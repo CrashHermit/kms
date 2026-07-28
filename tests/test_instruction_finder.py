@@ -1,18 +1,12 @@
-"""Instruction finder: tags exercise lead-in nodes with type=INSTRUCTION.
-The LLM is injected via a scripted module returning the lead-in positions per window."""
+"""Instruction finder: tags exercise lead-in nodes as InstructionNode."""
 
 import asyncio
 
 from kms.core import models
-from kms.ingestion.instruction_finder import (
-    InstructionFinderNode,
-    tag_instructions,
-)
+from kms.ingestion import instruction_finder
 
 
 class _ScriptedFinder:
-    """Replays one `instruction_positions` verdict per window call."""
-
     def __init__(self, scripted):
         self._scripted = list(scripted)
 
@@ -22,57 +16,49 @@ class _ScriptedFinder:
 
 def _nodes():
     return [
-        models.ASTNode(
-            type=models.NodeType.PARAGRAPH,
-            content='In the following exercises, simplify.',
-            id=0,
+        models.ParagraphNode(
+            content='In the following exercises, simplify.', id=0,
         ),
-        models.ASTNode(type=models.NodeType.LIST, content='3 matrix A', id=1),
-        models.ASTNode(type=models.NodeType.LIST, content='4 matrix B', id=2),
-        models.ASTNode(
-            type=models.NodeType.PARAGRAPH, content='ordinary prose', id=3
-        ),
+        models.ListNode(content='3 matrix A', id=1),
+        models.ListNode(content='4 matrix B', id=2),
+        models.ParagraphNode(content='ordinary prose', id=3),
     ]
 
 
 def test_tags_the_lead_in_node_and_leaves_others_untouched():
-    # One window; position 0 is the lead-in.
     out = asyncio.run(
-        tag_instructions(_nodes(), module=_ScriptedFinder([[0]]))
+        instruction_finder.tag_instructions(
+            _nodes(), module=_ScriptedFinder([[0]])
+        )
     )
-    assert [n.type for n in out] == [
-        models.NodeType.INSTRUCTION,
-        models.NodeType.LIST,
-        models.NodeType.LIST,
-        models.NodeType.PARAGRAPH,
-    ]
-    # Content is never touched — tagging is a pure type change.
-    assert out[0].content == 'In the following exercises, simplify.'
+    assert isinstance(out[0], models.InstructionNode)
+    assert isinstance(out[1], models.ListNode)
+    assert isinstance(out[2], models.ListNode)
+    assert isinstance(out[3], models.ParagraphNode)
 
 
 def test_no_lead_in_leaves_every_node_unchanged():
     out = asyncio.run(
-        tag_instructions(_nodes(), module=_ScriptedFinder([[]]))
+        instruction_finder.tag_instructions(
+            _nodes(), module=_ScriptedFinder([[]])
+        )
     )
-    assert all(n.type != models.NodeType.INSTRUCTION for n in out)
+    assert all(not isinstance(n, models.InstructionNode) for n in out)
 
 
 def test_out_of_range_position_is_clamped_not_fatal():
-    # A stray position past the window edge clamps to the last node rather than
-    # crashing.
     out = asyncio.run(
-        tag_instructions(_nodes(), module=_ScriptedFinder([[99]]))
+        instruction_finder.tag_instructions(
+            _nodes(), module=_ScriptedFinder([[99]])
+        )
     )
-    assert [n.type for n in out] == [
-        models.NodeType.PARAGRAPH,
-        models.NodeType.LIST,
-        models.NodeType.LIST,
-        models.NodeType.INSTRUCTION,
-    ]
+    assert isinstance(out[3], models.InstructionNode)
 
 
 def test_instruction_finder_node_writes_the_nodes_channel():
-    node = InstructionFinderNode(module=_ScriptedFinder([[0]]))
+    node = instruction_finder.InstructionFinderNode(
+        module=_ScriptedFinder([[0]])
+    )
     out = asyncio.run(node.run({'nodes': _nodes()}))
     assert set(out) == {'nodes'}
-    assert out['nodes'][0].type == models.NodeType.INSTRUCTION
+    assert isinstance(out['nodes'][0], models.InstructionNode)
