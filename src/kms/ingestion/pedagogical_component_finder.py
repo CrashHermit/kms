@@ -58,6 +58,7 @@ untyped spans to the ``spans`` channel, which ``role_typer`` then splits into th
 overlay and the procedure spans.
 """
 
+import asyncio
 import logging
 
 import dspy
@@ -236,6 +237,10 @@ class PedagogicalComponentFinder(dspy.Module):
             logs.elide(current_nodes[0].content if current_nodes else ''),
         )
         return spans
+
+    def forward(self, current_nodes: list[WindowNode]) -> list[Span]:
+        """Sync forward for DSPy optimisers."""
+        return asyncio.run(self.aforward(current_nodes))
 
 
 def _normalize_spans(spans: list[Span], last_local: int) -> list[Span]:

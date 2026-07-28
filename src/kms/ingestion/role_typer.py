@@ -139,6 +139,10 @@ class RoleTyper(dspy.Module):
         )
         return role
 
+    def forward(self, contents: str) -> str:
+        """Sync forward for DSPy optimisers."""
+        return asyncio.run(self.aforward(contents))
+
 
 def contents_of(span: list[int], nodes_by_id: dict[int, models.ASTNode]) -> str:
     """The span's member content as one string, in member order, blank-line separated."""
@@ -174,10 +178,10 @@ async def type_roles(
     procedure portion get a Procedure attached (real or placeholder). Returns
     ``(statement_ids, procedure_ids)`` — both ``list[int]`` of first-node ids.
     """
-    module = module or RoleTyper()
     if not spans:
         logger.info('role typer: no spans')
         return [], []
+    module = module or RoleTyper()
 
     roles = await asyncio.gather(
         *(module.acall(contents_of(span, nodes_by_id)) for span in spans)

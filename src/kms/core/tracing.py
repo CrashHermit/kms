@@ -34,6 +34,11 @@ documented way to mask trace data. ``_strip_images`` is that processor: it swaps
 for ``'<image>'``. The bytes are reconstructable from the input PDF, and the trainable text
 signal (transcription -> corrected) is kept in full.
 
+Set ``KMS_TRACE_STRIP_IMAGES=0`` to keep images in traces for VLM-based judges
+(``corrector_judge_lm`` needs the page image to evaluate the corrector). The default strips;
+keeping images balloons the SQLite store (~1.2 MB/page) but lets a VLM judge verify
+corrections against the actual page.
+
 USAGE. Set ``KMS_TRACE_DIR`` and run the pipeline — ``run()`` enables capture when the variable
 is set, so both the CLI and library callers get it:
 
@@ -59,8 +64,21 @@ from pathlib import Path
 
 TRACE_DIR_ENV = 'KMS_TRACE_DIR'
 URI_ENV = 'KMS_MLFLOW_URI'
+STRIP_IMAGES_ENV = 'KMS_TRACE_STRIP_IMAGES'
 
 _enabled = False
+
+
+def _should_strip() -> bool:
+    """Whether to strip base64 images from trace inputs.
+
+    Stripping is the default (keeps the store small). Set
+    ``KMS_TRACE_STRIP_IMAGES=0`` to keep images for VLM-based judges.
+    """
+    value = (os.environ.get(STRIP_IMAGES_ENV) or '').strip()
+    if not value:
+        return True
+    return value.lower() not in {'0', 'false', 'no', 'off'}
 
 
 def _is_image(value: object) -> bool:
@@ -132,7 +150,12 @@ def enable(directory: str | Path) -> None:
         (os.environ.get(URI_ENV) or '').strip() or store_uri(directory)
     )
     mlflow.set_experiment(directory.name or 'kms')
-    mlflow.tracing.configure(span_processors=[_strip_images])
+    span_processors = (
+        [_strip_images]
+        if _should_strip()
+        else []
+    )
+    mlflow.tracing.configure(span_processors=span_processors)
     mlflow.dspy.autolog()
     _enabled = True
 

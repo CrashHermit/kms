@@ -6,6 +6,7 @@ The result is a flat list of structural nodes per page — purely structural, no
 math-semantic typing (that lives in the entity layer).
 """
 
+import asyncio
 import logging
 
 import dspy
@@ -121,6 +122,10 @@ class Extractor(dspy.Module):
             logs.counts([str(node.type or '') for node in nodes]),
         )
         return nodes
+
+    def forward(self, segment_markdown: str) -> list[DSPyModel]:
+        """Sync forward for DSPy optimisers."""
+        return asyncio.run(self.aforward(segment_markdown))
 
 
 # --- LangGraph node: parse each segment's markdown into AST nodes ---

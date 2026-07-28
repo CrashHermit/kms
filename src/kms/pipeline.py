@@ -55,7 +55,7 @@ from typing import TYPE_CHECKING
 
 from langgraph.graph import END, START, StateGraph
 
-from kms.core import state, tracing
+from kms.core import llm, state, tracing
 from kms.graph import db, persister
 from kms.ingestion import (
     corrector,
@@ -70,6 +70,7 @@ from kms.ingestion import (
     statement_extractor,
 )
 from kms.output import assembler
+from kms.training import load_if_exists
 
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
@@ -89,14 +90,51 @@ def build_graph() -> 'CompiledStateGraph':
     # a no-op unless KMS_TRACE_DIR is set.
     tracing.enable_from_env()
 
-    corrector_node = corrector.CorrectorNode()
-    extractor_node = extractor.ExtractorNode()
-    seam_node = seam_merger.SeamMergerNode()
-    splitter_node = splitter.SplitterNode()
-    instruction_finder_node = instruction_finder.InstructionFinderNode()
+    # --- DSPy modules --- loaded from KMS_OPTIMIZED_DIR if set, else fresh.
+    corrector_module = load_if_exists(
+        'corrector', corrector.Corrector, llm.corrector_lm()
+    )
+    extractor_module = load_if_exists(
+        'extractor', extractor.Extractor, llm.text_lm()
+    )
+    seam_module = load_if_exists(
+        'seam_merger', seam_merger.SeamMerger, llm.text_lm()
+    )
+    splitter_module = load_if_exists(
+        'splitter', splitter.Splitter, llm.text_lm()
+    )
+    instruction_finder_module = load_if_exists(
+        'instruction_finder',
+        instruction_finder.InstructionFinder,
+        llm.text_lm(),
+    )
+    instruction_distributor_module = load_if_exists(
+        'instruction_distributor',
+        instruction_distributor.InstructionDistributor,
+        llm.text_lm(),
+    )
+    pcf_module = load_if_exists(
+        'pedagogical_component_finder',
+        pedagogical_component_finder.PedagogicalComponentFinder,
+        llm.text_lm(),
+    )
+    role_typer_module = load_if_exists(
+        'role_typer', role_typer.RoleTyper, llm.text_lm()
+    )
+
+    # --- LangGraph nodes ---
+    corrector_node = corrector.CorrectorNode(module=corrector_module)
+    extractor_node = extractor.ExtractorNode(module=extractor_module)
+    seam_node = seam_merger.SeamMergerNode(module=seam_module)
+    splitter_node = splitter.SplitterNode(module=splitter_module)
+    instruction_finder_node = instruction_finder.InstructionFinderNode(
+        module=instruction_finder_module
+    )
     node_persister_node = persister.IngestionPersisterNode()
-    pcf_node = pedagogical_component_finder.PedagogicalComponentFinderNode()
-    role_typer_node = role_typer.RoleTyperNode()
+    pcf_node = pedagogical_component_finder.PedagogicalComponentFinderNode(
+        module=pcf_module
+    )
+    role_typer_node = role_typer.RoleTyperNode(module=role_typer_module)
     statement_extractor_node = (
         statement_extractor.StatementExtractorNode()
     )
@@ -104,7 +142,9 @@ def build_graph() -> 'CompiledStateGraph':
         procedure_extractor.ProcedureExtractorNode()
     )
     instruction_distributor_node = (
-        instruction_distributor.InstructionDistributorNode()
+        instruction_distributor.InstructionDistributorNode(
+            module=instruction_distributor_module
+        )
     )
 
     graph = StateGraph(state.State)

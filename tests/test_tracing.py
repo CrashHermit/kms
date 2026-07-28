@@ -93,3 +93,23 @@ def test_store_uri_is_a_sqlite_file_inside_the_directory(tmp_path):
     uri = tracing.store_uri(tmp_path)
     assert uri.startswith('sqlite:///')
     assert uri.endswith('mlruns.db')
+
+
+# --- image stripping toggle ---
+
+
+def test_should_strip_defaults_to_true(monkeypatch):
+    monkeypatch.delenv(tracing.STRIP_IMAGES_ENV, raising=False)
+    assert tracing._should_strip() is True
+
+
+def test_should_strip_false_strings_turn_it_off(monkeypatch):
+    for off in ('0', 'false', 'no', 'off', 'FALSE', 'NO', 'OFF'):
+        monkeypatch.setenv(tracing.STRIP_IMAGES_ENV, off)
+        assert tracing._should_strip() is False, f'{off!r} should turn stripping off'
+
+
+def test_should_strip_other_values_leave_it_on(monkeypatch):
+    for on in ('1', 'yes', 'true', 'on', 'YES', 'garbage'):
+        monkeypatch.setenv(tracing.STRIP_IMAGES_ENV, on)
+        assert tracing._should_strip() is True, f'{on!r} should leave stripping on'

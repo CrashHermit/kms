@@ -5,15 +5,18 @@ Every DSPy module in this package delegates to a shared language model built
 here, so the model choice, credentials, and routing live in one place instead of
 being duplicated across nodes.
 
-Two backends, each on its native/best gateway:
+Three text backends, two vision — five total:
 
 - Text reasoning nodes (extractor, seam merger, and the per-type entity finders) run
   on DeepSeek V4 Flash via DeepSeek's own API (litellm ``deepseek/`` provider, base
   https://api.deepseek.com). DeepSeek does automatic server-side context caching, so no
   provider pinning is needed. The key is read from DEEPSEEK_API_KEY.
+- LLM-as-judge metrics for prompt optimisation use DeepSeek V4 Pro — same API key,
+  just a different model name (``deepseek/deepseek-v4-pro``; override via METRIC_MODEL).
 - The correction pass sends a page image, so it runs on Qwen3-VL-235B via OpenRouter.
-  The key is read from OPENROUTER_API_KEY. (Page OCR itself is the Mistral API — see
-  ``mistral_ocr`` — which uses its own key and is not a DSPy backend.)
+- The corrector judge is MiMo-V2.5 via OpenRouter — a cheaper VLM from a different
+  family, pinned to the same DeepInfra upstream for prompt-cache warmth.
+  The key is read from OPENROUTER_API_KEY.
 
 OpenRouter provider pinning (corrector)
 ---------------------------------------
@@ -104,6 +107,26 @@ def text_lm() -> dspy.LM:
 
 
 @lru_cache(maxsize=1)
+def metric_lm() -> dspy.LM:
+    """DeepSeek V4 Pro for LLM-as-judge metric scoring.
+
+    Uses the same API key as ``text_lm`` (``DEEPSEEK_API_KEY``) — just a different
+    model name. Thinking mode is disabled because the metric signature's own
+    ``ChainOfThought`` already elicits reasoning.
+
+    Override with the ``METRIC_MODEL`` env var.
+    """
+    return dspy.LM(
+        os.environ.get('METRIC_MODEL', 'deepseek/deepseek-v4-pro'),
+        api_key=_require_key(DEEPSEEK_ENV_KEY, 'sk-...'),
+        temperature=0.0,
+        max_tokens=128000,
+        cache=False,
+        extra_body={'thinking': {'type': 'disabled'}},
+    )
+
+
+@lru_cache(maxsize=1)
 def corrector_lm() -> dspy.LM:
     """Qwen3-VL-235B (via OpenRouter) for the correction pass on the Mistral front-end.
 
@@ -123,4 +146,29 @@ def corrector_lm() -> dspy.LM:
         max_tokens=128000,
         cache=False,
         **_provider_routing(os.environ.get('CORRECTOR_PROVIDER', 'DeepInfra')),
+    )
+
+
+@lru_cache(maxsize=1)
+def corrector_judge_lm() -> dspy.LM:
+    """MiMo-V2.5 (via OpenRouter) for judging the corrector's output against the page image.
+
+    A separate, stronger VLM from a different family than the corrector's Qwen —
+    avoids self-grading bias. Provider-pinned to DeepInfra for prompt-cache warmth
+    on repeated structured judge calls. The corrector judge is the only metric that
+    needs a VLM (text stages use ``metric_lm``).
+
+    Override with ``CORRECTOR_JUDGE_MODEL``; unpin with ``CORRECTOR_JUDGE_PROVIDER``.
+    """
+    return dspy.LM(
+        os.environ.get(
+            'CORRECTOR_JUDGE_MODEL', 'openrouter/xiaomi/mimo-v2.5'
+        ),
+        api_key=_require_key(OPENROUTER_ENV_KEY, 'sk-or-...'),
+        temperature=0.0,
+        max_tokens=128000,
+        cache=False,
+        **_provider_routing(
+            os.environ.get('CORRECTOR_JUDGE_PROVIDER', 'DeepInfra')
+        ),
     )

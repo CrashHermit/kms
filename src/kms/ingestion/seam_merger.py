@@ -7,6 +7,7 @@ each cross-page pair is a split block and merges the halves. Workers run in two
 passes (even/odd) to avoid races on shared segments.
 """
 
+import asyncio
 import logging
 
 import dspy
@@ -92,6 +93,21 @@ class SeamMerger(dspy.Module):
             bottom_node_context=bottom_node_context,
         )
         return result.node
+
+    def forward(
+        self,
+        top_bottom_edge_node: SeamNodeDTO,
+        bottom_top_edge_node: SeamNodeDTO,
+        top_node_context: SeamNodeDTO | None = None,
+        bottom_node_context: SeamNodeDTO | None = None,
+    ) -> SeamNodeDTO | None:
+        """Sync forward for DSPy optimisers."""
+        return asyncio.run(self.aforward(
+            top_bottom_edge_node=top_bottom_edge_node,
+            bottom_top_edge_node=bottom_top_edge_node,
+            top_node_context=top_node_context,
+            bottom_node_context=bottom_node_context,
+        ))
 
 
 # --- LangGraph node: stitch nodes split across segment boundaries ---

@@ -26,6 +26,7 @@ Runs BEFORE the node persister — instruction nodes are never written to Neo4j,
 persisted stream carries exercises with their instruction already prepended to content.
 """
 
+import asyncio
 import logging
 
 import dspy
@@ -113,6 +114,12 @@ class InstructionDistributor(dspy.Module):
             logs.elide(instruction),
         )
         return instruction, positions
+
+    def forward(
+        self, lead_in: str, following: list[WindowProblem]
+    ) -> tuple[str, list[int]]:
+        """Sync forward for DSPy optimisers."""
+        return asyncio.run(self.aforward(lead_in, following))
 
 
 def _node_text(node: models.ASTNode) -> str:

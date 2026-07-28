@@ -27,6 +27,7 @@ Wired in by ``SplitterNode`` (bottom of file): it runs right after the seam merg
 overwriting the `nodes` channel with the normalized stream.
 """
 
+import asyncio
 import logging
 
 import dspy
@@ -141,6 +142,10 @@ class Splitter(dspy.Module):
             ),
         )
         return splits
+
+    def forward(self, current_nodes: list[WindowNode]) -> list[NodeSplit]:
+        """Sync forward for DSPy optimisers."""
+        return asyncio.run(self.aforward(current_nodes))
 
 
 async def _gather_decisions(

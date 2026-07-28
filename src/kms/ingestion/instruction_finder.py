@@ -23,6 +23,7 @@ Wired in by ``InstructionFinderNode`` (bottom of file): it rewrites the `nodes` 
 with the tagged stream, between the splitter and the node persister.
 """
 
+import asyncio
 import logging
 
 import dspy
@@ -98,6 +99,10 @@ class InstructionFinder(dspy.Module):
             positions or 'none',
         )
         return positions
+
+    def forward(self, current_nodes: list[WindowNode]) -> list[int]:
+        """Sync forward for DSPy optimisers."""
+        return asyncio.run(self.aforward(current_nodes))
 
 
 async def tag_instructions(

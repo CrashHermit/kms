@@ -34,6 +34,7 @@ conditional-output variant (emit a sentinel when the page is already clean, to s
 rewrite output) is a drop-in future optimization behind the same interface.
 """
 
+import asyncio
 import base64
 import logging
 from pathlib import Path
@@ -149,6 +150,10 @@ class Corrector(dspy.Module):
             len(corrected),
         )
         return corrected
+
+    def forward(self, page_image: dspy.Image, transcription: str) -> str:
+        """Sync forward for DSPy optimisers."""
+        return asyncio.run(self.aforward(page_image, transcription))
 
 
 # --- LangGraph node: proofread each Mistral-transcribed page against its image ---
