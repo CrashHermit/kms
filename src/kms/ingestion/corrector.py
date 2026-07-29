@@ -36,11 +36,24 @@ passes are bare-bones LLM calls, and a page's correctness rests on the prompt
 rather than on a wrapper second-guessing the output.
 
 **Formatting is not the corrector's job** — including math delimiters. The
-prompt tells it to leave markdown structure, delimiters, whitespace, and
-emphasis exactly as transcribed, so presentation is untouched here and belongs
+prompt tells it to leave markdown structure, delimiters, emphasis, and cosmetic
+whitespace exactly as transcribed, so presentation is untouched here and belongs
 to the formatter stage instead. Note the consequence while that stage does not
 exist: nothing in this pass converts `\( … \)` / `\[ … \]` to the dollar
 convention the extractor's prompt asks for.
+
+Two boundaries of that rule are drawn explicitly, because both were found
+undefined when the prompt was first evaluated against real OCR output:
+
+- Whitespace that *carries meaning* is not formatting. Indentation inside a
+  code block is structure — Mistral flattens it, and a line at the wrong depth
+  says something the page does not — so it is corrected under the position
+  class rather than frozen under the formatting prohibition.
+- Page furniture is out of scope in **both** directions. Running heads, folios,
+  and marginal labels are neither removed when present nor restored when
+  Mistral drops them (it usually does). Whether chrome belongs in the document
+  is a presentation policy, which is the formatter's to decide, not a fidelity
+  question this pass can settle from the image.
 
 The corrector is always-rewrite: it returns the whole corrected page. A cheaper
 conditional-output variant (emit a sentinel when the page is already clean, to
@@ -118,10 +131,12 @@ class Signature(dspy.Signature):
       different one.
     - Position — where content sits inside a structure, when the structure is
       what gives it meaning: a cell's row and column, an item's nesting depth,
-      a heading's level.
+      a heading's level, the indentation that places a line inside a block of
+      code.
     - Order — content sequenced in a way the page does not support, such as
       material lifted out of a separate region and interleaved with the body.
-    - Presence — content the transcription dropped or duplicated.
+    - Presence — content the transcription dropped or duplicated, other than
+      the page furniture named below.
 
     Judge by effect rather than by this list: if the transcription asserts
     something the page does not, correct it.
@@ -136,10 +151,16 @@ class Signature(dspy.Signature):
     - Numbering and labels. Never renumber or re-letter anything.
     - Notation and terminology. Keep the document's conventions and symbols as
       they are; do not standardise them.
-    - Formatting. Markdown structure, math delimiters, whitespace, and emphasis
-      stay exactly as transcribed, even where you would write them differently.
-    - Page furniture. Leave running heads, folios, and marginal labels as
-      transcribed.
+    - Formatting. Markdown structure, math delimiters, emphasis, and whitespace
+      that only affects appearance stay exactly as transcribed, even where you
+      would write them differently. Whitespace that carries meaning is not
+      formatting and belongs to Position above: indentation inside a block of
+      code is structure, and a line indented to the wrong depth says something
+      the page does not.
+    - Page furniture. Running heads, folios, and marginal labels are out of
+      scope in both directions — leave them wherever the transcription has
+      them, and do not add them where it has none, even if the page shows
+      them.
     - Wording. Do not reword anything that matches the image.
     - Boundaries. Content that starts or ends abruptly at the edge of the page
       stays that way — do not complete or trim it.
