@@ -1,6 +1,6 @@
 """Phase 3 — graph tier: the knowledge graph itself (Neo4j).
 
-Four semantic kinds over a provenance tier. Every mapping module is pure —
+Three semantic kinds over a provenance tier. Every mapping module is pure —
 deterministic uuids, property maps, edge pairs — and free of the neo4j driver,
 which is quarantined in ``db``.
 
@@ -12,8 +12,6 @@ which is quarantined in ``db``.
   is a single string written by the statement extractor.
 - ``procedures`` — ``models.Procedure`` → ``:Procedure`` and its ``:Act`` step
   chain (declared but not yet written — the step decomposer is a future pass).
-- ``concepts`` — the global ``:Concept`` hub identity scheme. **Currently
-  dark**: nothing writes concepts or ``:INSTANCE_OF`` edges.
 - ``schema`` — idempotent constraint/index bootstrap for every label.
 - ``writer`` — the I/O half: ``persist_nodes`` / ``persist_statements`` /
   ``persist_procedures``, each batched and idempotent.

@@ -45,8 +45,7 @@ proof's.
 The entity persister is the terminal stage: it orders the overlay into one document-ordered,
 globally-id'd list and upserts it as the graph's ``:Statement`` layer (rooted under the ``:Source``),
 linked back to its member `:Node` chunks), then the procedural layer (`:Procedure` per derivation,
-`:Act` per step, threaded `:FIRST`/`:THEN`). A no-op when Neo4j isn't configured. The concept layer
-is currently dark. After the graph returns, `run()` only assembles the markdown document: assembly
+`:Act` per step, threaded `:FIRST`/`:THEN`). A no-op when Neo4j isn't configured. After the graph returns, `run()` only assembles the markdown document: assembly
 walks `nodes`, consulting `segments` only for picture inventories.
 """
 

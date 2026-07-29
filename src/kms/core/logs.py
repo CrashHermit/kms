@@ -13,11 +13,8 @@ Two levels, used consistently across the stages:
   (how many nodes, how many blocks, how many procedures) without flooding the terminal.
 * ``DEBUG`` — one line per *DSPy call*: the inputs' shape and the outputs, elided. This is
   what makes an individual stage's decisions inspectable when something looks wrong.
-
-DELIBERATELY NOT TRACING. The retired ``core.tracing`` wrote structured per-call JSONL that
-the ``training/*`` loaders consumed as DSPy examples. This is a debugging aid, not that:
-it is lossy (content is elided), unstructured, and goes to a log stream rather than a file.
-Restoring trainable capture is a separate decision — see ``docs/HANDOFF.md``.
+  what makes an individual stage's decisions inspectable when something looks
+  wrong.
 """
 
 # Default budget for an elided snippet. Long enough to identify a block by its opening

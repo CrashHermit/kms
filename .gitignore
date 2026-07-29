@@ -24,6 +24,6 @@ output/
 # pytest
 .pytest_cache/
 
-# Trace stores (core.tracing writes an MLflow SQLite store per book)
+# Old trace stores
 mlruns/
 traces/
