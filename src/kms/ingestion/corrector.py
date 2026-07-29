@@ -2,35 +2,45 @@ r"""
 Correction pass for the Mistral OCR front-end.
 
 Mistral transcribes a page faithfully most of the time, but it makes occasional
-subtle, meaning-changing math errors that survive at any input resolution — e.g.
-reading a plain radical `√` as an indexed root `∛`, or attaching a subscript to
-the wrong symbol (`f(x)_1` for `f(x_1)`). Those are exactly the errors that
-silently corrupt a math knowledge graph, and they are hard to catch without the
-source image.
+subtle, meaning-changing errors that survive at any input resolution — reading a
+plain radical `√` as an indexed root `∛`, attaching a subscript to the wrong
+symbol (`f(x)_1` for `f(x_1)`), dropping a negation, shifting a table cell into
+the next column. Those are exactly the errors that silently corrupt a knowledge
+graph, and they are hard to catch without the source image.
 
 This stage is a **generate-then-verify** second pass: a strong vision model
 re-reads the page image alongside Mistral's markdown and fixes genuine
 transcription errors — a verification task, which is easier and more reliable
 than transcribing from scratch, so the checker stays away from its own OCR
-failure modes. It was validated to fix the known error modes while leaving
-already-correct pages byte-identical.
+failure modes.
 
-Every transcribed page is proofread — not only math-bearing ones — since
-transcription errors also appear in prose (dropped words, wrong characters,
-stray page chrome), and proofreading the whole page keeps the always-rewrite
-model uniform and simple.
+The corrector is a **fidelity** pass, not a quality pass: its single question is
+whether the transcription says what the page says. The image is therefore its
+only authority, and any judgement the image cannot settle — what the subject
+matter ought to say, which convention the document follows, what would read
+better — is out of scope by construction. That is what keeps it from editing the
+source's own errors or standardising its notation.
+
+The prompt is **domain-general and stated as principles** rather than as a
+checklist of known error shapes. Scrutiny is allocated by redundancy instead of
+by subject: prose says the same thing several ways at once and can be read for
+sense, while notation, identifiers, quantities, and tabular data carry no such
+slack and are read character by character. The meaning-changing differences are
+named as classes (attachment, extent, substitution, polarity, quantity,
+relation, position, order, presence) so a non-mathematical source is handled by
+the same pass.
 
 The stage is **unguarded**: whatever the model returns is what the page becomes.
 There is deliberately no divergence check on the correction — the pipeline's
 passes are bare-bones LLM calls, and a page's correctness rests on the prompt
 rather than on a wrapper second-guessing the output.
 
-The corrector also **normalizes math delimiters** to the pipeline's dollar
-convention so the extractor and every downstream stage see uniform math. That
-is asked of the vision model in the prompt — converting the escape-sequence
-delimiters (`\[ … \]`, `\( … \)`) and wrapping display equations the OCR left
-*undelimited* — with no post-processing behind it. Nothing outside the model
-touches the page.
+**Formatting is not the corrector's job** — including math delimiters. The
+prompt tells it to leave markdown structure, delimiters, whitespace, and
+emphasis exactly as transcribed, so presentation is untouched here and belongs
+to the formatter stage instead. Note the consequence while that stage does not
+exist: nothing in this pass converts `\( … \)` / `\[ … \]` to the dollar
+convention the extractor's prompt asks for.
 
 The corrector is always-rewrite: it returns the whole corrected page. A cheaper
 conditional-output variant (emit a sentinel when the page is already clean, to
@@ -72,47 +82,80 @@ def _load_dspy_image(path: str | None) -> dspy.Image | None:
 
 class Signature(dspy.Signature):
     r"""
-    You are a meticulous mathematics proofreader. You are given the image of a
-    single textbook page and an OCR transcription of that page in markdown.
-    Compare them and return a corrected transcription.
+    You are a meticulous proofreader of OCR transcriptions. You are given the
+    image of a single document page and an OCR transcription of that page in
+    markdown. Compare them and return a corrected transcription.
 
-    Correct ONLY genuine transcription errors — do not rewrite, restructure,
-    reformat, or re-transcribe text that already matches the image (the one
-    deliberate exception is math-delimiter normalization, described under LATEX
-    FORMAT below). Preserve the transcription's wording, structure, and markdown
-    exactly except where it disagrees with the image.
+    The image is your only authority. Correct a difference only when the image
+    settles it. If deciding would take knowledge the image cannot give you —
+    what the subject matter ought to say, which convention the document
+    follows, what would read better — leave the transcription as it is.
 
-    Scrutinize mathematical notation token by token against the image, since
-    that is where transcription errors hide:
-    - root indices: a plain square root `\sqrt{x}` must NOT gain an index
-      (`\sqrt[3]{x}`), and an indexed root must keep its true index;
-    - subscripts/superscripts: attach each to the correct symbol (`f(x_1)`, not
-      `f(x)_1`);
-    - operators, relations, delimiters, and Greek letters.
+    Correct differences that change meaning, and leave every other difference
+    alone. This is a check on fidelity, not on quality.
 
-    LATEX FORMAT — keep all math in LaTeX and normalize its delimiters to dollar
-    signs: inline math in single dollars `$ … $`, display math in double
-    `$$ … $$`. This delimiter normalization is required (the one allowed
-    exception to "do not reformat"); change only the delimiters, never the math
-    content:
-    - convert `\( … \)` to `$ … $` and `\[ … \]` to `$$ … $$`;
-    - wrap any display equation the transcription left undelimited — a
-      standalone equation line, or a bare `\begin{array}` / `aligned` / `cases`
-      / `equation` block — in `$$ … $$`.
+    HOW CLOSELY TO READ
+
+    Redundancy, not subject matter, decides how much scrutiny a passage needs.
+    Prose says the same thing several ways at once, so context repairs a
+    misread word and you can read it for sense. Notation, identifiers,
+    quantities, code, and tabular data carry no such slack — `x_2` and `x^2`
+    are equally plausible in isolation, and only the image tells you which was
+    written. Read low-redundancy content character by character.
+
+    WHAT COUNTS AS A MEANING-CHANGING DIFFERENCE
+
+    - Attachment — what a mark binds to, where binding it elsewhere would say
+      something different.
+    - Extent — where something begins and ends: what a grouping, a span, or a
+      notational construct encloses.
+    - Substitution — one character or symbol transcribed as another it
+      resembles, including a mark that carries meaning being dropped or added.
+    - Polarity — a negation gained or lost.
+    - Quantity — any change to a value, its magnitude, its precision, or the
+      range something is taken over.
+    - Relation — a logical, conditional, or ordering connective exchanged for a
+      different one.
+    - Position — where content sits inside a structure, when the structure is
+      what gives it meaning: a cell's row and column, an item's nesting depth,
+      a heading's level.
+    - Order — content sequenced in a way the page does not support, such as
+      material lifted out of a separate region and interleaved with the body.
+    - Presence — content the transcription dropped or duplicated.
+
+    Judge by effect rather than by this list: if the transcription asserts
+    something the page does not, correct it.
+
+    WHAT NOT TO TOUCH
+
+    - The document's substance. Transcribe the source's own errors faithfully —
+      a wrong step, a bad value, a claim that does not follow. You are checking
+      the transcription, not the document.
+    - Arrangement. Do not reorganise content that already follows the page's
+      own order.
+    - Numbering and labels. Never renumber or re-letter anything.
+    - Notation and terminology. Keep the document's conventions and symbols as
+      they are; do not standardise them.
+    - Formatting. Markdown structure, math delimiters, whitespace, and emphasis
+      stay exactly as transcribed, even where you would write them differently.
+    - Page furniture. Leave running heads, folios, and marginal labels as
+      transcribed.
+    - Wording. Do not reword anything that matches the image.
+    - Boundaries. Content that starts or ends abruptly at the edge of the page
+      stays that way — do not complete or trim it.
 
     Return the full corrected markdown for the page and nothing else. If the
-    transcription is already faithful (apart from any delimiter normalization
-    above), return it unchanged.
+    transcription already matches the image, return it unchanged.
     """
 
     page_image: dspy.Image = dspy.InputField(
-        description='The image of the textbook page — the ground truth to check the transcription against.'
+        description='The image of the document page — the ground truth to check the transcription against.'
     )
     transcription: str = dspy.InputField(
         description='The OCR markdown transcription of the page to proofread.'
     )
     corrected: str = dspy.OutputField(
-        description='The full corrected markdown transcription of the page, with only genuine errors fixed.'
+        description='The full corrected markdown transcription of the page, with only meaning-changing transcription errors fixed.'
     )
 
 
