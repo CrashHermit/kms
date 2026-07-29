@@ -20,18 +20,17 @@ transcription errors also appear in prose (dropped words, wrong characters,
 stray page chrome), and proofreading the whole page keeps the always-rewrite
 model uniform and simple.
 
-A **divergence guard** (`_within_tolerance`) keeps it safe: a "correction" whose
-length swings far from the original is treated as a runaway rewrite (or a
-truncation) and rejected — we keep the original transcription rather than trust
-a wholesale rewrite. Real fixes are small.
+The stage is **unguarded**: whatever the model returns is what the page becomes.
+There is deliberately no divergence check on the correction — the pipeline's
+passes are bare-bones LLM calls, and a page's correctness rests on the prompt
+rather than on a wrapper second-guessing the output.
 
 The corrector also **normalizes math delimiters** to the pipeline's dollar
 convention so the extractor and every downstream stage see uniform math. The
 unambiguous escape-sequence delimiters (`\[ … \]`, `\( … \)`) are swapped
-deterministically by `_normalize_math_delimiters` on every page (whether or not
-the vision correction was accepted); wrapping display equations the OCR left
-*undelimited* needs to know what is display math, so that is asked of the vision
-model in the prompt.
+deterministically by `_normalize_math_delimiters`; wrapping display equations
+the OCR left *undelimited* needs to know what is display math, so that is asked
+of the vision model in the prompt.
 
 The corrector is always-rewrite: it returns the whole corrected page. A cheaper
 conditional-output variant (emit a sentinel when the page is already clean, to
@@ -50,10 +49,6 @@ from langgraph.types import Send
 from kms.core import llm, models, state
 
 logger = logging.getLogger(__name__)
-
-# A correction should be a light edit; reject anything outside this band of the
-# original length as a runaway rewrite or a truncation.
-_TOLERANCE = 0.30
 
 
 def _load_dspy_image(path: str | None) -> dspy.Image | None:
@@ -75,26 +70,6 @@ def _load_dspy_image(path: str | None) -> dspy.Image | None:
     return dspy.Image(url=f'data:image/png;base64,{encoded}')
 
 
-def _within_tolerance(original: str, corrected: str) -> bool:
-    """Whether a correction is a plausible light edit of the original.
-
-    Guards against the corrector truncating or wholesale rewriting the page.
-
-    Args:
-        original: The transcription that was sent for proofreading.
-        corrected: The model's returned transcription.
-
-    Returns:
-        True when the correction is non-empty and within ±``_TOLERANCE`` of
-        the original's length.
-    """
-    if not corrected or not corrected.strip():
-        return False
-    shortest = len(original) * (1 - _TOLERANCE)
-    longest = len(original) * (1 + _TOLERANCE)
-    return shortest <= len(corrected) <= longest
-
-
 # LaTeX math-delimiter escape sequences → the pipeline's dollar convention.
 # `\[`/`\]` and `\(`/`\)` are unambiguous math delimiters (they do not occur in
 # prose), so a straight, whitespace-preserving token swap is safe and
@@ -106,10 +81,9 @@ def _normalize_math_delimiters(text: str) -> str:
     """Rewrite LaTeX math delimiters to the pipeline's dollar convention.
 
     ``\\[ … \\]`` becomes ``$$ … $$`` (display) and ``\\( … \\)`` becomes
-    ``$ … $`` (inline). Runs on every proofread page — whether or not the
-    vision correction was accepted — so display math is uniform for the
-    extractor and downstream stages. Bare, *undelimited* display blocks are
-    handled in the prompt, not here.
+    ``$ … $`` (inline). Runs on every proofread page, so display math is
+    uniform for the extractor and downstream stages. Bare, *undelimited*
+    display blocks are handled in the prompt, not here.
 
     Args:
         text: The page's markdown.
@@ -244,8 +218,8 @@ class CorrectorNode:
     async def worker(self, state: dict) -> dict:
         """Proofread one page's transcription against its image.
 
-        Keeps the original when the correction diverges too far (a runaway
-        rewrite or a truncation).
+        The correction is taken as returned — the page becomes whatever the
+        model produced, with only its math delimiters normalized.
 
         Args:
             state: The worker payload, holding its ``segment``.
@@ -258,24 +232,11 @@ class CorrectorNode:
             page_image=_load_dspy_image(segment.image_path),
             transcription=segment.content,
         )
-        kept = _within_tolerance(segment.content, corrected)
-        if not kept:
-            # A runaway rewrite or a truncated completion; the page silently
-            # keeps its original transcription, so this is the only signal it
-            # happened.
-            logger.warning(
-                'page %d: correction rejected (%d chars in, %d out); keeping '
-                'the original transcription',
-                segment.index,
-                len(segment.content or ''),
-                len(corrected),
-            )
-        final = corrected if kept else segment.content
-        # Normalize math delimiters on the chosen text — even when the
-        # correction was rejected, so a kept-original page still gets uniform
-        # `$$`/`$` delimiters.
-        final = _normalize_math_delimiters(final)
-        return {'correction_results': [(segment.index, final)]}
+        return {
+            'correction_results': [
+                (segment.index, _normalize_math_delimiters(corrected))
+            ]
+        }
 
     def collect(self, state: state.State) -> dict:
         """Write each corrected transcription back into its segment.
