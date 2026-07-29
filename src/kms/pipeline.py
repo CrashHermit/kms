@@ -55,7 +55,7 @@ from typing import TYPE_CHECKING
 
 from langgraph.graph import END, START, StateGraph
 
-from kms.core import llm, state, tracing
+from kms.core import llm, state
 from kms.graph import db, persister
 from kms.ingestion import (
     corrector,
@@ -70,7 +70,6 @@ from kms.ingestion import (
     statement_extractor,
 )
 from kms.output import assembler
-from kms.training import load_if_exists
 
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
@@ -85,41 +84,24 @@ def build_graph() -> 'CompiledStateGraph':
     the pedagogical component finder then cuts that stream into untyped spans for the role typer, the block
     typer and the two extractors to classify and fill in.
     """
-    # Hooked here rather than in run(), so EVERY entry point traces — a caller that drives
-    # the compiled graph directly (a harness, a notebook) gets capture too. Idempotent, and
-    # a no-op unless KMS_TRACE_DIR is set.
-    tracing.enable_from_env()
-
-    # --- DSPy modules --- loaded from KMS_OPTIMIZED_DIR if set, else fresh.
-    corrector_module = load_if_exists(
-        'corrector', corrector.Corrector, llm.corrector_lm()
+    # --- DSPy modules ---
+    corrector_module = corrector.Corrector(language_model=llm.corrector_lm())
+    extractor_module = extractor.Extractor(language_model=llm.text_lm())
+    seam_module = seam_merger.SeamMerger(language_model=llm.text_lm())
+    splitter_module = splitter.Splitter(language_model=llm.text_lm())
+    instruction_finder_module = instruction_finder.InstructionFinder(
+        language_model=llm.text_lm()
     )
-    extractor_module = load_if_exists(
-        'extractor', extractor.Extractor, llm.text_lm()
+    instruction_distributor_module = (
+        instruction_distributor.InstructionDistributor(
+            language_model=llm.text_lm()
+        )
     )
-    seam_module = load_if_exists(
-        'seam_merger', seam_merger.SeamMerger, llm.text_lm()
+    pcf_module = pedagogical_component_finder.PedagogicalComponentFinder(
+        language_model=llm.text_lm()
     )
-    splitter_module = load_if_exists(
-        'splitter', splitter.Splitter, llm.text_lm()
-    )
-    instruction_finder_module = load_if_exists(
-        'instruction_finder',
-        instruction_finder.InstructionFinder,
-        llm.text_lm(),
-    )
-    instruction_distributor_module = load_if_exists(
-        'instruction_distributor',
-        instruction_distributor.InstructionDistributor,
-        llm.text_lm(),
-    )
-    pcf_module = load_if_exists(
-        'pedagogical_component_finder',
-        pedagogical_component_finder.PedagogicalComponentFinder,
-        llm.text_lm(),
-    )
-    role_typer_module = load_if_exists(
-        'role_typer', role_typer.RoleTyper, llm.text_lm()
+    role_typer_module = role_typer.RoleTyper(
+        language_model=llm.text_lm()
     )
 
     # --- LangGraph nodes ---
@@ -247,9 +229,7 @@ async def run(
     filename); ``title``/``author`` are optional book attributes stored on the ``:Source`` node.
     Graph persistence is skipped entirely when Neo4j isn't configured — a DB-less run still
     produces ``document.md`` but persists no nodes or entities. Returns the path of the assembled
-    document. Setting ``KMS_TRACE_DIR`` additionally captures every DSPy call's inputs and
-    outputs as MLflow traces, loadable as ``dspy.Example``\\ s (see ``core.tracing`` and
-    ``core.datasets``).
+    document.
     """
     output_dir = Path(output_dir)
     from kms.ingestion import ocr
@@ -273,9 +253,4 @@ async def run(
         )
         return written
     finally:
-        # Traces export asynchronously; without this a short run can exit before the queue
-        # drains and the sweep looks like it captured nothing. No-op when tracing is off.
-        tracing.flush()
-        await (
-            db.close_driver()
-        )  # release the Neo4j connection pool (a no-op if never opened)
+        await db.close_driver()
