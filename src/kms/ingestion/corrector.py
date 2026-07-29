@@ -26,11 +26,11 @@ passes are bare-bones LLM calls, and a page's correctness rests on the prompt
 rather than on a wrapper second-guessing the output.
 
 The corrector also **normalizes math delimiters** to the pipeline's dollar
-convention so the extractor and every downstream stage see uniform math. The
-unambiguous escape-sequence delimiters (`\[ … \]`, `\( … \)`) are swapped
-deterministically by `_normalize_math_delimiters`; wrapping display equations
-the OCR left *undelimited* needs to know what is display math, so that is asked
-of the vision model in the prompt.
+convention so the extractor and every downstream stage see uniform math. That
+is asked of the vision model in the prompt — converting the escape-sequence
+delimiters (`\[ … \]`, `\( … \)`) and wrapping display equations the OCR left
+*undelimited* — with no post-processing behind it. Nothing outside the model
+touches the page.
 
 The corrector is always-rewrite: it returns the whole corrected page. A cheaper
 conditional-output variant (emit a sentinel when the page is already clean, to
@@ -68,32 +68,6 @@ def _load_dspy_image(path: str | None) -> dspy.Image | None:
         return None
     encoded = base64.b64encode(Path(path).read_bytes()).decode('utf-8')
     return dspy.Image(url=f'data:image/png;base64,{encoded}')
-
-
-# LaTeX math-delimiter escape sequences → the pipeline's dollar convention.
-# `\[`/`\]` and `\(`/`\)` are unambiguous math delimiters (they do not occur in
-# prose), so a straight, whitespace-preserving token swap is safe and
-# deterministic.
-_DELIMITER_SWAPS = ((r'\[', '$$'), (r'\]', '$$'), (r'\(', '$'), (r'\)', '$'))
-
-
-def _normalize_math_delimiters(text: str) -> str:
-    """Rewrite LaTeX math delimiters to the pipeline's dollar convention.
-
-    ``\\[ … \\]`` becomes ``$$ … $$`` (display) and ``\\( … \\)`` becomes
-    ``$ … $`` (inline). Runs on every proofread page, so display math is
-    uniform for the extractor and downstream stages. Bare, *undelimited*
-    display blocks are handled in the prompt, not here.
-
-    Args:
-        text: The page's markdown.
-
-    Returns:
-        The markdown with dollar-delimited math.
-    """
-    for old, new in _DELIMITER_SWAPS:
-        text = text.replace(old, new)
-    return text
 
 
 class Signature(dspy.Signature):
@@ -218,8 +192,8 @@ class CorrectorNode:
     async def worker(self, state: dict) -> dict:
         """Proofread one page's transcription against its image.
 
-        The correction is taken as returned — the page becomes whatever the
-        model produced, with only its math delimiters normalized.
+        The correction is taken exactly as returned — the page becomes
+        whatever the model produced, unexamined and unaltered.
 
         Args:
             state: The worker payload, holding its ``segment``.
@@ -232,11 +206,7 @@ class CorrectorNode:
             page_image=_load_dspy_image(segment.image_path),
             transcription=segment.content,
         )
-        return {
-            'correction_results': [
-                (segment.index, _normalize_math_delimiters(corrected))
-            ]
-        }
+        return {'correction_results': [(segment.index, corrected)]}
 
     def collect(self, state: state.State) -> dict:
         """Write each corrected transcription back into its segment.

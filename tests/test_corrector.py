@@ -1,5 +1,4 @@
-"""Correction pass — pure dispatch/collect + delimiter normalization. No
-network/LLM."""
+"""Correction pass — pure dispatch/collect. No network/LLM."""
 
 import asyncio
 
@@ -14,37 +13,11 @@ def _segment(index, content, image_path='/pages/Segment.png'):
     return models.Segment(index=index, image_path=image_path, content=content)
 
 
-def test_normalize_math_delimiters_swaps_display_and_inline():
-    # \[ … \] -> $$ … $$ (display), \( … \) -> $ … $ (inline), whitespace
-    # preserved.
-    assert (
-        corrector._normalize_math_delimiters(r'\[ a^2 + b^2 \]')
-        == '$$ a^2 + b^2 $$'
-    )
-    assert (
-        corrector._normalize_math_delimiters(r'see \(x_1\) here')
-        == 'see $x_1$ here'
-    )
-    # multi-line display block (e.g. a wrapped array) keeps its interior
-    # verbatim.
-    src = '\\[\n\\begin{array}{l} x \\end{array}\n\\]'
-    assert (
-        corrector._normalize_math_delimiters(src)
-        == '$$\n\\begin{array}{l} x \\end{array}\n$$'
-    )
-
-
-def test_normalize_math_delimiters_leaves_dollars_and_prose_untouched():
-    # Already-correct `$$`/`$` and plain prose (incl. plain brackets/parens) are
-    # unchanged.
-    already = 'inline $x$ and display $$y$$ with a list item [a] and (b)'
-    assert corrector._normalize_math_delimiters(already) == already
-
-
-def test_worker_takes_the_correction_as_returned_and_normalizes_it():
-    # Unguarded: the correction becomes the page however far it diverges, with
-    # only its delimiters normalized. image_path="" -> _load_dspy_image returns
-    # None, so the worker needs no image file on disk.
+def test_worker_takes_the_correction_exactly_as_returned():
+    # Nothing outside the model touches the page: the correction becomes the
+    # page verbatim, however far it diverges and whatever its delimiters.
+    # image_path="" -> _load_dspy_image returns None, so the worker needs no
+    # image file on disk.
     segment = _segment(0, 'orig', image_path='')
 
     class _DivergentModule:
@@ -57,7 +30,7 @@ def test_worker_takes_the_correction_as_returned_and_normalizes_it():
         )
     )
     assert out['correction_results'] == [
-        (0, 'a much longer rewrite with $x$ in it')
+        (0, r'a much longer rewrite with \(x\) in it')
     ]
 
 
