@@ -37,6 +37,7 @@ rewrite output) is a drop-in future optimization behind the same interface.
 import asyncio
 import base64
 import logging
+import re
 from pathlib import Path
 
 import dspy
@@ -73,19 +74,50 @@ def _within_tolerance(original: str, corrected: str) -> bool:
 
 
 # LaTeX math-delimiter escape sequences → the pipeline's dollar convention. `\[`/`\]` and
-# `\(`/`\)` are unambiguous math delimiters (they do not occur in prose), so a straight,
-# whitespace-preserving token swap is safe and deterministic.
+# `\(`/`\)` are unambiguous math delimiters (they do not occur in prose), so a straight
+# token swap is safe and deterministic.
 _DELIMITER_SWAPS = ((r'\[', '$$'), (r'\]', '$$'), (r'\(', '$'), (r'\)', '$'))
+
+# A `$$ … $$` or `$ … $` span, used to strip padding from inside the delimiters. Display
+# is matched first so a display pair is never read as two empty inline ones.
+_MATH_SPAN = re.compile(r'\$\$(.*?)\$\$|\$(.*?)\$', re.DOTALL)
+
+
+def _strip_delimiter_padding(match: re.Match) -> str:
+    """Rewrite one math span with no spaces or tabs immediately inside its delimiters.
+
+    Newlines are kept: a wrapped display block is conventionally written `$$\\n … \\n$$`,
+    and collapsing it onto one line would reflow the page for no gain. Only the
+    horizontal padding the escape-form swap introduces is removed."""
+    display, inline = match.group(1), match.group(2)
+    body = display if display is not None else inline
+    fence = '$$' if display is not None else '$'
+    stripped = body.strip(' \t')
+    return f'{fence}{stripped}{fence}' if stripped else match.group(0)
 
 
 def _normalize_math_delimiters(text: str) -> str:
-    """Rewrite LaTeX math delimiters to `$`/`$$`: `\\[ … \\]` → `$$ … $$` (display) and
-    `\\( … \\)` → `$ … $` (inline). Runs on every proofread page — whether or not the vision
+    """Rewrite LaTeX math delimiters to `$`/`$$`: `\\[ … \\]` → `$$…$$` (display) and
+    `\\( … \\)` → `$…$` (inline). Runs on every proofread page — whether or not the vision
     correction was accepted — so display math is uniform for the extractor and downstream
-    stages. Bare, *undelimited* display blocks are handled in the prompt, not here."""
+    stages. Bare, *undelimited* display blocks are handled in the prompt, not here.
+
+    Padding inside the delimiters is stripped as part of the swap. Mistral writes the
+    escape forms with spaces (`\\( 2^p-1 \\)`), and a literal swap would carry them into
+    `$ 2^p-1 $` — a second spelling of every inline expression, differing from the
+    unpadded `$2^p-1$` the same OCR emits elsewhere on the same page. Downstream stages
+    then have to match both, and the corrector's training labels have to pick one
+    arbitrarily. Whitespace immediately inside a math delimiter is never significant to
+    LaTeX, so collapsing it loses nothing."""
+    if not any(token in text for token, _ in _DELIMITER_SWAPS):
+        # No escape-form delimiters, so no padding was introduced and there is nothing to
+        # tidy. Returning early confines the span rewrite to the case that motivates it,
+        # rather than letting it walk every `$`-to-`$` run on a page — which on prose
+        # containing two currency amounts would pair `$5 … $6` as if it were math.
+        return text
     for old, new in _DELIMITER_SWAPS:
         text = text.replace(old, new)
-    return text
+    return _MATH_SPAN.sub(_strip_delimiter_padding, text)
 
 
 class Signature(dspy.Signature):

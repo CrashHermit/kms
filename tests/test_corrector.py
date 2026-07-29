@@ -23,21 +23,34 @@ def test_within_tolerance_accepts_light_edits_rejects_runaways():
 
 
 def test_normalize_math_delimiters_swaps_display_and_inline():
-    # \[ … \] -> $$ … $$ (display), \( … \) -> $ … $ (inline), whitespace preserved.
+    # \[ … \] -> $$…$$ (display), \( … \) -> $…$ (inline). The spaces Mistral writes just
+    # inside the escape delimiters go away, so an expression has one spelling.
     assert (
         corrector._normalize_math_delimiters(r'\[ a^2 + b^2 \]')
-        == '$$ a^2 + b^2 $$'
+        == '$$a^2 + b^2$$'
     )
     assert (
         corrector._normalize_math_delimiters(r'see \(x_1\) here')
         == 'see $x_1$ here'
     )
-    # multi-line display block (e.g. a wrapped array) keeps its interior verbatim.
+    assert (
+        corrector._normalize_math_delimiters(r'a \( 2^{p}-1 \) b')
+        == 'a $2^{p}-1$ b'
+    )
+    # multi-line display block (e.g. a wrapped array) keeps its newlines — only the
+    # horizontal padding is removed.
     src = '\\[\n\\begin{array}{l} x \\end{array}\n\\]'
     assert (
         corrector._normalize_math_delimiters(src)
         == '$$\n\\begin{array}{l} x \\end{array}\n$$'
     )
+
+
+def test_normalize_math_delimiters_ignores_currency_prose():
+    # A page with no escape-form delimiters is returned untouched, so two currency
+    # amounts are never paired up as if the `$`s delimited math.
+    prose = 'it cost $5 and then $6 later'
+    assert corrector._normalize_math_delimiters(prose) == prose
 
 
 def test_normalize_math_delimiters_leaves_dollars_and_prose_untouched():
