@@ -1,0 +1,8 @@
+[
+  {
+    "category": "root_index",
+    "image_shows": "\\left\\{\\frac{1}{\\sqrt[3]{n}}\\right\\}",
+    "ocr_had": "\\left\\{\\frac{1}{\\sqrt{n}}\\right\\}",
+    "note": "The mirror-image failure: a genuine cube root stripped of its index. Both 1/sqrt(n) and 1/cbrt(n) are monotone, bounded and tend to 0, so the exercise still looks sensible and nothing downstream would flag it."
+  }
+]

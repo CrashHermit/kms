@@ -1,0 +1,6 @@
+{
+  "kind": "synthetic",
+  "source_pdf": "tests/fixtures/books/logic_hammack_truthtables.pdf",
+  "source_page": 1,
+  "derived_from": "logic_hammack_truthtables-p01"
+}

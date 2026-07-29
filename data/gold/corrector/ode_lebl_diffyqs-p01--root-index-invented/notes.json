@@ -1,0 +1,8 @@
+[
+  {
+    "category": "root_index",
+    "image_shows": "Figure 1.7: Slope field of $y' = 2\\sqrt{|y|}$ with two",
+    "ocr_had": "Figure 1.7: Slope field of $y' = 2\\sqrt[3]{|y|}$ with two",
+    "note": "A plain square root given a false cube-root index. The caption still renders and still reads as mathematics, but it now describes a different differential equation from the one plotted in the figure beside it — and from the identical expression later on the same page."
+  }
+]

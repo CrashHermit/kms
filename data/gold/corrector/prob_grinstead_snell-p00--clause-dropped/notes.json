@@ -1,0 +1,8 @@
+[
+  {
+    "category": "dropped_text",
+    "image_shows": "that the walker may choose, each with equal probability (see Figure 1.6c).",
+    "ocr_had": "that the walker may choose (see Figure 1.6c).",
+    "note": "A qualifying clause lost mid-sentence. The sentence still reads naturally, which is what makes dropped text hard to catch without the image — but the uniformity assumption that defines the three-dimensional walk is gone."
+  }
+]

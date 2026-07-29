@@ -1,0 +1,20 @@
+[
+  {
+    "category": "sub_superscript",
+    "image_shows": "the case.¹³  (a raised footnote marker after the closing period)",
+    "ocr_had": "the case.13",
+    "note": "The superscript was flattened to baseline text, so the footnote marker reads as part of the sentence — 'not the case.13'. Restored as $^{13}$."
+  },
+  {
+    "category": "sub_superscript",
+    "image_shows": "¹³G. Pólya, \"Two Incidents,\" ...  (the footnote's own raised marker opening the note)",
+    "ocr_had": "13G. Pólya, \"Two Incidents,\" ...",
+    "note": "Same flattening on the footnote body, leaving '13G' glued together as if it were a word. Restored as $^{13}$."
+  },
+  {
+    "category": "math_delimiters",
+    "image_shows": "n, 2n and (0,0) set in math italic in items (b) and its continuation",
+    "ocr_had": "n, 2n, (0, 0) as plain roman text with no delimiters",
+    "note": "Wrapped in single dollars per the corrector's LATEX FORMAT rule. Content unchanged."
+  }
+]

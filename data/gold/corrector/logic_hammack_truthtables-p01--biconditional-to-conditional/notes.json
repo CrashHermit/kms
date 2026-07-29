@@ -1,0 +1,8 @@
+[
+  {
+    "category": "operator",
+    "image_shows": "it becomes $P \\Leftrightarrow (Q \\vee R)$.",
+    "ocr_had": "it becomes $P \\Rightarrow (Q \\vee R)$.",
+    "note": "Biconditional read as a one-way conditional. The surrounding sentences are about exactly this formula, so the page now states something the rest of the section contradicts."
+  }
+]

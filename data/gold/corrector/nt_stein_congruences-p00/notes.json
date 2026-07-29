@@ -1,0 +1,26 @@
+[
+  {
+    "category": "symbol",
+    "image_shows": "89 618970019642690137449562111",
+    "ocr_had": "89 61897001964269013744956211",
+    "note": "Trailing digit dropped from the 27-digit Mersenne prime. Confirmed against the image and independently: 2^89 - 1 = 618970019642690137449562111. The OCR value has 26 digits and is not a Mersenne number at all, so the error is silent but total."
+  },
+  {
+    "category": "structure",
+    "image_shows": "...        print p, 2^p - 1  (indented one level deeper than the enclosing `if`)",
+    "ocr_had": "...    print p, 2^p - 1",
+    "note": "Sage session indentation flattened, putting `print` at the same level as the `if` that governs it. Python indentation is semantic — the flattened listing is a different (invalid) program."
+  },
+  {
+    "category": "structure",
+    "image_shows": "...         s = s^2 - 2  (indented inside the `for`, one level deeper than `s = Mod(...)` and `return`)",
+    "ocr_had": "...    s = s^2 - 2",
+    "note": "Same flattening in the Lucas-Lehmer listing: the loop body, the loop header, and the return all landed at one indent level, which destroys the algorithm."
+  },
+  {
+    "category": "math_delimiters",
+    "image_shows": "inline math set in the running text (2^p - 1, (Z/pZ)*, p, n, phi(n))",
+    "ocr_had": "\\( 2^{p}-1 \\), \\((\\mathbf{Z} / p\\mathbf{Z})^{*}\\), \\(p\\), \\( n \\), \\( \\varphi(n) \\)",
+    "note": "Escape-sequence delimiters normalized to the pipeline's dollar convention. Content untouched."
+  }
+]

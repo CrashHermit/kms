@@ -1,0 +1,8 @@
+[
+  {
+    "category": "operator",
+    "image_shows": "and so $\\bigcup_{j \\in J} B_j \\in \\mathcal{T}$, since",
+    "ocr_had": "and so $\\bigcap_{j \\in J} B_j \\in \\mathcal{T}$, since",
+    "note": "Union misread as intersection in the middle of the proof that T_1 is closed under arbitrary unions. The glyphs differ only by orientation, and the corrupted line is still a true statement in general — it just no longer proves the property being established."
+  }
+]

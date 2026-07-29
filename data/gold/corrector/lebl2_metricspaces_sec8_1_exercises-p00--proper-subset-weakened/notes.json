@@ -1,0 +1,8 @@
+[
+  {
+    "category": "operator",
+    "image_shows": "\\subsetneq \\text{span}",
+    "ocr_had": "\\subset \\text{span}",
+    "note": "Proper inclusion weakened to plain inclusion. The exercise is to prove the span gets strictly smaller; with the corrupted relation the claim is trivially true and the exercise is destroyed."
+  }
+]

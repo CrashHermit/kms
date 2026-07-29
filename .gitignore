@@ -27,3 +27,7 @@ output/
 # Old trace stores
 mlruns/
 traces/
+
+# Gold-set page renders: regenerable from the fixture PDFs via
+# `python -m kms.training.gold_corrector render`, so only the text is tracked.
+data/gold/corrector/*/page.png

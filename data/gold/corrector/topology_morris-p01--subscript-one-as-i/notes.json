@@ -1,0 +1,8 @@
+[
+  {
+    "category": "symbol",
+    "image_shows": "$$\\emptyset \\in \\mathcal{T}_1 \\quad \\text{since}",
+    "ocr_had": "$$\\emptyset \\in \\mathcal{T}_i \\quad \\text{since}",
+    "note": "A numeric subscript 1 read as the letter i. Silently introduces an undefined indexed family T_i into a proof about the single topology T_1."
+  }
+]

@@ -1,0 +1,8 @@
+[
+  {
+    "category": "sub_superscript",
+    "image_shows": "implies that $A_j = f^{-1}(B_j)$, where",
+    "ocr_had": "implies that $A_j = f^{-1}(B)_j$, where",
+    "note": "The subscript reattached to the wrong symbol: f^{-1}(B_j) — the preimage of the j-th set — becomes f^{-1}(B)_j, the j-th component of the preimage of an unindexed B. This is the documented f(x)_1 / f(x_1) failure mode."
+  }
+]

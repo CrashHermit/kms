@@ -1,0 +1,8 @@
+[
+  {
+    "category": "sub_superscript",
+    "image_shows": "Exercise 2.1.7: Let $\\{x_n\\}_{n=1}^{\\infty}$ be a sequence.",
+    "ocr_had": "Exercise 2.1.7: Let $\\{x\\}_{n=1}^{\\infty}$ be a sequence.",
+    "note": "The sequence term loses its index, turning the set of terms into a singleton set indexed by n. The following two parts of the exercise still refer to x_n, so the page becomes internally inconsistent."
+  }
+]

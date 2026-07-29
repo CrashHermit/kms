@@ -1,0 +1,8 @@
+[
+  {
+    "category": "symbol",
+    "image_shows": "|  $F$ | $F$ | $F$ | $F$ | $T$ | $\\mathbf{F}$  |",
+    "ocr_had": "|  $F$ | $F$ | $F$ | $F$ | $F$ | $\\mathbf{F}$  |",
+    "note": "The ~(P^Q) entry on the FF row flipped from T to F. A single character, invisible in prose, that makes the truth table contradict both the paragraph above it (which says column five is the opposite of column four) and the final column beside it."
+  }
+]

@@ -1,0 +1,6 @@
+{
+  "kind": "synthetic",
+  "source_pdf": "tests/fixtures/books/calc3_gradients_exercises.pdf",
+  "source_page": 0,
+  "derived_from": "calc3_gradients_exercises-p00"
+}

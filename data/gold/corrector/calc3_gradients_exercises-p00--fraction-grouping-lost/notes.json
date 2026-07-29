@@ -1,0 +1,8 @@
+[
+  {
+    "category": "delimiter",
+    "image_shows": "$$f(x, y) = \\frac{14 - x^2 - y^2}{3}.$$",
+    "ocr_had": "$$f(x, y) = 14 - x^2 - y^2/3.$$",
+    "note": "The built-up fraction flattened to a slash without regrouping, so only y^2 ends up divided by 3 instead of the whole numerator. Same shape as the natural 1/(n+1) error found in lebl2_metricspaces-p00."
+  }
+]

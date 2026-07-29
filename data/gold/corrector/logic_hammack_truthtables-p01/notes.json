@@ -1,0 +1,8 @@
+[
+  {
+    "category": "presentation_glyph",
+    "image_shows": "typographic curly quotation marks and apostrophes",
+    "ocr_had": "“ ” ’ (U+201C/U+201D/U+2019)",
+    "note": "Flattened to ASCII \" and '. Mistral emits curly and straight forms interchangeably across this corpus — straight on ode_lebl-p01, curly here — so the gold label picks one rather than teaching the model to reproduce whichever the OCR happened to guess."
+  }
+]

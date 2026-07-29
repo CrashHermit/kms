@@ -1,0 +1,8 @@
+[
+  {
+    "category": "delimiter",
+    "image_shows": "the interval (1/(n+1), 1/n) — set as two built-up fractions, the left one with n+1 clearly in the denominator",
+    "ocr_had": "the interval $(1/n+1, 1/n)$",
+    "note": "The grouping around the denominator was lost, so the left endpoint parses as (1/n)+1 instead of 1/(n+1). Meaning-changing and completely silent: the expression is still well-formed LaTeX and still renders, it just denotes a different interval — and a wrong one, since (1/n)+1 > 1/n makes the interval empty. Exactly the failure class this correction stage exists to catch."
+  }
+]

@@ -1,0 +1,6 @@
+{
+  "kind": "synthetic",
+  "source_pdf": "tests/fixtures/books/ode_lebl_diffyqs.pdf",
+  "source_page": 1,
+  "derived_from": "ode_lebl_diffyqs-p01"
+}

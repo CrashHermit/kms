@@ -1,0 +1,8 @@
+[
+  {
+    "category": "spurious_text",
+    "image_shows": "We will prove that there is a primitive root",
+    "ocr_had": "40 2. The Ring of Integers Modulo n\n\nWe will prove that there is a primitive root",
+    "note": "The running head and folio left inline at the top of the page body. Mistral normally strips these into the response's separate header/footer fields, so this is the failure that occurs when that extraction misses."
+  }
+]

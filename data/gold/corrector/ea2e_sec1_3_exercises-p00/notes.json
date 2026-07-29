@@ -1,0 +1,14 @@
+[
+  {
+    "category": "math_delimiters",
+    "image_shows": "every exercise on the page set in math type: signed integers, -(-4), |-32|, |15-7|-|14-6|, 18-|2(8-3)|, -|p| when p = 19, and the relations < > = in the lead-ins",
+    "ocr_had": "the same expressions as bare running text — not one dollar delimiter on the whole page",
+    "note": "All 60-odd expressions wrapped in single dollars per the corrector's LATEX FORMAT rule. No digit, sign, or bar was changed: every value was checked against the image individually and Mistral had them all right. Cost is only +10.5% length, well inside the divergence guard, because the expressions are short."
+  },
+  {
+    "category": "presentation_glyph",
+    "image_shows": "part-labels printed as lowercase letters inside circles (ⓐ ⓑ ⓒ ⓓ)",
+    "ocr_had": "ⓐ ⓑ ⓒ ⓓ — the circled codepoints U+24D0..U+24D3, transcribed faithfully",
+    "note": "Rewritten to the corpus-wide (a)/(b)/(c)/(d) convention. Mistral read the page correctly here — the glyph really is a circled letter — but U+24D0 is a presentation form the rest of the corpus never uses: Hefferon, Grinstead & Snell and Calculus Vol. 3 all print part-labels as (a) or a., and the splitter and distributor match on that. Leaving the circled form in would make the label set inconsistent with every other book in the dataset."
+  }
+]

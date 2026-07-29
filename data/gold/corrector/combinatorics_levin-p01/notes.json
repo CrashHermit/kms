@@ -1,0 +1,8 @@
+[
+  {
+    "category": "symbol",
+    "image_shows": "the “graph” we drew for the Bridges of Königsberg problem  (double quotation marks, scare-quoting the word)",
+    "ocr_had": "the 'graph' we drew",
+    "note": "Double quotation marks read as single. Mistral emits double quotes correctly elsewhere in this dataset, so this is a misread of the glyph rather than a formatting convention. Written with ASCII double quotes per the canonical form; the correction is the quote *kind*, not its typography."
+  }
+]

@@ -1,0 +1,8 @@
+[
+  {
+    "category": "math_delimiters",
+    "image_shows": "189. $-(-4)$\n\n190. $-(-8)$\n\n191. $-(-15)$\n\n192. $-(-11)$",
+    "ocr_had": "189. \\(-(-4)\\)\n\n190. \\(-(-8)\\)\n\n191. \\(-(-15)\\)\n\n192. \\(-(-11)\\)",
+    "note": "Escape-sequence delimiters where the rest of the page uses dollars. The pipeline normalizes these deterministically, so this sample pins the behaviour: the corrector must emit $ … $ and leave the arithmetic alone."
+  }
+]

@@ -1,0 +1,6 @@
+{
+  "kind": "synthetic",
+  "source_pdf": "tests/fixtures/books/prob_grinstead_snell.pdf",
+  "source_page": 0,
+  "derived_from": "prob_grinstead_snell-p00"
+}

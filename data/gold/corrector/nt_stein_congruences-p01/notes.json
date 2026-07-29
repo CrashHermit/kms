@@ -1,0 +1,8 @@
+[
+  {
+    "category": "math_delimiters",
+    "image_shows": "every math expression on the page set in math type: (Z/pZ)*, p-1, 2^3, 2^n, q^r, q^{r+1}, x^2-1, Z/8Z, f in k[x], alpha in k, deg(f), f(alpha)=0",
+    "ocr_had": "(Z/pZ)*, p-1, 2³, 2ⁿ, qʳ, qʳ⁺¹, x² - 1, Z/8Z, f ∈ k[x], α ∈ k, deg(f), f(α) = 0 — plain Unicode text, no math delimiters at all",
+    "note": "Mistral transcribed this page's math as Unicode running text instead of LaTeX, though it emitted LaTeX on the facing page (p00) of the same book. Converted to LaTeX in dollar delimiters per the corrector's LATEX FORMAT rule; no math content changed. Note the cost: the page grows 18.4%, most of the corrector's 30% divergence budget, on a page that is largely prose."
+  }
+]

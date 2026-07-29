@@ -1,0 +1,6 @@
+{
+  "kind": "synthetic",
+  "source_pdf": "tests/fixtures/books/nt_stein_congruences.pdf",
+  "source_page": 1,
+  "derived_from": "nt_stein_congruences-p01"
+}

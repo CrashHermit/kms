@@ -1,0 +1,6 @@
+{
+  "kind": "synthetic",
+  "source_pdf": "tests/fixtures/books/ea2e_sec1_3_exercises.pdf",
+  "source_page": 0,
+  "derived_from": "ea2e_sec1_3_exercises-p00"
+}

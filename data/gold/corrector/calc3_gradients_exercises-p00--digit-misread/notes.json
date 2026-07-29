@@ -1,0 +1,8 @@
+[
+  {
+    "category": "symbol",
+    "image_shows": "\\frac{12}{13}\\mathbf{k}",
+    "ocr_had": "\\frac{12}{15}\\mathbf{k}",
+    "note": "One digit of a unit vector changed. (-3/13, -4/13, -12/13) has norm 1; (-3/13, -4/13, -12/15) does not, so the directional derivative the exercise asks for is no longer well-posed — but nothing about the line looks wrong."
+  }
+]

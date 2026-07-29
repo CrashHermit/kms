@@ -1,0 +1,6 @@
+{
+  "kind": "synthetic",
+  "source_pdf": "tests/fixtures/books/topology_morris.pdf",
+  "source_page": 1,
+  "derived_from": "topology_morris-p01"
+}

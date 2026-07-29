@@ -1,0 +1,38 @@
+[
+  {
+    "category": "structure",
+    "image_shows": "3.15(c) first equation set with a blank column where the missing -x_2 term would sit: `x_1        + x_3  =  4`",
+    "ocr_had": "x_1 &+ x_3 &= 4",
+    "note": "Mistral tried to reproduce the visual column gap with a second alignment marker, producing a row with two `&` inside an `aligned` whose other rows have one. That is malformed LaTeX — the environment will not compile. Collapsed to a single alignment point at the `=`. The equation itself was transcribed correctly and is unchanged; only the spurious alignment marker is dropped."
+  },
+  {
+    "category": "structure",
+    "image_shows": "3.15(f) `x           + z + w = 4`",
+    "ocr_had": "x &+ z + w &= 4",
+    "note": "Same double-alignment-marker defect; collapsed to one alignment point."
+  },
+  {
+    "category": "structure",
+    "image_shows": "3.16(b) `x        - z      = 1`",
+    "ocr_had": "x &- z &= 1",
+    "note": "Same double-alignment-marker defect; collapsed to one alignment point."
+  },
+  {
+    "category": "structure",
+    "image_shows": "3.16(c) `y          + w = 0` and `-y         - w = 0`",
+    "ocr_had": "y &+ w &= 0  /  -y &- w &= 0",
+    "note": "Same double-alignment-marker defect on two rows of the same system; collapsed to one alignment point each."
+  },
+  {
+    "category": "structure",
+    "image_shows": "3.17 `2x -  y       - w =  3`",
+    "ocr_had": "2x - y &- w &= 3",
+    "note": "Same double-alignment-marker defect; collapsed to one alignment point."
+  },
+  {
+    "category": "structure",
+    "image_shows": "3.18 `x -  y      + w = 4`",
+    "ocr_had": "x - y &+ w &= 4",
+    "note": "Same double-alignment-marker defect; collapsed to one alignment point."
+  }
+]

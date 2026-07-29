@@ -113,10 +113,25 @@ class Signature(dspy.Signature):
     the delimiters, never the math content:
     - convert `\( … \)` to `$ … $` and `\[ … \]` to `$$ … $$`;
     - wrap any display equation the transcription left undelimited — a standalone equation
-      line, or a bare `\begin{array}` / `aligned` / `cases` / `equation` block — in `$$ … $$`.
+      line, or a bare `\begin{array}` / `aligned` / `cases` / `equation` block — in `$$ … $$`;
+    - rewrite math the transcription left as plain Unicode text into LaTeX inside dollars:
+      `x² − 1` becomes `$x^2 - 1$`, `n ≥ 3` becomes `$n \geq 3$`, `qʳ⁺¹` becomes
+      `$q^{r+1}$`. Operators (`×÷±≤≥≠∈⊂∪∩→∞√∑∫`) and super/subscript digits (`²`, `⁵`,
+      `ₙ`) must not survive outside a math span. Wrap the expression, never reword it.
+
+    ENCODING — the page's characters, written the way the pipeline expects them:
+    - part-labels go in parentheses: a label printed as a circled letter (`ⓐ`, `ⓑ`) is
+      written `(a)`, `(b)`;
+    - quotation marks and apostrophes are ASCII `"` and `'`, never curly.
+    These are re-encodings of what the image shows, not rewordings — never change, add, or
+    drop a word to satisfy them.
+
+    Do NOT add markup the transcription does not already have. If the OCR dropped a bold
+    label or an italic defined term, leave it dropped: restoring emphasis is reformatting,
+    and it is the first step from proofreading toward rewriting.
 
     Return the full corrected markdown for the page and nothing else. If the transcription
-    is already faithful (apart from any delimiter normalization above), return it unchanged.
+    is already faithful (apart from the normalizations above), return it unchanged.
     """
 
     page_image: dspy.Image = dspy.InputField(
