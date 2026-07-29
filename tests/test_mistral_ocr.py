@@ -1,5 +1,6 @@
-"""Mistral OCR response → models.Segment mapping. No network, no keys, no LLM — just the
-pure transform that turns an OCR JSON response into the pipeline's models.Segment backbone."""
+"""Mistral OCR response → models.Segment mapping. No network, no keys, no LLM —
+just the pure transform that turns an OCR JSON response into the pipeline's
+models.Segment backbone."""
 
 from pathlib import Path
 
@@ -29,7 +30,10 @@ def test_build_segments_rewrites_refs_and_saves_pictures(tmp_path):
         'pages': [
             {
                 'index': 0,
-                'markdown': '# Title\n\n![alt](img-0.jpeg)\n\nprose $x^2$\n\n![alt2](img-1.jpeg)\n',
+                'markdown': (
+                    '# Title\n\n![alt](img-0.jpeg)\n\n'
+                    'prose $x^2$\n\n![alt2](img-1.jpeg)\n'
+                ),
                 'images': [
                     _img('img-0.jpeg'),
                     _img('img-1.jpeg', data_url=True),
@@ -41,7 +45,8 @@ def test_build_segments_rewrites_refs_and_saves_pictures(tmp_path):
     assert len(segs) == 1
     segment = segs[0]
     assert segment.index == 0
-    # Mistral ids rewritten to the positional ![N]() convention, in reading order.
+    # Mistral ids rewritten to the positional ![N]() convention, in reading
+    # order.
     assert '![1]()' in segment.content and '![2]()' in segment.content
     assert (
         'img-0.jpeg' not in segment.content
@@ -56,7 +61,8 @@ def test_build_segments_rewrites_refs_and_saves_pictures(tmp_path):
 
 
 def test_unreferenced_figure_is_still_saved(tmp_path):
-    # A figure that never appears inline in the markdown must not be silently dropped.
+    # A figure that never appears inline in the markdown must not be silently
+    # dropped.
     resp = {
         'pages': [
             {
@@ -72,7 +78,8 @@ def test_unreferenced_figure_is_still_saved(tmp_path):
 
 
 def test_non_figure_link_left_untouched(tmp_path):
-    # A markdown link whose target is not an extracted figure id passes through as-is.
+    # A markdown link whose target is not an extracted figure id passes through
+    # as-is.
     md = 'see ![diagram](https://example.com/x.png) here'
     rewritten, pics = ocr._rewrite_page(
         md, [], tmp_path / 'Segments' / 'Segment_0000'
@@ -82,8 +89,8 @@ def test_non_figure_link_left_untouched(tmp_path):
 
 
 def test_pages_are_indexed_densely(tmp_path):
-    # Even if the source pages are non-contiguous, segments are dense 0..N so the seam
-    # merger sees a proper adjacency.
+    # Even if the source pages are non-contiguous, segments are dense 0..N so
+    # the seam merger sees a proper adjacency.
     resp = {
         'pages': [
             {

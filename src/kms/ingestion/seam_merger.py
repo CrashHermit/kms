@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 class SeamNodeDTO(BaseModel):
-    """Lightweight DSPy boundary model representing a node's content and type."""
+    """Lightweight DSPy boundary model: a node's content and type."""
 
     content: str | None = None
     types: list[str] = []
@@ -28,28 +28,28 @@ class SeamNodeDTO(BaseModel):
 
 class Signature(dspy.Signature):
     """
-    You are an expert technical editor. Two adjacent runs of document blocks share a seam
-    — the boundary where one run ends and the next begins. Sometimes a single block
-    (paragraph, sentence, equation, list item, caption, etc.) is split across that
-    boundary, producing an incomplete tail in the top run and an incomplete head in the
-    bottom run.
+    You are an expert technical editor. Two adjacent runs of document blocks
+    share a seam — the boundary where one run ends and the next begins.
+    Sometimes a single block (paragraph, sentence, equation, list item, caption,
+    etc.) is split across that boundary, producing an incomplete tail in the top
+    run and an incomplete head in the bottom run.
 
-    Your job: decide whether the tail node of the top run and the head node of the bottom
-    run are two halves of the same interrupted block. If they are, merge them into one
-    coherent node. If they are not — they are already complete, independent nodes that
-    merely sit next to each other at the boundary — return None.
+    Your job: decide whether the tail node of the top run and the head node of
+    the bottom run are two halves of the same interrupted block. If they are,
+    merge them into one coherent node. If they are not — they are already
+    complete, independent nodes that merely sit next to each other at the
+    boundary — return None.
 
-    Judge this purely on structure: does the tail read as cut off mid-block and the head
-    as its continuation? Do not reason about the subject matter or reassemble blocks that
-    are each already complete.
+    Judge this purely on structure: does the tail read as cut off mid-block and
+    the head as its continuation? Do not reason about the subject matter or
+    reassemble blocks that are each already complete.
 
-    Use the context nodes (the neighbour just inside each run) only to inform your
-    judgment — never include their content in the merged output.
+    Use the context nodes (the neighbour just inside each run) only to inform
+    your judgment — never include their content in the merged output.
 
-    LATEX FORMAT:
-    All mathematical notation must use LaTeX format. Use single dollar signs `$ $`
-    for inline math and double dollar signs `$$ $$` for block/display math.
-    Preserve existing delimiters and math content exactly.
+    LATEX FORMAT: All mathematical notation must use LaTeX format. Use single
+    dollar signs `$ $` for inline math and double dollar signs `$$ $$` for
+    block/display math. Preserve existing delimiters and math content exactly.
     """
 
     top_node_context: SeamNodeDTO | None = dspy.InputField(
@@ -71,7 +71,11 @@ class Signature(dspy.Signature):
 
 
 class SeamMerger(dspy.Module):
-    """Decides whether two adjacent segments' edge nodes are halves of one split block."""
+    """Decides whether two adjacent edge nodes are halves of one block.
+
+    Args:
+        language_model: The LM to run on. Defaults to ``llm.text_lm()``.
+    """
 
     def __init__(self, language_model: dspy.LM | None = None) -> None:
         super().__init__()
@@ -85,7 +89,17 @@ class SeamMerger(dspy.Module):
         top_node_context: SeamNodeDTO | None = None,
         bottom_node_context: SeamNodeDTO | None = None,
     ) -> SeamNodeDTO | None:
-        """Returns the merged node if the pair is a split block, or None."""
+        """Judge one seam.
+
+        Args:
+            top_bottom_edge_node: The tail node of the top run.
+            bottom_top_edge_node: The head node of the bottom run.
+            top_node_context: The neighbour just inside the top run.
+            bottom_node_context: The neighbour just inside the bottom run.
+
+        Returns:
+            The merged node if the pair is one split block, else None.
+        """
         result = await self.merger.acall(
             top_node_context=top_node_context,
             top_bottom_edge_node=top_bottom_edge_node,
@@ -102,35 +116,54 @@ class SeamMerger(dspy.Module):
         bottom_node_context: SeamNodeDTO | None = None,
     ) -> SeamNodeDTO | None:
         """Sync forward for DSPy optimisers."""
-        return asyncio.run(self.aforward(
-            top_bottom_edge_node=top_bottom_edge_node,
-            bottom_top_edge_node=bottom_top_edge_node,
-            top_node_context=top_node_context,
-            bottom_node_context=bottom_node_context,
-        ))
+        return asyncio.run(
+            self.aforward(
+                top_bottom_edge_node=top_bottom_edge_node,
+                bottom_top_edge_node=bottom_top_edge_node,
+                top_node_context=top_node_context,
+                bottom_node_context=bottom_node_context,
+            )
+        )
 
 
 # --- LangGraph node: stitch nodes split across segment boundaries ---
 #
 # A worker touches two adjacent segments (top tail + bottom head), so adjacent
-# pairs cannot run at once without racing on the shared segment. We run two passes:
-# the even pass handles pairs whose top index is even (0-1, 2-3, ...), the odd pass
-# handles the rest (1-2, 3-4, ...). Within a pass no two pairs share a segment, so
-# they fan out safely; the passes run sequentially (even -> collect -> odd -> collect),
-# and each pass writes its own reducer channel to avoid cross-pass contamination.
+# pairs cannot run at once without racing on the shared segment. We run two
+# passes: the even pass handles pairs whose top index is even (0-1, 2-3, ...),
+# the odd pass handles the rest (1-2, 3-4, ...). Within a pass no two pairs
+# share a segment, so they fan out safely; the passes run sequentially (even ->
+# collect -> odd -> collect), and each pass writes its own reducer channel to
+# avoid cross-pass contamination.
 
 
 def _to_seam_node_dto(node: models.ASTNode | None) -> SeamNodeDTO:
+    """The boundary model for one node.
+
+    Args:
+        node: The node to describe, or None for a missing neighbour.
+
+    Returns:
+        The boundary model, empty when no node was given.
+    """
     if node is None:
         return SeamNodeDTO(content=None, types=[])
-    return SeamNodeDTO(
-        content=node.content, types=[node.kind]
-    )
+    return SeamNodeDTO(content=node.content, types=[node.kind])
 
 
 def _pairs(
     segments: list[models.Segment], parity: int
 ) -> list[tuple[models.Segment, models.Segment]]:
+    """The adjacent segment pairs one parity pass may fan out over.
+
+    Args:
+        segments: The ordered segment backbone.
+        parity: 0 for the even pass (0-1, 2-3, …), 1 for the odd pass.
+
+    Returns:
+        The ``(top, bottom)`` pairs whose top index has the given parity and
+        where both sides carry nodes.
+    """
     return [
         (segments[i], segments[i + 1])
         for i in range(len(segments) - 1)
@@ -143,8 +176,19 @@ def _pairs(
 async def _merge_pair(
     module: SeamMerger, top: models.Segment, bottom: models.Segment
 ) -> list[tuple[int, list[models.ASTNode]]]:
-    """Decide whether the top's tail and the bottom's head are one split node; if so,
-    fold the merged content into the tail and drop the head."""
+    """Merge one seam, if the LLM judges it to be a split node.
+
+    A healed seam folds the merged content into the top's tail and drops the
+    bottom's head.
+
+    Args:
+        module: The seam-merging module.
+        top: The upper segment of the pair.
+        bottom: The lower segment of the pair.
+
+    Returns:
+        Both segments' ``(segment_index, nodes)`` entries.
+    """
     top_nodes = list(top.nodes)
     bottom_nodes = list(bottom.nodes)
 
@@ -176,7 +220,11 @@ async def _merge_pair(
 
 
 class SeamMergerNode:
-    """Heals cross-page structural splits using two parity passes to avoid races."""
+    """Heals cross-page splits using two parity passes to avoid races.
+
+    Args:
+        module: The seam-merging module. Created fresh if None.
+    """
 
     def __init__(self, module: SeamMerger | None = None) -> None:
         self.module = module or SeamMerger()
@@ -185,7 +233,8 @@ class SeamMergerNode:
         """Fans out workers for even-indexed segment pairs (0-1, 2-3, …)."""
         pairs = _pairs(state.get('segments', []), parity=0)
         sends = [
-            Send('seam_even_worker', {'top': t, 'bottom': b}) for t, b in pairs
+            Send('seam_even_worker', {'top': top, 'bottom': bottom})
+            for top, bottom in pairs
         ]
         return sends or 'seam_even_collect'
 
@@ -193,7 +242,8 @@ class SeamMergerNode:
         """Fans out workers for odd-indexed segment pairs (1-2, 3-4, …)."""
         pairs = _pairs(state.get('segments', []), parity=1)
         sends = [
-            Send('seam_odd_worker', {'top': t, 'bottom': b}) for t, b in pairs
+            Send('seam_odd_worker', {'top': top, 'bottom': bottom})
+            for top, bottom in pairs
         ]
         return sends or 'seam_odd_collect'
 
@@ -214,6 +264,15 @@ class SeamMergerNode:
         }
 
     def _collect(self, state: state.State, channel: str) -> dict:
+        """Drain one pass's channel back into the segment backbone.
+
+        Args:
+            state: The pipeline state.
+            channel: The reducer channel this pass wrote.
+
+        Returns:
+            The updated segment backbone.
+        """
         segments = models.merge_results_into_segments(
             state['segments'], state.get(channel, []), 'nodes'
         )
@@ -224,16 +283,25 @@ class SeamMergerNode:
         return self._collect(state, 'seam_even_results')
 
     def odd_collect(self, state: state.State) -> dict:
-        """Drain the odd pass, then birth the flat global node list. The seam merger is
-        the last stage that splits/merges nodes structurally, so page-splits are now
-        healed and node identity is stable — flatten the per-page backbone into `nodes`,
-        stamping each with its global id and originating segment_index. Every stage after
-        this works on `nodes`, not on the per-segment nesting."""
+        """Drain the odd pass, then birth the flat global node list.
+
+        The seam merger is the last stage that splits/merges nodes
+        structurally, so page-splits are now healed and node identity is
+        stable — flatten the per-page backbone into `nodes`, stamping each with
+        its global id and originating segment_index. Every stage after this
+        works on `nodes`, not on the per-segment nesting.
+
+        Args:
+            state: The pipeline state.
+
+        Returns:
+            The healed segment backbone and the flat node stream.
+        """
         result = self._collect(state, 'seam_odd_results')
         segments = result['segments']
         nodes = models.flatten_segments(segments)
-        # The handover between the pipeline's two phases: per-page segments become one
-        # flat, stably-id'd stream that every later stage walks.
+        # The handover between the pipeline's two phases: per-page segments
+        # become one flat, stably-id'd stream that every later stage walks.
         logger.info(
             'seam merger: %d page(s) -> flat stream of %d node(s)',
             len(segments),

@@ -8,10 +8,12 @@ __pycache__/
 # Large test data
 test.pdf
 
-# Ad-hoc validation run artifacts (scratch)
-out/
+# Ad-hoc validation run artifacts (scratch). Anchored to the repo root so the
+# patterns can't also swallow the `src/kms/output/` package.
+/out/
 scratch_*
-output/
+/output/
+
 # Secrets
 .env
 

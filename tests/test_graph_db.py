@@ -1,5 +1,6 @@
-"""Connection plumbing for the graph tier — pure, no server (neo4j is stubbed in conftest).
-Covers the config helpers and the driver singleton's lifecycle, not any graph model."""
+"""Connection plumbing for the graph tier — pure, no server (neo4j is stubbed in
+conftest). Covers the config helpers and the driver singleton's lifecycle, not
+any graph model."""
 
 import asyncio
 import json
@@ -38,7 +39,9 @@ def test_database_defaults_to_neo4j_and_honours_override(monkeypatch):
 def test_driver_raises_a_clear_error_when_unconfigured(monkeypatch):
     for k in _CONN_ENV:
         monkeypatch.delenv(k, raising=False)
-    asyncio.run(db.close_driver())  # ensure no singleton lingers from another test
+    asyncio.run(
+        db.close_driver()
+    )  # ensure no singleton lingers from another test
     with pytest.raises(RuntimeError, match='NEO4J_URI is not set'):
         db.driver()
 
@@ -47,7 +50,9 @@ def test_driver_is_a_reused_singleton_until_closed(monkeypatch):
     _set_conn(monkeypatch)
     try:
         first = db.driver()
-        assert db.driver() is first  # same pooled instance, not rebuilt per call
+        assert (
+            db.driver() is first
+        )  # same pooled instance, not rebuilt per call
     finally:
         asyncio.run(db.close_driver())
 
@@ -61,29 +66,25 @@ def test_close_driver_is_a_safe_noop_when_nothing_opened(monkeypatch):
     asyncio.run(db.close_driver())
 
 
-# --- HTTP Query-API transport: selection, URL derivation, and request/response shaping ---
+# --- HTTP Query-API transport: selection, URL derivation, and request/response
+# shaping ---
 
 
 def test_transport_env_selects_http_over_a_bolt_uri(monkeypatch):
-    # An Aura Bolt URI + an explicit http transport -> HTTP, with the HTTPS endpoint derived
-    # from the same host (the Bolt-blocked-sandbox path: flip one env var, keep the URI).
+    # An Aura Bolt URI + an explicit http transport -> HTTP, with the HTTPS
+    # endpoint derived from the same host (the Bolt-blocked-sandbox path: flip
+    # one env var, keep the URI).
     monkeypatch.setenv('NEO4J_URI', 'neo4j+s://abc123.databases.neo4j.io')
     monkeypatch.setenv('NEO4J_TRANSPORT', 'http')
     assert db._use_http() is True
-    assert (
-        db._http_base_url()
-        == 'https://abc123.databases.neo4j.io'
-    )
+    assert db._http_base_url() == 'https://abc123.databases.neo4j.io'
 
 
 def test_transport_is_inferred_from_an_https_uri_scheme(monkeypatch):
     monkeypatch.delenv('NEO4J_TRANSPORT', raising=False)
     monkeypatch.setenv('NEO4J_URI', 'https://abc123.databases.neo4j.io')
     assert db._use_http() is True
-    assert (
-        db._http_base_url()
-        == 'https://abc123.databases.neo4j.io'
-    )
+    assert db._http_base_url() == 'https://abc123.databases.neo4j.io'
 
 
 def test_bolt_stays_the_default_transport(monkeypatch):
@@ -103,7 +104,8 @@ def test_driver_returns_the_http_facade_when_selected(monkeypatch):
 
 
 def _mock_driver(handler) -> db.HttpQueryDriver:
-    """An HttpQueryDriver whose client answers from a handler instead of the network, so the
+    """An HttpQueryDriver whose client answers from a handler, not the network,
+    so the
     request-shaping and response-parsing are testable with no server."""
     d = db.HttpQueryDriver('https://host.databases.neo4j.io', ('neo4j', 'pw'))
     d._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))

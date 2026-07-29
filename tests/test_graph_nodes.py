@@ -14,9 +14,7 @@ def test_node_uuid_distinguishes_index_and_source():
     assert nodes.node_uuid('hefferon.pdf', 7) != nodes.node_uuid(
         'hefferon.pdf', 8
     )
-    assert nodes.node_uuid('hefferon.pdf', 7) != nodes.node_uuid(
-        'lebl.pdf', 7
-    )
+    assert nodes.node_uuid('hefferon.pdf', 7) != nodes.node_uuid('lebl.pdf', 7)
 
 
 def test_node_properties_maps_kind_content_and_provenance():
@@ -50,10 +48,9 @@ def test_node_label_for_base_astnode():
 
 def test_node_properties_link_back_to_source():
     node = models.MathNode(content='$x$', id=3, segment_index=2)
-    assert (
-        nodes.node_properties(node, 'book.pdf')['source']
-        == nodes.source_uuid('book.pdf')
-    )
+    assert nodes.node_properties(node, 'book.pdf')[
+        'source'
+    ] == nodes.source_uuid('book.pdf')
 
 
 def test_source_uuid_is_deterministic():
@@ -74,6 +71,4 @@ def test_source_metadata_cannot_clobber_key():
 
 
 def test_source_properties_drop_none_metadata():
-    assert 'title' not in nodes.source_properties(
-        'book.pdf', {'title': None}
-    )
+    assert 'title' not in nodes.source_properties('book.pdf', {'title': None})

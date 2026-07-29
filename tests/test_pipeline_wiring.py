@@ -1,4 +1,5 @@
-"""Static graph-wiring checks — no imports, so they need none of the heavy deps."""
+"""Static graph-wiring checks — no imports, so they need none of the heavy
+deps."""
 
 import ast
 import pathlib

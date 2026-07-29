@@ -1,9 +1,10 @@
 """Test setup: make `kms.*` importable and stub the heavy third-party deps.
 
 The unit suite exercises pure pipeline logic (flattening, windowing, the finder
-cursor-walk, entity output) and must run without installing dspy/pydantic/langgraph.
-Each stub is installed ONLY if the real package is missing, so the same tests also run
-unchanged in a full environment where the real deps are present.
+cursor-walk, entity output) and must run without installing
+dspy/pydantic/langgraph. Each stub is installed ONLY if the real package is
+missing, so the same tests also run unchanged in a full environment where the
+real deps are present.
 """
 
 import pathlib
@@ -98,9 +99,10 @@ def _langgraph_types():
 
 
 def _neo4j():
-    # Enough surface for `kms.graph.db` / `kms.graph.schema` to import and for the pure
-    # helpers (schema_statements, vector_dim) to be unit-tested with no server. Anything
-    # that actually talks to a database is exercised only by the opt-in integration test,
+    # Enough surface for `kms.graph.db` / `kms.graph.schema` to import and for
+    # the pure helpers (schema_statements, vector_dim) to be unit-tested with no
+    # server. Anything that actually talks to a database is exercised only by
+    # the opt-in integration test,
     # which skips unless NEO4J_URI is set.
     m = types.ModuleType('neo4j')
 

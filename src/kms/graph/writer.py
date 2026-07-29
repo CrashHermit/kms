@@ -35,11 +35,6 @@ from kms.graph.nodes import (
     source_properties,
     source_uuid,
 )
-from kms.graph.statements import (
-    STATEMENT_LABEL,
-    statement_properties,
-    statement_uuid,
-)
 from kms.graph.procedures import (
     ACT_LABEL,
     PROCEDURE_LABEL,
@@ -48,6 +43,11 @@ from kms.graph.procedures import (
     has_procedure_pairs,
     procedure_rows,
     then_pairs,
+)
+from kms.graph.statements import (
+    STATEMENT_LABEL,
+    statement_properties,
+    statement_uuid,
 )
 
 
@@ -106,43 +106,45 @@ def _merged_chain(
     """
     # Which node ids are absorbed into a statement.
     absorbed: set[int] = set()
-    for stmt in statements:
-        for mid in stmt.statement_of or []:
-            absorbed.add(mid)
+    for statement in statements:
+        for member_id in statement.statement_of or []:
+            absorbed.add(member_id)
 
     # Map statement first-node id -> statement entity (for its graph uuid).
-    stmt_by_first: dict[int, models.StatementNode] = {}
-    for stmt in statements:
-        first = (stmt.statement_of or [None])[0]
+    statement_by_first_node: dict[int, models.StatementNode] = {}
+    for statement in statements:
+        first = (statement.statement_of or [None])[0]
         if first is not None:
-            stmt_by_first[first] = stmt
+            statement_by_first_node[first] = statement
 
     # Walk nodes, emit chain elements.
     chain: list[dict] = []
     for node in nodes:
-        nid = node.id
-        if nid is None:
+        node_id = node.id
+        if node_id is None:
             continue
-        if nid in stmt_by_first:
+        if node_id in statement_by_first_node:
             chain.append(
                 {
                     'kind': 'statement',
-                    'uuid': statement_uuid(source, stmt_by_first[nid].id),
+                    'uuid': statement_uuid(
+                        source, statement_by_first_node[node_id].id
+                    ),
                 }
             )
             continue
-        if nid in absorbed:
+        if node_id in absorbed:
             continue
         chain.append(
             {
                 'kind': 'node',
-                'uuid': node_uuid(source, nid),
+                'uuid': node_uuid(source, node_id),
             }
         )
 
     return [
-        {'from': a['uuid'], 'to': b['uuid']}
-        for a, b in zip(chain, chain[1:], strict=False)
+        {'from': current['uuid'], 'to': following['uuid']}
+        for current, following in zip(chain, chain[1:], strict=False)
     ]
 
 
@@ -153,23 +155,23 @@ def _merged_head(
 ) -> str | None:
     """The uuid of the first element in the merged chain, or None if empty."""
     absorbed: set[int] = set()
-    for stmt in statements:
-        for mid in stmt.statement_of or []:
-            absorbed.add(mid)
-    stmt_by_first: dict[int, models.StatementNode] = {}
-    for stmt in statements:
-        first = (stmt.statement_of or [None])[0]
+    for statement in statements:
+        for member_id in statement.statement_of or []:
+            absorbed.add(member_id)
+    statement_by_first_node: dict[int, models.StatementNode] = {}
+    for statement in statements:
+        first = (statement.statement_of or [None])[0]
         if first is not None:
-            stmt_by_first[first] = stmt
+            statement_by_first_node[first] = statement
 
     for node in nodes:
-        nid = node.id
-        if nid is None:
+        node_id = node.id
+        if node_id is None:
             continue
-        if nid in stmt_by_first:
-            return statement_uuid(source, stmt_by_first[nid].id)
-        if nid not in absorbed:
-            return node_uuid(source, nid)
+        if node_id in statement_by_first_node:
+            return statement_uuid(source, statement_by_first_node[node_id].id)
+        if node_id not in absorbed:
+            return node_uuid(source, node_id)
     return None
 
 
@@ -194,18 +196,18 @@ async def persist_chain(
     async with driver().session(database=database()) as session:
         if head:
             await session.run(
-                f'MATCH (s:{SOURCE_LABEL} {{uuid: $src}}), '
+                f'MATCH (s:{SOURCE_LABEL} {{uuid: $source}}), '
                 f'(n {{uuid: $head}}) '
                 f'MERGE (s)-[:HEAD]->(n)',
-                src=source_key,
+                source=source_key,
                 head=head,
             )
         if pairs:
             await session.run(
-                f'UNWIND $pairs AS pair '
-                f'MATCH (a {{uuid: pair.from}}), '
-                f'(b {{uuid: pair.to}}) '
-                f'MERGE (a)-[:NEXT]->(b)',
+                'UNWIND $pairs AS pair '
+                'MATCH (a {uuid: pair.from}), '
+                '(b {uuid: pair.to}) '
+                'MERGE (a)-[:NEXT]->(b)',
                 pairs=pairs,
             )
 
@@ -214,9 +216,7 @@ def statement_rows(
     statements: list[models.StatementNode], source: str
 ) -> list[dict]:
     """Every statement's property map, one flat list."""
-    return [
-        statement_properties(stmt, source) for stmt in statements
-    ]
+    return [statement_properties(statement, source) for statement in statements]
 
 
 async def persist_statements(

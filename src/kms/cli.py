@@ -1,9 +1,12 @@
-"""Command-line entry point for the KMS pipeline: ``python -m kms.cli book.pdf out/``.
+"""Command-line entry point for the KMS pipeline:
+``python -m kms.cli book.pdf out/``.
 
-Logging: every stage logs one INFO line summarising what it produced, and one DEBUG line
-per DSPy call with that call's inputs' shape and its (elided) outputs. INFO is the default;
-set ``KMS_LOG_LEVEL=DEBUG`` for the per-call detail. The stage loggers are named after their
-modules (``kms.entity.pedagogical_component_finder``, …), so a single stage can be turned up on its own.
+Logging: every stage logs one INFO line summarising what it produced, and one
+DEBUG line per DSPy call with that call's inputs' shape and its (elided)
+outputs. INFO is the default; set ``KMS_LOG_LEVEL=DEBUG`` for the per-call
+detail. The stage loggers are named after their modules
+(``kms.ingestion.pedagogical_component_finder``, …), so a single stage can be
+turned up on its own.
 """
 
 import asyncio
@@ -19,14 +22,19 @@ LOG_LEVEL_ENV = 'KMS_LOG_LEVEL'
 
 
 def _log_level() -> int:
-    """The configured log level, defaulting to INFO for an unset or unrecognised value."""
+    """The configured log level.
+
+    Returns:
+        The level named by ``KMS_LOG_LEVEL``, or INFO when it is unset or
+        unrecognised.
+    """
     name = (os.environ.get(LOG_LEVEL_ENV) or 'INFO').strip().upper()
     level = logging.getLevelNamesMapping().get(name)
     return level if isinstance(level, int) else logging.INFO
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Run the pipeline from the command line: ``python -m kms.cli <pdf> [out_dir]``.
+    """Run the pipeline: ``python -m kms.cli <pdf> [out_dir]``.
 
     Args:
         argv: Argument list. Reads ``sys.argv[1:]`` when None.

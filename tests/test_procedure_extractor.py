@@ -7,9 +7,7 @@ from kms.ingestion import procedure_extractor
 
 
 def test_extract_fills_procedure_content_from_group_text():
-    stmt = models.StatementNode(
-        content='Theorem.', id=0, statement_of=[0, 1]
-    )
+    stmt = models.StatementNode(content='Theorem.', id=0, statement_of=[0, 1])
     stmt.procedures.append(models.Procedure(index=0))
     nodes = [
         stmt,
@@ -38,27 +36,19 @@ def test_procedures_on_one_statement():
 
 
 def test_node_run_fills_procedure_content():
-    stmt = models.StatementNode(
-        content='Theorem.', id=0, statement_of=[0, 1]
-    )
+    stmt = models.StatementNode(content='Theorem.', id=0, statement_of=[0, 1])
     stmt.procedures.append(models.Procedure(index=0))
     nodes = [
         stmt,
         models.ParagraphNode(content='Proof.', id=1),
     ]
     node = procedure_extractor.ProcedureExtractorNode()
-    asyncio.run(
-        node.run({'nodes': nodes, 'statement_ids': [0]})
-    )
+    asyncio.run(node.run({'nodes': nodes, 'statement_ids': [0]}))
     assert stmt.procedures[0].content == 'Theorem.\n\nProof.'
 
 
 def test_node_run_without_procedures_is_noop():
-    stmt = models.StatementNode(
-        content='x', id=0, statement_of=[0]
-    )
+    stmt = models.StatementNode(content='x', id=0, statement_of=[0])
     node = procedure_extractor.ProcedureExtractorNode()
-    asyncio.run(
-        node.run({'nodes': [stmt], 'statement_ids': [0]})
-    )
+    asyncio.run(node.run({'nodes': [stmt], 'statement_ids': [0]}))
     assert stmt.procedures == []

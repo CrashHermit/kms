@@ -3,24 +3,24 @@ name = "kms"
 version = "0.1.0"
 description = "knowledge management and metacognitive learning system"
 requires-python = ">=3.13, <=3.14"
-# Light, portable core: the LLM pipeline (OCR/extract/seam/refine/govern/entity) and
-# its runtime. Everything here is CPU-only and installs in seconds — this is what
-# `uv sync` installs and what web sessions need.
+# Light, portable core: the LLM pipeline (OCR/extract/seam/split/find/type) and
+# its runtime. Everything here is CPU-only and installs in seconds — this is
+# what `uv sync` installs and what web sessions need.
 dependencies = [
   "pydantic>=2.0",
   "dspy-ai>=3.2.1",
   "langgraph>=0.2",
   "fsrs>=6.3.1",
   "neo4j>=6.2.0",
-  "httpx>=0.27",  # graph tier's HTTP Query-API transport (Bolt fallback for HTTPS-only egress)
+  # Graph tier's HTTP Query-API transport (Bolt fallback for HTTPS-only egress).
+  "httpx>=0.27",
   "python-dotenv>=1.0",
-  "dspy[optuna]>=3.2.1",
 ]
 
 [project.optional-dependencies]
 # No-GPU document front-end: the Mistral OCR API turns each page into markdown +
-# extracted figures, and pypdfium2 rasterizes pages so the correction pass has an image
-# to check the transcription against. CPU-only, installs in seconds:
+# extracted figures, and pypdfium2 rasterizes pages so the correction pass has
+# an image to check the transcription against. CPU-only, installs in seconds:
 #   uv sync --extra mistral
 mistral = [
   "pypdfium2>=4",
@@ -34,17 +34,17 @@ dev = ["pytest>=8", "ruff>=0.9"]
 testpaths = ["tests"]
 
 [tool.ruff]
-# One tool for format + lint + import order. src-layout aware so `module`/`training`
-# resolve as first-party. Target the minimum supported interpreter.
+# One tool for format + lint + import order. src-layout aware so `kms` resolves
+# as first-party. Target the minimum supported interpreter.
 line-length = 80
 target-version = "py312"
 src = ["src", "."]
 
 [tool.ruff.lint]
-# Light, low-noise set: pyflakes (unused imports/vars, undefined names), import order,
-# pycodestyle errors, bugbear (likely bugs), pyupgrade (keeps the modern-typing house
-# style). Line length is owned by the formatter, and long DSPy `description=` / prompt
-# strings are intentional, so E501 is off.
+# Light, low-noise set: pyflakes (unused imports/vars, undefined names), import
+# order, pycodestyle errors, bugbear (likely bugs), pyupgrade (keeps the
+# modern-typing house style). Line length is owned by the formatter, and long
+# DSPy `description=` / prompt strings are intentional, so E501 is off.
 select = ["E", "F", "I", "B", "UP"]
 ignore = ["E501"]
 

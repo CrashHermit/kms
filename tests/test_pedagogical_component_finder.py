@@ -28,9 +28,7 @@ def test_banks_a_bounded_span_and_emits_member_ids():
         [[pedagogical_component_finder.Span(start=1, end=2)], []]
     )
     spans = asyncio.run(
-        pedagogical_component_finder.find_spans(
-            _nodes(), module=module
-        )
+        pedagogical_component_finder.find_spans(_nodes(), module=module)
     )
     assert spans == [[1, 2]]
 
@@ -46,9 +44,7 @@ def test_statement_and_derivation_are_cut_into_separate_spans():
         ]
     )
     assert asyncio.run(
-        pedagogical_component_finder.find_spans(
-            _nodes(), module=module
-        )
+        pedagogical_component_finder.find_spans(_nodes(), module=module)
     ) == [[1], [2]]
 
 
@@ -56,9 +52,7 @@ def test_on_prose_only_stream_returns_nothing():
     module = _ScriptedFinder([[]])
     assert (
         asyncio.run(
-            pedagogical_component_finder.find_spans(
-                _nodes(), module=module
-            )
+            pedagogical_component_finder.find_spans(_nodes(), module=module)
         )
         == []
     )

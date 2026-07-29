@@ -39,5 +39,5 @@ async def ensure_schema() -> None:
     """Create the constraints and index if absent. Idempotent — safe on
     every startup."""
     async with db.driver().session(database=db.database()) as session:
-        for stmt in schema_statements():
-            await session.run(stmt)
+        for statement in schema_statements():
+            await session.run(statement)

@@ -30,15 +30,11 @@ def statement_uuid(source: str, first_node_id: int) -> str:
     return nodes.node_uuid(source, first_node_id)
 
 
-def statement_properties(
-    statement: models.StatementNode, source: str
-) -> dict:
+def statement_properties(statement: models.StatementNode, source: str) -> dict:
     """The Neo4j property map for one statement: matches the uuid of
     the existing ``:Node:Statement`` vertex and sets ``content``."""
     props = {
         'uuid': statement_uuid(source, statement.first_node_id()),
         'content': statement.content,
     }
-    return {
-        key: value for key, value in props.items() if value is not None
-    }
+    return {key: value for key, value in props.items() if value is not None}

@@ -19,26 +19,20 @@ class IngestionPersisterNode:
 
     async def run(self, state: state.State) -> dict:
         """Persist everything."""
-        source = state.get("source")
+        source = state.get('source')
         if not db.is_configured() or not source:
             return {}
         await schema.ensure_schema()
 
         nodes = state.get('nodes', [])
-        await writer.persist_nodes(
-            nodes, source, state.get('source_metadata')
-        )
+        await writer.persist_nodes(nodes, source, state.get('source_metadata'))
 
         # Build ordered statement list from state.
         statement_ids = state.get('statement_ids', [])
-        nodes_by_id = {
-            node.id: node
-            for node in nodes
-            if node.id is not None
-        }
+        nodes_by_id = {node.id: node for node in nodes if node.id is not None}
         statements: list[models.StatementNode] = []
-        for sid in statement_ids:
-            node = nodes_by_id.get(sid)
+        for statement_id in statement_ids:
+            node = nodes_by_id.get(statement_id)
             if isinstance(node, models.StatementNode):
                 statements.append(node)
 
