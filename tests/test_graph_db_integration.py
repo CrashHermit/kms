@@ -1,12 +1,14 @@
-"""Opt-in Neo4j integration test. Gated on an EXPLICIT flag (``KMS_NEO4J_IT``), not on the mere
-presence of ``NEO4J_URI`` — a configured ``.env`` (which ``db.py`` loads) would otherwise drag the
-slow, network-dependent live tests into every ``pytest`` run. With the flag set it checks
-connectivity, a round-trip query, and the structural-layer + entity-overlay writes against a real,
-reachable instance whose creds come from ``NEO4J_URI``/``NEO4J_USERNAME``/``NEO4J_PASSWORD``.
+"""Opt-in Neo4j integration test. Gated on an EXPLICIT flag (``KMS_NEO4J_IT``),
+not on the mere presence of ``NEO4J_URI`` — a configured ``.env`` (which
+``db.py`` loads) would otherwise drag the slow, network-dependent live tests
+into every ``pytest`` run. With the flag set it checks connectivity, a
+round-trip query, and the structural-layer + entity-overlay writes against a
+real, reachable instance whose creds come from
+``NEO4J_URI``/``NEO4J_USERNAME``/``NEO4J_PASSWORD``.
 
-Driven via asyncio.run so it needs no pytest-asyncio (the repo declares no such dev dep).
-Run against a live DB with, e.g.:
-    KMS_NEO4J_IT=1 NEO4J_URI=bolt://localhost:7687 NEO4J_USERNAME=neo4j NEO4J_PASSWORD=... \
+Driven via asyncio.run so it needs no pytest-asyncio (the repo declares no such
+dev dep). Run against a live DB with, e.g.: KMS_NEO4J_IT=1
+NEO4J_URI=bolt://localhost:7687 NEO4J_USERNAME=neo4j NEO4J_PASSWORD=... \
         PYTHONPATH=src uv run pytest tests/test_graph_db_integration.py -q
 """
 
@@ -17,7 +19,8 @@ import pytest
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get('KMS_NEO4J_IT'),
-    reason='set KMS_NEO4J_IT=1 (with NEO4J_URI/USERNAME/PASSWORD) to run the Neo4j integration test',
+    reason='set KMS_NEO4J_IT=1 (with NEO4J_URI/USERNAME/PASSWORD) '
+    'to run the Neo4j integration test',
 )
 
 
@@ -32,7 +35,9 @@ def test_connectivity_round_trip_and_idempotent_schema():
                 record = await result.single()
                 assert record['n'] == 1
             await schema.ensure_schema()
-            await schema.ensure_schema()  # idempotent: a second pass must not raise
+            await (
+                schema.ensure_schema()
+            )  # idempotent: a second pass must not raise
         finally:
             await db.close_driver()
 
@@ -64,22 +69,29 @@ def test_persist_nodes_upserts_labels_and_next_chain():
             meta = {'title': 'Test Book', 'author': 'A. Mathematician'}
             await schema.ensure_schema()
             await writer.persist_nodes(stream, source, meta)
-            await writer.persist_nodes(stream, source, meta)  # idempotent re-run
+            await writer.persist_nodes(
+                stream, source, meta
+            )  # idempotent re-run
             async with db.driver().session(database=db.database()) as session:
-                # multi-label: the math node is reachable as :Math and carries base :Node too
+                # multi-label: the math node is reachable as :Math and carries
+                # base :Node too
                 math = await one(
                     session,
                     "MATCH (n:Math:Node {content: '$x$'}) RETURN count(n) AS c",
                 )
-                # the :NEXT chain threads all three in order: §1 -> a -> $x$ (length 2)
+                # the :NEXT chain threads all three in order: §1 -> a -> $x$
+                # (length 2)
                 chain = await one(
                     session,
-                    'MATCH p=(:Node)-[:NEXT*]->(:Node) RETURN max(length(p)) AS longest',
+                    'MATCH p=(:Node)-[:NEXT*]->(:Node) '
+                    'RETURN max(length(p)) AS longest',
                 )
-                # the source roots the chain: :Source -HEAD-> the first node, and carries metadata
+                # the source roots the chain: :Source -HEAD-> the first node,
+                # and carries metadata
                 head = await one(
                     session,
-                    "MATCH (s:Source {title: 'Test Book', author: 'A. Mathematician'})"
+                    "MATCH (s:Source {title: 'Test Book', "
+                    "author: 'A. Mathematician'})"
                     '-[:HEAD]->(n:Node) RETURN n.content AS c',
                 )
                 assert math['c'] == 1  # re-run did not duplicate the node
@@ -125,7 +137,8 @@ def test_persist_entities_and_procedures_upsert_the_overlay_and_its_spine():
             segment_index=0,
         ),
     ]
-    # A definition, and a theorem whose proof is its own span with two steps. Decomposition is
+    # A definition, and a theorem whose proof is its own span with two steps.
+    # Decomposition is
     # universal and the procedure carries its own :DERIVED_FROM provenance.
     overlay = [
         models.Entity(
@@ -160,7 +173,8 @@ def test_persist_entities_and_procedures_upsert_the_overlay_and_its_spine():
             await writer.persist_entities(overlay, source)  # idempotent re-run
             await writer.persist_procedures(overlay, source)
             async with db.driver().session(database=db.database()) as session:
-                # type is an open PROPERTY on a bare :Entity — no per-type label is minted
+                # type is an open PROPERTY on a bare :Entity — no per-type label
+                # is minted
                 typed = await one(
                     session,
                     "MATCH (e:Entity {type: 'theorem'}) RETURN count(e) AS c",
@@ -168,26 +182,33 @@ def test_persist_entities_and_procedures_upsert_the_overlay_and_its_spine():
                 labelled = await one(
                     session, 'MATCH (e:Theorem) RETURN count(e) AS c'
                 )
-                # the overlay is linked to its book via the source property and points back
+                # the overlay is linked to its book via the source property and
+                # points back
                 # at its member chunks
-                src_uuid = nodes.source_uuid(source)
+                book_uuid = nodes.source_uuid(source)
                 rooted = await one(
                     session,
-                    f"MATCH (e:Entity {{source: '{src_uuid}'}}) RETURN count(e) AS c",
+                    f"MATCH (e:Entity {{source: '{book_uuid}'}}) "
+                    'RETURN count(e) AS c',
                 )
                 derived = await one(
                     session,
-                    'MATCH (:Entity)-[:DERIVED_FROM]->(:Node) RETURN count(*) AS c',
+                    'MATCH (:Entity)-[:DERIVED_FROM]->(:Node) '
+                    'RETURN count(*) AS c',
                 )
-                # the procedural spine: one :Procedure, its own provenance, and a 2-act chain
+                # the procedural spine: one :Procedure, its own provenance, and
+                # a 2-act chain
                 spine = await one(
                     session,
-                    'MATCH (:Entity)-[:HAS_PROCEDURE]->(p:Procedure)-[:FIRST]->(a:Act)'
-                    '-[:THEN]->(b:Act) RETURN a.text AS first, b.text AS second',
+                    'MATCH (:Entity)-[:HAS_PROCEDURE]->'
+                    '(p:Procedure)-[:FIRST]->(a:Act)'
+                    '-[:THEN]->(b:Act) '
+                    'RETURN a.text AS first, b.text AS second',
                 )
                 proc_prov = await one(
                     session,
-                    'MATCH (:Procedure)-[:DERIVED_FROM]->(:Node) RETURN count(*) AS c',
+                    'MATCH (:Procedure)-[:DERIVED_FROM]->(:Node) '
+                    'RETURN count(*) AS c',
                 )
                 assert typed['c'] == 1  # re-run did not duplicate
                 assert labelled['c'] == 0  # open types never become labels

@@ -1,4 +1,5 @@
-"""Flat-stream refactor: seam-birthed global node list + assembler resolving by segment_index."""
+"""Flat-stream refactor: seam-birthed global node list + assembler resolving by
+segment_index."""
 
 import pathlib
 import tempfile
@@ -44,7 +45,9 @@ def test_flatten_assigns_stable_ids_and_seg_index_across_pages():
 def test_assemble_walks_flat_nodes_and_passes_unmatched_placeholder():
     segs = _segments()
     flat = models.flatten_segments(segs)
-    out = assembler.assemble(flat, segs, output_dir=tempfile.mkdtemp(), filename='doc.md')
+    out = assembler.assemble(
+        flat, segs, output_dir=tempfile.mkdtemp(), filename='doc.md'
+    )
     text = pathlib.Path(out).read_text()
     assert '# Ch 1' in text and '1. solve x' in text
     assert (

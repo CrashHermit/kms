@@ -1,4 +1,5 @@
-"""Role typer: diagnoses group composition, creates StatementNodes + Procedures."""
+"""Role typer: diagnoses group composition, creates StatementNodes +
+Procedures."""
 
 import asyncio
 
@@ -26,7 +27,7 @@ def test_splits_statements_from_procedures():
         role_typer.type_roles([[0], [1], [2]], by_id, module)
     )
     assert sids == [0, 1, 2]  # every span gets a StatementNode
-    assert pids == [1]         # only the procedure span
+    assert pids == [1]  # only the procedure span
     assert isinstance(by_id[0], models.StatementNode)
     assert by_id[0].statement_of == [0]
     assert by_id[0].procedures == []
@@ -42,9 +43,7 @@ def test_an_unusable_role_falls_back_to_statement():
     nodes = [models.ParagraphNode(content='Theorem 2.1', id=0)]
     by_id = {0: nodes[0]}
     module = _ScriptedModule(['nonsense'])
-    sids, pids = asyncio.run(
-        role_typer.type_roles([[0]], by_id, module)
-    )
+    sids, pids = asyncio.run(role_typer.type_roles([[0]], by_id, module))
     assert sids == [0]
     assert pids == []
     assert isinstance(by_id[0], models.StatementNode)
@@ -74,7 +73,9 @@ def test_node_run_writes_both_channels():
 def test_node_run_on_an_empty_spans_channel_is_a_noop():
     node = role_typer.RoleTyperNode(module=_ScriptedModule([]))
     out = asyncio.run(
-        node.run({'nodes': [models.ParagraphNode(content='x', id=0)], 'spans': []})
+        node.run(
+            {'nodes': [models.ParagraphNode(content='x', id=0)], 'spans': []}
+        )
     )
     assert out['statement_ids'] == []
     assert out['procedure_ids'] == []

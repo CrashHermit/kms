@@ -1,12 +1,12 @@
 """
-Domain models for the pipeline: the in-memory AST and entity data structures, and the
-pure helpers that operate on them.
+Domain models for the pipeline: the in-memory AST and entity data structures,
+and the pure helpers that operate on them.
 
-These are the vocabulary the whole system is *about*. They depend only on the standard
-library — deliberately free of the orchestration framework (LangGraph) and the LLM stack
-(dspy), so a test, the graph tier, or a future non-LangGraph runner can use them in
-isolation. The LangGraph ``state.State`` that carries these through the graph lives in its
-sibling ``kms.core.state``.
+These are the vocabulary the whole system is *about*. They depend only on the
+standard library — deliberately free of the orchestration framework (LangGraph)
+and the LLM stack (dspy), so a test, the graph tier, or a future non-LangGraph
+runner can use them in isolation. The LangGraph ``state.State`` that carries
+these through the graph lives in its sibling ``kms.core.state``.
 """
 
 from dataclasses import dataclass, field
@@ -17,7 +17,11 @@ from typing import Any
 
 @dataclass(slots=True)
 class ASTNode:
-    """Base node in the flat document stream. Subclassed by structural kind."""
+    """Base node in the flat document stream.
+
+    Subclassed by structural kind (paragraph, math, code, …).
+    """
+
     content: str | None = None
     id: int | None = None
     segment_index: int | None = None
@@ -30,47 +34,48 @@ class ASTNode:
 
 @dataclass(slots=True)
 class ParagraphNode(ASTNode):
-    pass
+    """Prose text. Inline math stays in the paragraph."""
 
 
 @dataclass(slots=True)
 class MathNode(ASTNode):
-    pass
+    """A standalone display-math block."""
 
 
 @dataclass(slots=True)
 class CodeNode(ASTNode):
-    pass
+    """A fenced code block."""
 
 
 @dataclass(slots=True)
 class ListNode(ASTNode):
-    pass
+    """A bullet or numbered list, kept whole."""
 
 
 @dataclass(slots=True)
 class TableNode(ASTNode):
-    pass
+    """A markdown table body (grid rows only)."""
 
 
 @dataclass(slots=True)
 class ImageNode(ASTNode):
-    pass
+    """An indexed figure placeholder, ``![N]()``."""
 
 
 @dataclass(slots=True)
 class CaptionNode(ASTNode):
-    pass
+    """A figure caption, table title, note, or label."""
 
 
 @dataclass(slots=True)
 class HeaderNode(ASTNode):
-    pass
+    """A section, chapter, or block heading."""
 
 
 @dataclass(slots=True)
 class InstructionNode(ASTNode):
     """Exercise lead-in, set by the instruction finder."""
+
     pass
 
 
@@ -84,6 +89,7 @@ class StatementNode(ASTNode):
     group text and extract the statement portion into ``content``.
     ``procedures`` holds zero or one Procedure (real or placeholder).
     """
+
     statement_of: list[int] | None = None
     content: str | None = None
     procedures: list['Procedure'] = field(default_factory=list)
@@ -116,8 +122,10 @@ class Procedure:
 
 @dataclass(slots=True)
 class Picture:
-    """An image extracted from a page. `index` is the 1-based placeholder id that
-    OCR's ![N]() markers refer to."""
+    """An image extracted from a page.
+
+    `index` is the 1-based placeholder id that OCR's ![N]() markers refer to.
+    """
 
     index: int
     image_path: str
@@ -127,8 +135,10 @@ class Picture:
 class Segment:
     """One page of the document. `index` is 0-based document order.
 
-    TRANSIENT — per-page ingestion scaffolding. Only its pictures outlive the seam merger,
-    and only for placeholder resolution at assembly; no Segment reaches the graph."""
+    TRANSIENT — per-page ingestion scaffolding. Only its pictures outlive the
+    seam merger, and only for placeholder resolution at assembly; no Segment
+    reaches the graph.
+    """
 
     index: int
     image_path: str
@@ -145,8 +155,17 @@ class Segment:
 def merge_results_into_segments(
     segments: list[Segment], results: list[tuple[int, Any]], attr: str
 ) -> list[Segment]:
-    """Drain a stage's ``(segment_index, value)`` reducer channel back into the ordered
-    segment backbone, setting ``attr`` on each segment that has a result."""
+    """Drain a stage's reducer channel back into the segment backbone.
+
+    Args:
+        segments: The ordered segment backbone.
+        results: The stage's ``(segment_index, value)`` entries.
+        attr: The Segment attribute each value is written to.
+
+    Returns:
+        The same segment list, with ``attr`` set on every segment that had a
+        result.
+    """
     by_index = dict(results)
     for segment in segments:
         if segment.index in by_index:
@@ -155,12 +174,19 @@ def merge_results_into_segments(
 
 
 def flatten_segments(segments: list[Segment]) -> list[ASTNode]:
-    """Flatten per-page segment nodes into one global ordered node list, stamping each
-    node with a stable ``id`` and its originating ``segment_index``."""
+    """Flatten per-page segment nodes into one global ordered node list.
+
+    Args:
+        segments: The ordered segment backbone.
+
+    Returns:
+        The flat stream, each node stamped with a stable ``id`` and its
+        originating ``segment_index``.
+    """
     flat: list[ASTNode] = []
-    for seg in segments:
-        for node in seg.nodes or []:
-            node.segment_index = seg.index
+    for segment in segments:
+        for node in segment.nodes or []:
+            node.segment_index = segment.index
             flat.append(node)
     for i, node in enumerate(flat):
         node.id = i

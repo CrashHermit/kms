@@ -1,11 +1,12 @@
-"""Stage logging: the shared formatting helpers, and the per-stage INFO summaries.
+"""Stage logging: the shared formatting helpers, and the per-stage INFO
+summaries.
 
 The pipeline previously emitted a single line for a whole run, which made a live
-validation sweep reconstruct stage behaviour from the LangGraph State and the DSPy cache
-(see ``robustness_test/ENTITY-REBUILD-VALIDATION.md``). These tests pin the summaries that
-replaced that, in particular the two counts that make a bad run diagnosable: the
-pedagogical component finder's procedure-span count and the statement extractor's
-induced-type histogram.
+validation sweep reconstruct stage behaviour from the LangGraph State and the
+DSPy cache (see ``robustness_test/ENTITY-REBUILD-VALIDATION.md``). These tests
+pin the summaries that replaced that, in particular the two counts that make a
+bad run diagnosable: the pedagogical component finder's procedure-span count and
+the statement extractor's induced-type histogram.
 """
 
 import asyncio
@@ -77,7 +78,9 @@ def test_pedagogical_component_finder_logs_the_span_count(caplog):
             [],
         ]
     )
-    with caplog.at_level(logging.INFO, logger='kms.ingestion.pedagogical_component_finder'):
+    with caplog.at_level(
+        logging.INFO, logger='kms.ingestion.pedagogical_component_finder'
+    ):
         asyncio.run(
             pedagogical_component_finder.find_spans(
                 _nodes('Theorem 1', 'Proof.', 'tail'), module=module
@@ -95,7 +98,8 @@ class _ScriptedRoles:
 
 
 def test_role_typer_logs_the_block_derivation_split(caplog):
-    # "statements found but zero derivations" is the signature of an unmarked-derivation miss,
+    # "statements found but zero derivations" is the signature of an
+    # unmarked-derivation miss,
     # so the two counts must be reported separately.
     node = role_typer.RoleTyperNode(
         module=_ScriptedRoles(['statement', 'procedure'])
@@ -109,9 +113,7 @@ def test_role_typer_logs_the_block_derivation_split(caplog):
 
 
 def test_role_typer_logs_zero_derivations(caplog):
-    node = role_typer.RoleTyperNode(
-        module=_ScriptedRoles(['statement'])
-    )
+    node = role_typer.RoleTyperNode(module=_ScriptedRoles(['statement']))
     with caplog.at_level(logging.INFO, logger='kms.ingestion.role_typer'):
         asyncio.run(node.run({'nodes': _nodes('a'), 'spans': [[0]]}))
     assert '1 statement(s), 0 procedure(s)' in caplog.text

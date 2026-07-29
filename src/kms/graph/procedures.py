@@ -54,9 +54,7 @@ def procedure_properties(
         'index': procedure.index,
         'content': procedure.content,
     }
-    return {
-        key: value for key, value in props.items() if value is not None
-    }
+    return {key: value for key, value in props.items() if value is not None}
 
 
 def act_properties(
@@ -68,9 +66,7 @@ def act_properties(
 ) -> dict:
     """The Neo4j property map for one procedure step."""
     return {
-        'uuid': act_uuid(
-            source, statement_id, procedure_index, step_index
-        ),
+        'uuid': act_uuid(source, statement_id, procedure_index, step_index),
         'source': nodes.source_uuid(source),
         'text': text,
         'index': step_index,
@@ -82,15 +78,13 @@ def procedure_rows(
 ) -> list[dict]:
     """Every procedure's property map across the overlay, one flat list."""
     return [
-        procedure_properties(source, stmt.id, procedure)
-        for stmt in statements
-        for procedure in stmt.procedures
+        procedure_properties(source, statement.id, procedure)
+        for statement in statements
+        for procedure in statement.procedures
     ]
 
 
-def act_rows(
-    statements: list[models.StatementNode], source: str
-) -> list[dict]:
+def act_rows(statements: list[models.StatementNode], source: str) -> list[dict]:
     """Every step's property map across the overlay. Currently empty —
     the step decomposer is a future pass."""
     return []
@@ -103,13 +97,11 @@ def has_procedure_pairs(
     edges."""
     return [
         {
-            'statement': statement_uuid(source, stmt.id),
-            'procedure': procedure_uuid(
-                source, stmt.id, procedure.index
-            ),
+            'statement': statement_uuid(source, statement.id),
+            'procedure': procedure_uuid(source, statement.id, procedure.index),
         }
-        for stmt in statements
-        for procedure in stmt.procedures
+        for statement in statements
+        for procedure in statement.procedures
     ]
 
 

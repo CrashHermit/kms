@@ -17,7 +17,8 @@ class _ScriptedFinder:
 def _nodes():
     return [
         models.ParagraphNode(
-            content='In the following exercises, simplify.', id=0,
+            content='In the following exercises, simplify.',
+            id=0,
         ),
         models.ListNode(content='3 matrix A', id=1),
         models.ListNode(content='4 matrix B', id=2),
