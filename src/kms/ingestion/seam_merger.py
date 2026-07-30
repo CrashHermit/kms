@@ -34,7 +34,7 @@ import dspy
 from langgraph.types import Send
 from pydantic import BaseModel
 
-from kms.core import llm, logs, models, state
+from kms.core import llm, logs, models, recorder, state
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +126,16 @@ class SeamMerger(dspy.Module):
             bottom_top_edge_node=bottom_top_edge_node,
             bottom_node_context=bottom_node_context,
         )
+        recorder.record_example(
+            'seam_merger',
+            {
+                'top_bottom_edge_node': top_bottom_edge_node,
+                'bottom_top_edge_node': bottom_top_edge_node,
+                'top_node_context': top_node_context,
+                'bottom_node_context': bottom_node_context,
+            },
+            result,
+        )
         return result.merged
 
     def forward(
@@ -190,11 +200,7 @@ def _mergeable_indices(nodes: list[models.ASTNode]) -> list[int]:
     Returns:
         The indices of the mergeable nodes.
     """
-    return [
-        index
-        for index, node in enumerate(nodes)
-        if not isinstance(node, _APPARATUS)
-    ]
+    return [index for index, node in enumerate(nodes) if not isinstance(node, _APPARATUS)]
 
 
 def _pairs(
@@ -251,12 +257,8 @@ async def _merge_pair(
     head_index = bottom_mergeable[0]
     tail = top_nodes[tail_index]
     head = bottom_nodes[head_index]
-    top_context = (
-        top_nodes[top_mergeable[-2]] if len(top_mergeable) > 1 else None
-    )
-    bottom_context = (
-        bottom_nodes[bottom_mergeable[1]] if len(bottom_mergeable) > 1 else None
-    )
+    top_context = top_nodes[top_mergeable[-2]] if len(top_mergeable) > 1 else None
+    bottom_context = bottom_nodes[bottom_mergeable[1]] if len(bottom_mergeable) > 1 else None
 
     merged = await module.aforward(
         top_bottom_edge_node=_to_seam_node_dto(tail),
@@ -293,36 +295,22 @@ class SeamMergerNode:
     def dispatch_even(self, state: state.State) -> list[Send] | str:
         """Fans out workers for even-indexed segment pairs (0-1, 2-3, …)."""
         pairs = _pairs(state.get('segments', []), parity=0)
-        sends = [
-            Send('seam_even_worker', {'top': top, 'bottom': bottom})
-            for top, bottom in pairs
-        ]
+        sends = [Send('seam_even_worker', {'top': top, 'bottom': bottom}) for top, bottom in pairs]
         return sends or 'seam_even_collect'
 
     def dispatch_odd(self, state: state.State) -> list[Send] | str:
         """Fans out workers for odd-indexed segment pairs (1-2, 3-4, …)."""
         pairs = _pairs(state.get('segments', []), parity=1)
-        sends = [
-            Send('seam_odd_worker', {'top': top, 'bottom': bottom})
-            for top, bottom in pairs
-        ]
+        sends = [Send('seam_odd_worker', {'top': top, 'bottom': bottom}) for top, bottom in pairs]
         return sends or 'seam_odd_collect'
 
     async def even_worker(self, state: dict) -> dict:
         """Merges one even pair and returns the healed segment nodes."""
-        return {
-            'seam_even_results': await _merge_pair(
-                self.module, state['top'], state['bottom']
-            )
-        }
+        return {'seam_even_results': await _merge_pair(self.module, state['top'], state['bottom'])}
 
     async def odd_worker(self, state: dict) -> dict:
         """Merges one odd pair and returns the healed segment nodes."""
-        return {
-            'seam_odd_results': await _merge_pair(
-                self.module, state['top'], state['bottom']
-            )
-        }
+        return {'seam_odd_results': await _merge_pair(self.module, state['top'], state['bottom'])}
 
     def _collect(self, state: state.State, channel: str) -> dict:
         """Drain one pass's channel back into the segment backbone.

@@ -31,7 +31,7 @@ import logging
 import dspy
 from pydantic import BaseModel
 
-from kms.core import llm, logs, models, state, walker
+from kms.core import llm, logs, models, recorder, state, walker
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +107,7 @@ class InstructionFinder(dspy.Module):
             The window-local positions of the lead-in nodes.
         """
         result = await self.finder.acall(current_nodes=current_nodes)
+        recorder.record_example('instruction_finder', {'current_nodes': current_nodes}, result)
         positions = list(result.instruction_positions or [])
         logger.debug(
             'tag: %d nodes in, lead-in position(s) %s',
@@ -168,9 +169,7 @@ async def tag_instructions(
                 logs.elide(nodes[global_index].content),
             )
         cursor = end
-    tagged = [
-        node for node in nodes if isinstance(node, models.InstructionNode)
-    ]
+    tagged = [node for node in nodes if isinstance(node, models.InstructionNode)]
     logger.info(
         'instruction finder: %d node(s) -> %d lead-in(s) tagged',
         node_count,
@@ -203,7 +202,5 @@ class InstructionFinderNode:
         Returns:
             The tagged `nodes` channel.
         """
-        nodes = await tag_instructions(
-            state.get('nodes', []), module=self.module
-        )
+        nodes = await tag_instructions(state.get('nodes', []), module=self.module)
         return {'nodes': nodes}

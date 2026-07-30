@@ -73,7 +73,7 @@ from pathlib import Path
 import dspy
 from langgraph.types import Send
 
-from kms.core import llm, models, state
+from kms.core import llm, models, recorder, state
 
 logger = logging.getLogger(__name__)
 
@@ -211,8 +211,11 @@ class Corrector(dspy.Module):
         Returns:
             The proofread transcription, with genuine errors corrected.
         """
-        result = await self.proofreader.acall(
-            page_image=page_image, transcription=transcription
+        result = await self.proofreader.acall(page_image=page_image, transcription=transcription)
+        recorder.record_example(
+            'corrector',
+            {'page_image': page_image, 'transcription': transcription},
+            result,
         )
         corrected = result.corrected or ''
         logger.debug(
@@ -293,8 +296,6 @@ class CorrectorNode:
             The updated segment backbone.
         """
         results = state.get('correction_results', [])
-        segments = models.merge_results_into_segments(
-            state['segments'], results, 'content'
-        )
+        segments = models.merge_results_into_segments(state['segments'], results, 'content')
         logger.info('corrector: %d page(s) proofread', len(results))
         return {'segments': segments}

@@ -57,12 +57,13 @@ returns, `run()` only assembles the markdown document: assembly walks `nodes`,
 consulting `segments` only for picture inventories.
 """
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from langgraph.graph import END, START, StateGraph
 
-from kms.core import llm, state
+from kms.core import llm, recorder, state
 from kms.graph import db, persister
 from kms.ingestion import (
     corrector,
@@ -103,18 +104,12 @@ def build_graph() -> 'CompiledStateGraph':
     extractor_module = extractor.Extractor(language_model=llm.text_lm())
     seam_module = seam_merger.SeamMerger(language_model=llm.text_lm())
     splitter_module = splitter.Splitter(language_model=llm.text_lm())
-    instruction_finder_module = instruction_finder.InstructionFinder(
+    instruction_finder_module = instruction_finder.InstructionFinder(language_model=llm.text_lm())
+    instruction_distributor_module = instruction_distributor.InstructionDistributor(
         language_model=llm.text_lm()
     )
-    instruction_distributor_module = (
-        instruction_distributor.InstructionDistributor(
-            language_model=llm.text_lm()
-        )
-    )
-    component_finder_module = (
-        pedagogical_component_finder.PedagogicalComponentFinder(
-            language_model=llm.text_lm()
-        )
+    component_finder_module = pedagogical_component_finder.PedagogicalComponentFinder(
+        language_model=llm.text_lm()
     )
     role_typer_module = role_typer.RoleTyper(language_model=llm.text_lm())
 
@@ -128,18 +123,14 @@ def build_graph() -> 'CompiledStateGraph':
         module=instruction_finder_module
     )
     node_persister_node = persister.IngestionPersisterNode()
-    component_finder_node = (
-        pedagogical_component_finder.PedagogicalComponentFinderNode(
-            module=component_finder_module
-        )
+    component_finder_node = pedagogical_component_finder.PedagogicalComponentFinderNode(
+        module=component_finder_module
     )
     role_typer_node = role_typer.RoleTyperNode(module=role_typer_module)
     statement_extractor_node = statement_extractor.StatementExtractorNode()
     procedure_extractor_node = procedure_extractor.ProcedureExtractorNode()
-    instruction_distributor_node = (
-        instruction_distributor.InstructionDistributorNode(
-            module=instruction_distributor_module
-        )
+    instruction_distributor_node = instruction_distributor.InstructionDistributorNode(
+        module=instruction_distributor_module
     )
 
     graph = StateGraph(state.State)
@@ -266,6 +257,15 @@ async def run(
 
     output_dir = Path(output_dir)
     source = source or Path(pdf_path).name
+    if os.environ.get('KMS_RECORD'):
+        recorder.set_run(
+            source,
+            output_dir=str(output_dir / 'examples'),
+            pdf=str(pdf_path),
+            pages=pages,
+            title=title,
+            author=author,
+        )
     metadata = {'title': title, 'author': author}
     segments = ocr.extract(pdf_path, output_dir=output_dir, pages=pages)
     graph = build_graph()

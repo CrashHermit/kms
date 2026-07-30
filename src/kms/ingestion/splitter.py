@@ -36,7 +36,7 @@ import logging
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import llm, models, state, walker
+from kms.core import llm, models, recorder, state, walker
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +74,7 @@ class SplitExercise(BaseModel):
 class NodeSplit(BaseModel):
     """A node that packs two or more exercises, and its split pieces."""
 
-    position: int = Field(
-        description='The window position of the node that packs the exercises.'
-    )
+    position: int = Field(description='The window position of the node that packs the exercises.')
     exercises: list[SplitExercise] = Field(
         description='The individual exercises it holds, in order (two or more).'
     )
@@ -145,9 +143,7 @@ class Splitter(dspy.Module):
         self.splitter = dspy.ChainOfThought(Signature)
         self.set_lm(language_model or llm.text_lm())
 
-    async def aforward(
-        self, current_nodes: list[WindowNode]
-    ) -> list[NodeSplit]:
+    async def aforward(self, current_nodes: list[WindowNode]) -> list[NodeSplit]:
         """Judge one window.
 
         Args:
@@ -157,6 +153,7 @@ class Splitter(dspy.Module):
             The window's split decisions.
         """
         result = await self.splitter.acall(current_nodes=current_nodes)
+        recorder.record_example('splitter', {'current_nodes': current_nodes}, result)
         splits = list(result.splits or [])
         # Whether a given packed node splits is the stage's known run-to-run
         # variance (docs/HANDOFF.md, known issues), so log the per-window
@@ -166,8 +163,7 @@ class Splitter(dspy.Module):
             len(current_nodes),
             len(splits),
             ''.join(
-                f' | position {split.position} -> '
-                f'{len(split.exercises)} piece(s)'
+                f' | position {split.position} -> {len(split.exercises)} piece(s)'
                 for split in splits
             ),
         )
@@ -178,9 +174,7 @@ class Splitter(dspy.Module):
         return asyncio.run(self.aforward(current_nodes))
 
 
-async def _gather_decisions(
-    nodes: list[models.ASTNode], module: Splitter, budget: int
-) -> Decision:
+async def _gather_decisions(nodes: list[models.ASTNode], module: Splitter, budget: int) -> Decision:
     """Walk the stream in windows and collect every split, keyed by node id.
 
     A split is per-node (a node's content is wholly inside one window), so the
@@ -216,8 +210,7 @@ async def _gather_decisions(
             items = [
                 exercise
                 for exercise in split_result.exercises
-                if (exercise.content or '').strip()
-                or (exercise.number or '').strip()
+                if (exercise.content or '').strip() or (exercise.number or '').strip()
             ]
             # Only a genuine group is a split.
             if node_id is not None and len(items) >= 2:
@@ -226,9 +219,7 @@ async def _gather_decisions(
     return decision
 
 
-def _rebuild(
-    nodes: list[models.ASTNode], decision: Decision
-) -> list[models.ASTNode]:
+def _rebuild(nodes: list[models.ASTNode], decision: Decision) -> list[models.ASTNode]:
     """Materialise the normalised stream.
 
     Replaces each split node with one node per piece, passes everything else
@@ -322,7 +313,5 @@ class SplitterNode:
         Returns:
             The normalised `nodes` channel.
         """
-        nodes = await split_exercises(
-            state.get('nodes', []), module=self.module
-        )
+        nodes = await split_exercises(state.get('nodes', []), module=self.module)
         return {'nodes': nodes}

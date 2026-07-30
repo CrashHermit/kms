@@ -35,7 +35,7 @@ import logging
 
 import dspy
 
-from kms.core import llm, logs, models, state
+from kms.core import llm, logs, models, recorder, state
 
 logger = logging.getLogger(__name__)
 
@@ -153,6 +153,7 @@ class RoleTyper(dspy.Module):
             answer.
         """
         result = await self.classify.acall(contents=contents)
+        recorder.record_example('role_typer', {'contents': contents}, result)
         answer = ' '.join((result.role or '').split()).lower()
         # `statement` is the fallback: it is the far more common role, and a
         # block wrongly demoted to a derivation would be attached to (and
@@ -161,9 +162,7 @@ class RoleTyper(dspy.Module):
         logger.debug(
             'role: %s%s | from %r',
             role,
-            ''
-            if answer in SPAN_ROLES
-            else f' (fallback, model said {answer!r})',
+            '' if answer in SPAN_ROLES else f' (fallback, model said {answer!r})',
             logs.elide(contents),
         )
         return role
@@ -192,9 +191,7 @@ def contents_of(span: list[int], nodes_by_id: dict[int, models.ASTNode]) -> str:
     )
 
 
-def _mark_statement(
-    node: models.ASTNode, span: list[int]
-) -> models.StatementNode:
+def _mark_statement(node: models.ASTNode, span: list[int]) -> models.StatementNode:
     """Promote a plain node to a StatementNode carrying the span's members.
 
     Args:
@@ -237,9 +234,7 @@ async def type_roles(
         return [], []
     module = module or RoleTyper()
 
-    roles = await asyncio.gather(
-        *(module.acall(contents_of(span, nodes_by_id)) for span in spans)
-    )
+    roles = await asyncio.gather(*(module.acall(contents_of(span, nodes_by_id)) for span in spans))
     statement_ids: list[int] = []
     procedure_ids: list[int] = []
     for span, role in zip(spans, roles, strict=True):

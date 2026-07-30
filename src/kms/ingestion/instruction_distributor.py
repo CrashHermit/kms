@@ -40,7 +40,7 @@ import logging
 import dspy
 from pydantic import BaseModel
 
-from kms.core import llm, logs, models, state, walker
+from kms.core import llm, logs, models, recorder, state, walker
 
 logger = logging.getLogger(__name__)
 
@@ -109,9 +109,7 @@ class InstructionDistributor(dspy.Module):
         self.judge = dspy.ChainOfThought(GovernExtent)
         self.set_lm(language_model or llm.text_lm())
 
-    async def aforward(
-        self, lead_in: str, following: list[WindowProblem]
-    ) -> tuple[str, list[int]]:
+    async def aforward(self, lead_in: str, following: list[WindowProblem]) -> tuple[str, list[int]]:
         """Judge one lead-in's extent.
 
         Args:
@@ -121,8 +119,11 @@ class InstructionDistributor(dspy.Module):
         Returns:
             The shared instruction and the window-local positions it governs.
         """
-        result = await self.judge.acall(
-            lead_in=lead_in, following_problems=following
+        result = await self.judge.acall(lead_in=lead_in, following_problems=following)
+        recorder.record_example(
+            'instruction_distributor',
+            {'lead_in': lead_in, 'following_problems': following},
+            result,
         )
         instruction, positions = (
             (result.instruction or '').strip(),
@@ -136,9 +137,7 @@ class InstructionDistributor(dspy.Module):
         )
         return instruction, positions
 
-    def forward(
-        self, lead_in: str, following: list[WindowProblem]
-    ) -> tuple[str, list[int]]:
+    def forward(self, lead_in: str, following: list[WindowProblem]) -> tuple[str, list[int]]:
         """Sync forward for DSPy optimisers."""
         return asyncio.run(self.aforward(lead_in, following))
 
@@ -155,9 +154,7 @@ def _node_text(node: models.ASTNode) -> str:
     return (node.content or '').strip()
 
 
-def _window(
-    candidates: list[models.ASTNode], budget: int
-) -> list[models.ASTNode]:
+def _window(candidates: list[models.ASTNode], budget: int) -> list[models.ASTNode]:
     """The candidates that fit in one look-ahead window.
 
     Args:
@@ -207,9 +204,7 @@ async def _govern_one(
                 for position, node in enumerate(window)
             ],
         )
-        governed = sorted(
-            {min(max(position, 0), last_local) for position in positions}
-        )
+        governed = sorted({min(max(position, 0), last_local) for position in positions})
 
         if not governed:
             # This lead-in governs nothing here.
@@ -242,9 +237,7 @@ async def distribute_instructions(
         The cleaned node stream — instruction nodes removed, governed
         exercises enriched.
     """
-    lead_ins = [
-        node for node in nodes if isinstance(node, models.InstructionNode)
-    ]
+    lead_ins = [node for node in nodes if isinstance(node, models.InstructionNode)]
     if not lead_ins:
         logger.info(
             'instruction distributor: no-op (0 lead-in(s), %d node(s))',
@@ -255,14 +248,8 @@ async def distribute_instructions(
     module = module or InstructionDistributor()
 
     # Index the stream so we know what follows each lead-in.
-    position_of = {
-        node.id: position
-        for position, node in enumerate(nodes)
-        if node.id is not None
-    }
-    lead_positions = sorted(
-        position_of.get(node.id) for node in lead_ins if node.id is not None
-    )
+    position_of = {node.id: position for position, node in enumerate(nodes) if node.id is not None}
+    lead_positions = sorted(position_of.get(node.id) for node in lead_ins if node.id is not None)
     stream_end = len(nodes)
 
     for node in lead_ins:
@@ -271,11 +258,7 @@ async def distribute_instructions(
             continue
         # Candidates end at the next lead-in or the end of the stream.
         next_lead = min(
-            (
-                position
-                for position in lead_positions
-                if position is not None and position > here
-            ),
+            (position for position in lead_positions if position is not None and position > here),
             default=stream_end,
         )
         candidates = [
@@ -286,12 +269,9 @@ async def distribute_instructions(
         await _govern_one(node, candidates, module)
 
     # Remove instruction nodes from the stream.
-    cleaned = [
-        node for node in nodes if not isinstance(node, models.InstructionNode)
-    ]
+    cleaned = [node for node in nodes if not isinstance(node, models.InstructionNode)]
     logger.info(
-        'instruction distributor: %d lead-in(s) removed, '
-        '%d of %d node(s) remain',
+        'instruction distributor: %d lead-in(s) removed, %d of %d node(s) remain',
         len(lead_ins),
         len(cleaned),
         len(nodes),

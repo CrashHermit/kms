@@ -68,7 +68,7 @@ import logging
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import llm, logs, models, state, walker
+from kms.core import llm, logs, models, recorder, state, walker
 
 logger = logging.getLogger(__name__)
 
@@ -98,9 +98,7 @@ class Span(BaseModel):
     stops and the next begins.
     """
 
-    start: int = Field(
-        description='First local position of the span (inclusive).'
-    )
+    start: int = Field(description='First local position of the span (inclusive).')
     end: int = Field(description='Last local position of the span (inclusive).')
 
 
@@ -260,6 +258,11 @@ class PedagogicalComponentFinder(dspy.Module):
             The spans found in the window, as local position ranges.
         """
         result = await self.finder.acall(current_nodes=current_nodes)
+        recorder.record_example(
+            'pedagogical_component_finder',
+            {'current_nodes': current_nodes},
+            result,
+        )
         spans = list(result.spans or [])
         logger.debug(
             'find: %d nodes in, %d span(s) out | first node %r',
@@ -377,8 +380,7 @@ async def find_spans(
                 # The sole span reaches the edge and may continue — grow and
                 # re-read.
                 logger.debug(
-                    'grow: sole span reaches the window edge at cursor %d; '
-                    'budget %d -> %d',
+                    'grow: sole span reaches the window edge at cursor %d; budget %d -> %d',
                     cursor,
                     size,
                     size * 2,
@@ -419,9 +421,7 @@ class PedagogicalComponentFinderNode:
         module: The finder module. Created fresh if None.
     """
 
-    def __init__(
-        self, module: PedagogicalComponentFinder | None = None
-    ) -> None:
+    def __init__(self, module: PedagogicalComponentFinder | None = None) -> None:
         self.module = module or PedagogicalComponentFinder()
 
     async def run(self, state: state.State) -> dict:
