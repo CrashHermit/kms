@@ -40,7 +40,7 @@ import logging
 import dspy
 from pydantic import BaseModel
 
-from kms.core import llm, logs, models, state
+from kms.core import llm, logs, models, state, walker
 
 logger = logging.getLogger(__name__)
 
@@ -155,18 +155,6 @@ def _node_text(node: models.ASTNode) -> str:
     return (node.content or '').strip()
 
 
-def _estimate_tokens(text: str) -> int:
-    """A rough token estimate for a string: character count ÷ 4, clamped.
-
-    Args:
-        text: The text to size.
-
-    Returns:
-        The estimated token count, at least 1.
-    """
-    return len(text) // 4 + 1
-
-
 def _window(
     candidates: list[models.ASTNode], budget: int
 ) -> list[models.ASTNode]:
@@ -181,7 +169,7 @@ def _window(
     """
     window, accumulated = [], 0
     for node in candidates:
-        token_count = _estimate_tokens(_node_text(node))
+        token_count = walker.estimate_tokens(node)
         if window and accumulated + token_count > budget:
             break
         window.append(node)
