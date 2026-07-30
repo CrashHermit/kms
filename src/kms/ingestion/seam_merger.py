@@ -131,9 +131,12 @@ class MergeSignature(dspy.Signature):
     where the interrupted block starts and stops — never include their content
     in what you return.
 
-    LATEX FORMAT: All mathematical notation must use LaTeX format. Use single
-    dollar signs `$ $` for inline math and double dollar signs `$$ $$` for
-    block/display math. Preserve existing delimiters and math content exactly.
+    CHARACTERS ARE COPIED, NOT INTERPRETED. Reproduce every character of both
+    halves exactly as it is given to you — backslashes, dollar signs, braces,
+    markdown markers, unicode. Do NOT add or remove escaping: `\(` stays `\(`
+    and never becomes `\\(`. Do NOT convert one math delimiter style into
+    another, and do NOT normalise, tidy or re-indent anything. The whitespace
+    at the join itself is the only thing you may change.
     """
 
     top_node_context: SeamNodeDTO | None = dspy.InputField(
