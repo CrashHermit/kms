@@ -28,6 +28,14 @@ dollar convention the extractor's prompt and every downstream stage assume.
 becomes. No divergence check, no post-processing — the pipeline's passes are
 bare LLM calls and correctness rests on the prompt.
 
+Delimiter conversion is stated as its own required section rather than as one
+bullet among equals, because a flat rule list was measurably applied only in
+part: on a code-heavy real page the pass reliably fenced the code, normalised
+heading levels, and left all fourteen `\( … \)` delimiters — including ones on a
+heading line it had just edited — the same way on every repeat. Which rules
+fired depended on what else the page had wrong with it, so the rule this stage
+was added for needed to stop competing for attention with markup housekeeping.
+
 Two deliberate omissions, both of which were on the table and both of which
 would break things at this position in the pipeline:
 
@@ -67,20 +75,33 @@ class Signature(dspy.Signature):
     where you cannot make it without guessing at meaning, leave the text as it
     is.
 
-    WHAT TO STANDARDISE
+    REQUIRED — MATH DELIMITERS
 
-    - Math delimiters. Inline math in single dollars `$ … $`, display math in
-      double `$$ … $$`. Convert `\( … \)` and `\[ … \]`. Wrap a display
-      equation the transcription left bare — a standalone equation line, or an
-      `array` / `aligned` / `cases` / `equation` environment — in `$$ … $$`.
-      Change the delimiters only, never the expression between them.
+    This is the one change you must always make, and the reason this pass
+    exists. Work through the page and convert every occurrence, wherever math
+    appears — in prose, in a heading, in a list item, in a table cell:
+
+    - `\( … \)` becomes `$ … $`
+    - `\[ … \]` becomes `$$ … $$`
+    - a display equation left bare — a standalone equation line, or an `array`
+      / `aligned` / `cases` / `equation` environment — is wrapped in `$$ … $$`
+
+    Change the delimiters only, never the expression between them. Convert all
+    of them, not the first few, and do this even when the page has other things
+    wrong with it.
+
+    ALSO STANDARDISE
+
     - Headings. Mark every heading with `#`s, one level per structural level,
-      deepening consistently down the page. Do not invent a heading, remove
-      one, or promote a line that is not one.
+      deepening consistently down the page. A heading written as a line of text
+      underlined by `===` or `---` on the next line is a heading: replace both
+      lines with a single `#`-marked one. Do not invent a heading, remove one,
+      or promote a line that is not one.
     - Lists. `-` for bullets and `1.` numbering for ordered lists, with nesting
       shown by indentation. Keep every item, its position, and any label the
       document gives it.
-    - Emphasis. `*italic*` and `**bold**`.
+    - Emphasis. Write italics as `*italic*` and bold as `**bold**`. Normalise
+      the emphasis that is there; do not add emphasis to text that has none.
     - Tables. Pipe tables with a header separator row, one row per line.
     - Blank lines. One blank line between top-level blocks, none inside a
       block.
