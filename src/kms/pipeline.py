@@ -47,8 +47,9 @@ extractors fill in each one's content, which is transcription rather than
 judgement. That overlay rides its own `statements` channel: a statement's
 content is its whole group's text, so it sits BESIDE `nodes`, never in it —
 in the stream it would make every stage that walks nodes (the assembler
-included) read the group twice. The chain is split this way because fusing these questions made each
-one worse — the finder read a missing "Solution." marker as "no derivation".
+included) read the group twice. The chain is split this way because fusing
+these questions made each one worse — the finder read a missing "Solution."
+marker as "no derivation".
 
 The ingestion persister is the terminal stage. It runs after every stream
 mutation, so the persisted node ids match the overlay's members and instruction

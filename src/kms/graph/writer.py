@@ -123,9 +123,9 @@ def _chain_elements(
     for statement in statements:
         members = statement.statement_of or []
         absorbed.update(members)
-        first = members[0] if members else statement.id
-        if first is not None:
-            statement_by_first_node[first] = statement
+        first_member_id = members[0] if members else statement.id
+        if first_member_id is not None:
+            statement_by_first_node[first_member_id] = statement
 
     elements: list[dict] = []
     for node in nodes:
@@ -207,10 +207,10 @@ async def persist_chain(
 
     Both tiers are matched BY LABEL. Cypher cannot parameterise a label, so
     the pairs are bucketed by their ``(from_label, to_label)`` combination —
-    at most four — and each bucket is one statement with its labels written
-    in. A label-free ``MATCH (a {uuid: …})`` would scan every vertex in the
-    database and, worse, would silently do the wrong thing the moment two
-    tiers shared a uuid.
+    at most four — and each bucket is one query with its labels written in. A
+    label-free ``MATCH (a {uuid: …})`` would scan every vertex in the database
+    and, worse, would silently do the wrong thing the moment two tiers shared
+    a uuid.
     """
     if not nodes:
         return
@@ -224,9 +224,10 @@ async def persist_chain(
 
     async with driver().session(database=database()) as session:
         if head:
+            head_label = head['label']
             await session.run(
                 f'MATCH (s:{SOURCE_LABEL} {{uuid: $source}}), '
-                f'(n:{head["label"]} {{uuid: $head}}) '
+                f'(n:{head_label} {{uuid: $head}}) '
                 f'MERGE (s)-[:HEAD]->(n)',
                 source=source_key,
                 head=head['uuid'],

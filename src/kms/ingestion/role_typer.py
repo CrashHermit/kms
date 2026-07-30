@@ -252,10 +252,10 @@ async def type_roles(
     roles = await asyncio.gather(*(module.acall(contents_of(span, nodes_by_id)) for span in spans))
     statements: list[models.Statement] = []
     for span, role in zip(spans, roles, strict=True):
-        first = span[0]
-        if first not in nodes_by_id:
+        first_member_id = span[0]
+        if first_member_id not in nodes_by_id:
             continue
-        statement = _mark_statement(nodes_by_id[first], span)
+        statement = _mark_statement(nodes_by_id[first_member_id], span)
         if role == PROCEDURE_ROLE:
             statement.procedures.append(models.Procedure(index=0))
         statements.append(statement)
@@ -297,5 +297,7 @@ class RoleTyperNode:
         """
         nodes = state.get('nodes', [])
         nodes_by_id = {node.id: node for node in nodes if node.id is not None}
-        statements = await type_roles(state.get('spans', []), nodes_by_id, self.module)
+        statements = await type_roles(
+            state.get('spans', []), nodes_by_id, self.module
+        )
         return {'statements': statements}

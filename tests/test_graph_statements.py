@@ -35,7 +35,9 @@ def test_statement_uuids_are_disjoint_from_node_uuids():
 
 
 def test_statement_properties_carry_content_and_provenance():
-    statement = models.Statement(id=4, content='Theorem 2.1.', statement_of=[4, 5])
+    statement = models.Statement(
+        id=4, content='Theorem 2.1.', statement_of=[4, 5]
+    )
     props = statements.statement_properties(statement, 'book.pdf')
     assert props['uuid'] == statements.statement_uuid('book.pdf', 4)
     assert props['content'] == 'Theorem 2.1.'
@@ -116,11 +118,13 @@ class _FakeSession:
     async def __aexit__(self, *_exc):
         return False
 
-    async def run(self, query, **params):
-        self.log.append((query, params))
+    async def run(self, query, **parameters):
+        self.log.append((query, parameters))
 
 
 class _FakeDriver:
+    """Hands out recording sessions in place of a Neo4j driver."""
+
     def __init__(self):
         self.log = []
 

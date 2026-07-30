@@ -37,8 +37,9 @@ def test_a_statement_is_not_an_ast_node():
     # The stream cannot hold one even by accident: Statement is a peer of
     # Procedure, not an ASTNode.
     nodes = [models.ParagraphNode(content='Theorem 2.1', id=0)]
+    module = _ScriptedModule(['statement'])
     statements = asyncio.run(
-        role_typer.type_roles([[0]], {0: nodes[0]}, _ScriptedModule(['statement']))
+        role_typer.type_roles([[0]], {0: nodes[0]}, module)
     )
     assert not isinstance(statements[0], models.ASTNode)
 
