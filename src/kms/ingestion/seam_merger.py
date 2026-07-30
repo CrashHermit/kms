@@ -6,6 +6,23 @@ the bottom page. This stage uses a DSPy ChainOfThought module to decide whether
 each cross-page pair is a split block and merges the halves. Workers run in two
 passes (even/odd) to avoid races on shared segments.
 
+TWO QUESTIONS, TWO CALLS. The judge (``Signature``) answers one bool: are
+these two halves of one block? Only if it says yes does
+the rewriter (``MergeSignature``) get asked the second question — what is that
+block — and rejoin them. Splitting them this way is not tidiness. A single
+``merged: str | None`` field used to carry both answers, and asked to return
+None for "these don't merge" the model returned the four-character STRING
+"None", which is not None and is truthy: every declined seam overwrote the
+tail with the word "None" and deleted the head, destroying two nodes at 100%
+of page boundaries in every run, on two different models. Text is all a model
+can emit, so a text field cannot hold "no" — the negative answer needs a field
+whose type can, and here it needs a different call entirely.
+
+The rewriter sees exactly what the judge saw — both edge nodes AND both
+context neighbours — because where the interrupted block starts and stops is
+the same question in both calls, and the neighbours are what settle it. The
+context is read-only in both: it informs the answer, it is never part of it.
+
 **Page apparatus — bibliographic references and notes — is not a seam candidate
 and is skipped when choosing the edges.** The stage rests on an adjacency
 assumption: that the last block of one page is the one that continues onto the
@@ -54,22 +71,19 @@ class Signature(dspy.Signature):
     etc.) is split across that boundary, producing an incomplete tail in the top
     run and an incomplete head in the bottom run.
 
-    Your job: decide whether the tail node of the top run and the head node of
-    the bottom run are two halves of the same interrupted block. If they are,
-    merge them into one coherent node. If they are not — they are already
-    complete, independent nodes that merely sit next to each other at the
-    boundary — return None.
+    Your job is ONE yes/no judgment: are the tail node of the top run and the
+    head node of the bottom run two halves of the same interrupted block? You
+    do not rewrite or join anything — a separate pass rejoins the halves, and
+    only when you answer True.
 
     Judge this purely on structure: does the tail read as cut off mid-block and
     the head as its continuation? Do not reason about the subject matter or
-    reassemble blocks that are each already complete.
+    reassemble blocks that are each already complete. If the two are already
+    complete, independent nodes that merely sit next to each other at the
+    boundary, answer False.
 
     Use the context nodes (the neighbour just inside each run) only to inform
-    your judgment — never include their content in the merged output.
-
-    LATEX FORMAT: All mathematical notation must use LaTeX format. Use single
-    dollar signs `$ $` for inline math and double dollar signs `$$ $$` for
-    block/display math. Preserve existing delimiters and math content exactly.
+    your judgment — they are never part of the join.
     """
 
     top_node_context: SeamNodeDTO | None = dspy.InputField(
@@ -85,8 +99,58 @@ class Signature(dspy.Signature):
         description='The node immediately after the head of the bottom element run. Read-only context — do not include its content in the output.'
     )
 
-    merged: str | None = dspy.OutputField(
-        description='The merged content. If the two edge nodes are split halves of the same block, return the combined text (tail content immediately followed by head content, joined naturally without an added separator). If they are already complete independent nodes, return None.'
+    is_split: bool = dspy.OutputField(
+        description='True if the tail node is cut off mid-block and the head node continues it, so the two are halves of one block. False if each is already complete on its own.'
+    )
+
+
+class MergeSignature(dspy.Signature):
+    r"""
+    Two texts are the two halves of ONE block of a document that a page break
+    interrupted — the first is cut off, the second continues it. Write them
+    back as the single block they were.
+
+    This is a REJOIN, not an edit. Every word, symbol and LaTeX token of both
+    halves must survive, in their original order, with nothing added and
+    nothing dropped. Your whole job is the seam itself:
+
+      - A break INSIDE a word closes up: 'espe' + 'cially' is 'especially'.
+      - A word broken across the break with a hyphen loses the hyphen:
+        'sub-' + 'graph' is 'subgraph'.
+      - A break BETWEEN words takes a single space: 'every vertex of' +
+        '$G$ is a vertex' is 'every vertex of $G$ is a vertex'.
+      - A structure split down the middle closes up as the structure requires,
+        e.g. the two halves of one display-math environment or one table row
+        rejoin into a well-formed whole.
+
+    Do NOT correct spelling, restate, summarise, translate, reflow, or drop a
+    repeated word — even one that looks like an error. Do not comment on what
+    you did. Return the rejoined block and nothing else.
+
+    Use the context nodes (the neighbour just inside each page) only to tell
+    where the interrupted block starts and stops — never include their content
+    in what you return.
+
+    LATEX FORMAT: All mathematical notation must use LaTeX format. Use single
+    dollar signs `$ $` for inline math and double dollar signs `$$ $$` for
+    block/display math. Preserve existing delimiters and math content exactly.
+    """
+
+    top_node_context: SeamNodeDTO | None = dspy.InputField(
+        description='The node immediately before the tail. Read-only context — do not include its content in the output.'
+    )
+    top_bottom_edge_node: SeamNodeDTO = dspy.InputField(
+        description='The first half — the block as it was cut off at the foot of the page.'
+    )
+    bottom_top_edge_node: SeamNodeDTO = dspy.InputField(
+        description='The second half — the block as it resumes at the top of the next page.'
+    )
+    bottom_node_context: SeamNodeDTO | None = dspy.InputField(
+        description='The node immediately after the head. Read-only context — do not include its content in the output.'
+    )
+
+    merged: str = dspy.OutputField(
+        description='The two halves rejoined into one block, both preserved in full.'
     )
 
 
@@ -100,6 +164,7 @@ class SeamMerger(dspy.Module):
     def __init__(self, language_model: dspy.LM | None = None) -> None:
         super().__init__()
         self.merger = dspy.ChainOfThought(Signature)
+        self.rewriter = dspy.ChainOfThought(MergeSignature)
         self.set_lm(language_model or llm.text_lm())
 
     async def aforward(
@@ -108,7 +173,7 @@ class SeamMerger(dspy.Module):
         bottom_top_edge_node: SeamNodeDTO,
         top_node_context: SeamNodeDTO | None = None,
         bottom_node_context: SeamNodeDTO | None = None,
-    ) -> str | None:
+    ) -> bool:
         """Judge one seam.
 
         Args:
@@ -118,7 +183,7 @@ class SeamMerger(dspy.Module):
             bottom_node_context: The neighbour just inside the bottom run.
 
         Returns:
-            The merged node if the pair is one split block, else None.
+            Whether the pair is the two halves of one interrupted block.
         """
         result = await self.merger.acall(
             top_node_context=top_node_context,
@@ -136,6 +201,46 @@ class SeamMerger(dspy.Module):
             },
             result,
         )
+        return bool(result.is_split)
+
+    async def arewrite(
+        self,
+        top_bottom_edge_node: SeamNodeDTO,
+        bottom_top_edge_node: SeamNodeDTO,
+        top_node_context: SeamNodeDTO | None = None,
+        bottom_node_context: SeamNodeDTO | None = None,
+    ) -> str:
+        """Rejoin two halves the judge has already ruled to be one block.
+
+        A second call rather than a second field on the judgment: the two are
+        different questions (*are* these one block, and *what* is that block),
+        and fusing questions is what this codebase has repeatedly had to undo.
+        Keeping them apart also means neither field is asked to carry a
+        negative answer — the reason the old ``str | None`` output could come
+        back as the literal string "None".
+
+        Takes the same four nodes the judge saw, context included: where the
+        interrupted block starts and stops is the same question here as there,
+        and the neighbours are what settle it.
+
+        Args:
+            top_bottom_edge_node: The first half, cut off at the foot of the
+                page.
+            bottom_top_edge_node: The second half, resuming on the next page.
+            top_node_context: The neighbour just inside the top run.
+            bottom_node_context: The neighbour just inside the bottom run.
+
+        Returns:
+            The rejoined block.
+        """
+        inputs = {
+            'top_node_context': top_node_context,
+            'top_bottom_edge_node': top_bottom_edge_node,
+            'bottom_top_edge_node': bottom_top_edge_node,
+            'bottom_node_context': bottom_node_context,
+        }
+        result = await self.rewriter.acall(**inputs)
+        recorder.record_example('seam_rewriter', inputs, result)
         return result.merged
 
     def forward(
@@ -144,7 +249,7 @@ class SeamMerger(dspy.Module):
         bottom_top_edge_node: SeamNodeDTO,
         top_node_context: SeamNodeDTO | None = None,
         bottom_node_context: SeamNodeDTO | None = None,
-    ) -> str | None:
+    ) -> bool:
         """Sync forward for DSPy optimisers."""
         return asyncio.run(
             self.aforward(
@@ -260,23 +365,25 @@ async def _merge_pair(
     top_context = top_nodes[top_mergeable[-2]] if len(top_mergeable) > 1 else None
     bottom_context = bottom_nodes[bottom_mergeable[1]] if len(bottom_mergeable) > 1 else None
 
-    merged = await module.aforward(
-        top_bottom_edge_node=_to_seam_node_dto(tail),
-        bottom_top_edge_node=_to_seam_node_dto(head),
-        top_node_context=_to_seam_node_dto(top_context),
-        bottom_node_context=_to_seam_node_dto(bottom_context),
-    )
-    healed = merged is not None and bool(merged)
+    edges = {
+        'top_bottom_edge_node': _to_seam_node_dto(tail),
+        'bottom_top_edge_node': _to_seam_node_dto(head),
+        'top_node_context': _to_seam_node_dto(top_context),
+        'bottom_node_context': _to_seam_node_dto(bottom_context),
+    }
+    is_split = await module.aforward(**edges)
     logger.debug(
         'seam %d/%d: %s | tail %r + head %r',
         top.index,
         bottom.index,
-        'merged' if healed else 'left split',
+        'merged' if is_split else 'left split',
         logs.elide(tail.content, 40),
         logs.elide(head.content, 40),
     )
-    if healed:
-        tail.content = merged
+    if is_split:
+        # The rewriter sees exactly what the judge saw, context included, and
+        # writes the two halves back as the one block they were.
+        tail.content = await module.arewrite(**edges)
         del bottom_nodes[head_index]
 
     return [(top.index, top_nodes), (bottom.index, bottom_nodes)]

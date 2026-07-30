@@ -30,13 +30,15 @@ def _note(content):
 class _Merger:
     """Stands in for the LLM: always merges, recording what it was asked.
 
-    Returns the merged CONTENT, like ``SeamMerger.aforward`` does — the healed
-    tail takes the string straight onto its ``content``.
+    ``aforward`` is the judge (one bool) and ``arewrite`` is the second call
+    that rejoins the halves, so the double sees both questions the real module
+    asks — and records the nodes each was shown.
     """
 
     def __init__(self, merged='MERGED'):
         self.merged = merged
         self.seen = []
+        self.rewritten = []
 
     async def aforward(
         self,
@@ -53,12 +55,32 @@ class _Merger:
                 bottom_node_context.content,
             )
         )
+        return True
+
+    async def arewrite(
+        self,
+        top_bottom_edge_node,
+        bottom_top_edge_node,
+        top_node_context=None,
+        bottom_node_context=None,
+    ):
+        self.rewritten.append(
+            (
+                top_bottom_edge_node.content,
+                bottom_top_edge_node.content,
+                top_node_context.content,
+                bottom_node_context.content,
+            )
+        )
         return self.merged
 
 
 class _NeverMerges:
     async def aforward(self, **_kwargs):
-        return None
+        return False
+
+    async def arewrite(self, **_kwargs):
+        raise AssertionError('the rewriter must not run on a declined seam')
 
 
 def _merge(top, bottom, module):
@@ -97,7 +119,7 @@ def test_a_leading_citation_on_the_bottom_page_is_passed_over():
     top = _segment(0, [_para('a sentence cut off mid-')])
     bottom = _segment(1, [_ref('Stein, 2009.'), _para('way through it.')])
 
-    module = _Merger('a sentence cut off mid-way through it.')
+    module = _Merger()
     result = _merge(top, bottom, module)
 
     assert module.seen[0][1] == 'way through it.'
@@ -178,6 +200,55 @@ def test_unhealed_seam_leaves_both_pages_untouched():
 
     assert [node.content for node in result[0]] == ['complete.', 'a footnote']
     assert [node.content for node in result[1]] == ['Also complete.']
+
+
+def test_a_declined_seam_never_overwrites_the_tail():
+    # Regression: the signature used to return the merged text as `str | None`
+    # and the stage healed on `bool(merged)`. Asked to return None for "these
+    # do not merge", the model returned the four-character STRING 'None' —
+    # truthy — so every declined seam replaced the tail's real content with the
+    # word "None" and deleted the head. It hit 100% of page boundaries.
+    top = _segment(0, [_para('**965.** (4² + 5²)²')])
+    bottom = _segment(1, [_para('**966.** Simplify: $3(x+2)$')])
+
+    result = _merge(top, bottom, _NeverMerges())
+
+    assert [node.content for node in result[0]] == ['**965.** (4² + 5²)²']
+    assert [node.content for node in result[1]] == [
+        '**966.** Simplify: $3(x+2)$'
+    ]
+
+
+def test_a_healed_seam_takes_the_rewriter_s_text():
+    # The rewriter, not a hardcoded join, produces the merged block.
+    top = _segment(0, [_para('a sentence cut off mid-')])
+    bottom = _segment(1, [_para('way through it.')])
+
+    module = _Merger('a sentence cut off mid-way through it.')
+    result = _merge(top, bottom, module)
+
+    assert [node.content for node in result[0]] == [
+        'a sentence cut off mid-way through it.'
+    ]
+    assert result[1] == []
+
+
+def test_the_rewriter_sees_the_same_nodes_as_the_judge():
+    # Same four nodes, context included: where the interrupted block starts and
+    # stops is the same question in both calls.
+    top = _segment(0, [_para('context above'), _para('tail')])
+    bottom = _segment(1, [_para('head'), _para('context below')])
+
+    module = _Merger()
+    _merge(top, bottom, module)
+
+    assert module.rewritten == module.seen
+    assert module.rewritten[0] == (
+        'tail',
+        'head',
+        'context above',
+        'context below',
+    )
 
 
 def test_pairs_skip_a_page_with_nothing_mergeable():
