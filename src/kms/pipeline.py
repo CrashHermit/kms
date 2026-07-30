@@ -107,6 +107,9 @@ def build_graph() -> 'CompiledStateGraph':
     formatter_module = formatter.Formatter(language_model=llm.text_lm())
     extractor_module = extractor.Extractor(language_model=llm.text_lm())
     seam_module = seam_merger.SeamMerger(language_model=llm.text_lm())
+    seam_rewriter_module = seam_merger.SeamRewriter(
+        language_model=llm.text_lm()
+    )
     splitter_module = splitter.Splitter(language_model=llm.text_lm())
     instruction_finder_module = instruction_finder.InstructionFinder(language_model=llm.text_lm())
     instruction_distributor_module = instruction_distributor.InstructionDistributor(
@@ -121,7 +124,9 @@ def build_graph() -> 'CompiledStateGraph':
     corrector_node = corrector.CorrectorNode(module=corrector_module)
     formatter_node = formatter.FormatterNode(module=formatter_module)
     extractor_node = extractor.ExtractorNode(module=extractor_module)
-    seam_node = seam_merger.SeamMergerNode(module=seam_module)
+    seam_node = seam_merger.SeamMergerNode(
+        module=seam_module, rewriter=seam_rewriter_module
+    )
     splitter_node = splitter.SplitterNode(module=splitter_module)
     instruction_finder_node = instruction_finder.InstructionFinderNode(
         module=instruction_finder_module

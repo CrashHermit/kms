@@ -164,7 +164,6 @@ class SeamMerger(dspy.Module):
     def __init__(self, language_model: dspy.LM | None = None) -> None:
         super().__init__()
         self.merger = dspy.ChainOfThought(Signature)
-        self.rewriter = dspy.ChainOfThought(MergeSignature)
         self.set_lm(language_model or llm.text_lm())
 
     async def aforward(
@@ -203,21 +202,57 @@ class SeamMerger(dspy.Module):
         )
         return bool(result.is_split)
 
-    async def arewrite(
+    def forward(
+        self,
+        top_bottom_edge_node: SeamNodeDTO,
+        bottom_top_edge_node: SeamNodeDTO,
+        top_node_context: SeamNodeDTO | None = None,
+        bottom_node_context: SeamNodeDTO | None = None,
+    ) -> bool:
+        """Sync forward for DSPy optimisers."""
+        return asyncio.run(
+            self.aforward(
+                top_bottom_edge_node=top_bottom_edge_node,
+                bottom_top_edge_node=bottom_top_edge_node,
+                top_node_context=top_node_context,
+                bottom_node_context=bottom_node_context,
+            )
+        )
+
+
+class SeamRewriter(dspy.Module):
+    """Rejoins the two halves of a block the seam merger judged to be split.
+
+    Its own module rather than a second predictor on ``SeamMerger``: this is
+    the second QUESTION (what is the block?), asked only when the first was
+    answered yes, and every question in this pipeline gets a module of its own
+    so it can be stubbed, recorded and optimised separately. It stays in this
+    file because it is meaningless away from the seam — the two questions are
+    about the same pair of nodes, share ``SeamNodeDTO``, and are explained by
+    the same module docstring.
+
+    It is called inline by ``_merge_pair`` rather than run as its own graph
+    stage. The even pass's merges are already written back before the odd pass
+    dispatches (see the parity note below), so deferring the rejoin to a later
+    stage would leave the odd pass judging against half-healed pages.
+
+    Args:
+        language_model: The LM to run on. Defaults to ``llm.text_lm()``.
+    """
+
+    def __init__(self, language_model: dspy.LM | None = None) -> None:
+        super().__init__()
+        self.rewriter = dspy.ChainOfThought(MergeSignature)
+        self.set_lm(language_model or llm.text_lm())
+
+    async def aforward(
         self,
         top_bottom_edge_node: SeamNodeDTO,
         bottom_top_edge_node: SeamNodeDTO,
         top_node_context: SeamNodeDTO | None = None,
         bottom_node_context: SeamNodeDTO | None = None,
     ) -> str:
-        """Rejoin two halves the judge has already ruled to be one block.
-
-        A second call rather than a second field on the judgment: the two are
-        different questions (*are* these one block, and *what* is that block),
-        and fusing questions is what this codebase has repeatedly had to undo.
-        Keeping them apart also means neither field is asked to carry a
-        negative answer — the reason the old ``str | None`` output could come
-        back as the literal string "None".
+        """Rejoin one seam's two halves.
 
         Takes the same four nodes the judge saw, context included: where the
         interrupted block starts and stops is the same question here as there,
@@ -249,7 +284,7 @@ class SeamMerger(dspy.Module):
         bottom_top_edge_node: SeamNodeDTO,
         top_node_context: SeamNodeDTO | None = None,
         bottom_node_context: SeamNodeDTO | None = None,
-    ) -> bool:
+    ) -> str:
         """Sync forward for DSPy optimisers."""
         return asyncio.run(
             self.aforward(
@@ -332,17 +367,22 @@ def _pairs(
 
 
 async def _merge_pair(
-    module: SeamMerger, top: models.Segment, bottom: models.Segment
+    module: SeamMerger,
+    rewriter: SeamRewriter,
+    top: models.Segment,
+    bottom: models.Segment,
 ) -> list[tuple[int, list[models.ASTNode]]]:
     """Merge one seam, if the LLM judges it to be a split node.
 
     The edges are the top's last and the bottom's first *mergeable* nodes —
     page apparatus is passed over on both sides, so a page that ends in a
-    footnote still has its real tail healed. A healed seam folds the merged
+    footnote still has its real tail healed. A healed seam folds the rejoined
     content into that tail and drops that head.
 
     Args:
-        module: The seam-merging module.
+        module: The seam-judging module.
+        rewriter: The module that rejoins a split pair. Only called for a
+            seam the judge accepts.
         top: The upper segment of the pair.
         bottom: The lower segment of the pair.
 
@@ -383,7 +423,7 @@ async def _merge_pair(
     if is_split:
         # The rewriter sees exactly what the judge saw, context included, and
         # writes the two halves back as the one block they were.
-        tail.content = await module.arewrite(**edges)
+        tail.content = await rewriter.aforward(**edges)
         del bottom_nodes[head_index]
 
     return [(top.index, top_nodes), (bottom.index, bottom_nodes)]
@@ -393,11 +433,17 @@ class SeamMergerNode:
     """Heals cross-page splits using two parity passes to avoid races.
 
     Args:
-        module: The seam-merging module. Created fresh if None.
+        module: The seam-judging module. Created fresh if None.
+        rewriter: The module that rejoins a split pair. Created fresh if None.
     """
 
-    def __init__(self, module: SeamMerger | None = None) -> None:
+    def __init__(
+        self,
+        module: SeamMerger | None = None,
+        rewriter: SeamRewriter | None = None,
+    ) -> None:
         self.module = module or SeamMerger()
+        self.rewriter = rewriter or SeamRewriter()
 
     def dispatch_even(self, state: state.State) -> list[Send] | str:
         """Fans out workers for even-indexed segment pairs (0-1, 2-3, …)."""
@@ -413,11 +459,17 @@ class SeamMergerNode:
 
     async def even_worker(self, state: dict) -> dict:
         """Merges one even pair and returns the healed segment nodes."""
-        return {'seam_even_results': await _merge_pair(self.module, state['top'], state['bottom'])}
+        merged = await _merge_pair(
+            self.module, self.rewriter, state['top'], state['bottom']
+        )
+        return {'seam_even_results': merged}
 
     async def odd_worker(self, state: dict) -> dict:
         """Merges one odd pair and returns the healed segment nodes."""
-        return {'seam_odd_results': await _merge_pair(self.module, state['top'], state['bottom'])}
+        merged = await _merge_pair(
+            self.module, self.rewriter, state['top'], state['bottom']
+        )
+        return {'seam_odd_results': merged}
 
     def _collect(self, state: state.State, channel: str) -> dict:
         """Drain one pass's channel back into the segment backbone.
