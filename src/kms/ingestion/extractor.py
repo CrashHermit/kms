@@ -149,7 +149,15 @@ class Signature(dspy.Signature):
       stays one node). The single exception is a run of bibliographic
       references, which is split per cited work — see that type below.
     - If content starts or ends abruptly at the boundary of the given markdown,
-      extract it as-is — do not try to complete or trim it.
+      extract it as-is — do not try to complete or trim it, and NEVER leave it
+      out. A page often opens or closes mid-block, so the first or last thing
+      on it may be a bare number, a stray pair of values, an unpunctuated
+      half-sentence, or a piece of a code listing. Such a fragment is content:
+      fold it into the block it continues when that is clear (a numeric line
+      directly above a code listing belongs INSIDE that code node), and give
+      it its own node otherwise. It is rejoined to its other half downstream,
+      but only if it survives this stage. A leading bare number is a fragment
+      of this kind, not a page number.
 
     NODE TYPES (emit `type` as exactly one of these values):
     - paragraph: Standard prose text. Inline math remains in the paragraph.
@@ -230,6 +238,10 @@ class Signature(dspy.Signature):
         genuine section title. If only one such line is present and you
         cannot tell which it is, treat it as a header.
       * Captions, figure labels, table titles, and reference-list entries.
+      * A fragment at the very start or end of the page. A bare number there
+        looks exactly like a folio and is not one — it is the tail of
+        something the previous page began. See the boundary rule above: it is
+        content and must be emitted.
 
       WHEN IN DOUBT, DO NOT USE THIS TYPE. Give the block its ordinary type
       instead. Furniture is the one type that is discarded rather than kept,
