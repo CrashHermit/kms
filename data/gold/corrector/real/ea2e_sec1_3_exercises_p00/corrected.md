@@ -107,3 +107,5 @@ In the following exercises, simplify each expression.
 213. -14 + (-12) + 4
 
 214. -17 + (-18) + 6
+
+Access for free at openstax.org

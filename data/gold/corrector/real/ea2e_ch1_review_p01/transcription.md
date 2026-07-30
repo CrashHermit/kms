@@ -99,3 +99,5 @@ In the following exercises, simplify.
 997. -(-19)
 
 998. -(-53)
+
+Access for free at openstax.org

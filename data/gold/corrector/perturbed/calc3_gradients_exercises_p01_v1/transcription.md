@@ -38,3 +38,5 @@ b. Show that, at each point in the plane, the electric potential decreases most 
 **4.7.3** Examine critical points and boundary points to find absolute maximum and minimum values for a function of two variables.
 
 One of the most useful applications for derivatives of a function of one variable is the determination of maximum and/or minimum values. This application is also important for functions of two or more variables, but as we have seen in earlier sections of this chapter, the introduction of more independent variables leads to more possible outcomes for the calculations. The main ideas of finding critical points and using derivative tests are still valid, but new wrinkles appear when assessing the results.
+
+Access for free at openstax.org

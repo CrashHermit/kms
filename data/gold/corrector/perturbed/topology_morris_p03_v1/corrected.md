@@ -12,3 +12,5 @@
 ### Countable-Closed Topology
 
 6. Let $X$ be any infinite set. The **countable-closed topology** is defined to be the topology having as its closed sets $X$ and all countable subsets of $X$. Prove that this is indeed a topology on $X$.
+
+$^2$You are reminded that the use of “or” in mathematics is different from that in everyday English. In mathematics, “or” is not exclusive. See the comments on this in Chapter 0.

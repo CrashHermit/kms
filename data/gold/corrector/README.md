@@ -6,14 +6,14 @@ train/dev material for a later MIPROv2 run. **This directory is data only** —
 there is no optimizer here, just the examples, their provenance, and an
 annotation of every difference between input and gold.
 
-68 records over 38 pages from the 12 committed book fixtures:
+69 records over 38 pages from the 12 committed book fixtures:
 
 | | records | pages with a correction | corrections |
 |---|---|---|---|
-| `real` — genuine Mistral output, gold = the hand-verified page | 38 | 6 | 9 |
-| `perturbed` — realistic errors injected into a verified page | 30 | 30 | 60 |
+| `real` — genuine Mistral output, gold = the hand-verified page | 38 | 7 | 11 |
+| `perturbed` — realistic errors injected into a verified page | 31 | 31 | 64 |
 
-The two halves teach opposite halves of the job. Mistral is *good*: 32 of 38
+The two halves teach opposite halves of the job. Mistral is *good*: 31 of 38
 pages came back with nothing that changes meaning, so their gold is the
 transcription verbatim. Those records are what keeps an optimized prompt from
 inventing corrections. The perturbed records supply the density of genuine
@@ -77,7 +77,7 @@ Each `index.json` record:
 an error analysis can ask "which classes does this prompt actually catch?"
 without diffing anything. Perturbed records also carry `derived_from`.
 
-**Splits**: `train` 45 / `dev` 23, assigned by *page* — a perturbed record is
+**Splits**: `train` 46 / `dev` 23, assigned by *page* — a perturbed record is
 always in the same split as the page it was derived from, because its gold text
 is that page's gold text, and splitting them would leak a dev answer into a
 train demo. Every one of the 12 books appears in both splits.
@@ -129,22 +129,22 @@ decided, and they were decided the same way on every page:
   bold "Proof." run as an H1 and a two-column definition list as a table. The
   prompt puts markdown structure under Formatting, so the gold leaves both.
   Indentation *inside code* is the documented exception and was corrected.
-- **Header/footer content was page furniture when this set was harvested.** With
-  `extract_header` and `extract_footer` on, Mistral routed running heads, folios
-  *and real footnotes* into separate response fields the pipeline never read.
-  Four pages lose a substantive footnote that way (Levin ×3, Morris ×1). The
-  gold does not restore them: the corrector cannot know the front-end's routing,
-  and a page whose footnote was rendered inline (Lebl, Grinstead–Snell) keeps it.
+- **The page's footer is part of the transcription.** `ocr.py` appends each
+  page's extracted footer back onto its markdown, so whatever sits below the
+  body — a footnote, a colophon, a licence line — arrives as a trailing block.
+  Eleven of the 38 pages carry one: 4 real footnotes (Levin ×3, Morris ×1) and 7
+  pieces of page chrome. **Gold keeps all of them.** A footnote is content, and
+  chrome is the *extractor's* to discard (it types such blocks `furniture`), not
+  the corrector's — this pass never deletes.
 
-  > **Stale input, deliberately.** That front-end behaviour has since changed:
-  > `ocr.py` now appends a page's extracted footer back onto its markdown, so
-  > footnotes reach the corrector as a trailing block, and the corrector's prompt
-  > says explicitly that a footnote is content rather than furniture. The 38
-  > `transcription.md` files here predate that change and are kept verbatim as
-  > harvested — they are still real OCR output, and every annotated correction
-  > still holds, but a page with a footnote no longer looks exactly like this
-  > coming out of the front end. Re-harvest before treating the set as a
-  > faithful sample of current front-end output.
+  > **How these 11 were patched.** The set was first harvested when
+  > `build_segments` dropped the footer field, so those transcriptions were
+  > missing it. Rather than re-OCR — which returns different markdown run to run
+  > and would have invalidated the 27 unaffected pages' verified gold — the
+  > footer was appended from the *same* saved OCR response that produced the
+  > committed markdown, i.e. that response read through today's code path. The
+  > appended text was then re-verified against each page render like any other
+  > content, which is where the Book of Proof licence correction came from.
 - **Reading order across columns is a correction.** Two OpenStax pages were read
   column-major out of a numbered multi-column grid (`1005, 1008, 1006, 1007`).
   The page numbers its items across each row, so the transcribed sequence is not
@@ -157,13 +157,13 @@ Corrections by class, over both halves (the classes are the prompt's own):
 
 | class | corrections | class | corrections |
 |---|---|---|---|
-| quantity | 18 | presence | 6 |
-| substitution | 11 | position | 5 |
+| quantity | 19 | presence | 8 |
+| substitution | 14 | position | 5 |
 | polarity | 10 | attachment | 4 |
 | extent | 6 | order | 3 |
 | relation | 6 | | |
 
-The nine genuine (non-injected) corrections are worth reading on their own —
+The eleven genuine (non-injected) corrections are worth reading on their own —
 they are what this OCR actually gets wrong:
 
 | record | class | what happened |
@@ -173,13 +173,17 @@ they are what this OCR actually gets wrong:
 | `nt_stein_congruences_p02` | presence ×2 | `R.<x>` read as an HTML tag, emitting two stray `</x>` |
 | `logic_hammack_truthtables_p00` | relation | "the truth table for ⇒" transcribed as "⇔", making the sentence cite the table it derives |
 | `lebl2_metricspaces_sec8_1_exercises_p00` | extent | slanted fraction flattened: `(1/(n+1), 1/n)` became `(1/n+1, 1/n)` |
+| `logic_hammack_truthtables_p00` | substitution | licence badge reads BY-NC-ND; transcribed as `CC BY-NC-SA` |
+| `logic_hammack_truthtables_p02` | substitution | the same badge, the same misreading |
 | `ea2e_ch1_review_p02` | order | three-column exercise grid read column-major |
 | `ea2e_sec1_3_exercises_p01` | order | two-column word-problem block read column-major |
 
 Note what is *absent*: across 38 pages of real mathematics there was not one
 misread subscript, exponent, or root index — the failure modes the corrector's
 docstring is built around. Mistral's residual errors here are structural
-(indentation, column order, markup artifacts) and long-numeral. The perturbed
+(indentation, column order, markup artifacts), long-numeral, and — once the page
+footer became part of the transcription — the licence badge it reads off an
+image rather than off text. The perturbed
 half covers the notational classes anyway, so an optimized prompt is scored on
 both, but the real distribution is a finding in itself.
 
@@ -188,13 +192,15 @@ both, but the real distribution is a finding in itself.
 Each perturbed record takes one verified page and injects one to three errors
 that are *visible against that page's image* — a real digit changed, a negation
 dropped, two table cells swapped between columns, a term removed from a sum, two
-rows of an eight-row truth table transposed. Every injection contradicts either
+rows of an eight-row truth table transposed, a page's whole footnote deleted, a
+year and an author's name altered inside a citation. Every injection contradicts either
 the image or the page's own surrounding text, so a correct model has evidence to
 find it. Injections are exact string substitutions applied to the gold, each
-asserted to match exactly once, so the pair differs *only* by the annotated
+asserted to match exactly once (a deletion is written as an anchored swap, so
+the annotation also records where the missing text belongs), so the pair differs *only* by the annotated
 edits and every perturbed gold is byte-identical to its real counterpart's.
 
 They are labelled `kind: "perturbed"` precisely so they can be down-weighted,
 held out, or dropped: they are synthetic, their error density (100% of records)
-is far above the real rate (16% of pages), and an optimizer trained only on them
+is far above the real rate (18% of pages), and an optimizer trained only on them
 would learn that something is always wrong.

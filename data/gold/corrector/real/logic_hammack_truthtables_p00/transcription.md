@@ -24,3 +24,6 @@ Without changing their meanings, convert each of the following sentences into a 
 3. If $xy = 0$ then $x = 0$ or $y = 0$, and conversely.
 4. If $a \in \mathbb{Q}$ then $5a \in \mathbb{Q}$, and if $5a \in \mathbb{Q}$ then $a \in \mathbb{Q}$.
 5. For an occurrence to become an adventure, it is necessary and sufficient for one to recount it. (Jean-Paul Sartre)
+
+Free PDF version
+![Creative Commons License Icon]() CC BY-NC-SA

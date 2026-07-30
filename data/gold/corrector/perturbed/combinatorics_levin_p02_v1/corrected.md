@@ -27,3 +27,5 @@ $$(4, 4, 3, 3, 3, 2, 1)?$$
 **Solution.** The number of vertices is easy to find. It is the number of degrees in the sequence: 7. To find the number of edges, we compute the degree sum
 
 $$4 + 4 + 3 + 3 + 3 + 2 + 1 = 20,$$
+
+$^2$A *lemma* is a mathematical statement that is primarily of importance in that it is used to establish other results.

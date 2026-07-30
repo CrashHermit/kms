@@ -27,3 +27,5 @@ One final definition: We say a graph is **bipartite** if the vertices can be div
 |  $K_{m,n}$ | The complete bipartite graph with sets of $m$ and $n$ vertices.  |
 |  $C_n$ | The cycle on $n$ vertices, just one big loop.  |
 |  $P_n$ | The path on $n + 1$ vertices (so $n$ edges), just one long path.  |
+
+$^{3}$A **proposition** is a general statement in mathematics, similar to a theorem, although generally of lesser importance.

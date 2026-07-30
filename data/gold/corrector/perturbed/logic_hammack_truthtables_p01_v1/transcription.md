@@ -26,3 +26,5 @@ For another example, consider the following familiar statement about real number
 The product $xy$ equals zero if and only if $x = 0$ or $y = 0$.
 
 This can be modeled as $(xy = 0) \Leftrightarrow (x = 0 \vee y = 0)$. If we introduce letters $P, Q$ and $R$ for the statements $xy = 0$, $x = 0$ and $y = 0$, it becomes $P \Leftrightarrow (Q \vee R)$. Notice that the parentheses are necessary here, for without them we wouldn’t know whether to read the statement as $P \Leftrightarrow (Q \vee R)$ or $(P \Leftrightarrow Q) \vee R$.
+
+Richard Hammack *Book of Proof*

@@ -32,3 +32,5 @@ To see if this is really so, we can write truth tables for $P \Leftrightarrow Q$
 |  $F$ | $F$ | $T$ | $T$ | $F$ | $T$ | $\mathbf{T}$ | $\mathbf{T}$  |
 
 The table shows that $P \Leftrightarrow Q$ and $(P \wedge Q) \vee (\sim P \wedge \sim Q)$ have the same truth value, no matter the values $P$ and $Q$. It is as if $P \Leftrightarrow Q$ and $(P \wedge Q) \vee (\sim P \wedge \sim Q)$ are algebraic expressions that are equal no matter what is “plugged into”
+
+Richard Hammack *Book of Proof*

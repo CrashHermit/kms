@@ -20,3 +20,6 @@ This may make you wonder about the lines in the table where $P \Leftrightarrow (
 You pass the class if and only if you get an “A” on the final or you get a “B” on the final.
 
 This promise has the form $P \Leftrightarrow (Q \vee R)$, so its truth values are tabulated in the above table. Imagine it turned out that you got an “A” on the exam but failed the course. Then surely your professor lied to you. In fact, $P$ is false, $Q$ is true and $R$ is false. This scenario is reflected in the sixth line of the table, and indeed $P \Leftrightarrow (Q \vee R)$ is false (i.e., it is a lie).
+
+Free PDF version
+![Creative Commons License Logo]() CC BY-NC-SA

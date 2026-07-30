@@ -25,3 +25,5 @@ We say that $G' = (V', E')$ is a **subgraph** of $G = (V, E)$, and write $G' \su
 We say that $G' = (V', E')$ is an **induced subgraph** of $G = (V, E)$ provided $V' \subseteq V$ and every edge in $E$ whose vertices are still in $V'$ is also an edge in $E'$.
 
 Notice that every induced subgraph is also an ordinary subgraph, but not conversely. Think of a subgraph as the result of deleting some vertices and edges from the larger graph. For the subgraph to be an induced subgraph, we can still delete vertices, but now we only delete those edges that included the deleted vertices.
+
+$^1$This is not unlike geometry, where we might have more than one copy of a particular triangle. There instead of *isomorphic* we say *congruent*.

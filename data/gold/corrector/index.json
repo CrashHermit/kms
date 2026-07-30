@@ -307,10 +307,17 @@
           "before": "(according to the truth table for $\\Leftrightarrow$)",
           "after": "(according to the truth table for $\\Rightarrow$)",
           "note": "The page cites the truth table for the conditional; the transcription substituted the biconditional, making the sentence cite the table it is deriving."
+        },
+        {
+          "class": "substitution",
+          "before": "![Creative Commons License Icon]() CC BY-NC-SA",
+          "after": "![Creative Commons License Icon]() BY-NC-ND",
+          "note": "The licence badge on the page reads BY-NC-ND; the transcription names a different licence (ShareAlike rather than NoDerivatives)."
         }
       ],
       "edit_classes": [
-        "relation"
+        "relation",
+        "substitution"
       ]
     },
     {
@@ -338,8 +345,17 @@
       "split": "train",
       "transcription": "real/logic_hammack_truthtables_p02/transcription.md",
       "corrected": "real/logic_hammack_truthtables_p02/corrected.md",
-      "edits": [],
-      "edit_classes": []
+      "edits": [
+        {
+          "class": "substitution",
+          "before": "![Creative Commons License Logo]() CC BY-NC-SA",
+          "after": "![Creative Commons License Logo]() BY-NC-ND",
+          "note": "The licence badge on the page reads BY-NC-ND; the transcription names a different licence (ShareAlike rather than NoDerivatives)."
+        }
+      ],
+      "edit_classes": [
+        "substitution"
+      ]
     },
     {
       "id": "logic_hammack_truthtables_p03",
@@ -679,7 +695,7 @@
           "class": "substitution",
           "before": "$\\frac{\\partial f}{\\partial x}$ exists",
           "after": "$\\frac{\\partial f}{\\partial y}$ exists",
-          "note": "Partial taken with respect to the wrong variable in the hypothesis of Picard's theorem."
+          "note": "Partial taken with respect to the wrong variable in the hypothesis of Picard&rsquo;s theorem."
         },
         {
           "class": "quantity",
@@ -862,6 +878,12 @@
       "corrected": "perturbed/topology_morris_p03_v1/corrected.md",
       "edits": [
         {
+          "class": "presence",
+          "before": "Prove that this is indeed a topology on $X$.",
+          "after": "Prove that this is indeed a topology on $X$.\n\n$^2$You are reminded that the use of “or” in mathematics is different from that in everyday English. In mathematics, “or” is not exclusive. See the comments on this in Chapter 0.",
+          "note": "The page footnote dropped entirely, taking with it the warning the body text refers to by its marker."
+        },
+        {
           "class": "relation",
           "before": "and not $b$, and there exists an open set containing $b$",
           "after": "and not $b$, or there exists an open set containing $b$",
@@ -875,6 +897,7 @@
         }
       ],
       "edit_classes": [
+        "presence",
         "quantity",
         "relation"
       ]
@@ -1088,7 +1111,7 @@
           "class": "order",
           "before": "|  $F$ | $T$ | $F$ | $T$ | $\\mathbf{F}$  |\n|  $F$ | $T$ | $T$ | $T$ | $\\mathbf{F}$  |",
           "after": "|  $F$ | $T$ | $T$ | $T$ | $\\mathbf{F}$  |\n|  $F$ | $T$ | $F$ | $T$ | $\\mathbf{F}$  |",
-          "note": "Two rows of the eight-row table transposed, so the enumeration no longer runs in the page's order."
+          "note": "Two rows of the eight-row table transposed, so the enumeration no longer runs in the page&rsquo;s order."
         }
       ],
       "edit_classes": [
@@ -1124,6 +1147,37 @@
       ],
       "edit_classes": [
         "extent",
+        "substitution"
+      ]
+    },
+    {
+      "id": "prob_grinstead_snell_p00_v1",
+      "kind": "perturbed",
+      "derived_from": "prob_grinstead_snell_p00",
+      "book": "prob_grinstead_snell",
+      "source_pdf": "tests/fixtures/books/prob_grinstead_snell.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "prob_grinstead_snell_p00.png",
+      "split": "train",
+      "transcription": "perturbed/prob_grinstead_snell_p00_v1/transcription.md",
+      "corrected": "perturbed/prob_grinstead_snell_p00_v1/corrected.md",
+      "edits": [
+        {
+          "class": "quantity",
+          "before": "Boktryckeri AB, 1790).",
+          "after": "Boktryckeri AB, 1970).",
+          "note": "Year misread in the footnote citation. A citation is a run of proper nouns and numbers with no redundancy to repair it."
+        },
+        {
+          "class": "substitution",
+          "before": "Festschrift in Honour of Herman World,",
+          "after": "Festschrift in Honour of Herman Wold,",
+          "note": "A name in the cited title misread as an ordinary word."
+        }
+      ],
+      "edit_classes": [
+        "quantity",
         "substitution"
       ]
     },
@@ -1234,6 +1288,12 @@
       "corrected": "perturbed/combinatorics_levin_p02_v1/corrected.md",
       "edits": [
         {
+          "class": "presence",
+          "before": "$$4 + 4 + 3 + 3 + 3 + 2 + 1 = 20,$$",
+          "after": "$$4 + 4 + 3 + 3 + 3 + 2 + 1 = 20,$$\n\n$^2$A *lemma* is a mathematical statement that is primarily of importance in that it is used to establish other results.",
+          "note": "The page footnote dropped entirely. It is content, not page furniture, and the image shows it below the rule."
+        },
+        {
           "class": "substitution",
           "before": "$$\\sum_{v \\in V} d(v) = 2v.$$",
           "after": "$$\\sum_{v \\in V} d(v) = 2e.$$",
@@ -1247,6 +1307,7 @@
         }
       ],
       "edit_classes": [
+        "presence",
         "quantity",
         "substitution"
       ]
@@ -1274,7 +1335,7 @@
           "class": "quantity",
           "before": "shook hands with exactly 8 people",
           "after": "shook hands with exactly 7 people",
-          "note": "Degree changed, contradicting the 9 · 7 = 63 computed in the solution."
+          "note": "Degree changed, contradicting the 9 &middot; 7 = 63 computed in the solution."
         }
       ],
       "edit_classes": [
@@ -1392,7 +1453,7 @@
           "class": "position",
           "before": "(d) $\\begin{pmatrix} 1 & 2 & 1 \\\\ 1 & 3 & 1 \\\\ 3 & 4 & 7 \\end{pmatrix}$",
           "after": "(d) $\\begin{pmatrix} 1 & 2 & 1 \\\\ 1 & 1 & 3 \\\\ 3 & 4 & 7 \\end{pmatrix}$",
-          "note": "Middle row's entries shifted between columns."
+          "note": "Middle row&rsquo;s entries shifted between columns."
         },
         {
           "class": "presence",
