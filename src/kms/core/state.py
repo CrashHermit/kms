@@ -35,11 +35,13 @@ class State(TypedDict, total=False):
     groups related content together; it does not split statements from
     procedures.
 
-    `statement_ids` carries the first-node ids of every group (real or
-    placeholder statement) from the role typer to the statement extractor.
-    `procedure_ids`
-    carries the subset of statement ids whose groups have a procedure portion
-    (real or placeholder), from the role typer to the procedure extractor.
+    `statements` carries the statement overlay from the role typer to the two
+    extractors and the persister: one StatementNode per group (real or
+    placeholder), each holding its members' node ids in `statement_of` and zero
+    or one Procedure. It is a channel of its own, deliberately NOT part of
+    `nodes`: a statement's content is its whole group's text, so a statement
+    sitting in the node stream would make the assembler emit every member after
+    the first one twice — once inside the statement and once as itself.
 
     The `*_results` channels are map-reduce scratch space: parallel Send
     workers append entries and the stage's collect step drains them back into
@@ -56,12 +58,9 @@ class State(TypedDict, total=False):
     spans: list[
         list[int]
     ]  # untyped unit spans from the group finder, document order
-    statement_ids: list[
-        int
-    ]  # first-node ids of every group, from the role typer
-    procedure_ids: list[
-        int
-    ]  # subset of statement_ids with a procedure, from the role typer
+    statements: list[
+        models.StatementNode
+    ]  # the statement overlay, group order, from the role typer
     correction_results: Annotated[
         list[tuple[int, str]], operator.add
     ]  # (segment index, corrected markdown)

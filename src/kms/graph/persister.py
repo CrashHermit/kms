@@ -9,7 +9,7 @@ The persister is gated on configuration: if no Neo4j target is wired
 (``NEO4J_URI`` unset) or the run carries no ``source``, it is a no-op.
 """
 
-from kms.core import models, state
+from kms.core import state
 from kms.graph import db, schema, writer
 
 
@@ -27,15 +27,10 @@ class IngestionPersisterNode:
         nodes = state.get('nodes', [])
         await writer.persist_nodes(nodes, source, state.get('source_metadata'))
 
-        # Build ordered statement list from state.
-        statement_ids = state.get('statement_ids', [])
-        nodes_by_id = {node.id: node for node in nodes if node.id is not None}
-        statements: list[models.StatementNode] = []
-        for statement_id in statement_ids:
-            node = nodes_by_id.get(statement_id)
-            if isinstance(node, models.StatementNode):
-                statements.append(node)
-
+        # The two tiers arrive on two channels: `nodes` is the verbatim page,
+        # `statements` the overlay over it. ``persist_chain`` is what relates
+        # them, slotting each statement in at its members' place.
+        statements = state.get('statements', [])
         await writer.persist_statements(statements, source)
         await writer.persist_procedures(statements, source)
         await writer.persist_chain(nodes, statements, source)

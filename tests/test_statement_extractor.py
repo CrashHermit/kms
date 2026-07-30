@@ -41,16 +41,21 @@ def test_extract_skips_missing_member_ids():
 
 
 def test_node_run_fills_content():
-    stmt = models.StatementNode(content='Thm', id=0, statement_of=[1, 2])
+    stmt = models.StatementNode(content='Thm', id=1, statement_of=[1, 2])
     members = [
         models.ParagraphNode(content='Theorem 2.1', id=1),
         models.ParagraphNode(content='Every group has an identity.', id=2),
     ]
     node = statement_extractor.StatementExtractorNode()
-    asyncio.run(node.run({'nodes': [stmt] + members, 'statement_ids': [0]}))
+    asyncio.run(node.run({'nodes': members, 'statements': [stmt]}))
     assert stmt.content == 'Theorem 2.1\n\nEvery group has an identity.'
+    # The members keep their own text — the fusion lands only on the overlay.
+    assert [member.content for member in members] == [
+        'Theorem 2.1',
+        'Every group has an identity.',
+    ]
 
 
 def test_node_run_on_empty_is_noop():
     node = statement_extractor.StatementExtractorNode()
-    assert asyncio.run(node.run({'nodes': [], 'statement_ids': []})) == {}
+    assert asyncio.run(node.run({'nodes': [], 'statements': []})) == {}

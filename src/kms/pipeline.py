@@ -44,7 +44,10 @@ resolves it, so the old semantic proof/solution boundary call is now a
 structural detection. The role typer then labels each span `statement` (a
 block) or `procedure` (a derivation), and the statement and procedure
 extractors fill in each one's content, which is transcription rather than
-judgement. The chain is split this way because fusing these questions made each
+judgement. That overlay rides its own `statements` channel: a statement's
+content is its whole group's text, so it sits BESIDE `nodes`, never in it —
+in the stream it would make every stage that walks nodes (the assembler
+included) read the group twice. The chain is split this way because fusing these questions made each
 one worse — the finder read a missing "Solution." marker as "no derivation".
 
 The ingestion persister is the terminal stage. It runs after every stream

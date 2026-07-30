@@ -26,8 +26,18 @@ Absence stays structural (``docs/SCHEMA.md``, principle 4): this pass never asks
 the book never works out simply produces no procedure-role span, because the
 finder never cut one.
 
-Entry point ``type_roles(spans, nodes_by_id)`` (async): returns the ``(entities,
-procedure_ids)`` pair the rest of the pipeline consumes. Persistence-agnostic.
+THE OVERLAY IS NOT PART OF THE NODE STREAM. A span's StatementNode is built
+FROM its first node but never put back in that node's place: it is returned on
+its own ``statements`` channel, and ``nodes`` comes out of this stage exactly as
+it went in. The two say different things — a node is one verbatim block of the
+page (the provenance tier), a statement is the whole group the span covers — and
+a statement standing in the stream would make every stage that walks ``nodes``
+read the group's text twice, once inside the statement and once from the members
+that follow it. The assembler walking that stream is where it showed: every
+member after a group's first was emitted twice into ``document.md``.
+
+Entry point ``type_roles(spans, nodes_by_id)`` (async): returns the statement
+overlay the rest of the pipeline consumes. Persistence-agnostic.
 """
 
 import asyncio
@@ -192,14 +202,19 @@ def contents_of(span: list[int], nodes_by_id: dict[int, models.ASTNode]) -> str:
 
 
 def _mark_statement(node: models.ASTNode, span: list[int]) -> models.StatementNode:
-    """Promote a plain node to a StatementNode carrying the span's members.
+    """Build the span's StatementNode from its first node.
+
+    The statement takes the first node's ``id`` — that is what keys it to its
+    place in the stream (``writer._merged_chain`` slots it in there) and what
+    its graph uuid is derived from — but it is a NEW node beside the stream,
+    not a replacement for the one it was built from.
 
     Args:
         node: The span's first node.
         span: The span's member node ids.
 
     Returns:
-        The promoted statement node.
+        The span's statement node.
     """
     return models.StatementNode(
         content=node.content,
@@ -213,48 +228,44 @@ async def type_roles(
     spans: list[list[int]],
     nodes_by_id: dict[int, models.ASTNode],
     module: RoleTyper | None = None,
-) -> tuple[list[int], list[int]]:
-    """Diagnose each group's composition and produce statement/procedure ids.
+) -> list[models.StatementNode]:
+    """Diagnose each group's composition and build the statement overlay.
 
     Every group produces a StatementNode (real or placeholder). Groups with a
-    procedure portion get a Procedure attached (real or placeholder).
+    procedure portion get a Procedure attached (real or placeholder). Nothing
+    here writes to the node stream — see the module docstring.
 
     Args:
         spans: The untyped spans, each a list of member node ids.
-        nodes_by_id: The full node stream keyed by stable id, mutated in place
-            as spans are promoted to statement nodes.
+        nodes_by_id: The full node stream keyed by stable id. Read-only.
         module: The role-typing module. Created fresh if None.
 
     Returns:
-        The ``(statement_ids, procedure_ids)`` pair, both lists of first-node
-        ids.
+        The statement overlay, one entry per span, in span order.
     """
     if not spans:
         logger.info('role typer: no spans')
-        return [], []
+        return []
     module = module or RoleTyper()
 
     roles = await asyncio.gather(*(module.acall(contents_of(span, nodes_by_id)) for span in spans))
-    statement_ids: list[int] = []
-    procedure_ids: list[int] = []
+    statements: list[models.StatementNode] = []
     for span, role in zip(spans, roles, strict=True):
         first = span[0]
         if first not in nodes_by_id:
             continue
         statement = _mark_statement(nodes_by_id[first], span)
-        nodes_by_id[first] = statement
-        statement_ids.append(first)
         if role == PROCEDURE_ROLE:
             statement.procedures.append(models.Procedure(index=0))
-            procedure_ids.append(first)
+        statements.append(statement)
 
     logger.info(
         'role typer: %d span(s) -> %d statement(s), %d procedure(s)',
         len(spans),
-        len(statement_ids),
-        len(procedure_ids),
+        len(statements),
+        sum(len(statement.procedures) for statement in statements),
     )
-    return statement_ids, procedure_ids
+    return statements
 
 
 # --- LangGraph node: split the untyped spans into blocks and derivations ---
@@ -263,8 +274,9 @@ async def type_roles(
 class RoleTyperNode:
     """Diagnoses each group and creates its StatementNode and Procedure.
 
-    Produces ``statement_ids`` (every group) and ``procedure_ids`` (the subset
-    with procedures) for the extractors.
+    Produces the ``statements`` channel — one statement per group, carrying its
+    members and zero or one Procedure — for the two extractors and the
+    persister. The ``nodes`` channel is read, never written.
 
     Args:
         module: The role-typing module. Created fresh if None.
@@ -274,23 +286,15 @@ class RoleTyperNode:
         self.module = module or RoleTyper()
 
     async def run(self, state: state.State) -> dict:
-        """Diagnose groups and produce statement/procedure ids.
+        """Diagnose groups and build the statement overlay.
 
         Args:
             state: The pipeline state, holding the node stream and spans.
 
         Returns:
-            The `statement_ids` and `procedure_ids` channels.
+            The `statements` channel. `nodes` is left exactly as it was.
         """
         nodes = state.get('nodes', [])
         nodes_by_id = {node.id: node for node in nodes if node.id is not None}
-        statement_ids, procedure_ids = await type_roles(
-            state.get('spans', []), nodes_by_id, self.module
-        )
-        for position, node in enumerate(nodes):
-            if node.id is not None and node.id in nodes_by_id:
-                nodes[position] = nodes_by_id[node.id]
-        return {
-            'statement_ids': statement_ids,
-            'procedure_ids': procedure_ids,
-        }
+        statements = await type_roles(state.get('spans', []), nodes_by_id, self.module)
+        return {'statements': statements}
