@@ -3,7 +3,7 @@ Graph representation of the structural node stream — the one part of the
 model we're sure of.
 
 The extractor emits domain-agnostic structural nodes (paragraph / math /
-code / list / table / image / caption / header / bibliographic — the
+code / list / table / image / caption / header / bibliographic / note — the
 ``core.models.ASTNode`` subclasses),
 the seam merger flattens them into the global ordered stream, and that
 stream is the provenance layer every later graph tier points back to. This

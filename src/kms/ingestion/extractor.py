@@ -24,13 +24,21 @@ that it is unrecoverable — a false positive deletes real content silently — 
 the prompt is written to keep anything it is unsure about, and every dropped
 block is logged at DEBUG.
 
-``bibliographic`` is the one type whose test is not the block's shape: a
-footnote citation and an entry in a reference list are both prose paragraphs to
-look at, and what separates them from prose is that they name an external work
-rather than say something. It is here rather than in a later semantic stage
-because a reference is a *block* — one node per work — and blocking is this
-stage's job; nothing downstream can recover the entry boundaries once several
-works are packed into one paragraph node.
+``bibliographic`` and ``note`` are the two types whose test is not the block's
+shape: a footnote and a reference-list entry are both prose paragraphs to look
+at. What separates them from prose is what they are *for* — one names an
+external work, the other hangs off a marker in the body — and between the two,
+naming a work wins. ``bibliographic`` is decided here rather than in a later
+semantic stage because a reference is a *block* — one node per work — and
+blocking is this stage's job; nothing downstream can recover the entry
+boundaries once several works are packed into one paragraph node.
+
+Together with ``furniture`` these give the page's bottom edge a three-way split
+with a positive test each, instead of forcing every footnote to be argued out of
+the discard: furniture talks about the artifact and is dropped, a note talks
+about the subject and is kept, a reference names a work. ``note`` nodes stay in
+the ordinary stream and remain eligible for the semantic chain — a footnote that
+defines a term is a definition wherever it happens to be printed.
 """
 
 import asyncio
@@ -55,6 +63,7 @@ _TYPE_MAP: dict[str, type[models.ASTNode]] = {
     'caption': models.CaptionNode,
     'header': models.HeaderNode,
     'bibliographic': models.BibliographicNode,
+    'note': models.NoteNode,
 }
 
 # Block types the stage identifies in order to throw away. These never become
@@ -81,7 +90,7 @@ class DSPyModel(BaseModel):
     """A single extracted block node from the LLM: its type and content."""
 
     type: str = Field(
-        description='The block type: paragraph, math, code, list, table, image, caption, header, bibliographic, or furniture.'
+        description='The block type: paragraph, math, code, list, table, image, caption, header, bibliographic, note, or furniture.'
     )
     content: str | None = Field(
         default=None, description='The content of the node'
@@ -181,6 +190,18 @@ class Signature(dspy.Signature):
       Give each node that work's entry text as written, including its
       leading marker if it has one. Prose that merely mentions a work in
       passing ("as Pólya showed") is a paragraph, not a bibliographic node.
+    - note: An authorial note bound to the body by a reference marker and
+      printed outside the running text — a footnote at the foot of the page,
+      an endnote, a margin note. It carries a marker (a superscript number, or
+      a symbol such as *, †, ‡) that matches one in the body, and it says
+      something about the SUBJECT: an aside, a caveat, a definition of a term
+      used above, a remark on who a result is named after.
+      Keep the marker in the content as written. Emit one note per marker.
+      Bibliographic wins over note: a footnote whose body is a citation of an
+      external work is bibliographic, not note.
+      A "Note:", "Tip:", or "Warning:" callout sitting IN the running text is
+      a paragraph, not a note — the test is the marker and the placement
+      outside the body flow, not the word.
     - furniture: Page apparatus — text that belongs to the artifact rather
       than to what the document says. Running heads and running feet, folios
       (bare page numbers), the book or chapter title repeated at the top or
@@ -192,12 +213,17 @@ class Signature(dspy.Signature):
       about the subject matter is not furniture. It usually sits at the very
       top or the very bottom of the page and repeats on every page.
       A furniture block is emitted as its own node, never folded into a
-      neighbouring block.
+      neighbouring block. A run of apparatus is ONE furniture block even when
+      it mixes text with a logo, badge, or image placeholder — a licence line
+      like "Free PDF version ![Creative Commons License]() CC BY-NC-SA" is a
+      single furniture node. Do not split it into pieces and do not re-type a
+      piece by its shape: a placeholder that is part of the apparatus is
+      furniture, not an image.
 
       NOT furniture, whatever their position on the page:
       * A footnote. Its marker makes it look like apparatus, but it says
         something about the subject and the body refers to it. Type it as
-        paragraph, or as bibliographic when it cites a work.
+        note, or as bibliographic when it cites a work.
       * A real heading. A heading that introduces content ON THIS PAGE is a
         header, even when it reads exactly like the running head — a page
         may show the same words twice, once as apparatus and once as the

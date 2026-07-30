@@ -23,6 +23,10 @@ def _ref(content):
     return models.BibliographicNode(content=content)
 
 
+def _note(content):
+    return models.NoteNode(content=content)
+
+
 class _Merger:
     """Stands in for the LLM: always merges, recording what it was asked."""
 
@@ -96,6 +100,41 @@ def test_a_leading_citation_on_the_bottom_page_is_passed_over():
     # The healed head is dropped by position — the citation is not the head,
     # and it survives.
     assert [node.content for node in result[1]] == ['Stein, 2009.']
+
+
+def test_a_trailing_note_also_displaces_nothing():
+    # Same displacement as a citation: the appended footnote is last, but the
+    # paragraph before it is what runs onto the next page.
+    top = _segment(
+        0,
+        [
+            _para('a sentence cut off mid-'),
+            _note('$^2$You are reminded that "or" is not exclusive.'),
+        ],
+    )
+    bottom = _segment(1, [_para('way through it.')])
+
+    module = _Merger('a sentence cut off mid-way through it.')
+    result = _merge(top, bottom, module)
+
+    assert module.seen[0][0] == 'a sentence cut off mid-'
+    assert [node.content for node in result[0]] == [
+        'a sentence cut off mid-way through it.',
+        '$^2$You are reminded that "or" is not exclusive.',
+    ]
+    assert result[1] == []
+
+
+def test_a_seam_between_two_notes_is_never_judged():
+    top = _segment(0, [_note('$^1$One note.')])
+    bottom = _segment(1, [_note('$^2$A different note.')])
+
+    module = _Merger()
+    result = _merge(top, bottom, module)
+
+    assert module.seen == []
+    assert [node.content for node in result[0]] == ['$^1$One note.']
+    assert [node.content for node in result[1]] == ['$^2$A different note.']
 
 
 def test_context_nodes_also_skip_citations():

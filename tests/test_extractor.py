@@ -41,6 +41,7 @@ def test_every_prompt_type_maps_to_its_node_class():
         'caption': models.CaptionNode,
         'header': models.HeaderNode,
         'bibliographic': models.BibliographicNode,
+        'note': models.NoteNode,
     }
     described = extractor.DSPyModel.model_fields['type'].description
     for node_type in extractor._TYPE_MAP:
@@ -57,6 +58,27 @@ def test_bibliographic_block_becomes_a_bibliographic_node():
     assert node.content == entry
     # The graph tier derives its label and `type` property from the class name.
     assert node.kind == 'bibliographic'
+
+
+def test_note_block_becomes_a_note_node():
+    footnote = '$^2$A *lemma* is a mathematical statement of lesser importance.'
+    node = extractor._node_for('note', footnote)
+    assert isinstance(node, models.NoteNode)
+    assert node.content == footnote
+    assert node.kind == 'note'
+
+
+def test_notes_are_kept_not_discarded():
+    # A note says something about the subject, so unlike furniture it stays in
+    # the stream and remains eligible for the semantic chain.
+    nodes = _worker(
+        [
+            _block('paragraph', 'body'),
+            _block('note', '$^1$Named after Charles Émile Picard.'),
+            _block('furniture', '42'),
+        ]
+    )
+    assert [node.kind for node in nodes] == ['paragraph', 'note']
 
 
 def test_discarded_types_are_offered_to_the_model_but_have_no_node_class():
