@@ -124,8 +124,7 @@ def _chain_elements(
         absorbed.update(statement.statement_of)
         # A statement's id IS its first member's id, so it keys both its place
         # in the stream and its own uuid — one identity, read one way.
-        if statement.id is not None:
-            statement_by_first_node[statement.id] = statement
+        statement_by_first_node[statement.id] = statement
 
     elements: list[dict] = []
     for node in nodes:

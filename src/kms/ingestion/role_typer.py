@@ -206,20 +206,22 @@ def contents_of(span: list[int], nodes_by_id: dict[int, models.ASTNode]) -> str:
 def _mark_statement(node: models.ASTNode, span: list[int]) -> models.Statement:
     """Build the span's Statement from its first node.
 
-    The statement takes the first node's ``id`` — that is what keys it to its
-    place in the stream, where ``writer._merged_chain`` slots it in — but it is
-    an entity beside the stream, not a replacement for the node it was built
-    from.
+    The statement's id is the span's first member id — that is what keys it to
+    its place in the stream, where ``writer._merged_chain`` slots it in — but
+    it is an entity beside the stream, not a replacement for the node it was
+    built from. Taking the id from the SPAN rather than from ``node.id`` is
+    what makes ``id == statement_of[0]`` true by construction, and keeps the
+    required ``int`` free of the node's optional one.
 
     Args:
-        node: The span's first node.
-        span: The span's member node ids.
+        node: The span's first node, for its content.
+        span: The span's member node ids, first one first.
 
     Returns:
         The span's statement.
     """
     return models.Statement(
-        id=node.id,
+        id=span[0],
         content=node.content,
         statement_of=span,
     )

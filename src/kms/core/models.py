@@ -146,9 +146,13 @@ class Statement:
     ``id`` is the id of the group's FIRST member node — the statement's
     document-order position, and what slots it into the persisted chain in
     that member's place. It names a place in the stream; it is not a node.
+    REQUIRED, unlike ``ASTNode.id``: a node exists before the stream is
+    flattened and is stamped with its id afterwards, but a statement is only
+    ever built from an already-stamped node, so an id-less one is a bug and
+    raises at construction rather than travelling on to name nothing.
     """
 
-    id: int | None = None
+    id: int
     content: str | None = None
     statement_of: list[int] = field(default_factory=list)
     procedures: list[Procedure] = field(default_factory=list)

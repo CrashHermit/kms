@@ -3,6 +3,8 @@ Procedures."""
 
 import asyncio
 
+import pytest
+
 from kms.core import models
 from kms.ingestion import role_typer
 
@@ -31,6 +33,14 @@ def test_splits_statements_from_procedures():
     assert statements[0].procedures == []
     assert len(statements[1].procedures) == 1  # only the procedure span
     assert statements[2].procedures == []
+
+
+def test_a_statement_cannot_be_built_without_an_id():
+    # Required, unlike ASTNode.id: a statement is only ever built from an
+    # already-stamped node, so an id-less one is a bug that should stop here
+    # rather than travel on and name nothing.
+    with pytest.raises(TypeError):
+        models.Statement()
 
 
 def test_a_statement_is_not_an_ast_node():
