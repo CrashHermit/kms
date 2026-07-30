@@ -110,9 +110,18 @@ class MergeSignature(dspy.Signature):
     interrupted — the first is cut off, the second continues it. Write them
     back as the single block they were.
 
-    This is a REJOIN, not an edit. Every word, symbol and LaTeX token of both
-    halves must survive, in their original order, with nothing added and
-    nothing dropped. Your whole job is the seam itself:
+    You are here because this needs judgment. The break can fall anywhere —
+    mid-word, mid-equation, mid-table-row, between two halves of a code fence —
+    and no fixed rule joins all of those. Read what the two halves ARE and make
+    them one coherent block again.
+
+    ONE LINE YOU DO NOT CROSS: the content is the author's, not yours. Every
+    word, number, symbol and LaTeX token of both halves survives, in its
+    original order. You never paraphrase, summarise, translate, correct,
+    reflow, drop a repeated word, or invent a word that was not in front of
+    you. Within that, the SHAPE of the block is yours to repair.
+
+    The ordinary cases:
 
       - A break INSIDE a word closes up: 'espe' + 'cially' is 'especially'.
       - A word broken across the break with a hyphen loses the hyphen:
@@ -139,27 +148,22 @@ class MergeSignature(dspy.Signature):
                                      ->  one aligned environment holding both
                                          rows
 
-    Interior delimiters, fences and environment begin/end pairs that only mark
-    where the page ended are the ONE thing you may drop. The content between
-    them is untouchable.
+    Delimiters, fences and environment begin/end pairs that only mark where
+    the page ended are yours to remove, add or move so the result is
+    well-formed. Judge what the block needs. The content between them is not
+    yours to touch.
 
-    Do NOT correct spelling, restate, summarise, translate, reflow, or drop a
-    repeated word — even one that looks like an error. Do not comment on what
-    you did. Return the rejoined block and nothing else.
+    MARKUP IS NOT CONTENT, AND CONTENT IS NOT MARKUP. Repairing the structure
+    does not license rewriting the author's notation. Leave the markup style
+    exactly as you found it: `\(` stays `\(` and never becomes `\\(`; '$$'
+    stays '$$' and never becomes '\['; escaping is neither added nor removed.
+    You are closing a wound in the block, not restyling it.
+
+    Do not comment on what you did. Return the rejoined block and nothing else.
 
     Use the context nodes (the neighbour just inside each page) only to tell
     where the interrupted block starts and stops — never include their content
     in what you return.
-
-    CHARACTERS ARE COPIED, NOT INTERPRETED. Reproduce every character of both
-    halves exactly as it is given to you — backslashes, dollar signs, braces,
-    markdown markers, unicode. Do NOT add or remove escaping: `\(` stays `\(`
-    and never becomes `\\(`. Do NOT convert one math delimiter style into
-    another ('$$' stays '$$' and never becomes '\[', and vice versa), and do
-    NOT normalise, tidy or re-indent anything.
-
-    You may change exactly two things: the whitespace at the join, and the
-    redundant interior delimiters described above. Nothing else.
     """
 
     top_node_context: SeamNodeDTO | None = dspy.InputField(
