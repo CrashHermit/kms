@@ -22,7 +22,10 @@ carrying Mistral's markdown + figures) is the backbone, the corrector proofreads
 each page's transcription against its image, and the formatter then standardises
 that page's markup — the two are exact inverses, the corrector changing content
 but never presentation and the formatter presentation but never content — before
-the (purely structural) extractor parses it into nodes. The formatter runs second
+the (purely structural) extractor parses it into nodes. The extractor is also
+where page apparatus leaves the document: it identifies running heads, folios
+and colophons as `furniture` and discards them inside the stage, so no later
+stage — the seam merger first among them — ever sees a node for them. The formatter runs second
 because anything that deliberately makes the text diverge from the image has to
 come after the pass whose contract is that they agree. The seam merger heals nodes split
 across page breaks and then flattens the healed backbone into the global

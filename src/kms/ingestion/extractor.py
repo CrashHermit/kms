@@ -6,6 +6,24 @@ DSPy ChainOfThought module. The result is a flat list of structural nodes per
 page — purely structural, no math-semantic typing (that lives in the entity
 layer).
 
+``furniture`` is the stage's one *discard* type. The apparatus around a
+document — the running head, the folio, the colophon or licence line at the foot
+of the page — is not part of what the document says, and since the OCR front end
+appends each page's extracted footer back onto its markdown (so footnote
+citations survive), that apparatus now reaches this stage. It is identified here
+and dropped before the stage returns, so nothing downstream ever sees it: no
+node, no id, no graph vertex. Identifying it *here* rather than in a later
+finder is what keeps the seam merger correct — a colophon left at the foot of a
+page would take the tail's place and prevent a genuinely split paragraph from
+being healed, exactly as a footnote would.
+
+Discarding is why it is a *type* and not a stage: the judgment is one the
+extractor is already making (which blocks are there, and what each one is), and
+a block that never becomes a node needs nothing else built for it. The cost is
+that it is unrecoverable — a false positive deletes real content silently — so
+the prompt is written to keep anything it is unsure about, and every dropped
+block is logged at DEBUG.
+
 ``bibliographic`` is the one type whose test is not the block's shape: a
 footnote citation and an entry in a reference list are both prose paragraphs to
 look at, and what separates them from prose is that they name an external work
@@ -39,6 +57,11 @@ _TYPE_MAP: dict[str, type[models.ASTNode]] = {
     'bibliographic': models.BibliographicNode,
 }
 
+# Block types the stage identifies in order to throw away. These never become
+# nodes, so they have no ``models.ASTNode`` class and never reach the stream —
+# see the module docstring on why the discard happens here.
+_DISCARDED_TYPES = frozenset({'furniture'})
+
 
 def _node_for(node_type: str, content: str | None) -> models.ASTNode:
     """Create the right ASTNode subclass for one extracted block.
@@ -58,11 +81,38 @@ class DSPyModel(BaseModel):
     """A single extracted block node from the LLM: its type and content."""
 
     type: str = Field(
-        description='The block type: paragraph, math, code, list, table, image, caption, header, or bibliographic.'
+        description='The block type: paragraph, math, code, list, table, image, caption, header, bibliographic, or furniture.'
     )
     content: str | None = Field(
         default=None, description='The content of the node'
     )
+
+
+def _partition(
+    blocks: list[DSPyModel],
+) -> tuple[list[DSPyModel], list[DSPyModel]]:
+    """Split one page's blocks into the ones kept and the ones discarded.
+
+    A discarded block is page apparatus (``furniture``): identified so it can
+    be thrown away here, before the stage returns, rather than travelling the
+    pipeline as a node every later stage has to ignore.
+
+    Args:
+        blocks: The blocks the LLM emitted for one page, in document order.
+
+    Returns:
+        The ``(kept, discarded)`` blocks, each in document order.
+    """
+    kept: list[DSPyModel] = []
+    discarded: list[DSPyModel] = []
+    for block in blocks:
+        target = (
+            discarded
+            if (block.type or '').strip().lower() in _DISCARDED_TYPES
+            else kept
+        )
+        target.append(block)
+    return kept, discarded
 
 
 class Signature(dspy.Signature):
@@ -130,7 +180,35 @@ class Signature(dspy.Signature):
       next author's name begins. Never merge two works into one node.
       Give each node that work's entry text as written, including its
       leading marker if it has one. Prose that merely mentions a work in
-      passing ("as Pólya showed") is a paragraph, not a bibliographic node."""
+      passing ("as Pólya showed") is a paragraph, not a bibliographic node.
+    - furniture: Page apparatus — text that belongs to the artifact rather
+      than to what the document says. Running heads and running feet, folios
+      (bare page numbers), the book or chapter title repeated at the top or
+      bottom of the page, a colophon, a publisher or licence line, a "printed
+      from" or "access this book at" line, marginal labels.
+      The test is what the text is ABOUT: furniture describes the book as an
+      object — its title, section, page, publisher, licence, URL — and would
+      be equally true printed on any page. Everything that says something
+      about the subject matter is not furniture. It usually sits at the very
+      top or the very bottom of the page and repeats on every page.
+      A furniture block is emitted as its own node, never folded into a
+      neighbouring block.
+
+      NOT furniture, whatever their position on the page:
+      * A footnote. Its marker makes it look like apparatus, but it says
+        something about the subject and the body refers to it. Type it as
+        paragraph, or as bibliographic when it cites a work.
+      * A real heading. A heading that introduces content ON THIS PAGE is a
+        header, even when it reads exactly like the running head — a page
+        may show the same words twice, once as apparatus and once as the
+        genuine section title. If only one such line is present and you
+        cannot tell which it is, treat it as a header.
+      * Captions, figure labels, table titles, and reference-list entries.
+
+      WHEN IN DOUBT, DO NOT USE THIS TYPE. Give the block its ordinary type
+      instead. Furniture is the one type that is discarded rather than kept,
+      so a wrong call here deletes real content, while a missed one merely
+      leaves a tidy line in the document."""
 
     segment_markdown: str = dspy.InputField(
         description='The raw markdown content of one textbook segment. Emit nodes for this content only.'
@@ -227,7 +305,21 @@ class ExtractorNode:
         """
         segment: models.Segment = state['segment']
         extracted = await self.module.aforward(segment_markdown=segment.content)
-        nodes = [_node_for(node.type, node.content) for node in extracted]
+        kept, discarded = _partition(extracted)
+        for block in discarded:
+            logger.debug(
+                'page %d: discarded %s block %r',
+                segment.index,
+                block.type,
+                logs.elide(block.content),
+            )
+        if discarded:
+            logger.info(
+                'extractor: page %d dropped %d furniture block(s)',
+                segment.index,
+                len(discarded),
+            )
+        nodes = [_node_for(block.type, block.content) for block in kept]
         return {'extract_results': [(segment.index, nodes)]}
 
     def collect(self, state: state.State) -> dict:
