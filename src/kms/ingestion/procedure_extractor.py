@@ -32,7 +32,7 @@ def extract_procedures(
             groups' members, never the statements themselves.
     """
     for statement in statements:
-        member_ids = statement.statement_of or []
+        member_ids = statement.statement_of
         members = [
             nodes_by_id[node_id]
             for node_id in member_ids

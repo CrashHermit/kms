@@ -49,7 +49,7 @@ def extract_statement(
         nodes_by_id: The full node stream keyed by stable id. It holds the
             group's members, never the statement itself.
     """
-    member_ids = statement_node.statement_of or []
+    member_ids = statement_node.statement_of
     members = [
         nodes_by_id[node_id] for node_id in member_ids if node_id in nodes_by_id
     ]

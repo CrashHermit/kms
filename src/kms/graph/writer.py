@@ -121,11 +121,11 @@ def _chain_elements(
     absorbed: set[int] = set()
     statement_by_first_node: dict[int, models.Statement] = {}
     for statement in statements:
-        members = statement.statement_of or []
-        absorbed.update(members)
-        first_member_id = members[0] if members else statement.id
-        if first_member_id is not None:
-            statement_by_first_node[first_member_id] = statement
+        absorbed.update(statement.statement_of)
+        # A statement's id IS its first member's id, so it keys both its place
+        # in the stream and its own uuid — one identity, read one way.
+        if statement.id is not None:
+            statement_by_first_node[statement.id] = statement
 
     elements: list[dict] = []
     for node in nodes:
