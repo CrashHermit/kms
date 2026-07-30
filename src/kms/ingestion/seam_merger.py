@@ -166,17 +166,30 @@ class MergeSignature(dspy.Signature):
     in what you return.
     """
 
-    top_node_context: SeamNodeDTO | None = dspy.InputField(
-        description='The node immediately before the tail. Read-only context — do not include its content in the output.'
-    )
-    top_bottom_edge_node: SeamNodeDTO = dspy.InputField(
+    # PLAIN STRINGS, NOT SeamNodeDTO. A pydantic input field is rendered into
+    # the prompt as JSON, and JSON escapes every backslash: a tail holding
+    # `\(2^{p}\)` reaches the model as `\\(2^{p}\\)`. This module's whole
+    # contract is reproducing characters exactly, and it was being shown
+    # characters that were not the document's — it then copied the escaped
+    # form back about a tenth of the time, silently doubling backslashes in
+    # `document.md`. No prompt wording can fix that; the field type can.
+    tail: str = dspy.InputField(
         description='The first half — the block as it was cut off at the foot of the page.'
     )
-    bottom_top_edge_node: SeamNodeDTO = dspy.InputField(
+    head: str = dspy.InputField(
         description='The second half — the block as it resumes at the top of the next page.'
     )
-    bottom_node_context: SeamNodeDTO | None = dspy.InputField(
-        description='The node immediately after the head. Read-only context — do not include its content in the output.'
+    tail_kind: str = dspy.InputField(
+        description="The first half's structural kind (paragraph, math, list, code, table, …)."
+    )
+    head_kind: str = dspy.InputField(
+        description="The second half's structural kind."
+    )
+    before_tail: str = dspy.InputField(
+        description='The block before the tail on its page. Read-only context — never include it in the output. Empty if there is none.'
+    )
+    after_head: str = dspy.InputField(
+        description='The block after the head on its page. Read-only context — never include it in the output. Empty if there is none.'
     )
 
     merged: str = dspy.OutputField(
@@ -298,11 +311,21 @@ class SeamRewriter(dspy.Module):
         Returns:
             The rejoined block.
         """
+        # Unpacked to plain strings on the way in — see the note on the
+        # signature's fields.
         inputs = {
-            'top_node_context': top_node_context,
-            'top_bottom_edge_node': top_bottom_edge_node,
-            'bottom_top_edge_node': bottom_top_edge_node,
-            'bottom_node_context': bottom_node_context,
+            'tail': top_bottom_edge_node.content or '',
+            'head': bottom_top_edge_node.content or '',
+            'tail_kind': ' '.join(top_bottom_edge_node.types),
+            'head_kind': ' '.join(bottom_top_edge_node.types),
+            'before_tail': (
+                top_node_context.content if top_node_context else ''
+            )
+            or '',
+            'after_head': (
+                bottom_node_context.content if bottom_node_context else ''
+            )
+            or '',
         }
         result = await self.rewriter.acall(**inputs)
         recorder.record_example('seam_rewriter', inputs, result)
