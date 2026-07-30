@@ -94,17 +94,16 @@ def _decode_data_url(url: str) -> bytes | None:
         The decoded payload, or None when the url is not an inlined base64
         image (e.g. a remote http url, which has no bytes to write out).
     """
-    if not url.startswith('data:') or 'base64' not in url.partition(',')[0]:
+    header, _, encoded = url.partition(',')
+    if not header.startswith('data:') or 'base64' not in header:
         return None
     try:
-        return base64.b64decode(url.partition(',')[2])
+        return base64.b64decode(encoded)
     except (binascii.Error, ValueError):
         return None
 
 
-def _write_image(
-    image: dspy.Image, module_name: str, run_id: str, corpus_root: Path
-) -> str:
+def _store_image(image: dspy.Image, corpus_root: Path, run_dir: str) -> str:
     """Write one image beside the corpus and return its reference.
 
     The file is named by content hash, so repeated samples of the same page
@@ -113,9 +112,8 @@ def _write_image(
 
     Args:
         image: The image to write out.
-        module_name: The module being recorded.
-        run_id: The run this record belongs to.
         corpus_root: The corpus root directory.
+        run_dir: The record's ``<module>/<run>`` directory, corpus-relative.
 
     Returns:
         The corpus-relative path of the written file, or the image's url
@@ -125,41 +123,12 @@ def _write_image(
     if payload is None:
         return image.url
     digest = hashlib.sha256(payload).hexdigest()[:16]
-    reference = f'{module_name}/{run_id}/{IMAGES_DIRNAME}/{digest}.png'
+    reference = f'{run_dir}/{IMAGES_DIRNAME}/{digest}.png'
     path = corpus_root / reference
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_bytes(payload)
     return reference
-
-
-def _serialize(
-    value: object,
-    field: str,
-    module_name: str,
-    run_id: str,
-    corpus_root: Path,
-    image_provenance: dict[str, dict],
-) -> object:
-    """The JSON-safe form of one recorded value.
-
-    Args:
-        value: The value a module was called with or returned.
-        field: The field's name, used to look up its provenance.
-        module_name: The module being recorded.
-        run_id: The run this record belongs to.
-        corpus_root: The corpus root directory.
-        image_provenance: Extra fields to attach, per image field name.
-
-    Returns:
-        An image reference object for a ``dspy.Image``, otherwise the value
-        unchanged.
-    """
-    if not isinstance(value, dspy.Image):
-        return value
-    entry = {IMAGE_KEY: _write_image(value, module_name, run_id, corpus_root)}
-    entry.update(image_provenance.get(field, {}))
-    return entry
 
 
 def _deserialize(value: object, corpus_root: Path) -> object:
@@ -225,23 +194,26 @@ def record_example(
         later.
     """
     root = Path(corpus_root)
-    run = run_id or RUN_ID
     provenance = image_provenance or {}
     record_id = uuid.uuid4().hex
+    run_dir = f'{module_name}/{run_id or RUN_ID}'
 
-    record = {
-        'metadata': {'id': record_id, 'model': model},
-        'inputs': {
-            name: _serialize(value, name, module_name, run, root, provenance)
-            for name, value in inputs.items()
-        },
-        'outputs': {
-            name: _serialize(value, name, module_name, run, root, provenance)
-            for name, value in outputs.items()
-        },
-    }
+    def serialize(field: str, value: object) -> object:
+        """One value's JSON-safe form, writing images out as it goes."""
+        if not isinstance(value, dspy.Image):
+            return value
+        return {
+            IMAGE_KEY: _store_image(value, root, run_dir),
+            **provenance.get(field, {}),
+        }
 
-    path = root / module_name / run / EXAMPLES_FILENAME
+    record: dict = {'metadata': {'id': record_id, 'model': model}}
+    for section, fields in zip(_SECTIONS, (inputs, outputs), strict=True):
+        record[section] = {
+            name: serialize(name, value) for name, value in fields.items()
+        }
+
+    path = root / run_dir / EXAMPLES_FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('a', encoding='utf-8') as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + '\n')
@@ -272,13 +244,16 @@ def load_records(
 
     records: list[dict] = []
     for path in sorted(root.glob(pattern)):
-        for line in path.read_text(encoding='utf-8').splitlines():
-            if not line.strip():
-                continue
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
+        # Streamed rather than slurped: the point of appending is that the
+        # corpus outgrows what you want to hold in memory at once.
+        with path.open(encoding='utf-8') as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    records.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
     return records
 
 

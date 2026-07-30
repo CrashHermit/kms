@@ -1,6 +1,7 @@
 """Recorder corpus — JSONL round-trip, image sidecars, append-only. No
 network/LLM."""
 
+import base64
 import json
 from pathlib import Path
 
@@ -15,14 +16,27 @@ OTHER_PNG = b'\x89PNG\r\n\x1a\na different page'
 
 
 def _image(payload=PNG):
-    import base64
-
+    """A dspy.Image carrying inlined bytes, as the corrector builds one."""
     encoded = base64.b64encode(payload).decode('utf-8')
     return dspy.Image(url=f'data:image/png;base64,{encoded}')
 
 
-def _lines(root, module='corrector', run='run1'):
-    path = Path(root) / module / run / recorder.EXAMPLES_FILENAME
+def _record(tmp_path, inputs=None, outputs=None, module='corrector', **kwargs):
+    """Record one call, defaulting everything the test does not care about."""
+    return recorder.record_example(
+        module,
+        {'transcription': 'orig'} if inputs is None else inputs,
+        {'corrected': 'fixed'} if outputs is None else outputs,
+        model=kwargs.pop('model', MODEL),
+        corpus_root=tmp_path,
+        run_id=kwargs.pop('run_id', 'run1'),
+        **kwargs,
+    )
+
+
+def _lines(tmp_path, module='corrector', run='run1'):
+    """The raw records as written, straight off disk."""
+    path = Path(tmp_path) / module / run / recorder.EXAMPLES_FILENAME
     return [
         json.loads(line)
         for line in path.read_text(encoding='utf-8').splitlines()
@@ -30,15 +44,14 @@ def _lines(root, module='corrector', run='run1'):
     ]
 
 
-def test_record_writes_three_sections_with_metadata(tmp_path):
-    record_id = recorder.record_example(
-        'corrector',
-        {'transcription': 'orig'},
-        {'corrected': 'fixed'},
-        model=MODEL,
-        corpus_root=tmp_path,
-        run_id='run1',
+def _images(tmp_path, module='corrector', run='run1'):
+    return sorted(
+        (Path(tmp_path) / module / run / recorder.IMAGES_DIRNAME).iterdir()
     )
+
+
+def test_record_writes_three_sections_with_metadata(tmp_path):
+    record_id = _record(tmp_path)
     (record,) = _lines(tmp_path)
     assert set(record) == {'metadata', 'inputs', 'outputs'}
     assert record['metadata'] == {'id': record_id, 'model': MODEL}
@@ -48,14 +61,7 @@ def test_record_writes_three_sections_with_metadata(tmp_path):
 
 def test_appends_rather_than_rewrites(tmp_path):
     for text in ('one', 'two', 'three'):
-        recorder.record_example(
-            'corrector',
-            {'transcription': text},
-            {'corrected': text},
-            model=MODEL,
-            corpus_root=tmp_path,
-            run_id='run1',
-        )
+        _record(tmp_path, {'transcription': text})
     records = _lines(tmp_path)
     assert [r['inputs']['transcription'] for r in records] == [
         'one',
@@ -67,14 +73,7 @@ def test_appends_rather_than_rewrites(tmp_path):
 
 
 def test_image_is_written_beside_the_corpus_not_inlined(tmp_path):
-    recorder.record_example(
-        'corrector',
-        {'transcription': 'orig', 'page_image': _image()},
-        {'corrected': 'fixed'},
-        model=MODEL,
-        corpus_root=tmp_path,
-        run_id='run1',
-    )
+    _record(tmp_path, {'transcription': 'orig', 'page_image': _image()})
     (record,) = _lines(tmp_path)
     reference = record['inputs']['page_image'][recorder.IMAGE_KEY]
 
@@ -88,35 +87,16 @@ def test_image_is_written_beside_the_corpus_not_inlined(tmp_path):
 
 def test_same_image_shares_one_sidecar_across_records(tmp_path):
     for _ in range(3):
-        recorder.record_example(
-            'corrector',
-            {'page_image': _image()},
-            {'corrected': 'fixed'},
-            model=MODEL,
-            corpus_root=tmp_path,
-            run_id='run1',
-        )
-    recorder.record_example(
-        'corrector',
-        {'page_image': _image(OTHER_PNG)},
-        {'corrected': 'fixed'},
-        model=MODEL,
-        corpus_root=tmp_path,
-        run_id='run1',
-    )
-    images = list((tmp_path / 'corrector' / 'run1' / 'images').iterdir())
+        _record(tmp_path, {'page_image': _image()})
+    _record(tmp_path, {'page_image': _image(OTHER_PNG)})
     # Content-hash naming: three samples of one page, one file; plus the other.
-    assert len(images) == 2
+    assert len(_images(tmp_path)) == 2
 
 
 def test_image_provenance_rides_alongside_the_reference(tmp_path):
-    recorder.record_example(
-        'corrector',
+    _record(
+        tmp_path,
         {'page_image': _image()},
-        {'corrected': 'fixed'},
-        model=MODEL,
-        corpus_root=tmp_path,
-        run_id='run1',
         image_provenance={
             'page_image': {
                 'source_pdf': 'books/stein.pdf',
@@ -127,21 +107,14 @@ def test_image_provenance_rides_alongside_the_reference(tmp_path):
     )
     (record,) = _lines(tmp_path)
     entry = record['inputs']['page_image']
+    assert recorder.IMAGE_KEY in entry
     assert entry['source_pdf'] == 'books/stein.pdf'
     assert entry['page_index'] == 39
     assert entry['render_scale'] == 2.5
-    assert recorder.IMAGE_KEY in entry
 
 
 def test_round_trips_to_examples_with_inputs_split(tmp_path):
-    recorder.record_example(
-        'corrector',
-        {'transcription': 'orig', 'page_image': _image()},
-        {'corrected': 'fixed'},
-        model=MODEL,
-        corpus_root=tmp_path,
-        run_id='run1',
-    )
+    _record(tmp_path, {'transcription': 'orig', 'page_image': _image()})
     (example,) = recorder.load_examples('corrector', corpus_root=tmp_path)
 
     assert example.transcription == 'orig'
@@ -156,15 +129,8 @@ def test_round_trips_to_examples_with_inputs_split(tmp_path):
 
 
 def test_missing_sidecar_raises_rather_than_substituting(tmp_path):
-    recorder.record_example(
-        'corrector',
-        {'page_image': _image()},
-        {'corrected': 'fixed'},
-        model=MODEL,
-        corpus_root=tmp_path,
-        run_id='run1',
-    )
-    for image in (tmp_path / 'corrector' / 'run1' / 'images').iterdir():
+    _record(tmp_path, {'page_image': _image()})
+    for image in _images(tmp_path):
         image.unlink()
 
     # A pruned sidecar is data loss; a stand-in would quietly feed a training
@@ -177,14 +143,7 @@ def test_missing_sidecar_raises_rather_than_substituting(tmp_path):
 
 
 def test_torn_line_is_skipped_not_fatal(tmp_path):
-    recorder.record_example(
-        'corrector',
-        {'transcription': 'good'},
-        {'corrected': 'fixed'},
-        model=MODEL,
-        corpus_root=tmp_path,
-        run_id='run1',
-    )
+    _record(tmp_path, {'transcription': 'good'})
     path = tmp_path / 'corrector' / 'run1' / recorder.EXAMPLES_FILENAME
     with path.open('a', encoding='utf-8') as handle:
         handle.write('{"metadata": {"id": "trunc"}, "inputs": {"transcr')
@@ -195,19 +154,10 @@ def test_torn_line_is_skipped_not_fatal(tmp_path):
 
 def test_runs_are_separate_and_loadable_together_or_singly(tmp_path):
     for run, text in (('run1', 'first'), ('run2', 'second')):
-        recorder.record_example(
-            'corrector',
-            {'transcription': text},
-            {'corrected': text},
-            model=MODEL,
-            corpus_root=tmp_path,
-            run_id=run,
-        )
+        _record(tmp_path, {'transcription': text}, run_id=run)
+
     every = recorder.load_records('corrector', corpus_root=tmp_path)
-    assert [r['inputs']['transcription'] for r in every] == [
-        'first',
-        'second',
-    ]
+    assert [r['inputs']['transcription'] for r in every] == ['first', 'second']
 
     only = recorder.load_records(
         'corrector', corpus_root=tmp_path, run_id='run2'
@@ -216,29 +166,18 @@ def test_runs_are_separate_and_loadable_together_or_singly(tmp_path):
 
 
 def test_modules_get_their_own_directories(tmp_path):
-    recorder.record_example(
-        'corrector',
-        {'transcription': 'a'},
-        {'corrected': 'a'},
-        model=MODEL,
-        corpus_root=tmp_path,
-        run_id='run1',
-    )
-    recorder.record_example(
-        'extractor',
+    _record(tmp_path)
+    _record(
+        tmp_path,
         {'segment_markdown': 'b'},
         {'nodes': []},
+        module='extractor',
         model='deepseek/deepseek-v4-flash',
-        corpus_root=tmp_path,
-        run_id='run1',
     )
     assert {p.name for p in tmp_path.iterdir()} == {'corrector', 'extractor'}
-    assert (
-        recorder.load_records('extractor', corpus_root=tmp_path)[0]['metadata'][
-            'model'
-        ]
-        == 'deepseek/deepseek-v4-flash'
-    )
+
+    (record,) = recorder.load_records('extractor', corpus_root=tmp_path)
+    assert record['metadata']['model'] == 'deepseek/deepseek-v4-flash'
 
 
 def test_missing_corpus_loads_empty(tmp_path):
@@ -254,13 +193,6 @@ def test_run_ids_are_unique_and_sortable():
 
 @pytest.mark.parametrize('url', ['https://example.com/page.png', 'data:,'])
 def test_non_inlined_image_urls_are_kept_verbatim(tmp_path, url):
-    recorder.record_example(
-        'corrector',
-        {'page_image': dspy.Image(url=url)},
-        {'corrected': 'fixed'},
-        model=MODEL,
-        corpus_root=tmp_path,
-        run_id='run1',
-    )
+    _record(tmp_path, {'page_image': dspy.Image(url=url)})
     (record,) = _lines(tmp_path)
     assert record['inputs']['page_image'][recorder.IMAGE_KEY] == url
