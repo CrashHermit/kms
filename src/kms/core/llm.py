@@ -8,10 +8,10 @@ being duplicated across nodes.
 Two backends:
 
 - Text reasoning nodes (extractor, seam merger, and the per-type entity
-  finders) run on DeepSeek V4 Flash via DeepSeek's own API (litellm
+  finders) run on DeepSeek V4 Pro via DeepSeek's own API (litellm
   ``deepseek/`` provider, base https://api.deepseek.com). DeepSeek does
   automatic server-side context caching, so no provider pinning is needed.
-  The key is read from DEEPSEEK_API_KEY.
+  The key is read from DEEPSEEK_API_KEY. TEXT_MODEL overrides the model.
 - The correction pass sends a page image, so it runs on Qwen3-VL-235B via
   OpenRouter. The key is read from OPENROUTER_API_KEY.
 
@@ -81,11 +81,18 @@ def _provider_routing(provider: str | None) -> dict:
 
 @lru_cache(maxsize=1)
 def text_lm() -> dspy.LM:
-    """DeepSeek V4 Flash via DeepSeek's own API for the text reasoning nodes.
+    """DeepSeek V4 Pro via DeepSeek's own API for the text reasoning nodes.
 
     Uses litellm's ``deepseek/`` provider (base https://api.deepseek.com),
     which reads the key we pass from DEEPSEEK_API_KEY. DeepSeek caches
     context server-side automatically, so there is no provider to pin.
+
+    Pro rather than Flash because the stages are being read for STRUCTURAL
+    faults: when a stage misbehaves (the extractor emitting one source block
+    twice, the splitter leaving a packed exercise list whole), the first
+    question is whether the pipeline is wrong or the model simply was, and a
+    weaker model makes that unanswerable. Set TEXT_MODEL to go back to
+    ``deepseek/deepseek-v4-flash`` for cheap runs.
 
     Thinking mode is disabled: v4-flash defaults to thinking and
     intermittently emits the whole answer into ``reasoning_content`` with an
@@ -95,7 +102,7 @@ def text_lm() -> dspy.LM:
     here — turning it off is both more reliable and cheaper.
     """
     return dspy.LM(
-        os.environ.get('TEXT_MODEL', 'deepseek/deepseek-v4-flash'),
+        os.environ.get('TEXT_MODEL', 'deepseek/deepseek-v4-pro'),
         api_key=_require_key(DEEPSEEK_ENV_KEY, 'sk-...'),
         temperature=0.0,
         max_tokens=128000,
