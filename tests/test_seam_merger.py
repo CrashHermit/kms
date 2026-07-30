@@ -28,7 +28,11 @@ def _note(content):
 
 
 class _Merger:
-    """Stands in for the LLM: always merges, recording what it was asked."""
+    """Stands in for the LLM: always merges, recording what it was asked.
+
+    Returns the merged CONTENT, like ``SeamMerger.aforward`` does — the healed
+    tail takes the string straight onto its ``content``.
+    """
 
     def __init__(self, merged='MERGED'):
         self.merged = merged
@@ -49,7 +53,7 @@ class _Merger:
                 bottom_node_context.content,
             )
         )
-        return seam_merger.SeamNodeDTO(content=self.merged, types=['paragraph'])
+        return self.merged
 
 
 class _NeverMerges:
