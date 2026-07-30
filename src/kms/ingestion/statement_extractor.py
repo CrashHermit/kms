@@ -36,7 +36,7 @@ def group_text(members: list[models.ASTNode]) -> str:
 
 
 def extract_statement(
-    statement_node: models.StatementNode,
+    statement_node: models.Statement,
     nodes_by_id: dict[int, models.ASTNode],
 ) -> None:
     """Fill ``content`` on a statement node from the group's member text.

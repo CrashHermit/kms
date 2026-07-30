@@ -36,7 +36,7 @@ class State(TypedDict, total=False):
     procedures.
 
     `statements` carries the statement overlay from the role typer to the two
-    extractors and the persister: one StatementNode per group (real or
+    extractors and the persister: one Statement per group (real or
     placeholder), each holding its members' node ids in `statement_of` and zero
     or one Procedure. It is a channel of its own, deliberately NOT part of
     `nodes`: a statement's content is its whole group's text, so a statement
@@ -59,7 +59,7 @@ class State(TypedDict, total=False):
         list[int]
     ]  # untyped unit spans from the group finder, document order
     statements: list[
-        models.StatementNode
+        models.Statement
     ]  # the statement overlay, group order, from the role typer
     correction_results: Annotated[
         list[tuple[int, str]], operator.add

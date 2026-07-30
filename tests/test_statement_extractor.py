@@ -18,7 +18,7 @@ def test_group_text_joins_and_drops_blank_nodes():
 
 
 def test_extract_fills_content_from_statement_of():
-    stmt = models.StatementNode(
+    stmt = models.Statement(
         content='Theorem 2.1', id=0, statement_of=[0, 1, 2]
     )
     members = [
@@ -31,7 +31,7 @@ def test_extract_fills_content_from_statement_of():
 
 
 def test_extract_skips_missing_member_ids():
-    stmt = models.StatementNode(content='Thm', id=0, statement_of=[0, 1, 99])
+    stmt = models.Statement(content='Thm', id=0, statement_of=[0, 1, 99])
     members = [
         models.ParagraphNode(content='a', id=0),
         models.ParagraphNode(content='b', id=1),
@@ -41,7 +41,7 @@ def test_extract_skips_missing_member_ids():
 
 
 def test_node_run_fills_content():
-    stmt = models.StatementNode(content='Thm', id=1, statement_of=[1, 2])
+    stmt = models.Statement(content='Thm', id=1, statement_of=[1, 2])
     members = [
         models.ParagraphNode(content='Theorem 2.1', id=1),
         models.ParagraphNode(content='Every group has an identity.', id=2),

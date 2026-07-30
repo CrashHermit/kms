@@ -2,7 +2,7 @@ r"""
 Procedure extractor — fills ``content`` on each Procedure attached to a
 statement.
 
-Procedures are children of StatementNode.procedures (zero or one per
+Procedures are children of ``models.Statement.procedures`` (zero or one per
 statement). The extractor reads the owning statement's group text and extracts
 the procedure portion. For now the concatenation is deterministic; an LLM pass
 will extract the procedure portion from the full group.
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def extract_procedures(
-    statements: list[models.StatementNode],
+    statements: list[models.Statement],
     nodes_by_id: dict[int, models.ASTNode],
 ) -> None:
     """Fill ``content`` on every Procedure attached to a statement.

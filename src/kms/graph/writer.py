@@ -93,91 +93,109 @@ async def persist_nodes(
             await session.run(query, rows=rows)
 
 
-def _merged_chain(
+def _chain_elements(
     nodes: list[models.ASTNode],
-    statements: list[models.StatementNode],
+    statements: list[models.Statement],
     source: str,
 ) -> list[dict]:
-    """Build the ``{from, to}`` uuid pairs for the merged ``:NEXT`` chain.
+    """The merged chain's elements, in document order.
 
-    Walks the raw node stream in document order, skipping nodes absorbed
-    into statements, and slotting ``:Statement`` nodes in their place.
-    Returns uuid pairs for consecutive elements in the merged chain.
+    Walks the raw node stream, slotting each statement in at its first
+    member's place and skipping the members it absorbed — the absorbed nodes
+    are still persisted for provenance, they just aren't in the walkable
+    chain.
+
+    Each element carries its ``label`` as well as its uuid. The label is not
+    decoration: node and statement uuids are disjoint but a lookup by uuid
+    alone still has to scan, and the per-label uniqueness constraints are what
+    make the MATCHes in ``persist_chain`` indexed.
+
+    Args:
+        nodes: The flat node stream, in document order.
+        statements: The statement overlay.
+        source: The stable book identity.
+
+    Returns:
+        One ``{label, uuid}`` per chain element, in document order.
     """
-    # Which node ids are absorbed into a statement.
     absorbed: set[int] = set()
+    statement_by_first_node: dict[int, models.Statement] = {}
     for statement in statements:
-        for member_id in statement.statement_of or []:
-            absorbed.add(member_id)
-
-    # Map statement first-node id -> statement entity (for its graph uuid).
-    statement_by_first_node: dict[int, models.StatementNode] = {}
-    for statement in statements:
-        first = (statement.statement_of or [None])[0]
+        members = statement.statement_of or []
+        absorbed.update(members)
+        first = members[0] if members else statement.id
         if first is not None:
             statement_by_first_node[first] = statement
 
-    # Walk nodes, emit chain elements.
-    chain: list[dict] = []
+    elements: list[dict] = []
     for node in nodes:
         node_id = node.id
         if node_id is None:
             continue
-        if node_id in statement_by_first_node:
-            chain.append(
+        statement = statement_by_first_node.get(node_id)
+        if statement is not None:
+            elements.append(
                 {
-                    'kind': 'statement',
-                    'uuid': statement_uuid(
-                        source, statement_by_first_node[node_id].id
-                    ),
+                    'label': STATEMENT_LABEL,
+                    'uuid': statement_uuid(source, statement.id),
                 }
             )
-            continue
-        if node_id in absorbed:
-            continue
-        chain.append(
-            {
-                'kind': 'node',
-                'uuid': node_uuid(source, node_id),
-            }
-        )
+        elif node_id not in absorbed:
+            elements.append(
+                {'label': NODE_LABEL, 'uuid': node_uuid(source, node_id)}
+            )
+    return elements
 
+
+def _merged_chain(
+    nodes: list[models.ASTNode],
+    statements: list[models.Statement],
+    source: str,
+) -> list[dict]:
+    """The consecutive element pairs of the merged ``:NEXT`` chain.
+
+    Args:
+        nodes: The flat node stream, in document order.
+        statements: The statement overlay.
+        source: The stable book identity.
+
+    Returns:
+        One ``{from, from_label, to, to_label}`` per ``:NEXT`` edge.
+    """
+    elements = _chain_elements(nodes, statements, source)
     return [
-        {'from': current['uuid'], 'to': following['uuid']}
-        for current, following in zip(chain, chain[1:], strict=False)
+        {
+            'from': current['uuid'],
+            'from_label': current['label'],
+            'to': following['uuid'],
+            'to_label': following['label'],
+        }
+        for current, following in zip(elements, elements[1:], strict=False)
     ]
 
 
 def _merged_head(
     nodes: list[models.ASTNode],
-    statements: list[models.StatementNode],
+    statements: list[models.Statement],
     source: str,
-) -> str | None:
-    """The uuid of the first element in the merged chain, or None if empty."""
-    absorbed: set[int] = set()
-    for statement in statements:
-        for member_id in statement.statement_of or []:
-            absorbed.add(member_id)
-    statement_by_first_node: dict[int, models.StatementNode] = {}
-    for statement in statements:
-        first = (statement.statement_of or [None])[0]
-        if first is not None:
-            statement_by_first_node[first] = statement
+) -> dict | None:
+    """The merged chain's first element, or None if the chain is empty.
 
-    for node in nodes:
-        node_id = node.id
-        if node_id is None:
-            continue
-        if node_id in statement_by_first_node:
-            return statement_uuid(source, statement_by_first_node[node_id].id)
-        if node_id not in absorbed:
-            return node_uuid(source, node_id)
-    return None
+    Args:
+        nodes: The flat node stream, in document order.
+        statements: The statement overlay.
+        source: The stable book identity.
+
+    Returns:
+        Its ``{label, uuid}``, or None.
+    """
+    elements = _chain_elements(nodes, statements, source)
+    return elements[0] if elements else None
 
 
 async def persist_chain(
     nodes: list[models.ASTNode],
-    statements: list[models.StatementNode],
+    statements: list[models.Statement],
     source: str,
 ) -> None:
     """Write the merged ``:NEXT`` chain and ``:HEAD`` edge.
@@ -186,6 +204,13 @@ async def persist_chain(
     ``:Statement`` vertices in document order. Absorbed raw nodes are
     skipped — they still exist in the graph for provenance but are not
     in the walkable chain.
+
+    Both tiers are matched BY LABEL. Cypher cannot parameterise a label, so
+    the pairs are bucketed by their ``(from_label, to_label)`` combination —
+    at most four — and each bucket is one statement with its labels written
+    in. A label-free ``MATCH (a {uuid: …})`` would scan every vertex in the
+    database and, worse, would silently do the wrong thing the moment two
+    tiers shared a uuid.
     """
     if not nodes:
         return
@@ -193,34 +218,38 @@ async def persist_chain(
     head = _merged_head(nodes, statements, source)
     source_key = source_uuid(source)
 
+    buckets: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for pair in pairs:
+        buckets[(pair['from_label'], pair['to_label'])].append(pair)
+
     async with driver().session(database=database()) as session:
         if head:
             await session.run(
                 f'MATCH (s:{SOURCE_LABEL} {{uuid: $source}}), '
-                f'(n {{uuid: $head}}) '
+                f'(n:{head["label"]} {{uuid: $head}}) '
                 f'MERGE (s)-[:HEAD]->(n)',
                 source=source_key,
-                head=head,
+                head=head['uuid'],
             )
-        if pairs:
+        for (from_label, to_label), rows in buckets.items():
             await session.run(
-                'UNWIND $pairs AS pair '
-                'MATCH (a {uuid: pair.from}), '
-                '(b {uuid: pair.to}) '
-                'MERGE (a)-[:NEXT]->(b)',
-                pairs=pairs,
+                f'UNWIND $pairs AS pair '
+                f'MATCH (a:{from_label} {{uuid: pair.from}}), '
+                f'(b:{to_label} {{uuid: pair.to}}) '
+                f'MERGE (a)-[:NEXT]->(b)',
+                pairs=rows,
             )
 
 
 def statement_rows(
-    statements: list[models.StatementNode], source: str
+    statements: list[models.Statement], source: str
 ) -> list[dict]:
     """Every statement's property map, one flat list."""
     return [statement_properties(statement, source) for statement in statements]
 
 
 async def persist_statements(
-    statements: list[models.StatementNode], source: str
+    statements: list[models.Statement], source: str
 ) -> None:
     """Upsert the book's ``:Statement`` overlay, rooted under the
     already-persisted ``:Source`` via ``:HAS_STATEMENT``."""
@@ -238,7 +267,7 @@ async def persist_statements(
 
 
 async def persist_procedures(
-    statements: list[models.StatementNode], source: str
+    statements: list[models.Statement], source: str
 ) -> None:
     """Upsert the procedural layer: one ``:Procedure`` per derivation hung
     off its statement via ``:HAS_PROCEDURE``."""

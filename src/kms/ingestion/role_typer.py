@@ -26,15 +26,17 @@ Absence stays structural (``docs/SCHEMA.md``, principle 4): this pass never asks
 the book never works out simply produces no procedure-role span, because the
 finder never cut one.
 
-THE OVERLAY IS NOT PART OF THE NODE STREAM. A span's StatementNode is built
-FROM its first node but never put back in that node's place: it is returned on
-its own ``statements`` channel, and ``nodes`` comes out of this stage exactly as
-it went in. The two say different things — a node is one verbatim block of the
-page (the provenance tier), a statement is the whole group the span covers — and
-a statement standing in the stream would make every stage that walks ``nodes``
-read the group's text twice, once inside the statement and once from the members
-that follow it. The assembler walking that stream is where it showed: every
-member after a group's first was emitted twice into ``document.md``.
+THE OVERLAY IS NOT PART OF THE NODE STREAM. A span's ``models.Statement`` is
+built FROM its first node but never put back in that node's place: it is
+returned on its own ``statements`` channel, and ``nodes`` comes out of this
+stage exactly as it went in. The two say different things — a node is one
+verbatim block of the page (the provenance tier), a statement is the whole
+group the span covers — and a statement standing in the stream would make every
+stage that walks ``nodes`` read the group's text twice, once inside the
+statement and once from the members that follow it. The assembler walking that
+stream is where it showed: every member after a group's first was emitted twice
+into ``document.md``. ``Statement`` is no longer an ``ASTNode`` at all, so the
+stream can no longer hold one.
 
 Entry point ``type_roles(spans, nodes_by_id)`` (async): returns the statement
 overlay the rest of the pipeline consumes. Persistence-agnostic.
@@ -201,25 +203,24 @@ def contents_of(span: list[int], nodes_by_id: dict[int, models.ASTNode]) -> str:
     )
 
 
-def _mark_statement(node: models.ASTNode, span: list[int]) -> models.StatementNode:
-    """Build the span's StatementNode from its first node.
+def _mark_statement(node: models.ASTNode, span: list[int]) -> models.Statement:
+    """Build the span's Statement from its first node.
 
     The statement takes the first node's ``id`` — that is what keys it to its
-    place in the stream (``writer._merged_chain`` slots it in there) and what
-    its graph uuid is derived from — but it is a NEW node beside the stream,
-    not a replacement for the one it was built from.
+    place in the stream, where ``writer._merged_chain`` slots it in — but it is
+    an entity beside the stream, not a replacement for the node it was built
+    from.
 
     Args:
         node: The span's first node.
         span: The span's member node ids.
 
     Returns:
-        The span's statement node.
+        The span's statement.
     """
-    return models.StatementNode(
-        content=node.content,
+    return models.Statement(
         id=node.id,
-        segment_index=node.segment_index,
+        content=node.content,
         statement_of=span,
     )
 
@@ -228,10 +229,10 @@ async def type_roles(
     spans: list[list[int]],
     nodes_by_id: dict[int, models.ASTNode],
     module: RoleTyper | None = None,
-) -> list[models.StatementNode]:
+) -> list[models.Statement]:
     """Diagnose each group's composition and build the statement overlay.
 
-    Every group produces a StatementNode (real or placeholder). Groups with a
+    Every group produces a Statement (real or placeholder). Groups with a
     procedure portion get a Procedure attached (real or placeholder). Nothing
     here writes to the node stream — see the module docstring.
 
@@ -249,7 +250,7 @@ async def type_roles(
     module = module or RoleTyper()
 
     roles = await asyncio.gather(*(module.acall(contents_of(span, nodes_by_id)) for span in spans))
-    statements: list[models.StatementNode] = []
+    statements: list[models.Statement] = []
     for span, role in zip(spans, roles, strict=True):
         first = span[0]
         if first not in nodes_by_id:
@@ -272,7 +273,7 @@ async def type_roles(
 
 
 class RoleTyperNode:
-    """Diagnoses each group and creates its StatementNode and Procedure.
+    """Diagnoses each group and creates its Statement and Procedure.
 
     Produces the ``statements`` channel — one statement per group, carrying its
     members and zero or one Procedure — for the two extractors and the

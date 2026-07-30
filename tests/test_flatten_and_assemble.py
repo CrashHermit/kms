@@ -64,7 +64,7 @@ class _AllStatements:
 
 def test_assembly_emits_each_block_once_after_the_overlay_is_built():
     # Regression: the role typer used to swap each span's first node for its
-    # StatementNode inside `nodes`, and the statement extractor then set that
+    # Statement inside `nodes`, and the statement extractor then set that
     # node's content to the WHOLE group's text — so the assembler emitted every
     # member after the first twice, once inside the fused statement and once as
     # itself. The overlay now travels on its own channel.

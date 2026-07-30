@@ -8,7 +8,7 @@ which is quarantined in ``db``.
   plus an HTTPS Query-API transport for sandboxes where Bolt is blocked.
 - ``nodes`` — ``models.ASTNode`` → ``:Node`` (+ its per-type label) and the
   ``:Source`` root. The provenance tier every semantic vertex points back at.
-- ``statements`` — ``models.StatementNode`` → a bare ``:Statement``. Content
+- ``statements`` — ``models.Statement`` → a bare ``:Statement``. Content
   is a single string written by the statement extractor.
 - ``procedures`` — ``models.Procedure`` → ``:Procedure`` and its ``:Act`` step
   chain (declared but not yet written — the step decomposer is a future pass).

@@ -1,4 +1,4 @@
-"""Role typer: diagnoses group composition, creates StatementNodes +
+"""Role typer: diagnoses group composition, creates Statements +
 Procedures."""
 
 import asyncio
@@ -31,6 +31,16 @@ def test_splits_statements_from_procedures():
     assert statements[0].procedures == []
     assert len(statements[1].procedures) == 1  # only the procedure span
     assert statements[2].procedures == []
+
+
+def test_a_statement_is_not_an_ast_node():
+    # The stream cannot hold one even by accident: Statement is a peer of
+    # Procedure, not an ASTNode.
+    nodes = [models.ParagraphNode(content='Theorem 2.1', id=0)]
+    statements = asyncio.run(
+        role_typer.type_roles([[0]], {0: nodes[0]}, _ScriptedModule(['statement']))
+    )
+    assert not isinstance(statements[0], models.ASTNode)
 
 
 def test_the_node_stream_is_left_alone():
