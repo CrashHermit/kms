@@ -15,17 +15,13 @@ dependencies = [
   # Graph tier's HTTP Query-API transport (Bolt fallback for HTTPS-only egress).
   "httpx>=0.27",
   "python-dotenv>=1.0",
-]
-
-[project.optional-dependencies]
-# No-GPU document front-end: the Mistral OCR API turns each page into markdown +
-# extracted figures, and pypdfium2 rasterizes pages so the correction pass has
-# an image to check the transcription against. CPU-only, installs in seconds:
-#   uv sync --extra mistral
-mistral = [
+  "inquirerpy>=0.3.4",
   "pypdfium2>=4",
   "pillow>=10",
 ]
+
+[project.scripts]
+kms = "kms.tui:run"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.9"]
@@ -36,7 +32,7 @@ testpaths = ["tests"]
 [tool.ruff]
 # One tool for format + lint + import order. src-layout aware so `kms` resolves
 # as first-party. Target the minimum supported interpreter.
-line-length = 80
+line-length = 100
 target-version = "py312"
 src = ["src", "."]
 

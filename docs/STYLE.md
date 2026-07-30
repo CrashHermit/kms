@@ -327,6 +327,12 @@ Already correct across the codebase (`UP` rule enforces this).
 Use trailing commas in multi-line lists, dicts, and function calls. Ruff format
 enforces this.
 
+### 5.7 `__future__` imports
+
+**Never** import `from __future__ import annotations`. The project targets
+Python ≥3.13, where `str | None`, `list[int]`, and all other PEP 604/585
+syntax is built-in — the `annotations` future is a no-op.
+
 ---
 
 ## 6. String quoting
