@@ -119,9 +119,29 @@ class MergeSignature(dspy.Signature):
         'sub-' + 'graph' is 'subgraph'.
       - A break BETWEEN words takes a single space: 'every vertex of' +
         '$G$ is a vertex' is 'every vertex of $G$ is a vertex'.
-      - A structure split down the middle closes up as the structure requires,
-        e.g. the two halves of one display-math environment or one table row
-        rejoin into a well-formed whole.
+      - A structure split down the middle comes back as ONE structure. If the
+        two halves are the two ends of a single display-math block, inline
+        math, fenced code block, table or LaTeX environment, rejoin them into
+        one well-formed whole — one opening delimiter, one closing delimiter,
+        the two halves' content between them, in order.
+
+    ONE STRUCTURE, NOT TWO STUCK TOGETHER. The page break often makes the
+    front end close the structure at the foot of the page and reopen it at the
+    top of the next, so BOTH halves arrive carrying their own delimiters. Drop
+    the redundant pair in the middle — they exist only because of the break:
+
+      - '$$x + y' + '= 4$$'          ->  '$$x + y = 4$$'
+      - '$$x + y$$' + '$$= 4$$'      ->  '$$x + y = 4$$'
+      - '$x +' + 'y$'                ->  '$x + y$'
+      - '```python\nif p:' + 'return p\n```'
+                                     ->  one fenced block, one pair of fences
+      - '\begin{aligned} a &= b \\' + '\begin{aligned} c &= d \end{aligned}'
+                                     ->  one aligned environment holding both
+                                         rows
+
+    Interior delimiters, fences and environment begin/end pairs that only mark
+    where the page ended are the ONE thing you may drop. The content between
+    them is untouchable.
 
     Do NOT correct spelling, restate, summarise, translate, reflow, or drop a
     repeated word — even one that looks like an error. Do not comment on what
@@ -135,8 +155,11 @@ class MergeSignature(dspy.Signature):
     halves exactly as it is given to you — backslashes, dollar signs, braces,
     markdown markers, unicode. Do NOT add or remove escaping: `\(` stays `\(`
     and never becomes `\\(`. Do NOT convert one math delimiter style into
-    another, and do NOT normalise, tidy or re-indent anything. The whitespace
-    at the join itself is the only thing you may change.
+    another ('$$' stays '$$' and never becomes '\[', and vice versa), and do
+    NOT normalise, tidy or re-indent anything.
+
+    You may change exactly two things: the whitespace at the join, and the
+    redundant interior delimiters described above. Nothing else.
     """
 
     top_node_context: SeamNodeDTO | None = dspy.InputField(
