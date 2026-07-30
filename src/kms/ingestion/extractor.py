@@ -1,9 +1,18 @@
 """Structural node extraction — parses OCR markdown into a flat ordered AST.
 
 Each textbook page's markdown is segmented into top-level block nodes
-(paragraph, math, list, header, table, image, caption, code) by a DSPy
-ChainOfThought module. The result is a flat list of structural nodes per page —
-purely structural, no math-semantic typing (that lives in the entity layer).
+(paragraph, math, list, header, table, image, caption, code, bibliographic) by a
+DSPy ChainOfThought module. The result is a flat list of structural nodes per
+page — purely structural, no math-semantic typing (that lives in the entity
+layer).
+
+``bibliographic`` is the one type whose test is not the block's shape: a
+footnote citation and an entry in a reference list are both prose paragraphs to
+look at, and what separates them from prose is that they name an external work
+rather than say something. It is here rather than in a later semantic stage
+because a reference is a *block* — one node per work — and blocking is this
+stage's job; nothing downstream can recover the entry boundaries once several
+works are packed into one paragraph node.
 """
 
 import asyncio
@@ -27,6 +36,7 @@ _TYPE_MAP: dict[str, type[models.ASTNode]] = {
     'image': models.ImageNode,
     'caption': models.CaptionNode,
     'header': models.HeaderNode,
+    'bibliographic': models.BibliographicNode,
 }
 
 
@@ -48,7 +58,7 @@ class DSPyModel(BaseModel):
     """A single extracted block node from the LLM: its type and content."""
 
     type: str = Field(
-        description='The block type: paragraph, math, code, list, table, image, caption, or header.'
+        description='The block type: paragraph, math, code, list, table, image, caption, header, or bibliographic.'
     )
     content: str | None = Field(
         default=None, description='The content of the node'
@@ -77,7 +87,8 @@ class Signature(dspy.Signature):
       nodes, and do not merge distinct blocks into one. Segment on structure
       (block boundaries) only — never on meaning: do NOT split a block because
       of what it says (e.g. a paragraph that runs into "Proof." or "Solution."
-      stays one node).
+      stays one node). The single exception is a run of bibliographic
+      references, which is split per cited work — see that type below.
     - If content starts or ends abruptly at the boundary of the given markdown,
       extract it as-is — do not try to complete or trim it.
 
@@ -105,7 +116,21 @@ class Signature(dspy.Signature):
     - header: A heading/title for a section/chapter/exercise set/etc. Emit
       exactly one header node per heading; do not split a heading into multiple
       nodes. A short label that opens a labelled block (e.g. "Example 6.7",
-      "Theorem 2.1", "Exercise 12") is a header."""
+      "Theorem 2.1", "Exercise 12") is a header.
+    - bibliographic: A reference to an external work — a published paper, book,
+      chapter, report, or web resource. It cites a work rather than saying
+      something: authors and a year with a title, and usually a venue,
+      publisher, page range, DOI, or URL. It appears either as an entry in a
+      reference list ("References", "Bibliography", "Works Cited") or as a
+      footnote whose body is a citation.
+      EMIT ONE NODE PER CITED WORK. This is the one place you split a block:
+      where a run of entries arrives as a single paragraph or list — with no
+      blank line between them, or several packed onto one line — emit each
+      work as its own node, cutting where one work's citation ends and the
+      next author's name begins. Never merge two works into one node.
+      Give each node that work's entry text as written, including its
+      leading marker if it has one. Prose that merely mentions a work in
+      passing ("as Pólya showed") is a paragraph, not a bibliographic node."""
 
     segment_markdown: str = dspy.InputField(
         description='The raw markdown content of one textbook segment. Emit nodes for this content only.'

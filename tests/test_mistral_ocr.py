@@ -88,6 +88,36 @@ def test_non_figure_link_left_untouched(tmp_path):
     assert pics == []
 
 
+def test_footer_is_appended_to_the_page_markdown(tmp_path):
+    # The footer field is where a footnote citation lands, so it is put back at
+    # the foot of the page rather than dropped with the running head.
+    resp = {
+        'pages': [
+            {
+                'index': 0,
+                'markdown': 'body text',
+                'header': '42\nCHAPTER 1. TOPOLOGICAL SPACES',
+                'footer': '$^1$G. Polya, "Two Incidents," 1970.',
+                'images': [],
+            }
+        ]
+    }
+    content = ocr.build_segments(resp, tmp_path)[0].content
+    assert content == 'body text\n\n$^1$G. Polya, "Two Incidents," 1970.'
+    # The running head stays out: inline it can land mid-entity and split it.
+    assert 'TOPOLOGICAL SPACES' not in content
+
+
+def test_page_without_a_footer_is_unchanged(tmp_path):
+    resp = {
+        'pages': [
+            {'index': 0, 'markdown': 'body text', 'footer': None, 'images': []}
+        ]
+    }
+    assert ocr.build_segments(resp, tmp_path)[0].content == 'body text'
+    assert ocr._with_footer('body text', '   ') == 'body text'
+
+
 def test_pages_are_indexed_densely(tmp_path):
     # Even if the source pages are non-contiguous, segments are dense 0..N so
     # the seam merger sees a proper adjacency.

@@ -129,14 +129,22 @@ decided, and they were decided the same way on every page:
   bold "Proof." run as an H1 and a two-column definition list as a table. The
   prompt puts markdown structure under Formatting, so the gold leaves both.
   Indentation *inside code* is the documented exception and was corrected.
-- **Header/footer content is page furniture.** With `extract_header` and
-  `extract_footer` on, Mistral routes running heads, folios *and real footnotes*
-  into separate response fields the pipeline never reads. Four pages lose a
-  substantive footnote that way (Levin ×3, Morris ×1). The gold does not restore
-  them: the corrector cannot know the front-end's routing, and a page whose
-  footnote was rendered inline (Lebl, Grinstead–Snell) keeps it. **This is a
-  front-end question, not a corrector one** — if those footnotes matter, the fix
-  is in `ocr.py`, and this set should be re-derived after.
+- **Header/footer content was page furniture when this set was harvested.** With
+  `extract_header` and `extract_footer` on, Mistral routed running heads, folios
+  *and real footnotes* into separate response fields the pipeline never read.
+  Four pages lose a substantive footnote that way (Levin ×3, Morris ×1). The
+  gold does not restore them: the corrector cannot know the front-end's routing,
+  and a page whose footnote was rendered inline (Lebl, Grinstead–Snell) keeps it.
+
+  > **Stale input, deliberately.** That front-end behaviour has since changed:
+  > `ocr.py` now appends a page's extracted footer back onto its markdown, so
+  > footnotes reach the corrector as a trailing block, and the corrector's prompt
+  > says explicitly that a footnote is content rather than furniture. The 38
+  > `transcription.md` files here predate that change and are kept verbatim as
+  > harvested — they are still real OCR output, and every annotated correction
+  > still holds, but a page with a footnote no longer looks exactly like this
+  > coming out of the front end. Re-harvest before treating the set as a
+  > faithful sample of current front-end output.
 - **Reading order across columns is a correction.** Two OpenStax pages were read
   column-major out of a numbered multi-column grid (`1005, 1008, 1006, 1007`).
   The page numbers its items across each row, so the transcribed sequence is not

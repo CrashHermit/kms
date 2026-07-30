@@ -5,6 +5,19 @@ extractor produces an incomplete tail on the top page and an incomplete head on
 the bottom page. This stage uses a DSPy ChainOfThought module to decide whether
 each cross-page pair is a split block and merges the halves. Workers run in two
 passes (even/odd) to avoid races on shared segments.
+
+**Bibliographic nodes are not seam candidates and are skipped when choosing the
+edges.** The stage rests on an adjacency assumption — that the last block of one
+page is the one that continues onto the next — and a reference breaks it in both
+directions. A footnote citation arrives at the foot of its page (the front end
+appends the extracted footer there), so it *displaces* the real tail: the
+paragraph that actually runs onto the next page is no longer last. And a
+reference list is a run of separate works with no continuation between them, so
+a merge across that seam does not heal a split block, it welds two distinct
+works into one node — and once two citations share a node nothing downstream can
+separate them again. Skipping the *nodes* rather than the whole seam keeps the
+heal working on the pages that have footnotes: the edges become the last and
+first mergeable blocks, and the citation is simply passed over.
 """
 
 import asyncio
@@ -151,6 +164,26 @@ def _to_seam_node_dto(node: models.ASTNode | None) -> SeamNodeDTO:
     return SeamNodeDTO(content=node.content, types=[node.kind])
 
 
+def _mergeable_indices(nodes: list[models.ASTNode]) -> list[int]:
+    """The positions of the nodes a seam may consider, in order.
+
+    Bibliographic references are passed over: they are never one half of a
+    block split across a page break, and merging one would weld a cited work
+    onto its neighbour irreversibly (see the module docstring).
+
+    Args:
+        nodes: One segment's nodes, in document order.
+
+    Returns:
+        The indices of the mergeable nodes.
+    """
+    return [
+        index
+        for index, node in enumerate(nodes)
+        if not isinstance(node, models.BibliographicNode)
+    ]
+
+
 def _pairs(
     segments: list[models.Segment], parity: int
 ) -> list[tuple[models.Segment, models.Segment]]:
@@ -162,14 +195,15 @@ def _pairs(
 
     Returns:
         The ``(top, bottom)`` pairs whose top index has the given parity and
-        where both sides carry nodes.
+        where both sides carry a mergeable node — a page whose only nodes are
+        references has no seam to heal, so no worker is spawned for it.
     """
     return [
         (segments[i], segments[i + 1])
         for i in range(len(segments) - 1)
         if segments[i].index % 2 == parity
-        and segments[i].nodes
-        and segments[i + 1].nodes
+        and _mergeable_indices(segments[i].nodes)
+        and _mergeable_indices(segments[i + 1].nodes)
     ]
 
 
@@ -178,8 +212,10 @@ async def _merge_pair(
 ) -> list[tuple[int, list[models.ASTNode]]]:
     """Merge one seam, if the LLM judges it to be a split node.
 
-    A healed seam folds the merged content into the top's tail and drops the
-    bottom's head.
+    The edges are the top's last and the bottom's first *mergeable* nodes —
+    bibliographic references are passed over on both sides, so a page that ends
+    in a footnote citation still has its real tail healed. A healed seam folds
+    the merged content into that tail and drops that head.
 
     Args:
         module: The seam-merging module.
@@ -192,10 +228,22 @@ async def _merge_pair(
     top_nodes = list(top.nodes)
     bottom_nodes = list(bottom.nodes)
 
-    tail = top_nodes[-1]
-    head = bottom_nodes[0]
-    top_context = top_nodes[-2] if len(top_nodes) > 1 else None
-    bottom_context = bottom_nodes[1] if len(bottom_nodes) > 1 else None
+    top_mergeable = _mergeable_indices(top_nodes)
+    bottom_mergeable = _mergeable_indices(bottom_nodes)
+    if not top_mergeable or not bottom_mergeable:
+        # Nothing on one side but references: no seam to judge.
+        return [(top.index, top_nodes), (bottom.index, bottom_nodes)]
+
+    tail_index = top_mergeable[-1]
+    head_index = bottom_mergeable[0]
+    tail = top_nodes[tail_index]
+    head = bottom_nodes[head_index]
+    top_context = (
+        top_nodes[top_mergeable[-2]] if len(top_mergeable) > 1 else None
+    )
+    bottom_context = (
+        bottom_nodes[bottom_mergeable[1]] if len(bottom_mergeable) > 1 else None
+    )
 
     merged = await module.aforward(
         top_bottom_edge_node=_to_seam_node_dto(tail),
@@ -214,7 +262,7 @@ async def _merge_pair(
     )
     if healed:
         tail.content = merged.content
-        bottom_nodes = bottom_nodes[1:]
+        del bottom_nodes[head_index]
 
     return [(top.index, top_nodes), (bottom.index, bottom_nodes)]
 

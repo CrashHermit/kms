@@ -7,6 +7,8 @@ page:
 
   - ``markdown``: the page transcribed in reading order, with each detected
     figure referenced inline as ``![<id>](<id>)`` at the spot it appears;
+  - ``header`` / ``footer``: the page's running head and its below-the-body
+    material, split out of the markdown;
   - ``images``: each detected figure as a cropped image (base64) plus its
     bounding box.
 
@@ -101,10 +103,14 @@ def ocr_pdf(pdf_bytes: bytes, pages: list[int] | None = None) -> dict:
         'include_image_base64': True,
         # Split running heads / footers (page numbers, chapter running titles)
         # into the response's separate `header`/`footer` fields instead of
-        # leaving them inline in the page markdown. We only read `markdown`, so
-        # this drops page chrome from the node stream — otherwise a running
-        # head can land mid-entity and split it. Needs OCR 2512+
+        # leaving them inline in the page markdown. Needs OCR 2512+
         # (mistral-ocr-latest resolves to that).
+        #
+        # The two fields are then treated differently (see `build_segments`): a
+        # running head is dropped, because inline it can land mid-entity and
+        # split it, while a footer is appended back to the page — page-bottom
+        # material is where footnote citations live, and dropping the field
+        # silently deleted them.
         'extract_header': True,
         'extract_footer': True,
     }
@@ -212,6 +218,29 @@ def _rewrite_page(
     return rewritten, pictures
 
 
+def _with_footer(markdown: str, footer: str | None) -> str:
+    """Append a page's extracted footer back onto its markdown.
+
+    ``extract_footer`` pulls everything below the body text out of the page
+    markdown — running feet and folios, but also footnotes, which is where a
+    citation of an external work usually sits. Reading only ``markdown``
+    therefore deleted those citations outright, so the footer is appended back
+    at the foot of the page, which is where the page has it: nothing can land
+    mid-entity there, and the extractor sees the entry as its own block.
+
+    Args:
+        markdown: The page's transcription.
+        footer: The page's extracted footer, if any.
+
+    Returns:
+        The markdown with the footer appended as a trailing block.
+    """
+    footer = (footer or '').strip()
+    if not footer:
+        return markdown
+    return f'{markdown.rstrip()}\n\n{footer}'
+
+
 def build_segments(
     response: dict, output_dir: str | Path
 ) -> list[models.Segment]:
@@ -219,7 +248,9 @@ def build_segments(
 
     Segments are indexed densely by the order pages appear in the response (so
     a contiguous request stays adjacent for the seam merger), with ``content``
-    and ``pictures`` already filled. Figures are written under
+    and ``pictures`` already filled. A page's ``content`` is its markdown plus
+    its extracted footer (see ``_with_footer``); the extracted running head is
+    dropped. Figures are written under
     ``<output_dir>/Segments/Segment_XXXX/Images/``.
     ``models.Segment.image_path`` points at a page render that Mistral does not
     produce; it is unused after OCR (the assembler resolves pictures via
@@ -246,7 +277,7 @@ def build_segments(
                 index=order_index,
                 image_path=str(segment_dir / 'Segment.png'),
                 pictures=pictures,
-                content=markdown,
+                content=_with_footer(markdown, page.get('footer')),
             )
         )
     return segments

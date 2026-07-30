@@ -73,6 +73,17 @@ class HeaderNode(ASTNode):
 
 
 @dataclass(slots=True)
+class BibliographicNode(ASTNode):
+    """One bibliographic reference to an external work.
+
+    A footnote citation or a single entry in a reference list — a work the
+    document points at rather than something the document says. Content only,
+    like every other structural node; parsing the entry into authors/year/
+    title/venue is a later concern.
+    """
+
+
+@dataclass(slots=True)
 class InstructionNode(ASTNode):
     """Exercise lead-in, set by the instruction finder."""
 
