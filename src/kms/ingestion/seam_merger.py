@@ -85,8 +85,8 @@ class Signature(dspy.Signature):
         description='The node immediately after the head of the bottom element run. Read-only context — do not include its content in the output.'
     )
 
-    node: SeamNodeDTO | None = dspy.OutputField(
-        description='The merged result. If the two edge nodes are split halves of the same node, return a single merged node combining their content. If they are already complete independent nodes, return None.'
+    merged: str | None = dspy.OutputField(
+        description='The merged content. If the two edge nodes are split halves of the same block, return the combined text (tail content immediately followed by head content, joined naturally without an added separator). If they are already complete independent nodes, return None.'
     )
 
 
@@ -108,7 +108,7 @@ class SeamMerger(dspy.Module):
         bottom_top_edge_node: SeamNodeDTO,
         top_node_context: SeamNodeDTO | None = None,
         bottom_node_context: SeamNodeDTO | None = None,
-    ) -> SeamNodeDTO | None:
+    ) -> str | None:
         """Judge one seam.
 
         Args:
@@ -126,7 +126,7 @@ class SeamMerger(dspy.Module):
             bottom_top_edge_node=bottom_top_edge_node,
             bottom_node_context=bottom_node_context,
         )
-        return result.node
+        return result.merged
 
     def forward(
         self,
@@ -134,7 +134,7 @@ class SeamMerger(dspy.Module):
         bottom_top_edge_node: SeamNodeDTO,
         top_node_context: SeamNodeDTO | None = None,
         bottom_node_context: SeamNodeDTO | None = None,
-    ) -> SeamNodeDTO | None:
+    ) -> str | None:
         """Sync forward for DSPy optimisers."""
         return asyncio.run(
             self.aforward(
@@ -264,7 +264,7 @@ async def _merge_pair(
         top_node_context=_to_seam_node_dto(top_context),
         bottom_node_context=_to_seam_node_dto(bottom_context),
     )
-    healed = merged is not None and bool(merged.content)
+    healed = merged is not None and bool(merged)
     logger.debug(
         'seam %d/%d: %s | tail %r + head %r',
         top.index,
@@ -274,7 +274,7 @@ async def _merge_pair(
         logs.elide(head.content, 40),
     )
     if healed:
-        tail.content = merged.content
+        tail.content = merged
         del bottom_nodes[head_index]
 
     return [(top.index, top_nodes), (bottom.index, bottom_nodes)]
