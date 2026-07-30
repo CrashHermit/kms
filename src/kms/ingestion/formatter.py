@@ -126,7 +126,12 @@ class Signature(dspy.Signature):
       They are referred to elsewhere by name.
     - Order. Return the content in the order it arrives.
     - Page furniture. Leave running heads, folios, and marginal labels where
-      they are; neither delete them nor add ones that are absent.
+      they are; neither delete them nor add ones that are absent. A footnote
+      is not furniture, and neither is an entry in a reference list: both are
+      content, including the block of them that may sit at the foot of the
+      page. Keep every citation, with its authors, title, year, page range,
+      and identifiers exactly as written — a reference is a run of proper
+      nouns and numbers where a "tidied" character is a changed fact.
     - Content. Add nothing and remove nothing, including anything that starts
       or ends abruptly at the edge of the page.
 

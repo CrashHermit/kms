@@ -1,0 +1,349 @@
+{
+  "module": "extractor",
+  "judgement": "discard",
+  "signature": {
+    "input": "segment_markdown",
+    "output": "nodes"
+  },
+  "ocr": {
+    "provider": "mistral",
+    "model": "mistral-ocr-latest",
+    "extract_header": true,
+    "extract_footer": true,
+    "harvested": "2026-07-30"
+  },
+  "records": [
+    {
+      "id": "hefferon_p0000",
+      "book": "hefferon",
+      "source": "Jim Hefferon, *Linear Algebra*, 4th edition (CC BY-SA)",
+      "source_url": "https://hefferon.net/linearalgebra/",
+      "page": 0,
+      "markdown": "pages/hefferon_p0000.md",
+      "discard": [
+        "# LINEAR ALGEBRA",
+        "**Jim Hefferon**",
+        "**Fourth edition**",
+        "http://joshua.smcvt.edu/linearalgebra"
+      ],
+      "keep": [
+        "![1]()"
+      ],
+      "note": "Title page. The cover figure is a real extracted crop and stays; the text around it is apparatus."
+    },
+    {
+      "id": "hefferon_p0007",
+      "book": "hefferon",
+      "source": "Jim Hefferon, *Linear Algebra*, 4th edition (CC BY-SA)",
+      "source_url": "https://hefferon.net/linearalgebra/",
+      "page": 7,
+      "markdown": "pages/hefferon_p0007.md",
+      "discard": [],
+      "keep": [
+        "Topic: Fields"
+      ],
+      "note": "Control: a contents page of dot leaders and nothing to discard."
+    },
+    {
+      "id": "hefferon_p0116",
+      "book": "hefferon",
+      "source": "Jim Hefferon, *Linear Algebra*, 4th edition (CC BY-SA)",
+      "source_url": "https://hefferon.net/linearalgebra/",
+      "page": 116,
+      "markdown": "pages/hefferon_p0116.md",
+      "discard": [],
+      "keep": [
+        "2.49 Find a structure that is closed under linear combinations"
+      ],
+      "note": "Control: body exercises, no apparatus at all."
+    },
+    {
+      "id": "hefferon_p0152",
+      "book": "hefferon",
+      "source": "Jim Hefferon, *Linear Algebra*, 4th edition (CC BY-SA)",
+      "source_url": "https://hefferon.net/linearalgebra/",
+      "page": 152,
+      "markdown": "pages/hefferon_p0152.md",
+      "discard": [],
+      "keep": [
+        "3.30 Give an example to show"
+      ],
+      "note": "Control: body exercises."
+    },
+    {
+      "id": "hefferon_p0476",
+      "book": "hefferon",
+      "source": "Jim Hefferon, *Linear Algebra*, 4th edition (CC BY-SA)",
+      "source_url": "https://hefferon.net/linearalgebra/",
+      "page": 476,
+      "markdown": "pages/hefferon_p0476.md",
+      "discard": [],
+      "keep": [
+        "39368 -1",
+        ">norm(v10)/norm(v9)"
+      ],
+      "note": "THE REGRESSION CASE. The page opens mid-listing with the tail of an Octave session from the previous page. A bare numeric line at the top is indistinguishable from a folio, and was being deleted — before the seam merger, the one stage that could have rejoined it."
+    },
+    {
+      "id": "lebl_p0000",
+      "book": "lebl",
+      "source": "Jiří Lebl, *Basic Analysis I* (CC BY-NC-SA / CC BY-SA)",
+      "source_url": "https://www.jirka.org/ra/",
+      "page": 0,
+      "markdown": "pages/lebl_p0000.md",
+      "discard": [
+        "# **Basic Analysis I**",
+        "by Jiří Lebl",
+        "May 15, 2026 (version 6.3)"
+      ],
+      "keep": [],
+      "note": "Title page."
+    },
+    {
+      "id": "lebl_p0001",
+      "book": "lebl",
+      "source": "Jiří Lebl, *Basic Analysis I* (CC BY-NC-SA / CC BY-SA)",
+      "source_url": "https://www.jirka.org/ra/",
+      "page": 1,
+      "markdown": "pages/lebl_p0001.md",
+      "discard": [
+        "Typeset in $\\LaTeX$.",
+        "Copyright ©2009–2026 Jiří Lebl",
+        "This work is dual licensed under the Creative Commons",
+        "You can use, print, duplicate, and share this book",
+        "the author was in part supported by NSF grants",
+        "The major version / edition number is raised only",
+        "The $\\LaTeX$ source for the book is available"
+      ],
+      "keep": [
+        "![1]()"
+      ],
+      "note": "Copyright page: licence terms, funding, versioning policy, source repository. All of it describes the book as an object."
+    },
+    {
+      "id": "lebl_p0071",
+      "book": "lebl",
+      "source": "Jiří Lebl, *Basic Analysis I* (CC BY-NC-SA / CC BY-SA)",
+      "source_url": "https://www.jirka.org/ra/",
+      "page": 71,
+      "markdown": "pages/lebl_p0071.md",
+      "discard": [],
+      "keep": [
+        "Exercise 2.2.14"
+      ],
+      "note": "Control: an exercise page."
+    },
+    {
+      "id": "lebl_p0155",
+      "book": "lebl",
+      "source": "Jiří Lebl, *Basic Analysis I* (CC BY-NC-SA / CC BY-SA)",
+      "source_url": "https://www.jirka.org/ra/",
+      "page": 155,
+      "markdown": "pages/lebl_p0155.md",
+      "discard": [],
+      "keep": [
+        "![1]()",
+        "![2]()",
+        "Figure 4.1: Graphical interpretation"
+      ],
+      "note": "Control: two real figures and their shared caption, none of it apparatus."
+    },
+    {
+      "id": "lebl_p0260",
+      "book": "lebl",
+      "source": "Jiří Lebl, *Basic Analysis I* (CC BY-NC-SA / CC BY-SA)",
+      "source_url": "https://www.jirka.org/ra/",
+      "page": 260,
+      "markdown": "pages/lebl_p0260.md",
+      "discard": [],
+      "keep": [
+        "Oftentimes it is useful to consider a subset"
+      ],
+      "note": "Control: body prose."
+    },
+    {
+      "id": "openstax_ea2e_p0000",
+      "book": "openstax_ea2e",
+      "source": "OpenStax, *Elementary Algebra 2e* (CC BY 4.0)",
+      "source_url": "https://openstax.org/details/books/elementary-algebra-2e",
+      "page": 0,
+      "markdown": "pages/openstax_ea2e_p0000.md",
+      "discard": [
+        "Elementary",
+        "# Alg-\nebra\n2e."
+      ],
+      "keep": [],
+      "note": "Cover, transcribed with the hyphenation the cover art carries."
+    },
+    {
+      "id": "openstax_ea2e_p0002",
+      "book": "openstax_ea2e",
+      "source": "OpenStax, *Elementary Algebra 2e* (CC BY 4.0)",
+      "source_url": "https://openstax.org/details/books/elementary-algebra-2e",
+      "page": 2,
+      "markdown": "pages/openstax_ea2e_p0002.md",
+      "discard": [
+        "# Elementary Algebra 2e",
+        "SENIOR CONTRIBUTING AUTHORS",
+        "LYNN MARECEK, SANTA ANA COLLEGE"
+      ],
+      "keep": [
+        "![1]()"
+      ],
+      "note": "Title page: title and author credits. The figure placeholder is backed by a real crop and stays."
+    },
+    {
+      "id": "openstax_ea2e_p0003",
+      "book": "openstax_ea2e",
+      "source": "OpenStax, *Elementary Algebra 2e* (CC BY 4.0)",
+      "source_url": "https://openstax.org/details/books/elementary-algebra-2e",
+      "page": 3,
+      "markdown": "pages/openstax_ea2e_p0003.md",
+      "discard": [
+        "## OpenStax",
+        "Rice University",
+        "To learn more about OpenStax",
+        "©2020 Rice University",
+        "## Trademarks",
+        "The OpenStax name, OpenStax logo"
+      ],
+      "keep": [],
+      "note": "Publisher, address, licence, attribution requirements, trademarks. The whole page is apparatus."
+    },
+    {
+      "id": "openstax_ea2e_p0005",
+      "book": "openstax_ea2e",
+      "source": "OpenStax, *Elementary Algebra 2e* (CC BY 4.0)",
+      "source_url": "https://openstax.org/details/books/elementary-algebra-2e",
+      "page": 5,
+      "markdown": "pages/openstax_ea2e_p0005.md",
+      "discard": [
+        "new school year",
+        "new **free books**",
+        "Download on the App Store"
+      ],
+      "keep": [],
+      "note": "An advertisement page for the publisher’s app — apparatus, though not of the running-foot kind."
+    },
+    {
+      "id": "openstax_ea2e_p0006",
+      "book": "openstax_ea2e",
+      "source": "OpenStax, *Elementary Algebra 2e* (CC BY 4.0)",
+      "source_url": "https://openstax.org/details/books/elementary-algebra-2e",
+      "page": 6,
+      "markdown": "pages/openstax_ea2e_p0006.md",
+      "discard": [],
+      "keep": [
+        "# Table of Contents",
+        "1.1 Introduction to Whole Numbers"
+      ],
+      "note": "Control: a contents page with no colophon."
+    },
+    {
+      "id": "openstax_ea2e_p0007",
+      "book": "openstax_ea2e",
+      "source": "OpenStax, *Elementary Algebra 2e* (CC BY 4.0)",
+      "source_url": "https://openstax.org/details/books/elementary-algebra-2e",
+      "page": 7,
+      "markdown": "pages/openstax_ea2e_p0007.md",
+      "discard": [
+        "This OpenStax book is available for free at http://cnx.org/content/col31130/1.4"
+      ],
+      "keep": [
+        "# Factoring 807",
+        "7.1 Greatest Common Factor",
+        "# Rational Expressions and Equations 903"
+      ],
+      "note": "THE SECOND FALSE-POSITIVE CASE. The bare chapter numerals beside each contents heading look exactly like folios; they are chapter numbers and belong to the contents. Only the colophon goes."
+    },
+    {
+      "id": "openstax_ea2e_p0103",
+      "book": "openstax_ea2e",
+      "source": "OpenStax, *Elementary Algebra 2e* (CC BY 4.0)",
+      "source_url": "https://openstax.org/details/books/elementary-algebra-2e",
+      "page": 103,
+      "markdown": "pages/openstax_ea2e_p0103.md",
+      "discard": [
+        "This OpenStax book is available for free at http://cnx.org/content/col31130/1.4"
+      ],
+      "keep": [
+        "# Solution",
+        "Subtract the numerators"
+      ],
+      "note": "Colophon after a worked solution."
+    },
+    {
+      "id": "openstax_ea2e_p0293",
+      "book": "openstax_ea2e",
+      "source": "OpenStax, *Elementary Algebra 2e* (CC BY 4.0)",
+      "source_url": "https://openstax.org/details/books/elementary-algebra-2e",
+      "page": 293,
+      "markdown": "pages/openstax_ea2e_p0293.md",
+      "discard": [
+        "This OpenStax book is available for free at http://cnx.org/content/col31130/1.4"
+      ],
+      "keep": [
+        "# **EXAMPLE 2.76**",
+        "Table 2.7"
+      ],
+      "note": "Colophon directly after a table title, which must survive."
+    },
+    {
+      "id": "openstax_ea2e_p0578",
+      "book": "openstax_ea2e",
+      "source": "OpenStax, *Elementary Algebra 2e* (CC BY 4.0)",
+      "source_url": "https://openstax.org/details/books/elementary-algebra-2e",
+      "page": 578,
+      "markdown": "pages/openstax_ea2e_p0578.md",
+      "discard": [],
+      "keep": [
+        "634. $x = 5$"
+      ],
+      "note": "Control: an exercise page with no colophon."
+    },
+    {
+      "id": "openstax_ea2e_p0958",
+      "book": "openstax_ea2e",
+      "source": "OpenStax, *Elementary Algebra 2e* (CC BY 4.0)",
+      "source_url": "https://openstax.org/details/books/elementary-algebra-2e",
+      "page": 958,
+      "markdown": "pages/openstax_ea2e_p0958.md",
+      "discard": [],
+      "keep": [
+        "![Right arrow icon]()",
+        "# **EXAMPLE 8.49**"
+      ],
+      "note": "A phantom placeholder — image markup with no extracted figure — but inline in body prose, not apparatus. Body text is never discarded, so it stays; this pins that the discard rule does not reach into the running text."
+    },
+    {
+      "id": "openstax_ea2e_p1053",
+      "book": "openstax_ea2e",
+      "source": "OpenStax, *Elementary Algebra 2e* (CC BY 4.0)",
+      "source_url": "https://openstax.org/details/books/elementary-algebra-2e",
+      "page": 1053,
+      "markdown": "pages/openstax_ea2e_p1053.md",
+      "discard": [
+        "This OpenStax book is available for free at http://cnx.org/content/col31130/1.4"
+      ],
+      "keep": [
+        "➤ TRY IT :: 9.31"
+      ],
+      "note": "Colophon on a page whose body opens with a glyph-led callout."
+    },
+    {
+      "id": "openstax_ea2e_p1243",
+      "book": "openstax_ea2e",
+      "source": "OpenStax, *Elementary Algebra 2e* (CC BY 4.0)",
+      "source_url": "https://openstax.org/details/books/elementary-algebra-2e",
+      "page": 1243,
+      "markdown": "pages/openstax_ea2e_p1243.md",
+      "discard": [
+        "This OpenStax book is available for free at http://cnx.org/content/col31130/1.4"
+      ],
+      "keep": [
+        "282. $$9d^2 - 12d = -4$$"
+      ],
+      "note": "Colophon after the last exercise of a run."
+    }
+  ]
+}

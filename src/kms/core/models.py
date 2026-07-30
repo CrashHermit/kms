@@ -73,6 +73,30 @@ class HeaderNode(ASTNode):
 
 
 @dataclass(slots=True)
+class BibliographicNode(ASTNode):
+    """One bibliographic reference to an external work.
+
+    A footnote citation or a single entry in a reference list — a work the
+    document points at rather than something the document says. Content only,
+    like every other structural node; parsing the entry into authors/year/
+    title/venue is a later concern.
+    """
+
+
+@dataclass(slots=True)
+class NoteNode(ASTNode):
+    """One authorial note bound to the body by a reference marker.
+
+    A footnote, endnote, or margin note: printed outside the running text but
+    saying something about the subject, unlike page furniture. Kept in the
+    stream and still eligible for the semantic chain — a footnote that defines
+    a term is a definition wherever it is printed. Its marker survives in
+    ``content``; resolving that marker back to the body node it annotates is a
+    later concern.
+    """
+
+
+@dataclass(slots=True)
 class InstructionNode(ASTNode):
     """Exercise lead-in, set by the instruction finder."""
 

@@ -1,0 +1,1626 @@
+{
+  "module": "corrector",
+  "signature": {
+    "inputs": [
+      "page_image",
+      "transcription"
+    ],
+    "output": "corrected"
+  },
+  "ocr": {
+    "provider": "mistral",
+    "model": "mistral-ocr-latest",
+    "extract_header": true,
+    "extract_footer": true,
+    "harvested": "2026-07-30"
+  },
+  "page_image": {
+    "renderer": "pypdfium2",
+    "scale": 2.5,
+    "note": "Page images are not committed. Render each record from its source_pdf at render_scale (see README)."
+  },
+  "records": [
+    {
+      "id": "calc3_gradients_exercises_p00",
+      "kind": "real",
+      "book": "calc3_gradients_exercises",
+      "source_pdf": "tests/fixtures/books/calc3_gradients_exercises.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "calc3_gradients_exercises_p00.png",
+      "split": "train",
+      "transcription": "real/calc3_gradients_exercises_p00/transcription.md",
+      "corrected": "real/calc3_gradients_exercises_p00/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "calc3_gradients_exercises_p01",
+      "kind": "real",
+      "book": "calc3_gradients_exercises",
+      "source_pdf": "tests/fixtures/books/calc3_gradients_exercises.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "calc3_gradients_exercises_p01.png",
+      "split": "dev",
+      "transcription": "real/calc3_gradients_exercises_p01/transcription.md",
+      "corrected": "real/calc3_gradients_exercises_p01/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "combinatorics_levin_p00",
+      "kind": "real",
+      "book": "combinatorics_levin",
+      "source_pdf": "tests/fixtures/books/combinatorics_levin.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "combinatorics_levin_p00.png",
+      "split": "train",
+      "transcription": "real/combinatorics_levin_p00/transcription.md",
+      "corrected": "real/combinatorics_levin_p00/corrected.md",
+      "edits": [],
+      "edit_classes": [],
+      "note": "Mistral routed the page's footnote into the response's separate footer field, so it is absent from the markdown; left absent under the page-furniture rule (see README)."
+    },
+    {
+      "id": "combinatorics_levin_p01",
+      "kind": "real",
+      "book": "combinatorics_levin",
+      "source_pdf": "tests/fixtures/books/combinatorics_levin.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "combinatorics_levin_p01.png",
+      "split": "dev",
+      "transcription": "real/combinatorics_levin_p01/transcription.md",
+      "corrected": "real/combinatorics_levin_p01/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "combinatorics_levin_p02",
+      "kind": "real",
+      "book": "combinatorics_levin",
+      "source_pdf": "tests/fixtures/books/combinatorics_levin.pdf",
+      "page": 2,
+      "render_scale": 2.5,
+      "page_image": "combinatorics_levin_p02.png",
+      "split": "train",
+      "transcription": "real/combinatorics_levin_p02/transcription.md",
+      "corrected": "real/combinatorics_levin_p02/corrected.md",
+      "edits": [],
+      "edit_classes": [],
+      "note": "Footnote 2 routed to the footer field; left absent."
+    },
+    {
+      "id": "combinatorics_levin_p03",
+      "kind": "real",
+      "book": "combinatorics_levin",
+      "source_pdf": "tests/fixtures/books/combinatorics_levin.pdf",
+      "page": 3,
+      "render_scale": 2.5,
+      "page_image": "combinatorics_levin_p03.png",
+      "split": "train",
+      "transcription": "real/combinatorics_levin_p03/transcription.md",
+      "corrected": "real/combinatorics_levin_p03/corrected.md",
+      "edits": [],
+      "edit_classes": [],
+      "note": "Footnote 3 routed to the footer field; left absent. The two-column Named Graphs list was transcribed as a markdown table, which preserves the pairing; left as formatting."
+    },
+    {
+      "id": "ea2e_ch1_review_p00",
+      "kind": "real",
+      "book": "ea2e_ch1_review",
+      "source_pdf": "tests/fixtures/books/ea2e_ch1_review.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "ea2e_ch1_review_p00.png",
+      "split": "train",
+      "transcription": "real/ea2e_ch1_review_p00/transcription.md",
+      "corrected": "real/ea2e_ch1_review_p00/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "ea2e_ch1_review_p01",
+      "kind": "real",
+      "book": "ea2e_ch1_review",
+      "source_pdf": "tests/fixtures/books/ea2e_ch1_review.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "ea2e_ch1_review_p01.png",
+      "split": "dev",
+      "transcription": "real/ea2e_ch1_review_p01/transcription.md",
+      "corrected": "real/ea2e_ch1_review_p01/corrected.md",
+      "edits": [],
+      "edit_classes": [],
+      "note": "The page's own doubled comma in one lead-in was silently normalised by the OCR; left as transcribed, since punctuation that changes no meaning is out of the corrector's scope in both directions."
+    },
+    {
+      "id": "ea2e_ch1_review_p02",
+      "kind": "real",
+      "book": "ea2e_ch1_review",
+      "source_pdf": "tests/fixtures/books/ea2e_ch1_review.pdf",
+      "page": 2,
+      "render_scale": 2.5,
+      "page_image": "ea2e_ch1_review_p02.png",
+      "split": "train",
+      "transcription": "real/ea2e_ch1_review_p02/transcription.md",
+      "corrected": "real/ea2e_ch1_review_p02/corrected.md",
+      "edits": [
+        {
+          "class": "order",
+          "before": "1005, 1008, 1006, 1007 (and the same pattern for 1011-1016, 1017-1022, 1023-1032, 1033-1036)",
+          "after": "1005, 1006, 1007, 1008 (each run in the page's numeric order)",
+          "note": "The three-column exercise grid was read column-major. The page runs the numbering across each row, so the transcribed sequence is not the page's order; every run on the page was resequenced. No exercise text was changed - the correction is purely the order of the blocks."
+        }
+      ],
+      "edit_classes": [
+        "order"
+      ]
+    },
+    {
+      "id": "ea2e_sec1_3_exercises_p00",
+      "kind": "real",
+      "book": "ea2e_sec1_3_exercises",
+      "source_pdf": "tests/fixtures/books/ea2e_sec1_3_exercises.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "ea2e_sec1_3_exercises_p00.png",
+      "split": "train",
+      "transcription": "real/ea2e_sec1_3_exercises_p00/transcription.md",
+      "corrected": "real/ea2e_sec1_3_exercises_p00/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "ea2e_sec1_3_exercises_p01",
+      "kind": "real",
+      "book": "ea2e_sec1_3_exercises",
+      "source_pdf": "tests/fixtures/books/ea2e_sec1_3_exercises.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "ea2e_sec1_3_exercises_p01.png",
+      "split": "dev",
+      "transcription": "real/ea2e_sec1_3_exercises_p01/transcription.md",
+      "corrected": "real/ea2e_sec1_3_exercises_p01/corrected.md",
+      "edits": [
+        {
+          "class": "order",
+          "before": "255, 257, 256, 258",
+          "after": "255, 256, 257, 258",
+          "note": "The two-column Everyday Math block was read column-major; the page numbers the word problems across the row, so 256 belongs between 255 and 257. Only the block order changed."
+        }
+      ],
+      "edit_classes": [
+        "order"
+      ]
+    },
+    {
+      "id": "hefferon_linsys_exercises_p00",
+      "kind": "real",
+      "book": "hefferon_linsys_exercises",
+      "source_pdf": "tests/fixtures/books/hefferon_linsys_exercises.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "hefferon_linsys_exercises_p00.png",
+      "split": "train",
+      "transcription": "real/hefferon_linsys_exercises_p00/transcription.md",
+      "corrected": "real/hefferon_linsys_exercises_p00/corrected.md",
+      "edits": [],
+      "edit_classes": [],
+      "note": "The recommended-exercise glyph is transcribed as a literal check mark on 3.15/3.17/3.18/3.20, matching the page."
+    },
+    {
+      "id": "hefferon_linsys_exercises_p01",
+      "kind": "real",
+      "book": "hefferon_linsys_exercises",
+      "source_pdf": "tests/fixtures/books/hefferon_linsys_exercises.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "hefferon_linsys_exercises_p01.png",
+      "split": "dev",
+      "transcription": "real/hefferon_linsys_exercises_p01/transcription.md",
+      "corrected": "real/hefferon_linsys_exercises_p01/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "lebl2_metricspaces_sec8_1_exercises_p00",
+      "kind": "real",
+      "book": "lebl2_metricspaces_sec8_1_exercises",
+      "source_pdf": "tests/fixtures/books/lebl2_metricspaces_sec8_1_exercises.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "lebl2_metricspaces_sec8_1_exercises_p00.png",
+      "split": "train",
+      "transcription": "real/lebl2_metricspaces_sec8_1_exercises_p00/transcription.md",
+      "corrected": "real/lebl2_metricspaces_sec8_1_exercises_p00/corrected.md",
+      "edits": [
+        {
+          "class": "extent",
+          "before": "the interval $(1/n+1, 1/n)$",
+          "after": "the interval $(1/(n+1), 1/n)$",
+          "note": "The page sets n+1 as the denominator of the slanted fraction; flattened to linear text the transcription reads (1/n)+1, a different endpoint."
+        }
+      ],
+      "edit_classes": [
+        "extent"
+      ]
+    },
+    {
+      "id": "lebl2_metricspaces_sec8_1_exercises_p01",
+      "kind": "real",
+      "book": "lebl2_metricspaces_sec8_1_exercises",
+      "source_pdf": "tests/fixtures/books/lebl2_metricspaces_sec8_1_exercises.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "lebl2_metricspaces_sec8_1_exercises_p01.png",
+      "split": "dev",
+      "transcription": "real/lebl2_metricspaces_sec8_1_exercises_p01/transcription.md",
+      "corrected": "real/lebl2_metricspaces_sec8_1_exercises_p01/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "lebl_realanalysis_sec2_1_exercises_p00",
+      "kind": "real",
+      "book": "lebl_realanalysis_sec2_1_exercises",
+      "source_pdf": "tests/fixtures/books/lebl_realanalysis_sec2_1_exercises.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "lebl_realanalysis_sec2_1_exercises_p00.png",
+      "split": "train",
+      "transcription": "real/lebl_realanalysis_sec2_1_exercises_p00/transcription.md",
+      "corrected": "real/lebl_realanalysis_sec2_1_exercises_p00/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "lebl_realanalysis_sec2_1_exercises_p01",
+      "kind": "real",
+      "book": "lebl_realanalysis_sec2_1_exercises",
+      "source_pdf": "tests/fixtures/books/lebl_realanalysis_sec2_1_exercises.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "lebl_realanalysis_sec2_1_exercises_p01.png",
+      "split": "dev",
+      "transcription": "real/lebl_realanalysis_sec2_1_exercises_p01/transcription.md",
+      "corrected": "real/lebl_realanalysis_sec2_1_exercises_p01/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "logic_hammack_truthtables_p00",
+      "kind": "real",
+      "book": "logic_hammack_truthtables",
+      "source_pdf": "tests/fixtures/books/logic_hammack_truthtables.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "logic_hammack_truthtables_p00.png",
+      "split": "train",
+      "transcription": "real/logic_hammack_truthtables_p00/transcription.md",
+      "corrected": "real/logic_hammack_truthtables_p00/corrected.md",
+      "edits": [
+        {
+          "class": "relation",
+          "before": "(according to the truth table for $\\Leftrightarrow$)",
+          "after": "(according to the truth table for $\\Rightarrow$)",
+          "note": "The page cites the truth table for the conditional; the transcription substituted the biconditional, making the sentence cite the table it is deriving."
+        },
+        {
+          "class": "substitution",
+          "before": "![Creative Commons License Icon]() CC BY-NC-SA",
+          "after": "![Creative Commons License Icon]() BY-NC-ND",
+          "note": "The licence badge on the page reads BY-NC-ND; the transcription names a different licence (ShareAlike rather than NoDerivatives)."
+        }
+      ],
+      "edit_classes": [
+        "relation",
+        "substitution"
+      ]
+    },
+    {
+      "id": "logic_hammack_truthtables_p01",
+      "kind": "real",
+      "book": "logic_hammack_truthtables",
+      "source_pdf": "tests/fixtures/books/logic_hammack_truthtables.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "logic_hammack_truthtables_p01.png",
+      "split": "dev",
+      "transcription": "real/logic_hammack_truthtables_p01/transcription.md",
+      "corrected": "real/logic_hammack_truthtables_p01/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "logic_hammack_truthtables_p02",
+      "kind": "real",
+      "book": "logic_hammack_truthtables",
+      "source_pdf": "tests/fixtures/books/logic_hammack_truthtables.pdf",
+      "page": 2,
+      "render_scale": 2.5,
+      "page_image": "logic_hammack_truthtables_p02.png",
+      "split": "train",
+      "transcription": "real/logic_hammack_truthtables_p02/transcription.md",
+      "corrected": "real/logic_hammack_truthtables_p02/corrected.md",
+      "edits": [
+        {
+          "class": "substitution",
+          "before": "![Creative Commons License Logo]() CC BY-NC-SA",
+          "after": "![Creative Commons License Logo]() BY-NC-ND",
+          "note": "The licence badge on the page reads BY-NC-ND; the transcription names a different licence (ShareAlike rather than NoDerivatives)."
+        }
+      ],
+      "edit_classes": [
+        "substitution"
+      ]
+    },
+    {
+      "id": "logic_hammack_truthtables_p03",
+      "kind": "real",
+      "book": "logic_hammack_truthtables",
+      "source_pdf": "tests/fixtures/books/logic_hammack_truthtables.pdf",
+      "page": 3,
+      "render_scale": 2.5,
+      "page_image": "logic_hammack_truthtables_p03.png",
+      "split": "train",
+      "transcription": "real/logic_hammack_truthtables_p03/transcription.md",
+      "corrected": "real/logic_hammack_truthtables_p03/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "nt_stein_congruences_p00",
+      "kind": "real",
+      "book": "nt_stein_congruences",
+      "source_pdf": "tests/fixtures/books/nt_stein_congruences.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "nt_stein_congruences_p00.png",
+      "split": "train",
+      "transcription": "real/nt_stein_congruences_p00/transcription.md",
+      "corrected": "real/nt_stein_congruences_p00/corrected.md",
+      "edits": [
+        {
+          "class": "quantity",
+          "before": "89 61897001964269013744956211",
+          "after": "89 618970019642690137449562111",
+          "note": "A digit dropped from the 27-digit Mersenne prime 2^89-1 printed by the sage session."
+        },
+        {
+          "class": "position",
+          "before": "...    print p, 2^p - 1",
+          "after": "...        print p, 2^p - 1",
+          "note": "Indentation flattened: the print is nested inside the if in the image, so as transcribed it sits outside the conditional."
+        },
+        {
+          "class": "position",
+          "before": "...    s = s^2 - 2",
+          "after": "...        s = s^2 - 2",
+          "note": "Indentation flattened: the assignment is the body of the for loop in the image, not a statement after it."
+        }
+      ],
+      "edit_classes": [
+        "position",
+        "quantity"
+      ]
+    },
+    {
+      "id": "nt_stein_congruences_p01",
+      "kind": "real",
+      "book": "nt_stein_congruences",
+      "source_pdf": "tests/fixtures/books/nt_stein_congruences.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "nt_stein_congruences_p01.png",
+      "split": "dev",
+      "transcription": "real/nt_stein_congruences_p01/transcription.md",
+      "corrected": "real/nt_stein_congruences_p01/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "nt_stein_congruences_p02",
+      "kind": "real",
+      "book": "nt_stein_congruences",
+      "source_pdf": "tests/fixtures/books/nt_stein_congruences.pdf",
+      "page": 2,
+      "render_scale": 2.5,
+      "page_image": "nt_stein_congruences_p02.png",
+      "split": "train",
+      "transcription": "real/nt_stein_congruences_p02/transcription.md",
+      "corrected": "real/nt_stein_congruences_p02/corrected.md",
+      "edits": [
+        {
+          "class": "presence",
+          "before": "0</x>",
+          "after": "0",
+          "note": "Stray closing tag: Mistral read the sage prompt R.<x> as an HTML tag and emitted a matching </x> the page does not contain."
+        },
+        {
+          "class": "presence",
+          "before": "[(11, 1), (8, 1), (7, 1), (6, 1), (5, 1), (2, 1)]</x>",
+          "after": "[(11, 1), (8, 1), (7, 1), (6, 1), (5, 1), (2, 1)]",
+          "note": "Second stray </x> from the same R.<x> misread, appended to the roots output."
+        }
+      ],
+      "edit_classes": [
+        "presence"
+      ]
+    },
+    {
+      "id": "nt_stein_congruences_p03",
+      "kind": "real",
+      "book": "nt_stein_congruences",
+      "source_pdf": "tests/fixtures/books/nt_stein_congruences.pdf",
+      "page": 3,
+      "render_scale": 2.5,
+      "page_image": "nt_stein_congruences_p03.png",
+      "split": "train",
+      "transcription": "real/nt_stein_congruences_p03/transcription.md",
+      "corrected": "real/nt_stein_congruences_p03/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "ode_lebl_diffyqs_p00",
+      "kind": "real",
+      "book": "ode_lebl_diffyqs",
+      "source_pdf": "tests/fixtures/books/ode_lebl_diffyqs.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "ode_lebl_diffyqs_p00.png",
+      "split": "train",
+      "transcription": "real/ode_lebl_diffyqs_p00/transcription.md",
+      "corrected": "real/ode_lebl_diffyqs_p00/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "ode_lebl_diffyqs_p01",
+      "kind": "real",
+      "book": "ode_lebl_diffyqs",
+      "source_pdf": "tests/fixtures/books/ode_lebl_diffyqs.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "ode_lebl_diffyqs_p01.png",
+      "split": "dev",
+      "transcription": "real/ode_lebl_diffyqs_p01/transcription.md",
+      "corrected": "real/ode_lebl_diffyqs_p01/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "ode_lebl_diffyqs_p02",
+      "kind": "real",
+      "book": "ode_lebl_diffyqs",
+      "source_pdf": "tests/fixtures/books/ode_lebl_diffyqs.pdf",
+      "page": 2,
+      "render_scale": 2.5,
+      "page_image": "ode_lebl_diffyqs_p02.png",
+      "split": "train",
+      "transcription": "real/ode_lebl_diffyqs_p02/transcription.md",
+      "corrected": "real/ode_lebl_diffyqs_p02/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "ode_lebl_diffyqs_p03",
+      "kind": "real",
+      "book": "ode_lebl_diffyqs",
+      "source_pdf": "tests/fixtures/books/ode_lebl_diffyqs.pdf",
+      "page": 3,
+      "render_scale": 2.5,
+      "page_image": "ode_lebl_diffyqs_p03.png",
+      "split": "train",
+      "transcription": "real/ode_lebl_diffyqs_p03/transcription.md",
+      "corrected": "real/ode_lebl_diffyqs_p03/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "prob_grinstead_snell_p00",
+      "kind": "real",
+      "book": "prob_grinstead_snell",
+      "source_pdf": "tests/fixtures/books/prob_grinstead_snell.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "prob_grinstead_snell_p00.png",
+      "split": "train",
+      "transcription": "real/prob_grinstead_snell_p00/transcription.md",
+      "corrected": "real/prob_grinstead_snell_p00/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "prob_grinstead_snell_p01",
+      "kind": "real",
+      "book": "prob_grinstead_snell",
+      "source_pdf": "tests/fixtures/books/prob_grinstead_snell.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "prob_grinstead_snell_p01.png",
+      "split": "dev",
+      "transcription": "real/prob_grinstead_snell_p01/transcription.md",
+      "corrected": "real/prob_grinstead_snell_p01/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "prob_grinstead_snell_p02",
+      "kind": "real",
+      "book": "prob_grinstead_snell",
+      "source_pdf": "tests/fixtures/books/prob_grinstead_snell.pdf",
+      "page": 2,
+      "render_scale": 2.5,
+      "page_image": "prob_grinstead_snell_p02.png",
+      "split": "train",
+      "transcription": "real/prob_grinstead_snell_p02/transcription.md",
+      "corrected": "real/prob_grinstead_snell_p02/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "prob_grinstead_snell_p03",
+      "kind": "real",
+      "book": "prob_grinstead_snell",
+      "source_pdf": "tests/fixtures/books/prob_grinstead_snell.pdf",
+      "page": 3,
+      "render_scale": 2.5,
+      "page_image": "prob_grinstead_snell_p03.png",
+      "split": "train",
+      "transcription": "real/prob_grinstead_snell_p03/transcription.md",
+      "corrected": "real/prob_grinstead_snell_p03/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "prob_grinstead_snell_p04",
+      "kind": "real",
+      "book": "prob_grinstead_snell",
+      "source_pdf": "tests/fixtures/books/prob_grinstead_snell.pdf",
+      "page": 4,
+      "render_scale": 2.5,
+      "page_image": "prob_grinstead_snell_p04.png",
+      "split": "dev",
+      "transcription": "real/prob_grinstead_snell_p04/transcription.md",
+      "corrected": "real/prob_grinstead_snell_p04/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "topology_morris_p00",
+      "kind": "real",
+      "book": "topology_morris",
+      "source_pdf": "tests/fixtures/books/topology_morris.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "topology_morris_p00.png",
+      "split": "train",
+      "transcription": "real/topology_morris_p00/transcription.md",
+      "corrected": "real/topology_morris_p00/corrected.md",
+      "edits": [],
+      "edit_classes": [],
+      "note": "Mistral typed the bold run 'Proof.' as an H1 heading; left as transcribed under the formatting rule (markdown structure is the formatter's job)."
+    },
+    {
+      "id": "topology_morris_p01",
+      "kind": "real",
+      "book": "topology_morris",
+      "source_pdf": "tests/fixtures/books/topology_morris.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "topology_morris_p01.png",
+      "split": "dev",
+      "transcription": "real/topology_morris_p01/transcription.md",
+      "corrected": "real/topology_morris_p01/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "topology_morris_p02",
+      "kind": "real",
+      "book": "topology_morris",
+      "source_pdf": "tests/fixtures/books/topology_morris.pdf",
+      "page": 2,
+      "render_scale": 2.5,
+      "page_image": "topology_morris_p02.png",
+      "split": "train",
+      "transcription": "real/topology_morris_p02/transcription.md",
+      "corrected": "real/topology_morris_p02/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "topology_morris_p03",
+      "kind": "real",
+      "book": "topology_morris",
+      "source_pdf": "tests/fixtures/books/topology_morris.pdf",
+      "page": 3,
+      "render_scale": 2.5,
+      "page_image": "topology_morris_p03.png",
+      "split": "train",
+      "transcription": "real/topology_morris_p03/transcription.md",
+      "corrected": "real/topology_morris_p03/corrected.md",
+      "edits": [],
+      "edit_classes": []
+    },
+    {
+      "id": "ode_lebl_diffyqs_p00_v1",
+      "kind": "perturbed",
+      "derived_from": "ode_lebl_diffyqs_p00",
+      "book": "ode_lebl_diffyqs",
+      "source_pdf": "tests/fixtures/books/ode_lebl_diffyqs.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "ode_lebl_diffyqs_p00.png",
+      "split": "train",
+      "transcription": "perturbed/ode_lebl_diffyqs_p00_v1/transcription.md",
+      "corrected": "perturbed/ode_lebl_diffyqs_p00_v1/corrected.md",
+      "edits": [
+        {
+          "class": "substitution",
+          "before": "$$y' = 2\\sqrt[3]{|y|}, \\quad y(0) = 0.$$",
+          "after": "$$y' = 2\\sqrt{|y|}, \\quad y(0) = 0.$$",
+          "note": "Plain radical read as an indexed (cube) root."
+        },
+        {
+          "class": "polarity",
+          "before": "Figure 1.5: Slope field of $y' = y$",
+          "after": "Figure 1.5: Slope field of $y' = -y$",
+          "note": "Negation dropped from the equation in the figure caption."
+        }
+      ],
+      "edit_classes": [
+        "polarity",
+        "substitution"
+      ]
+    },
+    {
+      "id": "ode_lebl_diffyqs_p01_v1",
+      "kind": "perturbed",
+      "derived_from": "ode_lebl_diffyqs_p01",
+      "book": "ode_lebl_diffyqs",
+      "source_pdf": "tests/fixtures/books/ode_lebl_diffyqs.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "ode_lebl_diffyqs_p01.png",
+      "split": "dev",
+      "transcription": "perturbed/ode_lebl_diffyqs_p01_v1/transcription.md",
+      "corrected": "perturbed/ode_lebl_diffyqs_p01_v1/corrected.md",
+      "edits": [
+        {
+          "class": "substitution",
+          "before": "$\\frac{\\partial f}{\\partial x}$ exists",
+          "after": "$\\frac{\\partial f}{\\partial y}$ exists",
+          "note": "Partial taken with respect to the wrong variable in the hypothesis of Picard&rsquo;s theorem."
+        },
+        {
+          "class": "quantity",
+          "before": "the interval $(-\\infty, -1)$",
+          "after": "the interval $(-\\infty, 1)$",
+          "note": "Sign added to the interval endpoint."
+        }
+      ],
+      "edit_classes": [
+        "quantity",
+        "substitution"
+      ]
+    },
+    {
+      "id": "ode_lebl_diffyqs_p02_v1",
+      "kind": "perturbed",
+      "derived_from": "ode_lebl_diffyqs_p02",
+      "book": "ode_lebl_diffyqs",
+      "source_pdf": "tests/fixtures/books/ode_lebl_diffyqs.pdf",
+      "page": 2,
+      "render_scale": 2.5,
+      "page_image": "ode_lebl_diffyqs_p02.png",
+      "split": "train",
+      "transcription": "perturbed/ode_lebl_diffyqs_p02_v1/transcription.md",
+      "corrected": "perturbed/ode_lebl_diffyqs_p02_v1/corrected.md",
+      "edits": [
+        {
+          "class": "extent",
+          "before": "Sketch the slope field for $y' = e^x - y$",
+          "after": "Sketch the slope field for $y' = e^{x-y}$",
+          "note": "Exponent scope lost: the whole difference is the exponent on the page."
+        },
+        {
+          "class": "attachment",
+          "before": "Take $y - xy' = 0$",
+          "after": "Take $(y - x)y' = 0$",
+          "note": "Grouping dropped, so the derivative binds to x instead of to the difference."
+        }
+      ],
+      "edit_classes": [
+        "attachment",
+        "extent"
+      ]
+    },
+    {
+      "id": "ode_lebl_diffyqs_p03_v1",
+      "kind": "perturbed",
+      "derived_from": "ode_lebl_diffyqs_p03",
+      "book": "ode_lebl_diffyqs",
+      "source_pdf": "tests/fixtures/books/ode_lebl_diffyqs.pdf",
+      "page": 3,
+      "render_scale": 2.5,
+      "page_image": "ode_lebl_diffyqs_p03.png",
+      "split": "train",
+      "transcription": "perturbed/ode_lebl_diffyqs_p03_v1/transcription.md",
+      "corrected": "perturbed/ode_lebl_diffyqs_p03_v1/corrected.md",
+      "edits": [
+        {
+          "class": "quantity",
+          "before": "Sketch the slope field of $y' = y^2$",
+          "after": "Sketch the slope field of $y' = y^3$",
+          "note": "Exponent misread in Exercise 1.2.101."
+        },
+        {
+          "class": "polarity",
+          "before": "0 & \\text{if } y < 0, \\\\ 1 & \\text{if } y \\geq 0.",
+          "after": "0 & \\text{if } y > 0, \\\\ 1 & \\text{if } y \\leq 0.",
+          "note": "Both inequalities in the piecewise definition reversed."
+        }
+      ],
+      "edit_classes": [
+        "polarity",
+        "quantity"
+      ]
+    },
+    {
+      "id": "topology_morris_p00_v1",
+      "kind": "perturbed",
+      "derived_from": "topology_morris_p00",
+      "book": "topology_morris",
+      "source_pdf": "tests/fixtures/books/topology_morris.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "topology_morris_p00.png",
+      "split": "train",
+      "transcription": "perturbed/topology_morris_p00_v1/transcription.md",
+      "corrected": "perturbed/topology_morris_p00_v1/corrected.md",
+      "edits": [
+        {
+          "class": "relation",
+          "before": "\\{x : x \\in X \\text{ or } f(x) \\in S\\}",
+          "after": "\\{x : x \\in X \\text{ and } f(x) \\in S\\}",
+          "note": "Conjunction in the definition of the inverse image read as a disjunction."
+        },
+        {
+          "class": "presence",
+          "before": "\\{-3, -5, -7, 3, 5, 7, 9\\}",
+          "after": "\\{-3, -5, -7, -9, 3, 5, 7, 9\\}",
+          "note": "An element dropped from the computed inverse image."
+        }
+      ],
+      "edit_classes": [
+        "presence",
+        "relation"
+      ]
+    },
+    {
+      "id": "topology_morris_p01_v1",
+      "kind": "perturbed",
+      "derived_from": "topology_morris_p01",
+      "book": "topology_morris",
+      "source_pdf": "tests/fixtures/books/topology_morris.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "topology_morris_p01.png",
+      "split": "dev",
+      "transcription": "perturbed/topology_morris_p01_v1/transcription.md",
+      "corrected": "perturbed/topology_morris_p01_v1/corrected.md",
+      "edits": [
+        {
+          "class": "polarity",
+          "before": "You are reminded that all sets are countable.",
+          "after": "You are reminded that not all sets are countable.",
+          "note": "Negation dropped from the warning, inverting it."
+        },
+        {
+          "class": "substitution",
+          "before": "$$A_1 \\cap A_2 = f^{-1}(B_1) \\cup f^{-1}(B_2)",
+          "after": "$$A_1 \\cap A_2 = f^{-1}(B_1) \\cap f^{-1}(B_2)",
+          "note": "Intersection read as union mid-identity."
+        }
+      ],
+      "edit_classes": [
+        "polarity",
+        "substitution"
+      ]
+    },
+    {
+      "id": "topology_morris_p02_v1",
+      "kind": "perturbed",
+      "derived_from": "topology_morris_p02",
+      "book": "topology_morris",
+      "source_pdf": "tests/fixtures/books/topology_morris.pdf",
+      "page": 2,
+      "render_scale": 2.5,
+      "page_image": "topology_morris_p02.png",
+      "split": "train",
+      "transcription": "perturbed/topology_morris_p02_v1/transcription.md",
+      "corrected": "perturbed/topology_morris_p02_v1/corrected.md",
+      "edits": [
+        {
+          "class": "quantity",
+          "before": "precisely three of the following nine",
+          "after": "precisely two of the following nine",
+          "note": "Count in the exercise statement changed."
+        },
+        {
+          "class": "attachment",
+          "before": "$f(A_1) \\cap A_2 \\neq f(A_1) \\cap f(A_2)$",
+          "after": "$f(A_1 \\cap A_2) \\neq f(A_1) \\cap f(A_2)$",
+          "note": "Function application rebracketed, collapsing the very distinction the exercise asks about."
+        }
+      ],
+      "edit_classes": [
+        "attachment",
+        "quantity"
+      ]
+    },
+    {
+      "id": "topology_morris_p03_v1",
+      "kind": "perturbed",
+      "derived_from": "topology_morris_p03",
+      "book": "topology_morris",
+      "source_pdf": "tests/fixtures/books/topology_morris.pdf",
+      "page": 3,
+      "render_scale": 2.5,
+      "page_image": "topology_morris_p03.png",
+      "split": "train",
+      "transcription": "perturbed/topology_morris_p03_v1/transcription.md",
+      "corrected": "perturbed/topology_morris_p03_v1/corrected.md",
+      "edits": [
+        {
+          "class": "presence",
+          "before": "Prove that this is indeed a topology on $X$.",
+          "after": "Prove that this is indeed a topology on $X$.\n\n$^2$You are reminded that the use of “or” in mathematics is different from that in everyday English. In mathematics, “or” is not exclusive. See the comments on this in Chapter 0.",
+          "note": "The page footnote dropped entirely, taking with it the warning the body text refers to by its marker."
+        },
+        {
+          "class": "relation",
+          "before": "and not $b$, and there exists an open set containing $b$",
+          "after": "and not $b$, or there exists an open set containing $b$",
+          "note": "Disjunction in the T0 definition read as a conjunction."
+        },
+        {
+          "class": "quantity",
+          "before": "the set $X = \\{0, 1, 2\\}$",
+          "after": "the set $X = \\{0, 1\\}$",
+          "note": "An element added to the two-point set."
+        }
+      ],
+      "edit_classes": [
+        "presence",
+        "quantity",
+        "relation"
+      ]
+    },
+    {
+      "id": "nt_stein_congruences_p00_v1",
+      "kind": "perturbed",
+      "derived_from": "nt_stein_congruences_p00",
+      "book": "nt_stein_congruences",
+      "source_pdf": "tests/fixtures/books/nt_stein_congruences.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "nt_stein_congruences_p00.png",
+      "split": "train",
+      "transcription": "perturbed/nt_stein_congruences_p00_v1/transcription.md",
+      "corrected": "perturbed/nt_stein_congruences_p00_v1/corrected.md",
+      "edits": [
+        {
+          "class": "quantity",
+          "before": "61 2305843009213693591",
+          "after": "61 2305843009213693951",
+          "note": "Digits transposed in the Mersenne prime printed by the session."
+        },
+        {
+          "class": "substitution",
+          "before": "sage: is_prime_lucas_lehmer(9491)",
+          "after": "sage: is_prime_lucas_lehmer(9941)",
+          "note": "Argument misread, contradicting the comment two lines above it."
+        }
+      ],
+      "edit_classes": [
+        "quantity",
+        "substitution"
+      ]
+    },
+    {
+      "id": "nt_stein_congruences_p01_v1",
+      "kind": "perturbed",
+      "derived_from": "nt_stein_congruences_p01",
+      "book": "nt_stein_congruences",
+      "source_pdf": "tests/fixtures/books/nt_stein_congruences.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "nt_stein_congruences_p01.png",
+      "split": "dev",
+      "transcription": "perturbed/nt_stein_congruences_p01_v1/transcription.md",
+      "corrected": "perturbed/nt_stein_congruences_p01_v1/corrected.md",
+      "edits": [
+        {
+          "class": "quantity",
+          "before": "the prime power 2²",
+          "after": "the prime power 2³",
+          "note": "Exponent misread in the statement about primitive roots."
+        },
+        {
+          "class": "relation",
+          "before": "for each prime p ≤ 20",
+          "after": "for each prime p < 20",
+          "note": "Strict inequality read as non-strict."
+        }
+      ],
+      "edit_classes": [
+        "quantity",
+        "relation"
+      ]
+    },
+    {
+      "id": "nt_stein_congruences_p02_v1",
+      "kind": "perturbed",
+      "derived_from": "nt_stein_congruences_p02",
+      "book": "nt_stein_congruences",
+      "source_pdf": "tests/fixtures/books/nt_stein_congruences.pdf",
+      "page": 2,
+      "render_scale": 2.5,
+      "page_image": "nt_stein_congruences_p02.png",
+      "split": "train",
+      "transcription": "perturbed/nt_stein_congruences_p02_v1/transcription.md",
+      "corrected": "perturbed/nt_stein_congruences_p02_v1/corrected.md",
+      "edits": [
+        {
+          "class": "extent",
+          "before": "\\deg(g) = de - d = p - (1 - d)",
+          "after": "\\deg(g) = de - d = p - 1 - d",
+          "note": "Grouping introduced that the page does not have, changing the degree."
+        },
+        {
+          "class": "presence",
+          "before": "sage: f.roots()\n[(12, 1), (10, 1), (4, 1)]\n\nThe output",
+          "after": "sage: f.roots()\n[(12, 1), (10, 1), (4, 1)]\nsage: f(12)\n0\n\nThe output",
+          "note": "Two lines of the session dropped."
+        }
+      ],
+      "edit_classes": [
+        "extent",
+        "presence"
+      ]
+    },
+    {
+      "id": "nt_stein_congruences_p03_v1",
+      "kind": "perturbed",
+      "derived_from": "nt_stein_congruences_p03",
+      "book": "nt_stein_congruences",
+      "source_pdf": "tests/fixtures/books/nt_stein_congruences.pdf",
+      "page": 3,
+      "render_scale": 2.5,
+      "page_image": "nt_stein_congruences_p03.png",
+      "split": "train",
+      "transcription": "perturbed/nt_stein_congruences_p03_v1/transcription.md",
+      "corrected": "perturbed/nt_stein_congruences_p03_v1/corrected.md",
+      "edits": [
+        {
+          "class": "attachment",
+          "before": "$$a^{r_1s_1}b^{r_1s_1} = (ab)^{r_1}s_1 = 1$$",
+          "after": "$$a^{r_1s_1}b^{r_1s_1} = (ab)^{r_1s_1} = 1$$",
+          "note": "Part of the exponent detached and left as a factor."
+        },
+        {
+          "class": "substitution",
+          "before": "it follows that s = r_1",
+          "after": "it follows that s = s_1",
+          "note": "Wrong subscripted identifier at the end of the proof."
+        }
+      ],
+      "edit_classes": [
+        "attachment",
+        "substitution"
+      ]
+    },
+    {
+      "id": "logic_hammack_truthtables_p00_v1",
+      "kind": "perturbed",
+      "derived_from": "logic_hammack_truthtables_p00",
+      "book": "logic_hammack_truthtables",
+      "source_pdf": "tests/fixtures/books/logic_hammack_truthtables.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "logic_hammack_truthtables_p00.png",
+      "split": "train",
+      "transcription": "perturbed/logic_hammack_truthtables_p00_v1/transcription.md",
+      "corrected": "perturbed/logic_hammack_truthtables_p00_v1/corrected.md",
+      "edits": [
+        {
+          "class": "substitution",
+          "before": "|  $F$ | $F$ | $F$  |",
+          "after": "|  $F$ | $F$ | $T$  |",
+          "note": "Last row of the biconditional truth table given the wrong value."
+        },
+        {
+          "class": "relation",
+          "before": "The following constructions all mean $P \\Rightarrow Q$:",
+          "after": "The following constructions all mean $P \\Leftrightarrow Q$:",
+          "note": "Biconditional read as a conditional in the lead-in to the list."
+        }
+      ],
+      "edit_classes": [
+        "relation",
+        "substitution"
+      ]
+    },
+    {
+      "id": "logic_hammack_truthtables_p01_v1",
+      "kind": "perturbed",
+      "derived_from": "logic_hammack_truthtables_p01",
+      "book": "logic_hammack_truthtables",
+      "source_pdf": "tests/fixtures/books/logic_hammack_truthtables.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "logic_hammack_truthtables_p01.png",
+      "split": "dev",
+      "transcription": "perturbed/logic_hammack_truthtables_p01_v1/transcription.md",
+      "corrected": "perturbed/logic_hammack_truthtables_p01_v1/corrected.md",
+      "edits": [
+        {
+          "class": "position",
+          "before": "|  $T$ | $F$ | $F$ | $T$ | $T$ | $\\mathbf{T}$  |",
+          "after": "|  $T$ | $F$ | $T$ | $F$ | $T$ | $\\mathbf{T}$  |",
+          "note": "Two cells swapped between the third and fourth columns of the T/F row."
+        },
+        {
+          "class": "quantity",
+          "before": "$(P \\vee Q) \\wedge \\sim (P \\wedge Q)$ in the fifth column.",
+          "after": "$(P \\vee Q) \\wedge \\sim (P \\wedge Q)$ in the sixth column.",
+          "note": "The prose points at the wrong column of its own table."
+        }
+      ],
+      "edit_classes": [
+        "position",
+        "quantity"
+      ]
+    },
+    {
+      "id": "logic_hammack_truthtables_p02_v1",
+      "kind": "perturbed",
+      "derived_from": "logic_hammack_truthtables_p02",
+      "book": "logic_hammack_truthtables",
+      "source_pdf": "tests/fixtures/books/logic_hammack_truthtables.pdf",
+      "page": 2,
+      "render_scale": 2.5,
+      "page_image": "logic_hammack_truthtables_p02.png",
+      "split": "train",
+      "transcription": "perturbed/logic_hammack_truthtables_p02_v1/transcription.md",
+      "corrected": "perturbed/logic_hammack_truthtables_p02_v1/corrected.md",
+      "edits": [
+        {
+          "class": "quantity",
+          "before": "The six possible combinations",
+          "after": "The eight possible combinations",
+          "note": "Row count changed, contradicting the eight-row table below it."
+        },
+        {
+          "class": "order",
+          "before": "|  $F$ | $T$ | $F$ | $T$ | $\\mathbf{F}$  |\n|  $F$ | $T$ | $T$ | $T$ | $\\mathbf{F}$  |",
+          "after": "|  $F$ | $T$ | $T$ | $T$ | $\\mathbf{F}$  |\n|  $F$ | $T$ | $F$ | $T$ | $\\mathbf{F}$  |",
+          "note": "Two rows of the eight-row table transposed, so the enumeration no longer runs in the page&rsquo;s order."
+        }
+      ],
+      "edit_classes": [
+        "order",
+        "quantity"
+      ]
+    },
+    {
+      "id": "logic_hammack_truthtables_p03_v1",
+      "kind": "perturbed",
+      "derived_from": "logic_hammack_truthtables_p03",
+      "book": "logic_hammack_truthtables",
+      "source_pdf": "tests/fixtures/books/logic_hammack_truthtables.pdf",
+      "page": 3,
+      "render_scale": 2.5,
+      "page_image": "logic_hammack_truthtables_p03.png",
+      "split": "train",
+      "transcription": "perturbed/logic_hammack_truthtables_p03_v1/transcription.md",
+      "corrected": "perturbed/logic_hammack_truthtables_p03_v1/corrected.md",
+      "edits": [
+        {
+          "class": "extent",
+          "before": "Thus $\\sim P \\vee Q$ means $\\sim (P \\vee Q)$, not $(\\sim P) \\vee Q$.",
+          "after": "Thus $\\sim P \\vee Q$ means $(\\sim P) \\vee Q$, not $\\sim (P \\vee Q)$.",
+          "note": "The two readings swapped, so the sentence asserts the opposite convention."
+        },
+        {
+          "class": "substitution",
+          "before": "9. $\\sim (\\sim P \\wedge \\sim Q)$",
+          "after": "9. $\\sim (\\sim P \\vee \\sim Q)$",
+          "note": "Connective misread inside exercise 9."
+        }
+      ],
+      "edit_classes": [
+        "extent",
+        "substitution"
+      ]
+    },
+    {
+      "id": "prob_grinstead_snell_p00_v1",
+      "kind": "perturbed",
+      "derived_from": "prob_grinstead_snell_p00",
+      "book": "prob_grinstead_snell",
+      "source_pdf": "tests/fixtures/books/prob_grinstead_snell.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "prob_grinstead_snell_p00.png",
+      "split": "train",
+      "transcription": "perturbed/prob_grinstead_snell_p00_v1/transcription.md",
+      "corrected": "perturbed/prob_grinstead_snell_p00_v1/corrected.md",
+      "edits": [
+        {
+          "class": "quantity",
+          "before": "Boktryckeri AB, 1790).",
+          "after": "Boktryckeri AB, 1970).",
+          "note": "Year misread in the footnote citation. A citation is a run of proper nouns and numbers with no redundancy to repair it."
+        },
+        {
+          "class": "substitution",
+          "before": "Festschrift in Honour of Herman World,",
+          "after": "Festschrift in Honour of Herman Wold,",
+          "note": "A name in the cited title misread as an ordinary word."
+        }
+      ],
+      "edit_classes": [
+        "quantity",
+        "substitution"
+      ]
+    },
+    {
+      "id": "prob_grinstead_snell_p02_v1",
+      "kind": "perturbed",
+      "derived_from": "prob_grinstead_snell_p02",
+      "book": "prob_grinstead_snell",
+      "source_pdf": "tests/fixtures/books/prob_grinstead_snell.pdf",
+      "page": 2,
+      "render_scale": 2.5,
+      "page_image": "prob_grinstead_snell_p02.png",
+      "split": "train",
+      "transcription": "perturbed/prob_grinstead_snell_p02_v1/transcription.md",
+      "corrected": "perturbed/prob_grinstead_snell_p02_v1/corrected.md",
+      "edits": [
+        {
+          "class": "quantity",
+          "before": "i.e., $m(i) = 1/8$, for $1 \\leq i \\leq 6$",
+          "after": "i.e., $m(i) = 1/6$, for $1 \\leq i \\leq 6$",
+          "note": "Probability changed, contradicting the six equally likely outcomes named in the same sentence."
+        },
+        {
+          "class": "extent",
+          "before": "$$P(E) = \\sum_{\\omega \\in \\Omega} m(\\omega).$$",
+          "after": "$$P(E) = \\sum_{\\omega \\in E} m(\\omega).$$",
+          "note": "Index set of the sum widened from the event to the whole sample space."
+        }
+      ],
+      "edit_classes": [
+        "extent",
+        "quantity"
+      ]
+    },
+    {
+      "id": "prob_grinstead_snell_p03_v1",
+      "kind": "perturbed",
+      "derived_from": "prob_grinstead_snell_p03",
+      "book": "prob_grinstead_snell",
+      "source_pdf": "tests/fixtures/books/prob_grinstead_snell.pdf",
+      "page": 3,
+      "render_scale": 2.5,
+      "page_image": "prob_grinstead_snell_p03.png",
+      "split": "train",
+      "transcription": "perturbed/prob_grinstead_snell_p03_v1/transcription.md",
+      "corrected": "perturbed/prob_grinstead_snell_p03_v1/corrected.md",
+      "edits": [
+        {
+          "class": "presence",
+          "before": "P(E) = m(\\mathrm{HH}) + m(\\mathrm{HT}) \\\\ = \\frac{1}{4} + \\frac{1}{4} + \\frac{1}{4} = \\frac{3}{4}.",
+          "after": "P(E) = m(\\mathrm{HH}) + m(\\mathrm{HT}) + m(\\mathrm{TH}) \\\\ = \\frac{1}{4} + \\frac{1}{4} + \\frac{1}{4} = \\frac{3}{4}.",
+          "note": "A term dropped from the first line of the computation while the second line still shows three summands."
+        },
+        {
+          "class": "quantity",
+          "before": "m(\\mathrm{A}) = m(\\mathrm{B}) = 3m(\\mathrm{C}).",
+          "after": "m(\\mathrm{A}) = m(\\mathrm{B}) = 2m(\\mathrm{C}).",
+          "note": "Coefficient changed, contradicting the stated half-chance."
+        }
+      ],
+      "edit_classes": [
+        "presence",
+        "quantity"
+      ]
+    },
+    {
+      "id": "prob_grinstead_snell_p04_v1",
+      "kind": "perturbed",
+      "derived_from": "prob_grinstead_snell_p04",
+      "book": "prob_grinstead_snell",
+      "source_pdf": "tests/fixtures/books/prob_grinstead_snell.pdf",
+      "page": 4,
+      "render_scale": 2.5,
+      "page_image": "prob_grinstead_snell_p04.png",
+      "split": "dev",
+      "transcription": "perturbed/prob_grinstead_snell_p04_v1/transcription.md",
+      "corrected": "perturbed/prob_grinstead_snell_p04_v1/corrected.md",
+      "edits": [
+        {
+          "class": "relation",
+          "before": "A \\cup B = \\{x \\mid x \\in A \\text{ and } x \\in B\\}",
+          "after": "A \\cup B = \\{x \\mid x \\in A \\text{ or } x \\in B\\}",
+          "note": "Union defined with a conjunction."
+        },
+        {
+          "class": "polarity",
+          "before": "A - B = \\{x \\mid x \\in A \\text{ and } x \\in B\\}",
+          "after": "A - B = \\{x \\mid x \\in A \\text{ and } x \\notin B\\}",
+          "note": "Negated membership read as plain membership in the difference."
+        }
+      ],
+      "edit_classes": [
+        "polarity",
+        "relation"
+      ]
+    },
+    {
+      "id": "combinatorics_levin_p02_v1",
+      "kind": "perturbed",
+      "derived_from": "combinatorics_levin_p02",
+      "book": "combinatorics_levin",
+      "source_pdf": "tests/fixtures/books/combinatorics_levin.pdf",
+      "page": 2,
+      "render_scale": 2.5,
+      "page_image": "combinatorics_levin_p02.png",
+      "split": "train",
+      "transcription": "perturbed/combinatorics_levin_p02_v1/transcription.md",
+      "corrected": "perturbed/combinatorics_levin_p02_v1/corrected.md",
+      "edits": [
+        {
+          "class": "presence",
+          "before": "$$4 + 4 + 3 + 3 + 3 + 2 + 1 = 20,$$",
+          "after": "$$4 + 4 + 3 + 3 + 3 + 2 + 1 = 20,$$\n\n$^2$A *lemma* is a mathematical statement that is primarily of importance in that it is used to establish other results.",
+          "note": "The page footnote dropped entirely. It is content, not page furniture, and the image shows it below the rule."
+        },
+        {
+          "class": "substitution",
+          "before": "$$\\sum_{v \\in V} d(v) = 2v.$$",
+          "after": "$$\\sum_{v \\in V} d(v) = 2e.$$",
+          "note": "Edge count read as the bound variable of the sum."
+        },
+        {
+          "class": "quantity",
+          "before": "in the sequence: 6. To find",
+          "after": "in the sequence: 7. To find",
+          "note": "Vertex count changed, contradicting the seven-term degree sequence above it."
+        }
+      ],
+      "edit_classes": [
+        "presence",
+        "quantity",
+        "substitution"
+      ]
+    },
+    {
+      "id": "combinatorics_levin_p03_v1",
+      "kind": "perturbed",
+      "derived_from": "combinatorics_levin_p03",
+      "book": "combinatorics_levin",
+      "source_pdf": "tests/fixtures/books/combinatorics_levin.pdf",
+      "page": 3,
+      "render_scale": 2.5,
+      "page_image": "combinatorics_levin_p03.png",
+      "split": "train",
+      "transcription": "perturbed/combinatorics_levin_p03_v1/transcription.md",
+      "corrected": "perturbed/combinatorics_levin_p03_v1/corrected.md",
+      "edits": [
+        {
+          "class": "polarity",
+          "before": "the number of vertices with odd degree must be odd.",
+          "after": "the number of vertices with odd degree must be even.",
+          "note": "The proposition inverted."
+        },
+        {
+          "class": "quantity",
+          "before": "shook hands with exactly 8 people",
+          "after": "shook hands with exactly 7 people",
+          "note": "Degree changed, contradicting the 9 &middot; 7 = 63 computed in the solution."
+        }
+      ],
+      "edit_classes": [
+        "polarity",
+        "quantity"
+      ]
+    },
+    {
+      "id": "calc3_gradients_exercises_p00_v1",
+      "kind": "perturbed",
+      "derived_from": "calc3_gradients_exercises_p00",
+      "book": "calc3_gradients_exercises",
+      "source_pdf": "tests/fixtures/books/calc3_gradients_exercises.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "calc3_gradients_exercises_p00.png",
+      "split": "train",
+      "transcription": "perturbed/calc3_gradients_exercises_p00_v1/transcription.md",
+      "corrected": "perturbed/calc3_gradients_exercises_p00_v1/corrected.md",
+      "edits": [
+        {
+          "class": "polarity",
+          "before": "+ \\frac{12}{13}\\mathbf{k}",
+          "after": "- \\frac{12}{13}\\mathbf{k}",
+          "note": "Sign of the k component flipped in the unit vector."
+        },
+        {
+          "class": "substitution",
+          "before": "283. $$f(x, y, z) = 4x^5y^2z^2",
+          "after": "283. $$f(x, y, z) = 4x^5y^2z^3",
+          "note": "Exponent on z misread."
+        }
+      ],
+      "edit_classes": [
+        "polarity",
+        "substitution"
+      ]
+    },
+    {
+      "id": "calc3_gradients_exercises_p01_v1",
+      "kind": "perturbed",
+      "derived_from": "calc3_gradients_exercises_p01",
+      "book": "calc3_gradients_exercises",
+      "source_pdf": "tests/fixtures/books/calc3_gradients_exercises.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "calc3_gradients_exercises_p01.png",
+      "split": "dev",
+      "transcription": "perturbed/calc3_gradients_exercises_p01_v1/transcription.md",
+      "corrected": "perturbed/calc3_gradients_exercises_p01_v1/corrected.md",
+      "edits": [
+        {
+          "class": "substitution",
+          "before": "$V(x, y) = e^{-2x} \\cos(2x)$",
+          "after": "$V(x, y) = e^{-2x} \\cos(2y)$",
+          "note": "Variable inside the cosine misread, making the potential independent of y."
+        },
+        {
+          "class": "quantity",
+          "before": "**304.** $f(x, y, z) = xyz = 8$",
+          "after": "**304.** $f(x, y, z) = xyz = 6$",
+          "note": "Level value changed, so it no longer matches the given point."
+        }
+      ],
+      "edit_classes": [
+        "quantity",
+        "substitution"
+      ]
+    },
+    {
+      "id": "hefferon_linsys_exercises_p00_v1",
+      "kind": "perturbed",
+      "derived_from": "hefferon_linsys_exercises_p00",
+      "book": "hefferon_linsys_exercises",
+      "source_pdf": "tests/fixtures/books/hefferon_linsys_exercises.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "hefferon_linsys_exercises_p00.png",
+      "split": "train",
+      "transcription": "perturbed/hefferon_linsys_exercises_p00_v1/transcription.md",
+      "corrected": "perturbed/hefferon_linsys_exercises_p00_v1/corrected.md",
+      "edits": [
+        {
+          "class": "polarity",
+          "before": "(a) \\begin{pmatrix} 1 & 3 \\\\ 4 & 12 \\end{pmatrix}",
+          "after": "(a) \\begin{pmatrix} 1 & 3 \\\\ 4 & -12 \\end{pmatrix}",
+          "note": "Minus sign lost, making the two matrices of 3.19 identical."
+        },
+        {
+          "class": "position",
+          "before": "(a) \\begin{pmatrix} 0 \\\\ 5 \\\\ -3 \\\\ 0 \\end{pmatrix}",
+          "after": "(a) \\begin{pmatrix} 0 \\\\ -3 \\\\ 5 \\\\ 0 \\end{pmatrix}",
+          "note": "Two entries of the column vector swapped."
+        }
+      ],
+      "edit_classes": [
+        "polarity",
+        "position"
+      ]
+    },
+    {
+      "id": "hefferon_linsys_exercises_p01_v1",
+      "kind": "perturbed",
+      "derived_from": "hefferon_linsys_exercises_p01",
+      "book": "hefferon_linsys_exercises",
+      "source_pdf": "tests/fixtures/books/hefferon_linsys_exercises.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "hefferon_linsys_exercises_p01.png",
+      "split": "dev",
+      "transcription": "perturbed/hefferon_linsys_exercises_p01_v1/transcription.md",
+      "corrected": "perturbed/hefferon_linsys_exercises_p01_v1/corrected.md",
+      "edits": [
+        {
+          "class": "position",
+          "before": "(d) $\\begin{pmatrix} 1 & 2 & 1 \\\\ 1 & 3 & 1 \\\\ 3 & 4 & 7 \\end{pmatrix}$",
+          "after": "(d) $\\begin{pmatrix} 1 & 2 & 1 \\\\ 1 & 1 & 3 \\\\ 3 & 4 & 7 \\end{pmatrix}$",
+          "note": "Middle row&rsquo;s entries shifted between columns."
+        },
+        {
+          "class": "presence",
+          "before": "\\begin{pmatrix} 2 \\\\ 1 \\\\ 5 \\end{pmatrix}, \\begin{pmatrix} 4 \\\\ 2 \\\\ 1 \\end{pmatrix}\\}$",
+          "after": "\\begin{pmatrix} 2 \\\\ 1 \\\\ 5 \\end{pmatrix}, \\begin{pmatrix} 3 \\\\ 3 \\\\ 0 \\end{pmatrix}, \\begin{pmatrix} 4 \\\\ 2 \\\\ 1 \\end{pmatrix}\\}$",
+          "note": "A generator dropped from the set in 3.21(c)."
+        }
+      ],
+      "edit_classes": [
+        "position",
+        "presence"
+      ]
+    },
+    {
+      "id": "lebl_realanalysis_sec2_1_exercises_p00_v1",
+      "kind": "perturbed",
+      "derived_from": "lebl_realanalysis_sec2_1_exercises_p00",
+      "book": "lebl_realanalysis_sec2_1_exercises",
+      "source_pdf": "tests/fixtures/books/lebl_realanalysis_sec2_1_exercises.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "lebl_realanalysis_sec2_1_exercises_p00.png",
+      "split": "train",
+      "transcription": "perturbed/lebl_realanalysis_sec2_1_exercises_p00_v1/transcription.md",
+      "corrected": "perturbed/lebl_realanalysis_sec2_1_exercises_p00_v1/corrected.md",
+      "edits": [
+        {
+          "class": "substitution",
+          "before": "\\left\\{\\frac{1}{\\sqrt{n}}\\right\\}",
+          "after": "\\left\\{\\frac{1}{\\sqrt[3]{n}}\\right\\}",
+          "note": "Indexed root read as a plain radical."
+        },
+        {
+          "class": "polarity",
+          "before": "Is the sequence $\\{2^{n}\\}_{n=1}^{\\infty}$ convergent?",
+          "after": "Is the sequence $\\{2^{-n}\\}_{n=1}^{\\infty}$ convergent?",
+          "note": "Negative exponent read as positive, which reverses the answer."
+        }
+      ],
+      "edit_classes": [
+        "polarity",
+        "substitution"
+      ]
+    },
+    {
+      "id": "lebl_realanalysis_sec2_1_exercises_p01_v1",
+      "kind": "perturbed",
+      "derived_from": "lebl_realanalysis_sec2_1_exercises_p01",
+      "book": "lebl_realanalysis_sec2_1_exercises",
+      "source_pdf": "tests/fixtures/books/lebl_realanalysis_sec2_1_exercises.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "lebl_realanalysis_sec2_1_exercises_p01.png",
+      "split": "dev",
+      "transcription": "perturbed/lebl_realanalysis_sec2_1_exercises_p01_v1/transcription.md",
+      "corrected": "perturbed/lebl_realanalysis_sec2_1_exercises_p01_v1/corrected.md",
+      "edits": [
+        {
+          "class": "attachment",
+          "before": "$y_{2k} := x_k^2$",
+          "after": "$y_{2k} := x_{k^2}$",
+          "note": "Subscript attached to the wrong level: a squared term instead of the k-squared-indexed term."
+        },
+        {
+          "class": "quantity",
+          "before": "$x_n := \\frac{n}{n^2+6}$",
+          "after": "$x_n := \\frac{n}{n^2+16}$",
+          "note": "Constant in the denominator misread."
+        }
+      ],
+      "edit_classes": [
+        "attachment",
+        "quantity"
+      ]
+    },
+    {
+      "id": "lebl2_metricspaces_sec8_1_exercises_p01_v1",
+      "kind": "perturbed",
+      "derived_from": "lebl2_metricspaces_sec8_1_exercises_p01",
+      "book": "lebl2_metricspaces_sec8_1_exercises",
+      "source_pdf": "tests/fixtures/books/lebl2_metricspaces_sec8_1_exercises.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "lebl2_metricspaces_sec8_1_exercises_p01.png",
+      "split": "dev",
+      "transcription": "perturbed/lebl2_metricspaces_sec8_1_exercises_p01_v1/transcription.md",
+      "corrected": "perturbed/lebl2_metricspaces_sec8_1_exercises_p01_v1/corrected.md",
+      "edits": [
+        {
+          "class": "polarity",
+          "before": "and $A_{jk}x_\\ell = 0$ if $\\ell = j$",
+          "after": "and $A_{jk}x_\\ell = 0$ if $\\ell \\neq j$",
+          "note": "Inequality read as equality, contradicting the line before it."
+        },
+        {
+          "class": "quantity",
+          "before": "such that $\\int_0^1 f = 0$ is a convex set",
+          "after": "such that $\\int_0^1 f = 1$ is a convex set",
+          "note": "Value changed, which would make 8.1.16 a restatement of the exercise it says to compare against."
+        }
+      ],
+      "edit_classes": [
+        "polarity",
+        "quantity"
+      ]
+    },
+    {
+      "id": "ea2e_ch1_review_p00_v1",
+      "kind": "perturbed",
+      "derived_from": "ea2e_ch1_review_p00",
+      "book": "ea2e_ch1_review",
+      "source_pdf": "tests/fixtures/books/ea2e_ch1_review.pdf",
+      "page": 0,
+      "render_scale": 2.5,
+      "page_image": "ea2e_ch1_review_p00.png",
+      "split": "train",
+      "transcription": "perturbed/ea2e_ch1_review_p00_v1/transcription.md",
+      "corrected": "perturbed/ea2e_ch1_review_p00_v1/corrected.md",
+      "edits": [
+        {
+          "class": "quantity",
+          "before": "**933.** 1450",
+          "after": "**933.** 1430",
+          "note": "Digit misread in a divisibility exercise."
+        },
+        {
+          "class": "polarity",
+          "before": "**956.** a = 7 · 4",
+          "after": "**956.** a ≠ 7 · 4",
+          "note": "Negated relation read as an equality."
+        }
+      ],
+      "edit_classes": [
+        "polarity",
+        "quantity"
+      ]
+    },
+    {
+      "id": "ea2e_sec1_3_exercises_p01_v1",
+      "kind": "perturbed",
+      "derived_from": "ea2e_sec1_3_exercises_p01",
+      "book": "ea2e_sec1_3_exercises",
+      "source_pdf": "tests/fixtures/books/ea2e_sec1_3_exercises.pdf",
+      "page": 1,
+      "render_scale": 2.5,
+      "page_image": "ea2e_sec1_3_exercises_p01.png",
+      "split": "dev",
+      "transcription": "perturbed/ea2e_sec1_3_exercises_p01_v1/transcription.md",
+      "corrected": "perturbed/ea2e_sec1_3_exercises_p01_v1/corrected.md",
+      "edits": [
+        {
+          "class": "quantity",
+          "before": "Alaska, at 20,230 feet",
+          "after": "Alaska, at 20,320 feet",
+          "note": "Digits transposed in the elevation."
+        },
+        {
+          "class": "extent",
+          "before": "249. 25 - [10 - 3 - 12]",
+          "after": "249. 25 - [10 - (3 - 12)]",
+          "note": "Inner grouping dropped from the nested expression."
+        }
+      ],
+      "edit_classes": [
+        "extent",
+        "quantity"
+      ]
+    }
+  ]
+}

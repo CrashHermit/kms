@@ -3,7 +3,8 @@ Graph representation of the structural node stream — the one part of the
 model we're sure of.
 
 The extractor emits domain-agnostic structural nodes (paragraph / math /
-code / list / table / image / caption / header — ``core.models.NodeType``),
+code / list / table / image / caption / header / bibliographic / note — the
+``core.models.ASTNode`` subclasses),
 the seam merger flattens them into the global ordered stream, and that
 stream is the provenance layer every later graph tier points back to. This
 module maps a ``core.models.ASTNode`` onto its Neo4j form. It invents no new

@@ -53,7 +53,11 @@ undefined when the prompt was first evaluated against real OCR output:
   and marginal labels are neither removed when present nor restored when
   Mistral drops them (it usually does). Whether chrome belongs in the document
   is a presentation policy, which is the formatter's to decide, not a fidelity
-  question this pass can settle from the image.
+  question this pass can settle from the image. A footnote is explicitly *not*
+  furniture — the front end now appends the page's footer back onto its
+  markdown, so a citation of an external work arrives here as a trailing block,
+  and the prompt says to proofread and keep it rather than read a page-bottom
+  block as chrome to leave alone.
 
 The corrector is always-rewrite: it returns the whole corrected page. A cheaper
 conditional-output variant (emit a sentinel when the page is already clean, to
@@ -160,7 +164,11 @@ class Signature(dspy.Signature):
     - Page furniture. Running heads, folios, and marginal labels are out of
       scope in both directions — leave them wherever the transcription has
       them, and do not add them where it has none, even if the page shows
-      them.
+      them. A footnote is not furniture. Neither is an entry in a reference
+      list. Both are content wherever they sit on the page, and a citation of
+      a published work is read character by character like any other
+      low-redundancy content: every author, title, year, page range, and
+      identifier is checked against the image and kept.
     - Wording. Do not reword anything that matches the image.
     - Boundaries. Content that starts or ends abruptly at the edge of the page
       stays that way — do not complete or trim it.
