@@ -1,10 +1,12 @@
 """Flat-stream refactor: seam-birthed global node list + assembler resolving by
 segment_index."""
 
+import asyncio
 import pathlib
 import tempfile
 
 from kms.core import models
+from kms.ingestion import role_typer, statement_extractor
 from kms.output import assembler
 
 
@@ -53,3 +55,53 @@ def test_assemble_walks_flat_nodes_and_passes_unmatched_placeholder():
     assert (
         '![1]()' in text
     )  # no matching picture -> placeholder passes through, no crash
+
+
+class _AllStatements:
+    """Stands in for the LLM: every span is a statement."""
+
+    async def acall(self, contents):
+        return role_typer.STATEMENT_ROLE
+
+
+def test_assembly_emits_each_block_once_after_the_overlay_is_built():
+    # Regression: the role typer used to swap each span's first node for its
+    # Statement inside `nodes`, and the statement extractor then set that
+    # node's content to the WHOLE group's text — so the assembler emitted every
+    # member after the first twice, once inside the fused statement and once as
+    # itself. The overlay now travels on its own channel.
+    nodes = [
+        models.ParagraphNode(content='Theorem 2.1.', id=0, segment_index=0),
+        models.ParagraphNode(
+            content='Proof. Let e be ...', id=1, segment_index=0
+        ),
+        models.ParagraphNode(
+            content='Hence e is unique.', id=2, segment_index=0
+        ),
+        models.ParagraphNode(content='1.23 Compute it.', id=3, segment_index=0),
+    ]
+    # One multi-node group and one single-node group, plus an overlapping span
+    # (the component finder is allowed to emit those).
+    state = {'nodes': nodes, 'spans': [[0, 1, 2], [1, 2], [3]]}
+
+    typer = role_typer.RoleTyperNode(module=_AllStatements())
+    state.update(asyncio.run(typer.run(state)))
+    asyncio.run(statement_extractor.StatementExtractorNode().run(state))
+
+    out = assembler.assemble(
+        state['nodes'],
+        [models.Segment(index=0, image_path='p0.png')],
+        output_dir=tempfile.mkdtemp(),
+        filename='document.md',
+    )
+    text = pathlib.Path(out).read_text()
+    for content in (
+        'Theorem 2.1.',
+        'Proof. Let e be ...',
+        'Hence e is unique.',
+    ):
+        assert text.count(content) == 1, f'{content!r} appears twice'
+    # The overlay still carries the full group text — that is its job.
+    assert state['statements'][0].content == (
+        'Theorem 2.1.\n\nProof. Let e be ...\n\nHence e is unique.'
+    )

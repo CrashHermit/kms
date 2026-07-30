@@ -44,8 +44,12 @@ resolves it, so the old semantic proof/solution boundary call is now a
 structural detection. The role typer then labels each span `statement` (a
 block) or `procedure` (a derivation), and the statement and procedure
 extractors fill in each one's content, which is transcription rather than
-judgement. The chain is split this way because fusing these questions made each
-one worse — the finder read a missing "Solution." marker as "no derivation".
+judgement. That overlay rides its own `statements` channel: a statement's
+content is its whole group's text, so it sits BESIDE `nodes`, never in it —
+in the stream it would make every stage that walks nodes (the assembler
+included) read the group twice. The chain is split this way because fusing
+these questions made each one worse — the finder read a missing "Solution."
+marker as "no derivation".
 
 The ingestion persister is the terminal stage. It runs after every stream
 mutation, so the persisted node ids match the overlay's members and instruction
@@ -103,6 +107,9 @@ def build_graph() -> 'CompiledStateGraph':
     formatter_module = formatter.Formatter(language_model=llm.text_lm())
     extractor_module = extractor.Extractor(language_model=llm.text_lm())
     seam_module = seam_merger.SeamMerger(language_model=llm.text_lm())
+    seam_rewriter_module = seam_merger.SeamRewriter(
+        language_model=llm.text_lm()
+    )
     splitter_module = splitter.Splitter(language_model=llm.text_lm())
     instruction_finder_module = instruction_finder.InstructionFinder(language_model=llm.text_lm())
     instruction_distributor_module = instruction_distributor.InstructionDistributor(
@@ -117,7 +124,9 @@ def build_graph() -> 'CompiledStateGraph':
     corrector_node = corrector.CorrectorNode(module=corrector_module)
     formatter_node = formatter.FormatterNode(module=formatter_module)
     extractor_node = extractor.ExtractorNode(module=extractor_module)
-    seam_node = seam_merger.SeamMergerNode(module=seam_module)
+    seam_node = seam_merger.SeamMergerNode(
+        module=seam_module, rewriter=seam_rewriter_module
+    )
     splitter_node = splitter.SplitterNode(module=splitter_module)
     instruction_finder_node = instruction_finder.InstructionFinderNode(
         module=instruction_finder_module

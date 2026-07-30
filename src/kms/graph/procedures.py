@@ -74,7 +74,7 @@ def act_properties(
 
 
 def procedure_rows(
-    statements: list[models.StatementNode], source: str
+    statements: list[models.Statement], source: str
 ) -> list[dict]:
     """Every procedure's property map across the overlay, one flat list."""
     return [
@@ -84,14 +84,14 @@ def procedure_rows(
     ]
 
 
-def act_rows(statements: list[models.StatementNode], source: str) -> list[dict]:
+def act_rows(statements: list[models.Statement], source: str) -> list[dict]:
     """Every step's property map across the overlay. Currently empty —
     the step decomposer is a future pass."""
     return []
 
 
 def has_procedure_pairs(
-    statements: list[models.StatementNode], source: str
+    statements: list[models.Statement], source: str
 ) -> list[dict]:
     """The ``{statement, procedure}`` uuid pairs for ``:HAS_PROCEDURE``
     edges."""
@@ -106,7 +106,7 @@ def has_procedure_pairs(
 
 
 def first_pairs(
-    statements: list[models.StatementNode], source: str
+    statements: list[models.Statement], source: str
 ) -> list[dict]:
     """The ``{procedure, act}`` uuid pairs for ``:FIRST`` edges. Empty
     until the step decomposer runs."""
@@ -114,7 +114,7 @@ def first_pairs(
 
 
 def then_pairs(
-    statements: list[models.StatementNode], source: str
+    statements: list[models.Statement], source: str
 ) -> list[dict]:
     """The ``{from, to}`` uuid pairs for the ``:THEN`` chain. Empty
     until the step decomposer runs."""

@@ -2,7 +2,7 @@ r"""
 Procedure extractor — fills ``content`` on each Procedure attached to a
 statement.
 
-Procedures are children of StatementNode.procedures (zero or one per
+Procedures are children of ``models.Statement.procedures`` (zero or one per
 statement). The extractor reads the owning statement's group text and extracts
 the procedure portion. For now the concatenation is deterministic; an LLM pass
 will extract the procedure portion from the full group.
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def extract_procedures(
-    statement_ids: list[int],
+    statements: list[models.Statement],
     nodes_by_id: dict[int, models.ASTNode],
 ) -> None:
     """Fill ``content`` on every Procedure attached to a statement.
@@ -27,14 +27,12 @@ def extract_procedures(
     an LLM pass will extract just the procedure portion.
 
     Args:
-        statement_ids: The first-node ids of every group.
-        nodes_by_id: The full node stream keyed by stable id.
+        statements: The statement overlay.
+        nodes_by_id: The full node stream keyed by stable id. It holds the
+            groups' members, never the statements themselves.
     """
-    for statement_id in statement_ids:
-        statement = nodes_by_id.get(statement_id)
-        if not isinstance(statement, models.StatementNode):
-            continue
-        member_ids = statement.statement_of or []
+    for statement in statements:
+        member_ids = statement.statement_of
         members = [
             nodes_by_id[node_id]
             for node_id in member_ids
@@ -44,16 +42,10 @@ def extract_procedures(
         for procedure in statement.procedures:
             procedure.content = text or None
 
-    procedure_count = sum(
-        len(nodes_by_id[statement_id].procedures)
-        for statement_id in statement_ids
-        if statement_id in nodes_by_id
-        and isinstance(nodes_by_id[statement_id], models.StatementNode)
-    )
     logger.info(
         'procedure extractor: %d procedure(s) from %d statement(s)',
-        procedure_count,
-        len(statement_ids),
+        sum(len(statement.procedures) for statement in statements),
+        len(statements),
     )
 
 
@@ -64,7 +56,8 @@ class ProcedureExtractorNode:
         """Fill procedure content from group text.
 
         Args:
-            state: The pipeline state, holding the nodes and statement ids.
+            state: The pipeline state, holding the node stream and the
+                statement overlay.
 
         Returns:
             An empty update — the procedures are mutated in place.
@@ -74,7 +67,7 @@ class ProcedureExtractorNode:
             for node in state.get('nodes', [])
             if node.id is not None
         }
-        statement_ids = state.get('statement_ids', [])
-        if statement_ids:
-            extract_procedures(statement_ids, nodes_by_id)
+        statements = state.get('statements', [])
+        if statements:
+            extract_procedures(statements, nodes_by_id)
         return {}

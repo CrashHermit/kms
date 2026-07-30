@@ -109,7 +109,7 @@ def test_role_typer_logs_the_block_derivation_split(caplog):
             node.run({'nodes': _nodes('a', 'b'), 'spans': [[0], [1]]})
         )
     assert '2 span(s) -> 2 statement(s), 1 procedure(s)' in caplog.text
-    assert out['procedure_ids'] == [1]
+    assert [len(s.procedures) for s in out['statements']] == [0, 1]
 
 
 def test_role_typer_logs_zero_derivations(caplog):

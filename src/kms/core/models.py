@@ -103,42 +103,59 @@ class InstructionNode(ASTNode):
     pass
 
 
-@dataclass(slots=True)
-class StatementNode(ASTNode):
-    """A pedagogical statement — definition, theorem, exercise, etc.
-
-    The PCF groups related content into compound spans; the role typer
-    diagnoses each group's composition. ``statement_of`` carries the
-    group's member node ids so the statement extractor can read the full
-    group text and extract the statement portion into ``content``.
-    ``procedures`` holds zero or one Procedure (real or placeholder).
-    """
-
-    statement_of: list[int] | None = None
-    content: str | None = None
-    procedures: list['Procedure'] = field(default_factory=list)
-
-    def first_node_id(self) -> int:
-        """The stream position of the statement's first member node."""
-        return (self.statement_of or [self.id])[0] if self.id is not None else 0
-
-
-# --- Procedure --------------------------------------------------------------
+# --- Semantic overlay -------------------------------------------------------
+#
+# The overlay sits BESIDE the node stream, never in it. A node is one verbatim
+# block of the page; a Statement is the whole group of blocks a pedagogical
+# unit occupies, and its content is derived from them. Deliberately NOT an
+# ASTNode: while it was one, a Statement could be — and was — assigned into the
+# stream in its first member's place, which made every consumer of that stream
+# read the group's text twice (the duplicated blocks in ``document.md``).
+#
+# Statement and Procedure share no base class either. Their only common field
+# is ``content``; their identities differ, and a Procedure is a Statement's
+# CHILD rather than its sibling. Inheritance on the strength of one shared
+# field is exactly the kinship claim that went wrong above.
 
 
 @dataclass(slots=True)
 class Procedure:
-    """One derivation attached to a statement node — a proof, a solution, a
+    """One derivation attached to a statement — a proof, a solution, a
     calculation.
 
     The procedure extractor reads the group's full text (via the owning
-    StatementNode's ``statement_of``) and extracts the procedure portion
-    into ``content``. Step decomposition is a future pass that will write
-    ``:Act`` nodes; no ``steps`` field here.
+    Statement's ``statement_of``) and extracts the procedure portion into
+    ``content``. Step decomposition is a future pass that will write ``:Act``
+    nodes; no ``steps`` field here.
     """
 
     index: int = 0
     content: str | None = None
+
+
+@dataclass(slots=True)
+class Statement:
+    """A pedagogical statement — definition, theorem, exercise, etc.
+
+    The PCF groups related content into compound spans; the role typer
+    diagnoses each group's composition. ``statement_of`` carries the group's
+    member node ids so the statement extractor can read the full group text
+    and extract the statement portion into ``content``. ``procedures`` holds
+    zero or one Procedure (real or placeholder).
+
+    ``id`` is the id of the group's FIRST member node — the statement's
+    document-order position, and what slots it into the persisted chain in
+    that member's place. It names a place in the stream; it is not a node.
+    REQUIRED, unlike ``ASTNode.id``: a node exists before the stream is
+    flattened and is stamped with its id afterwards, but a statement is only
+    ever built from an already-stamped node, so an id-less one is a bug and
+    raises at construction rather than travelling on to name nothing.
+    """
+
+    id: int
+    content: str | None = None
+    statement_of: list[int] = field(default_factory=list)
+    procedures: list[Procedure] = field(default_factory=list)
 
 
 # --- Picture / Segment ------------------------------------------------------

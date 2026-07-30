@@ -4,6 +4,12 @@ group text.
 
 Concatenates the group's member node text into one string. An LLM pass extracts
 the statement portion; for now the concatenation is deterministic.
+
+The statements come in on their own ``statements`` channel and the members are
+read out of ``nodes``; the two never mix. That separation is what keeps this
+concatenation safe: the fused text lands on an entity beside the stream, so no
+stage that walks ``nodes`` — the assembler above all — sees a group's text
+twice.
 """
 
 import logging
@@ -30,7 +36,7 @@ def group_text(members: list[models.ASTNode]) -> str:
 
 
 def extract_statement(
-    statement_node: models.StatementNode,
+    statement_node: models.Statement,
     nodes_by_id: dict[int, models.ASTNode],
 ) -> None:
     """Fill ``content`` on a statement node from the group's member text.
@@ -40,9 +46,10 @@ def extract_statement(
 
     Args:
         statement_node: The statement node to fill, mutated in place.
-        nodes_by_id: The full node stream keyed by stable id.
+        nodes_by_id: The full node stream keyed by stable id. It holds the
+            group's members, never the statement itself.
     """
-    member_ids = statement_node.statement_of or []
+    member_ids = statement_node.statement_of
     members = [
         nodes_by_id[node_id] for node_id in member_ids if node_id in nodes_by_id
     ]
@@ -56,10 +63,11 @@ class StatementExtractorNode:
     """Fills each statement node's ``content`` from its group text."""
 
     async def run(self, state: state.State) -> dict:
-        """Fill ``content`` on every statement node.
+        """Fill ``content`` on every statement in the overlay.
 
         Args:
-            state: The pipeline state, holding the nodes and statement ids.
+            state: The pipeline state, holding the node stream and the
+                statement overlay.
 
         Returns:
             An empty update — the statement nodes are mutated in place.
@@ -69,11 +77,8 @@ class StatementExtractorNode:
             for node in state.get('nodes', [])
             if node.id is not None
         }
-        for statement_id in state.get('statement_ids', []):
-            if statement_id in nodes_by_id:
-                extract_statement(nodes_by_id[statement_id], nodes_by_id)
-        logger.info(
-            'statement extractor: %d statement(s)',
-            len(state.get('statement_ids', [])),
-        )
+        statements = state.get('statements', [])
+        for statement in statements:
+            extract_statement(statement, nodes_by_id)
+        logger.info('statement extractor: %d statement(s)', len(statements))
         return {}
