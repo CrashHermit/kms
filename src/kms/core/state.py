@@ -65,6 +65,9 @@ class State(TypedDict, total=False):
     correction_results: Annotated[
         list[tuple[int, str]], operator.add
     ]  # (segment index, corrected markdown)
+    format_results: Annotated[
+        list[tuple[int, str]], operator.add
+    ]  # (segment index, formatted markdown)
     extract_results: Annotated[
         list[tuple[int, list[models.ASTNode]]], operator.add
     ]

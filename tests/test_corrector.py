@@ -1,5 +1,6 @@
-"""Correction pass — pure dispatch/collect + the divergence guard. No
-network/LLM."""
+"""Correction pass — pure dispatch/collect. No network/LLM."""
+
+import asyncio
 
 from kms.core import models
 from kms.ingestion import corrector
@@ -12,62 +13,25 @@ def _segment(index, content, image_path='/pages/Segment.png'):
     return models.Segment(index=index, image_path=image_path, content=content)
 
 
-def test_within_tolerance_accepts_light_edits_rejects_runaways():
-    orig = 'x' * 100
-    assert corrector._within_tolerance(orig, 'x' * 100)  # identical
-    assert corrector._within_tolerance(orig, 'x' * 80)  # −20%, a real fix
-    assert corrector._within_tolerance(orig, 'x' * 130)  # +30% boundary
-    assert not corrector._within_tolerance(orig, 'x' * 50)  # truncation
-    assert not corrector._within_tolerance(orig, 'x' * 200)  # runaway rewrite
-    assert not corrector._within_tolerance(orig, '')  # empty
-    assert not corrector._within_tolerance(orig, '   ')  # whitespace only
+def test_worker_takes_the_correction_exactly_as_returned():
+    # Nothing outside the model touches the page: the correction becomes the
+    # page verbatim, however far it diverges and whatever its delimiters.
+    # image_path="" -> _load_dspy_image returns None, so the worker needs no
+    # image file on disk.
+    segment = _segment(0, 'orig', image_path='')
 
-
-def test_normalize_math_delimiters_swaps_display_and_inline():
-    # \[ … \] -> $$ … $$ (display), \( … \) -> $ … $ (inline), whitespace
-    # preserved.
-    assert (
-        corrector._normalize_math_delimiters(r'\[ a^2 + b^2 \]')
-        == '$$ a^2 + b^2 $$'
-    )
-    assert (
-        corrector._normalize_math_delimiters(r'see \(x_1\) here')
-        == 'see $x_1$ here'
-    )
-    # multi-line display block (e.g. a wrapped array) keeps its interior
-    # verbatim.
-    src = '\\[\n\\begin{array}{l} x \\end{array}\n\\]'
-    assert (
-        corrector._normalize_math_delimiters(src)
-        == '$$\n\\begin{array}{l} x \\end{array}\n$$'
-    )
-
-
-def test_normalize_math_delimiters_leaves_dollars_and_prose_untouched():
-    # Already-correct `$$`/`$` and plain prose (incl. plain brackets/parens) are
-    # unchanged.
-    already = 'inline $x$ and display $$y$$ with a list item [a] and (b)'
-    assert corrector._normalize_math_delimiters(already) == already
-
-
-def test_worker_output_is_delimiter_normalized_when_correction_rejected():
-    # A runaway correction is rejected (kept original), but the kept text is
-    # still normalized. image_path="" -> _load_dspy_image returns None, so the
-    # worker needs no image file on disk.
-    segment = _segment(0, r'kept \(x\) original', image_path='')
-
-    class _RunawayModule:
+    class _DivergentModule:
         async def aforward(self, page_image, transcription):
-            return 'x' * 10_000  # rejected by the guard
-
-    import asyncio
+            return r'a much longer rewrite with \(x\) in it'
 
     out = asyncio.run(
-        corrector.CorrectorNode(module=_RunawayModule()).worker(
+        corrector.CorrectorNode(module=_DivergentModule()).worker(
             {'segment': segment}
         )
     )
-    assert out['correction_results'] == [(0, 'kept $x$ original')]
+    assert out['correction_results'] == [
+        (0, r'a much longer rewrite with \(x\) in it')
+    ]
 
 
 def test_dispatch_proofreads_every_page_with_content_and_image():

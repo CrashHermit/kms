@@ -11,16 +11,20 @@ stage runs. The later stages are plain sequential nodes (a growing look-ahead
 cursor cannot be sharded).
 
 Stage order:
-    corrector -> extractor -> seam_merger (even, odd) -> splitter
+    corrector -> formatter -> extractor -> seam_merger (even, odd) -> splitter
               -> instruction_finder -> instruction_distributor
               -> pedagogical_component_finder -> role_typer
               -> statement_extractor -> procedure_extractor
               -> ingestion_persister
 
 Two phases split at the seam merger. Ingestion is per-page: `segments` (already
-carrying Mistral's markdown + figures) is the backbone, and the corrector
-proofreads each page's transcription against its image before the (purely
-structural) extractor parses it into nodes. The seam merger heals nodes split
+carrying Mistral's markdown + figures) is the backbone, the corrector proofreads
+each page's transcription against its image, and the formatter then standardises
+that page's markup — the two are exact inverses, the corrector changing content
+but never presentation and the formatter presentation but never content — before
+the (purely structural) extractor parses it into nodes. The formatter runs second
+because anything that deliberately makes the text diverge from the image has to
+come after the pass whose contract is that they agree. The seam merger heals nodes split
 across page breaks and then flattens the healed backbone into the global
 ordered `nodes` list (stable ids + segment_index). The splitter then normalises
 that stream — it rewrites any node that packs several exercises into one node
@@ -60,6 +64,7 @@ from kms.graph import db, persister
 from kms.ingestion import (
     corrector,
     extractor,
+    formatter,
     instruction_distributor,
     instruction_finder,
     pedagogical_component_finder,
@@ -79,8 +84,9 @@ def build_graph() -> 'CompiledStateGraph':
     """Assemble and compile the LangGraph pipeline over ``state.State``.
 
     A single straight path: the correction pass proofreads each
-    Mistral-transcribed page against its image, the extractor parses the
-    corrected markdown into structural nodes, the seam merger heals page-split
+    Mistral-transcribed page against its image, the formatter standardises that
+    page's markup, the extractor parses the result into structural nodes, the
+    seam merger heals page-split
     nodes and flattens to the global stream, and the pedagogical component
     finder then cuts that stream into untyped spans for the role typer and the
     two extractors to classify and fill in.
@@ -90,6 +96,7 @@ def build_graph() -> 'CompiledStateGraph':
     """
     # --- DSPy modules ---
     corrector_module = corrector.Corrector(language_model=llm.corrector_lm())
+    formatter_module = formatter.Formatter(language_model=llm.text_lm())
     extractor_module = extractor.Extractor(language_model=llm.text_lm())
     seam_module = seam_merger.SeamMerger(language_model=llm.text_lm())
     splitter_module = splitter.Splitter(language_model=llm.text_lm())
@@ -110,6 +117,7 @@ def build_graph() -> 'CompiledStateGraph':
 
     # --- LangGraph nodes ---
     corrector_node = corrector.CorrectorNode(module=corrector_module)
+    formatter_node = formatter.FormatterNode(module=formatter_module)
     extractor_node = extractor.ExtractorNode(module=extractor_module)
     seam_node = seam_merger.SeamMergerNode(module=seam_module)
     splitter_node = splitter.SplitterNode(module=splitter_module)
@@ -136,6 +144,8 @@ def build_graph() -> 'CompiledStateGraph':
     # Each stage registers its worker (Send target) and collect (drain) nodes.
     graph.add_node('corrector_worker', corrector_node.worker)
     graph.add_node('corrector_collect', corrector_node.collect)
+    graph.add_node('formatter_worker', formatter_node.worker)
+    graph.add_node('formatter_collect', formatter_node.collect)
     graph.add_node('extractor_worker', extractor_node.worker)
     graph.add_node('extractor_collect', extractor_node.collect)
     graph.add_node('seam_even_worker', seam_node.even_worker)
@@ -164,8 +174,18 @@ def build_graph() -> 'CompiledStateGraph':
     )
     graph.add_edge('corrector_worker', 'corrector_collect')
 
+    # Formatting runs after correction, never before: anything that
+    # deliberately makes the text diverge from the page image must come after
+    # the pass whose contract is that the two agree.
     graph.add_conditional_edges(
         'corrector_collect',
+        formatter_node.dispatch,
+        ['formatter_worker', 'formatter_collect'],
+    )
+    graph.add_edge('formatter_worker', 'formatter_collect')
+
+    graph.add_conditional_edges(
+        'formatter_collect',
         extractor_node.dispatch,
         ['extractor_worker', 'extractor_collect'],
     )
