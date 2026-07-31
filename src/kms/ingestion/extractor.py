@@ -248,18 +248,22 @@ class Signature(dspy.Signature):
       about the subject matter is not furniture. It usually sits at the very
       top or the very bottom of the page and repeats on every page.
       A furniture block is emitted as its own node, never folded into a
-      neighbouring block. A run of apparatus is ONE furniture block even when
-      it mixes text with a logo, badge, or image placeholder — a licence line
-      like "Free PDF version ![Creative Commons License]() CC BY-NC-SA" is a
-      single furniture node. Do not split it into pieces and do not re-type a
-      piece by its shape: a placeholder that is part of the apparatus is
-      furniture, not an image.
-      This reaches INTO a line, never across blocks. A placeholder is part of
-      the apparatus when it sits inside a run of apparatus text, as the licence
-      line above has it. A placeholder standing alone as its own block — blank
-      lines above and below — is an extracted figure and stays an image node,
-      even on a title or copyright page where everything around it is
-      apparatus.
+      neighbouring block. A run of apparatus is ONE furniture block even when a
+      LINE of it mixes text with a logo, badge, or image placeholder — a
+      licence line like "Free PDF version ![Creative Commons License]() CC
+      BY-NC-SA" is a single furniture node. Do not split it into pieces and do
+      not re-type a piece by its shape: a placeholder sitting INLINE in
+      apparatus text is furniture, not an image.
+      The one exception is a placeholder that is its OWN block, with blank
+      lines above and below. The OCR emits one of those for a figure it pulled
+      off the page, so it is a real extracted picture rather than apparatus:
+      emit it as an image node and KEEP it, even when every block above and
+      below it is apparatus and gets dropped. Ask only how the placeholder
+      sits — inline in a line of apparatus text, or alone as its own block —
+      and never which page it is on.
+      Markers do not decide this either. A line keeps its `#` markers whether
+      or not it is apparatus, so a book title set as a heading on a title page
+      is still furniture.
 
       NOT furniture, whatever their position on the page:
       * A footnote. Its marker makes it look like apparatus, but it says
