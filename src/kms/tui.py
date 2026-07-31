@@ -170,7 +170,7 @@ def _run_tui() -> None:
         logger.info('Cancelled.')
         return
 
-    written = asyncio.run(
+    markdown = asyncio.run(
         pipeline.run(
             pdf_path,
             output_dir=out_dir,
@@ -180,7 +180,7 @@ def _run_tui() -> None:
             author=author,
         )
     )
-    logger.info('Assembled document (%d characters).', len(written))
+    logger.info('Assembled document (%d characters).', len(markdown))
 
 
 if __name__ == '__main__':

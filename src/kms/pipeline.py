@@ -237,7 +237,7 @@ async def run(
     source: str | None = None,
     title: str | None = None,
     author: str | None = None,
-) -> Path:
+) -> str:
     """Run the full pipeline on a PDF.
 
     The Mistral OCR API turns each page into reading-ordered markdown plus
@@ -287,9 +287,8 @@ async def run(
             {'recursion_limit': 1000},
         )
         nodes = result['nodes']
-        written = assembler.assemble(
+        return assembler.assemble(
             nodes, result['segments'], output_dir=output_dir
         )
-        return written
     finally:
         await db.close_driver()
