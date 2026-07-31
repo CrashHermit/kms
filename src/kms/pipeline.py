@@ -54,12 +54,14 @@ marker as "no derivation".
 The ingestion persister is the terminal stage. It runs after every stream
 mutation, so the persisted node ids match the overlay's members and instruction
 nodes are excluded: it writes the provenance layer (a `:Source` root with its
-`:Node` chain), the ``:Statement`` overlay rooted under that ``:Source``, and
-the procedural layer (`:Procedure` per derivation, `:Act` per step, threaded
-`:FIRST`/`:THEN`). A no-op when Neo4j isn't configured. After the graph
-returns, `run()` only assembles the markdown: assembly walks `nodes`, consulting
-`segments` only for picture inventories, and returns the text without writing it
-to disk.
+`:Node` chain), the ``:Statement`` overlay threaded into that same chain in
+each group's place, and the procedural layer (`:Procedure` per derivation,
+hung off its statement by `:HAS_PROCEDURE`). `:Act` steps and their
+`:FIRST`/`:THEN` threading are declared but not yet written — step
+decomposition is a future pass. A no-op when Neo4j isn't configured. After
+the graph returns, `run()` only assembles the markdown: assembly walks
+`nodes`, consulting `segments` only for picture inventories, and returns the
+text without writing it to disk.
 """
 
 import os
@@ -237,7 +239,7 @@ async def run(
     source: str | None = None,
     title: str | None = None,
     author: str | None = None,
-) -> Path:
+) -> str:
     """Run the full pipeline on a PDF.
 
     The Mistral OCR API turns each page into reading-ordered markdown plus
@@ -287,9 +289,8 @@ async def run(
             {'recursion_limit': 1000},
         )
         nodes = result['nodes']
-        written = assembler.assemble(
+        return assembler.assemble(
             nodes, result['segments'], output_dir=output_dir
         )
-        return written
     finally:
         await db.close_driver()

@@ -142,6 +142,14 @@ class Signature(dspy.Signature):
       of what it says (e.g. a paragraph that runs into "Proof." or "Solution."
       stays one node). The single exception is a run of bibliographic
       references, which is split per cited work — see that type below.
+    - A node's content is its block copied AS WRITTEN, including whatever leads
+      it: a heading's `#` markers, an item's number or letter ("282.", "(b)"),
+      a note's marker, a label naming the block. A leading marker is not
+      formatting to be tidied away — it is part of what the block IS, and an
+      exercise stripped of its number is no longer the exercise the rest of the
+      book refers to. This holds whatever the block's type: a numbered item
+      whose body is display math is still that numbered item, so it keeps the
+      number and does not become bare math.
     - If content starts or ends abruptly at the boundary of the given markdown,
       extract it as-is — do not try to complete or trim it, and NEVER leave it
       out. A page often opens or closes mid-block, so the first or last thing
@@ -152,6 +160,16 @@ class Signature(dspy.Signature):
       it its own node otherwise. It is rejoined to its other half downstream,
       but only if it survives this stage. A leading bare number is a fragment
       of this kind, not a page number.
+      When it gets its own node, TYPE IT AS WHAT IT IS A PIECE OF, never by
+      where it sits on the page: an unpunctuated half-sentence of prose is a
+      paragraph, a run of code is code, a row of values is table. A fragment is
+      NEVER a header — a heading is a short title that opens what follows, so
+      text that starts lowercase, starts mid-sentence, or completes a sentence
+      the previous page began cannot be one. The first line of a page is not a
+      heading merely because it is first.
+      Type it right or the repair never happens: the stage that rejoins the two
+      halves downstream merges only nodes of the SAME type, so a fragment that
+      survives with the wrong type is as lost as one deleted.
 
     NODE TYPES (emit `type` as exactly one of these values):
     - paragraph: Standard prose text. Inline math remains in the paragraph.
@@ -178,6 +196,21 @@ class Signature(dspy.Signature):
       exactly one header node per heading; do not split a heading into multiple
       nodes. A short label that opens a labelled block (e.g. "Example 6.7",
       "Theorem 2.1", "Exercise 12") is a header.
+      Copy the heading line EXACTLY as the markdown has it, keeping its leading
+      `#` markers and any bold or italic markup: the node for "## 1.5 Project"
+      has content "## 1.5 Project", never "1.5 Project". The markers are what
+      set the heading's level, and no later stage can recover a level that was
+      stripped here.
+      A RUN-IN HEADING — a label followed by body text on the SAME line, e.g.
+      "**Steps** We recommend proceeding in the following order:" — is TWO
+      nodes: the label as a header, and the text after it as its own node of
+      whatever type that text is. Emitting only the label deletes the rest of
+      the line. Never do that.
+      This is about a NAMED label, never about numbering. A numbered or
+      lettered item — "282. $$9d^2 - 12d = -4$$", "3. Read appendix A" — is
+      ONE node that keeps its number in the content exactly as written. The
+      number is that item's identity and later stages match on it, so never
+      split the number onto a node of its own and never drop it.
     - bibliographic: A reference to an external work — a published paper, book,
       chapter, report, or web resource. It cites a work rather than saying
       something: authors and a year with a title, and usually a venue,
@@ -215,12 +248,22 @@ class Signature(dspy.Signature):
       about the subject matter is not furniture. It usually sits at the very
       top or the very bottom of the page and repeats on every page.
       A furniture block is emitted as its own node, never folded into a
-      neighbouring block. A run of apparatus is ONE furniture block even when
-      it mixes text with a logo, badge, or image placeholder — a licence line
-      like "Free PDF version ![Creative Commons License]() CC BY-NC-SA" is a
-      single furniture node. Do not split it into pieces and do not re-type a
-      piece by its shape: a placeholder that is part of the apparatus is
-      furniture, not an image.
+      neighbouring block. A run of apparatus is ONE furniture block even when a
+      LINE of it mixes text with a logo, badge, or image placeholder — a
+      licence line like "Free PDF version ![Creative Commons License]() CC
+      BY-NC-SA" is a single furniture node. Do not split it into pieces and do
+      not re-type a piece by its shape: a placeholder sitting INLINE in
+      apparatus text is furniture, not an image.
+      The one exception is a placeholder that is its OWN block, with blank
+      lines above and below. The OCR emits one of those for a figure it pulled
+      off the page, so it is a real extracted picture rather than apparatus:
+      emit it as an image node and KEEP it, even when every block above and
+      below it is apparatus and gets dropped. Ask only how the placeholder
+      sits — inline in a line of apparatus text, or alone as its own block —
+      and never which page it is on.
+      Markers do not decide this either. A line keeps its `#` markers whether
+      or not it is apparatus, so a book title set as a heading on a title page
+      is still furniture.
 
       NOT furniture, whatever their position on the page:
       * A footnote. Its marker makes it look like apparatus, but it says

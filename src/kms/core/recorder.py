@@ -12,6 +12,7 @@ re-running the same book appends to the same corpus.
 
 import base64
 import json
+import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,6 +20,8 @@ from uuid import NAMESPACE_URL, uuid5
 
 import dspy
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 _NAMESPACE_KMS = uuid5(NAMESPACE_URL, 'kms')
 
@@ -70,8 +73,42 @@ def _is_data_url(value: str) -> bool:
     return bool(re.match(r'^data:[^;]+;base64,', value))
 
 
+def _jsonable(value: object) -> object:
+    """Coerce one recorded value into something ``json.dumps`` accepts.
+
+    Most stages declare their DSPy fields as Pydantic models — a single
+    ``DSPyModel``, or a ``list[DSPyModel]`` for the stages that emit a whole
+    page of nodes — so both the inputs and the prediction routinely arrive as
+    models nested inside lists. Recursion is what makes those cases work:
+    coercing only the top level (the previous behaviour) served the corrector
+    and formatter, whose fields are plain strings, and raised ``TypeError`` on
+    every other stage.
+
+    Args:
+        value: A recorded input or output value.
+
+    Returns:
+        The same value with Pydantic models dumped to dicts, containers
+        rebuilt from coerced members, and anything else JSON cannot represent
+        rendered as its string form.
+    """
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode='json')
+    if isinstance(value, dict):
+        return {str(key): _jsonable(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_jsonable(item) for item in value]
+    if value is None or isinstance(value, str | bool | int | float):
+        return value
+    return str(value)
+
+
 def _serialize_images(inputs: dict, images_dir: Path) -> dict:
-    """Replace ``dspy.Image`` values with sidecar file paths."""
+    """Replace ``dspy.Image`` values with sidecar file paths.
+
+    Every other value is coerced by ``_jsonable``, so a model-valued input
+    field records as a dict rather than aborting the write.
+    """
     index = 0
     serialized: dict = {}
     for name, value in inputs.items():
@@ -82,10 +119,8 @@ def _serialize_images(inputs: dict, images_dir: Path) -> dict:
             _write_image_sidecar(value, sidecar)
             serialized[name] = f'images/{filename}'
             index += 1
-        elif isinstance(value, BaseModel):
-            serialized[name] = value.model_dump()
         else:
-            serialized[name] = value
+            serialized[name] = _jsonable(value)
     return serialized
 
 
@@ -122,6 +157,11 @@ def record_example(
     that does not change the return type. No-op when ``set_run`` has not
     been called (recording is opt-in).
 
+    Failures are logged and swallowed: recording is a side channel for
+    training data, so a bad value or an unwritable corpus must cost that one
+    example, never the document being ingested. Raising here aborts the whole
+    LangGraph run from inside a worker.
+
     Args:
         module_name: Stable key for the module (e.g. ``'corrector'``).
         inputs: The keyword arguments the module was called with.
@@ -130,16 +170,23 @@ def record_example(
     global _run_id  # noqa PLW0603
     if _run_id is None:
         return
-    run_dir = _ensure_run_dir(module_name)
-    images_dir = run_dir / 'images'
-    jsonl = run_dir / 'examples.jsonl'
+    try:
+        run_dir = _ensure_run_dir(module_name)
+        images_dir = run_dir / 'images'
+        jsonl = run_dir / 'examples.jsonl'
 
-    record = {
-        'inputs': _serialize_images(inputs, images_dir),
-        'outputs': dict(prediction),
-    }
-    with jsonl.open('a') as handle:
-        handle.write(json.dumps(record, ensure_ascii=False) + '\n')
+        record = {
+            'inputs': _serialize_images(inputs, images_dir),
+            'outputs': _jsonable(dict(prediction)),
+        }
+        with jsonl.open('a') as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + '\n')
+    except (TypeError, ValueError, OSError):
+        logger.warning(
+            'recorder: failed to record a %s example',
+            module_name,
+            exc_info=True,
+        )
 
 
 def load_examples(
