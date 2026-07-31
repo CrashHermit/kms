@@ -1,2 +1,2 @@
-"""Final assembly: resolve figures and concatenate the node stream into one
-markdown document."""
+"""Final assembly: resolve figures and return the node stream as one markdown
+string."""

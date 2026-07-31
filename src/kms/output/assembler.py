@@ -1,6 +1,6 @@
 """
-Final assembly: resolve image links, consolidate picture files, and concatenate
-the ordered AST into a single markdown document.
+Final assembly: resolve image links, consolidate picture files, and return the
+ordered AST concatenated into a single markdown string.
 
 This runs after the LangGraph pipeline, once every stage has filled the segment
 backbone. It walks segments in document order while each segment's picture
@@ -11,7 +11,7 @@ node's page is its containing segment — no per-node page index is needed).
 For each resolved placeholder the surviving picture is copied into a single
 `<output_dir>/images/` directory under a collision-free name
 (`seg<segment>_img<picture>.png`), and the placeholder is rewritten to a
-relative link (`![](images/seg0003_img002.png)`) so the emitted document is
+relative link (`![](images/seg0003_img002.png)`) so the returned document is
 self-contained and portable. A placeholder whose index has no matching picture
 is left untouched rather than raising — the pipeline should not produce these,
 but a stray one must not abort assembly.
@@ -85,9 +85,8 @@ def assemble(
     nodes: list[models.ASTNode],
     segments: list[models.Segment],
     output_dir: str | Path = "output",
-    filename: str = "document.md",
-) -> Path:
-    """Resolve image links and write the node stream to one markdown file.
+) -> str:
+    """Resolve image links and return the node stream as one markdown string.
 
     Walks the global node stream in document order. Each node carries its
     originating `segment_index`, so an `![N]()` placeholder resolves against
@@ -99,11 +98,11 @@ def assemble(
     Args:
         nodes: The flat, ordered node stream.
         segments: The segment backbone, for its picture inventories.
-        output_dir: Directory the document and its images are written into.
-        filename: Name of the written markdown file.
+        output_dir: Directory the consolidated images are written into.
 
     Returns:
-        The path of the written document.
+        The assembled markdown, image placeholders resolved to relative
+        links under ``<output_dir>/images/``.
     """
     output_dir = Path(output_dir)
     images_dir = output_dir / IMAGES_DIRNAME
@@ -128,7 +127,4 @@ def assemble(
             )
         )
 
-    document = "\n\n".join(parts) + "\n"
-    output_path = output_dir / filename
-    output_path.write_text(document, encoding="utf-8")
-    return output_path
+    return "\n\n".join(parts) + "\n"

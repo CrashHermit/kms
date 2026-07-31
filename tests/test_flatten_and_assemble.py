@@ -2,7 +2,6 @@
 segment_index."""
 
 import asyncio
-import pathlib
 import tempfile
 
 from kms.core import models
@@ -47,10 +46,7 @@ def test_flatten_assigns_stable_ids_and_seg_index_across_pages():
 def test_assemble_walks_flat_nodes_and_passes_unmatched_placeholder():
     segs = _segments()
     flat = models.flatten_segments(segs)
-    out = assembler.assemble(
-        flat, segs, output_dir=tempfile.mkdtemp(), filename='doc.md'
-    )
-    text = pathlib.Path(out).read_text()
+    text = assembler.assemble(flat, segs, output_dir=tempfile.mkdtemp())
     assert '# Ch 1' in text and '1. solve x' in text
     assert (
         '![1]()' in text
@@ -88,13 +84,11 @@ def test_assembly_emits_each_block_once_after_the_overlay_is_built():
     state.update(asyncio.run(typer.run(state)))
     asyncio.run(statement_extractor.StatementExtractorNode().run(state))
 
-    out = assembler.assemble(
+    text = assembler.assemble(
         state['nodes'],
         [models.Segment(index=0, image_path='p0.png')],
         output_dir=tempfile.mkdtemp(),
-        filename='document.md',
     )
-    text = pathlib.Path(out).read_text()
     for content in (
         'Theorem 2.1.',
         'Proof. Let e be ...',

@@ -172,7 +172,7 @@ class MergeSignature(dspy.Signature):
     # contract is reproducing characters exactly, and it was being shown
     # characters that were not the document's — it then copied the escaped
     # form back about a tenth of the time, silently doubling backslashes in
-    # `document.md`. No prompt wording can fix that; the field type can.
+    # the assembled output. No prompt wording can fix that; the field type can.
     tail: str = dspy.InputField(
         description='The first half — the block as it was cut off at the foot of the page.'
     )

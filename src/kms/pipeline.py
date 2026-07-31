@@ -2,8 +2,8 @@
 LangGraph wiring for the document-processing pipeline.
 
 Builds the ordered graph that turns a PDF (via the Mistral OCR front-end) into
-a finished AST, then assembles it to a single markdown document plus the
-statement overlay. The ingestion stages (corrector, extractor, seam merger) are
+a finished AST, then assembles it to a single markdown string (figures
+consolidated under ``<output_dir>/images/``) plus the statement overlay. The ingestion stages (corrector, extractor, seam merger) are
 map-reduce: a conditional edge fans out one Send per unit of work to the
 stage's worker, the workers append to a per-stage reducer channel, and the
 collect step drains that channel back into the ordered backbone before the next
@@ -57,8 +57,9 @@ nodes are excluded: it writes the provenance layer (a `:Source` root with its
 `:Node` chain), the ``:Statement`` overlay rooted under that ``:Source``, and
 the procedural layer (`:Procedure` per derivation, `:Act` per step, threaded
 `:FIRST`/`:THEN`). A no-op when Neo4j isn't configured. After the graph
-returns, `run()` only assembles the markdown document: assembly walks `nodes`,
-consulting `segments` only for picture inventories.
+returns, `run()` only assembles the markdown: assembly walks `nodes`, consulting
+`segments` only for picture inventories, and returns the text without writing it
+to disk.
 """
 
 import os
@@ -232,7 +233,6 @@ def build_graph() -> 'CompiledStateGraph':
 async def run(
     pdf_path: str | Path,
     output_dir: str | Path = 'output',
-    filename: str = 'document.md',
     pages: list[int] | None = None,
     source: str | None = None,
     title: str | None = None,
@@ -245,13 +245,12 @@ async def run(
     heals, builds the statement overlay, and (when Neo4j is configured)
     persists the ``:Node`` provenance layer and the ``:Statement`` overlay plus
     its procedural layer on top of it. Graph persistence is skipped entirely
-    when Neo4j isn't configured — a DB-less run still produces ``document.md``
-    but persists no nodes or statements.
+    when Neo4j isn't configured — a DB-less run still returns the assembled
+    markdown but persists no nodes or statements.
 
     Args:
         pdf_path: The source PDF.
-        output_dir: Directory the document and its assets are written into.
-        filename: Name of the assembled markdown file.
+        output_dir: Directory the document's assets are written into.
         pages: 0-based pages to limit the OCR request to, or None for all.
         source: The book identity used as the graph's Neo4j key. Defaults to
             the PDF's filename.
@@ -259,7 +258,7 @@ async def run(
         author: Optional book author, stored on the ``:Source`` node.
 
     Returns:
-        The path of the assembled document.
+        The assembled markdown document as a string.
     """
     # Deferred so importing the pipeline does not require the OCR extra.
     from kms.ingestion import ocr
@@ -289,7 +288,7 @@ async def run(
         )
         nodes = result['nodes']
         written = assembler.assemble(
-            nodes, result['segments'], output_dir=output_dir, filename=filename
+            nodes, result['segments'], output_dir=output_dir
         )
         return written
     finally:

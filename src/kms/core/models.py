@@ -110,7 +110,7 @@ class InstructionNode(ASTNode):
 # unit occupies, and its content is derived from them. Deliberately NOT an
 # ASTNode: while it was one, a Statement could be — and was — assigned into the
 # stream in its first member's place, which made every consumer of that stream
-# read the group's text twice (the duplicated blocks in ``document.md``).
+# read the group's text twice (the duplicated blocks in the assembled output).
 #
 # Statement and Procedure share no base class either. Their only common field
 # is ``content``; their identities differ, and a Procedure is a Statement's

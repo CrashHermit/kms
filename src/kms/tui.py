@@ -180,7 +180,7 @@ def _run_tui() -> None:
             author=author,
         )
     )
-    logger.info('Wrote assembled document to: %s', written)
+    logger.info('Assembled document (%d characters).', len(written))
 
 
 if __name__ == '__main__':

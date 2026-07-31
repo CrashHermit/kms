@@ -35,7 +35,7 @@ group the span covers — and a statement standing in the stream would make ever
 stage that walks ``nodes`` read the group's text twice, once inside the
 statement and once from the members that follow it. The assembler walking that
 stream is where it showed: every member after a group's first was emitted twice
-into ``document.md``. ``Statement`` is no longer an ``ASTNode`` at all, so the
+into the assembled output. ``Statement`` is no longer an ``ASTNode`` at all, so the
 stream can no longer hold one.
 
 Entry point ``type_roles(spans, nodes_by_id)`` (async): returns the statement
