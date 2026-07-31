@@ -152,6 +152,16 @@ class Signature(dspy.Signature):
       it its own node otherwise. It is rejoined to its other half downstream,
       but only if it survives this stage. A leading bare number is a fragment
       of this kind, not a page number.
+      When it gets its own node, TYPE IT AS WHAT IT IS A PIECE OF, never by
+      where it sits on the page: an unpunctuated half-sentence of prose is a
+      paragraph, a run of code is code, a row of values is table. A fragment is
+      NEVER a header — a heading is a short title that opens what follows, so
+      text that starts lowercase, starts mid-sentence, or completes a sentence
+      the previous page began cannot be one. The first line of a page is not a
+      heading merely because it is first.
+      Type it right or the repair never happens: the stage that rejoins the two
+      halves downstream merges only nodes of the SAME type, so a fragment that
+      survives with the wrong type is as lost as one deleted.
 
     NODE TYPES (emit `type` as exactly one of these values):
     - paragraph: Standard prose text. Inline math remains in the paragraph.
@@ -178,6 +188,16 @@ class Signature(dspy.Signature):
       exactly one header node per heading; do not split a heading into multiple
       nodes. A short label that opens a labelled block (e.g. "Example 6.7",
       "Theorem 2.1", "Exercise 12") is a header.
+      Copy the heading line EXACTLY as the markdown has it, keeping its leading
+      `#` markers and any bold or italic markup: the node for "## 1.5 Project"
+      has content "## 1.5 Project", never "1.5 Project". The markers are what
+      set the heading's level, and no later stage can recover a level that was
+      stripped here.
+      A RUN-IN HEADING — a label followed by body text on the SAME line, e.g.
+      "**Steps** We recommend proceeding in the following order:" — is TWO
+      nodes: the label as a header, and the text after it as its own node of
+      whatever type that text is. Emitting only the label deletes the rest of
+      the line. Never do that.
     - bibliographic: A reference to an external work — a published paper, book,
       chapter, report, or web resource. It cites a work rather than saying
       something: authors and a year with a title, and usually a venue,
@@ -221,6 +241,12 @@ class Signature(dspy.Signature):
       single furniture node. Do not split it into pieces and do not re-type a
       piece by its shape: a placeholder that is part of the apparatus is
       furniture, not an image.
+      This reaches INTO a line, never across blocks. A placeholder is part of
+      the apparatus when it sits inside a run of apparatus text, as the licence
+      line above has it. A placeholder standing alone as its own block — blank
+      lines above and below — is an extracted figure and stays an image node,
+      even on a title or copyright page where everything around it is
+      apparatus.
 
       NOT furniture, whatever their position on the page:
       * A footnote. Its marker makes it look like apparatus, but it says
