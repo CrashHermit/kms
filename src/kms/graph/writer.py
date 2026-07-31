@@ -9,8 +9,11 @@ Neo4j.
 prose :Node and :Statement vertices in document order. Absorbed raw
 nodes are persisted but skipped in the chain.
 
-``persist_statements`` writes the ``:Statement`` overlay and
-``:HAS_STATEMENT`` edges from ``:Source``.
+``persist_statements`` writes the ``:Statement`` overlay as bare vertices.
+No edge runs from ``:Source`` to them: a statement is reached through the
+merged ``:NEXT`` chain, and scoped to its book by the indexed ``source``
+property (see ``schema``). An edge per statement would duplicate that index
+and hang the whole book off one supernode.
 
 ``persist_procedures`` writes ``:Procedure`` vertices and
 ``:HAS_PROCEDURE`` edges from their statements. ``:Act`` step chains are
@@ -251,8 +254,12 @@ def statement_rows(
 async def persist_statements(
     statements: list[models.Statement], source: str
 ) -> None:
-    """Upsert the book's ``:Statement`` overlay, rooted under the
-    already-persisted ``:Source`` via ``:HAS_STATEMENT``."""
+    """Upsert the book's ``:Statement`` overlay as bare vertices.
+
+    Deliberately edgeless: ``persist_chain`` threads each statement into the
+    walkable ``:NEXT`` chain at its group's place, and book-scoped lookup goes
+    through the ``statement_source`` index rather than a traversal.
+    """
     if not statements:
         return
     rows = statement_rows(statements, source)
