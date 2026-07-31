@@ -58,10 +58,10 @@ nodes are excluded: it writes the provenance layer (a `:Source` root with its
 each group's place, and the procedural layer (`:Procedure` per derivation,
 hung off its statement by `:HAS_PROCEDURE`). `:Act` steps and their
 `:FIRST`/`:THEN` threading are declared but not yet written — step
-decomposition is a future pass. A no-op when Neo4j isn't configured. After the graph
-returns, `run()` only assembles the markdown: assembly walks `nodes`, consulting
-`segments` only for picture inventories, and returns the text without writing it
-to disk.
+decomposition is a future pass. A no-op when Neo4j isn't configured. After
+the graph returns, `run()` only assembles the markdown: assembly walks
+`nodes`, consulting `segments` only for picture inventories, and returns the
+text without writing it to disk.
 """
 
 import os

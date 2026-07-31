@@ -182,7 +182,11 @@ def record_example(
         with jsonl.open('a') as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + '\n')
     except (TypeError, ValueError, OSError):
-        logger.warning('recorder: failed to record a %s example', module_name, exc_info=True)
+        logger.warning(
+            'recorder: failed to record a %s example',
+            module_name,
+            exc_info=True,
+        )
 
 
 def load_examples(
