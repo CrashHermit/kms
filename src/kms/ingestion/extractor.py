@@ -142,6 +142,14 @@ class Signature(dspy.Signature):
       of what it says (e.g. a paragraph that runs into "Proof." or "Solution."
       stays one node). The single exception is a run of bibliographic
       references, which is split per cited work — see that type below.
+    - A node's content is its block copied AS WRITTEN, including whatever leads
+      it: a heading's `#` markers, an item's number or letter ("282.", "(b)"),
+      a note's marker, a label naming the block. A leading marker is not
+      formatting to be tidied away — it is part of what the block IS, and an
+      exercise stripped of its number is no longer the exercise the rest of the
+      book refers to. This holds whatever the block's type: a numbered item
+      whose body is display math is still that numbered item, so it keeps the
+      number and does not become bare math.
     - If content starts or ends abruptly at the boundary of the given markdown,
       extract it as-is — do not try to complete or trim it, and NEVER leave it
       out. A page often opens or closes mid-block, so the first or last thing
@@ -198,6 +206,11 @@ class Signature(dspy.Signature):
       nodes: the label as a header, and the text after it as its own node of
       whatever type that text is. Emitting only the label deletes the rest of
       the line. Never do that.
+      This is about a NAMED label, never about numbering. A numbered or
+      lettered item — "282. $$9d^2 - 12d = -4$$", "3. Read appendix A" — is
+      ONE node that keeps its number in the content exactly as written. The
+      number is that item's identity and later stages match on it, so never
+      split the number onto a node of its own and never drop it.
     - bibliographic: A reference to an external work — a published paper, book,
       chapter, report, or web resource. It cites a work rather than saying
       something: authors and a year with a title, and usually a venue,
