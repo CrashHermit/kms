@@ -124,16 +124,31 @@ class Signature(dspy.Signature):
       solution shown).
     - a WORKED DERIVATION that resolves one of the above: a proof, a solution, a
       derivation, a worked calculation.
+    - a PRESCRIBED PROCEDURE: an ordered run of steps the reader is told to
+      carry out — a project's "Steps", a lab protocol, an algorithm given as
+      numbered instructions. Like a derivation it is a sequence of acts in
+      order, but it is PRESCRIBED rather than worked: it says what the reader
+      is to DO, where a derivation shows what the author DID. The whole run is
+      ONE span — its lead-in ("We recommend proceeding in the following
+      order:") together with every numbered step — never one span per step.
 
     NEVER SKIP A LABELLED UNIT. Every node that opens with its own label —
     "Definition 2.5.1", "Theorem 3.4", "Example 6.7", "SAGE Example 2.5.4.",
-    "Lemma 1.2", or a bare leading number ("12.", "2.1.12") — BEGINS a span,
-    without exception. This holds even when the unit is a single node with
-    nothing worked out after it: a bare definition that is simply stated, a
-    theorem quoted without proof, an exercise with no solution. Such a unit is
+    "Lemma 1.2", or a bare leading number ("12.", "2.1.12") that numbers a
+    problem in a problem set — BEGINS a span, without exception. This holds
+    even when the unit is a single node with nothing worked out after it: a
+    bare definition that is simply stated, a theorem quoted without proof, an
+    exercise with no solution. Such a unit is
     ONE span of one node. Do not pass over a labelled unit merely because there
     is no working attached to it — a missing span here deletes that block from
     the document entirely.
+
+    A NUMBER IS NOT AUTOMATICALLY A LABEL. The steps of a prescribed procedure
+    are numbered too ("0.", "1.", "2."), but those numbers ORDER one unit
+    rather than NAME several: they run consecutively under a single lead-in and
+    each reads as an act to perform, not as a problem to solve. Keep such a run
+    in ONE span. Ask what the number does — does it name a problem the book can
+    refer back to, or sequence a step inside something already named?
 
     A STATEMENT AND ITS DERIVATION ARE ALWAYS TWO SEPARATE SPANS. Never merge a
     theorem with its proof, or an example with its solution, into one span — cut
@@ -210,8 +225,9 @@ class Signature(dspy.Signature):
       to ordinary narrative.
 
     SEPARATE UNITS: distinct base numbers are distinct units (exercise 12 and
-    exercise 13 are two spans, never merged). A worked example and a following
-    exercise are two units.
+    exercise 13 are two spans, never merged) — this concerns problems in a
+    problem set, not the numbered steps of one procedure, which stay together.
+    A worked example and a following exercise are two units.
 
     POSITIONS:
     - Emit spans over the given nodes ONLY, using their `position` values; a
