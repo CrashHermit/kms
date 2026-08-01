@@ -24,6 +24,26 @@ It closes a gap the corrector's split left open: with delimiter normalization
 removed from the corrector, nothing was converting `\( … \)` / `\[ … \]` to the
 dollar convention the extractor's prompt and every downstream stage assume.
 
+The same gap has a wider mouth than delimiter conversion covers. The OCR
+front-end's markup varies by page: an end-to-end run came back with page 0
+carrying 21 delimited spans and pages 1 and 2 carrying none at all, their
+mathematics transcribed as plain text with Unicode glyphs — `x⁴`, `3ˣ`,
+`9x + 7 when x = 3`. Converting delimiters cannot help a page that has none,
+so those pages reached the equation extractor, whose contract is LaTeX *with*
+its delimiters, with nothing it could recognise: it found five equations on
+the delimited page and none on the other two. Wrapping undelimited
+mathematics, and writing Unicode notation as LaTeX, are therefore required
+work here for the same reason delimiter conversion is — this is the one pass
+positioned to do it, and the corrector cannot, since restoring a delimiter
+the page image does not show is precisely the divergence its contract forbids.
+
+Wrapping is the one rule here that can destroy information rather than merely
+fail to add it: a bare quantity in a drill exercise looks much like an
+expression, and an item number swallowed into a `$ … $` span is an identifier
+the rest of the book cites and nothing downstream can restore. The prompt
+therefore states the test, lists what is never wrapped, and makes the
+tie-break explicit — when in doubt, leave it bare.
+
 **Unguarded**, like the corrector: whatever the model returns is what the page
 becomes. No divergence check, no post-processing — the pipeline's passes are
 bare LLM calls and correctness rests on the prompt.
@@ -93,9 +113,80 @@ class Signature(dspy.Signature):
       equation — remove the delimiter pair between them and join the content
       with a line break. Two independent back-to-back equations stay separate.
 
-    Change the delimiters only, never the expression between them. Convert all
-    of them, not the first few, and do this even when the page has other things
-    wrong with it.
+    Convert all of them, not the first few, and do this even when the page has
+    other things wrong with it.
+
+    REQUIRED — MATH THAT ARRIVED WITH NO DELIMITERS AT ALL
+
+    Some pages come through with their mathematics as plain text: "969. x⁴ when
+    x = 3", "1011. -200 + 65". Nothing above catches these, because there are
+    no delimiters to convert. Wrap each such expression in `$ … $`.
+
+    THE TEST. A span is mathematics when it has EITHER of:
+    - a symbol standing for a quantity: `9x + 7`, `-m`, `12n`, `x⁴`;
+    - an operator or relation joining quantities: `25 - 7`, `-200 + 65`,
+      `20 ÷ 4`, `42 ≥ 27`, `y - 8 = 32`;
+    or when it is written in notation that is only ever mathematical, such as
+    absolute-value bars: `|7|`, `|-25|`, `|8 - 4|`.
+
+    A bare quantity with neither a symbol nor an operator is NOT mathematics
+    here. Leave these exactly as they are:
+    - an item's own number: `925.`, `1005.` — never wrap it, and never let it
+      join the expression after it;
+    - a part marker: `ⓐ`, `(a)`, `a)`;
+    - a lone value or a row of them, which in drill exercises is the exercise's
+      subject matter, not an expression: `407 8,564`, `864,951`, `1430`;
+    - page numbers, years, section and theorem numbers, and any other
+      identifier the document refers to elsewhere by name.
+
+    Wrap each maximal expression on its own, not the sentence around it:
+    "evaluate 9x + 7 when x = 3" becomes "evaluate $9x + 7$ when $x = 3$" —
+    two spans, with the prose between them untouched.
+
+    WHEN YOU ARE NOT SURE, LEAVE IT BARE. The two mistakes are not equal: a
+    span wrongly left alone is the page as it already stands and any later pass
+    can still find it, while a number wrongly wrapped is an identifier
+    corrupted — and an exercise stripped of the number the rest of the book
+    cites it by cannot be recovered downstream.
+
+    REQUIRED — A DOLLAR SIGN THAT IS NOT A DELIMITER
+
+    `$` also means money, and word problems are full of it: "The skirt cost
+    $15 more than the blouse." Escape every such dollar sign as `\$`.
+
+    This matters most on the lines you have just edited. A page that mentions
+    a price and says nothing in mathematics survives its stray `$`, but as
+    soon as this pass writes real delimiters nearby, a reader counting from
+    the left pairs the money sign with one of them and takes the prose
+    between for an expression — "$15 more than the blouse. Let $" becomes
+    mathematics. Escape the currency whenever a line carries both, and escape
+    it on sight even when it does not: the delimiters that collide with it may
+    be written later, on a page you no longer have in front of you.
+
+    A dollar sign that opens or closes real mathematics is never escaped.
+
+    REQUIRED — MATHEMATICS WRITTEN IN UNICODE GLYPHS
+
+    Inside a math span — one already delimited, or one you are wrapping under
+    the rule above — write the notation in LaTeX rather than in Unicode
+    look-alikes:
+    - superscripts: `x⁴` -> `x^4`, `3ˣ` -> `3^x`, `x¹⁰` -> `x^{10}`
+    - subscripts: `R₁` -> `R_1`
+    - operators and relations: `×` -> `\times`, `÷` -> `\div`, `·` -> `\cdot`,
+      `±` -> `\pm`, `≤` -> `\leq`, `≥` -> `\geq`, `≠` -> `\neq`, `√` -> `\sqrt`,
+      `∞` -> `\infty`, `→` -> `\to`, `⇒` -> `\Rightarrow`, `∈` -> `\in`
+    - Greek letters used as symbols: `α` -> `\alpha`, `π` -> `\pi`
+
+    This changes how the notation is ENCODED, never what it says: `x⁴` and
+    `x^4` are the same power. Do not go further and rewrite the mathematics
+    itself — do not simplify, reorder, factor, evaluate, or "tidy" an
+    expression into a form you prefer.
+
+    Do this ONLY inside mathematics. A superscript that marks a footnote is a
+    reference marker, not an exponent: leave `Theorem 2¹` alone. Leave glyphs
+    in ordinary prose, in code, and in verbatim content untouched.
+
+    Otherwise change the delimiters only, never the expression between them.
 
     ALSO STANDARDISE
 
@@ -123,9 +214,11 @@ class Signature(dspy.Signature):
     - Code and verbatim content. Leave fenced blocks and inline code alone,
       including their indentation and internal spacing — there, whitespace is
       structure, not presentation.
-    - Mathematical content. Only the delimiters around an expression may
-      change. Never rewrite the expression, and never convert notation to a
-      form you prefer.
+    - Mathematical content. What may change is the delimiters around an
+      expression, and the ENCODING of its notation where that notation is a
+      Unicode look-alike for LaTeX (see the Unicode rule above). Nothing else:
+      never rewrite the expression, never convert notation to a form you
+      prefer, and never alter a symbol the document chose.
     - Notation, terminology, and spelling. Keep the document's own conventions
       and symbols; standardise the markup, not the author.
     - Numbering and labels. Leave every identifier the document uses — section
