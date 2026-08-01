@@ -393,7 +393,11 @@ def _mergeable_indices(nodes: list[models.ASTNode]) -> list[int]:
     Returns:
         The indices of the mergeable nodes.
     """
-    return [index for index, node in enumerate(nodes) if not isinstance(node, _APPARATUS)]
+    return [
+        index
+        for index, node in enumerate(nodes)
+        if not isinstance(node, _APPARATUS)
+    ]
 
 
 def _pairs(
@@ -455,8 +459,12 @@ async def _merge_pair(
     head_index = bottom_mergeable[0]
     tail = top_nodes[tail_index]
     head = bottom_nodes[head_index]
-    top_context = top_nodes[top_mergeable[-2]] if len(top_mergeable) > 1 else None
-    bottom_context = bottom_nodes[bottom_mergeable[1]] if len(bottom_mergeable) > 1 else None
+    top_context = (
+        top_nodes[top_mergeable[-2]] if len(top_mergeable) > 1 else None
+    )
+    bottom_context = (
+        bottom_nodes[bottom_mergeable[1]] if len(bottom_mergeable) > 1 else None
+    )
 
     edges = {
         'top_bottom_edge_node': _to_seam_node_dto(tail),
@@ -501,13 +509,19 @@ class SeamMergerNode:
     def dispatch_even(self, state: state.State) -> list[Send] | str:
         """Fans out workers for even-indexed segment pairs (0-1, 2-3, …)."""
         pairs = _pairs(state.get('segments', []), parity=0)
-        sends = [Send('seam_even_worker', {'top': top, 'bottom': bottom}) for top, bottom in pairs]
+        sends = [
+            Send('seam_even_worker', {'top': top, 'bottom': bottom})
+            for top, bottom in pairs
+        ]
         return sends or 'seam_even_collect'
 
     def dispatch_odd(self, state: state.State) -> list[Send] | str:
         """Fans out workers for odd-indexed segment pairs (1-2, 3-4, …)."""
         pairs = _pairs(state.get('segments', []), parity=1)
-        sends = [Send('seam_odd_worker', {'top': top, 'bottom': bottom}) for top, bottom in pairs]
+        sends = [
+            Send('seam_odd_worker', {'top': top, 'bottom': bottom})
+            for top, bottom in pairs
+        ]
         return sends or 'seam_odd_collect'
 
     async def even_worker(self, state: dict) -> dict:

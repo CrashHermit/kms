@@ -32,9 +32,9 @@ testpaths = ["tests"]
 [tool.ruff]
 # One tool for format + lint + import order. src-layout aware so `kms` resolves
 # as first-party. Target the minimum supported interpreter.
-line-length = 100
+line-length = 80
 target-version = "py312"
-src = ["src", "."]
+src = ["src"]
 
 [tool.ruff.lint]
 # Light, low-noise set: pyflakes (unused imports/vars, undefined names), import

@@ -135,7 +135,9 @@ def _write_image_sidecar(image: dspy.Image, path: Path) -> None:
             path.write_bytes(source.read_bytes())
 
 
-def _deserialize_images(inputs: dict, run_dir: Path, image_fields: frozenset[str]) -> dict:
+def _deserialize_images(
+    inputs: dict, run_dir: Path, image_fields: frozenset[str]
+) -> dict:
     """Rebuild ``dspy.Image`` values from sidecar paths."""
     deserialized: dict = {}
     for name, value in inputs.items():

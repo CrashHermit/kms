@@ -103,59 +103,107 @@ class InstructionNode(ASTNode):
     pass
 
 
+# --- Equation & variable binding ---------------------------------------------
+
+
+@dataclass(slots=True)
+class Equation:
+    """One equation extracted from a content node.
+
+    Carries the LaTeX source, an optional identity (e.g. "heat equation")
+    resolved against the existing graph, and an optional domain label.
+    """
+
+    id: int | None = None
+    latex: str | None = None
+    name: str | None = None
+    domain: str | None = None
+
+
+@dataclass(slots=True)
+class Variable:
+    """One stand-in bound to a meaning at a specific position in the text.
+
+    Domain-agnostic: a symbol in a mathematical expression, an element in a
+    chemical equation, a labelled component in a circuit diagram, a parameter
+    in a function signature, a defined term in a legal document — anything
+    where a compact notation stands for a fuller meaning.
+
+    When ``equation_index`` is set, the variable belongs to an equation
+    rather than to the enclosing unit — the ``:HAS_VARIABLE`` edge will
+    point from that ``:Equation`` instead of from the unit.
+    """
+
+    symbol: str
+    meaning: str
+    kind: str
+    equation_index: int | None = None
+
+
 # --- Semantic overlay -------------------------------------------------------
 #
 # The overlay sits BESIDE the node stream, never in it. A node is one verbatim
-# block of the page; a Statement is the whole group of blocks a pedagogical
-# unit occupies, and its content is derived from them. Deliberately NOT an
-# ASTNode: while it was one, a Statement could be — and was — assigned into the
-# stream in its first member's place, which made every consumer of that stream
-# read the group's text twice (the duplicated blocks in the assembled output).
+# block of the page; a Statement is a HUB identifying the group of blocks a
+# pedagogical unit occupies — it carries no text, its members do. Deliberately
+# NOT an ASTNode: while it was one, a Statement could be — and was — assigned
+# into the stream in its first member's place, which made every consumer of
+# that stream read the group's text twice (the duplicated blocks in the
+# assembled output).
 #
-# Statement and Procedure share no base class either. Their only common field
-# is ``content``; their identities differ, and a Procedure is a Statement's
-# CHILD rather than its sibling. Inheritance on the strength of one shared
-# field is exactly the kinship claim that went wrong above.
+# Statement and Procedure share no base class, and they share no common
+# fields: a Procedure is a Statement's CHILD rather than its sibling, and
+# inheritance would be a kinship claim of exactly the kind that went wrong
+# above.
 
 
 @dataclass(slots=True)
 class Procedure:
-    """One derivation attached to a statement — a proof, a solution, a
-    calculation.
+    """One derivation — a proof, a solution, a calculation.
 
-    The procedure extractor reads the group's full text (via the owning
-    Statement's ``statement_of``) and extracts the procedure portion into
-    ``content``. Step decomposition is a future pass that will write ``:Act``
-    nodes; no ``steps`` field here.
+    A hub over the member nodes of its portion; it carries no text of its own.
+    ``block`` is the FULL PCF span, frozen at creation — the hub's identity
+    (see ``graph.procedures.procedure_uuid``), its association key (a
+    both-block's statement shares it), and its document position
+    (``block[0]``). ``members`` starts as the whole block and is narrowed to
+    the derivation portion by the procedure partitioner. ``index``
+    distinguishes multiple derivations within one block. Step decomposition
+    is a future pass that will write ``:Act`` nodes; no ``steps`` field here.
     """
 
+    block: list[int]
     index: int = 0
-    content: str | None = None
+    members: list[int] = field(default_factory=list)
 
 
 @dataclass(slots=True)
 class Statement:
-    """A pedagogical statement — definition, theorem, exercise, etc.
+    """A pedagogical statement — what a block states.
 
-    The PCF groups related content into compound spans; the role typer
-    diagnoses each group's composition. ``statement_of`` carries the group's
-    member node ids so the statement extractor can read the full group text
-    and extract the statement portion into ``content``. ``procedures`` holds
-    zero or one Procedure (real or placeholder).
-
-    ``id`` is the id of the group's FIRST member node — the statement's
-    document-order position, and what slots it into the persisted chain in
-    that member's place. It names a place in the stream; it is not a node.
-    REQUIRED, unlike ``ASTNode.id``: a node exists before the stream is
-    flattened and is stamped with its id afterwards, but a statement is only
-    ever built from an already-stamped node, so an id-less one is a bug and
-    raises at construction rather than travelling on to name nothing.
+    A HUB, not a text container: the PCF groups related content into compound
+    spans and the role typer diagnoses each group's composition, but the
+    statement itself only identifies nodes — the raw text lives on those
+    nodes. ``block`` is the FULL PCF span, frozen at creation: the hub's
+    identity (see ``graph.statements.statement_uuid``), its association key
+    (a both-block's procedure shares it), and its document position
+    (``block[0]``). ``members`` starts as the whole block and is narrowed to
+    the statement portion by the statement partitioner. ``block`` is REQUIRED
+    — a hub is only ever built from an already-found span, so a block-less
+    one is a bug and raises at construction.
     """
 
-    id: int
-    content: str | None = None
-    statement_of: list[int] = field(default_factory=list)
-    procedures: list[Procedure] = field(default_factory=list)
+    block: list[int]
+    members: list[int] = field(default_factory=list)
+
+
+# --- Unit kinds for the extraction channels -------------------------------
+#
+# The equation/variable channels key each entry by the unit it was extracted
+# from: ``(unit_kind, block, results)``. The kind namespaces the block list,
+# because a statement and a procedure from the SAME block carry the same
+# ``block`` — their artifact uuids would collide without it.
+UNIT_STATEMENT = 'statement'
+UNIT_PROCEDURE = 'procedure'
+UNIT_NODE = 'node'
 
 
 # --- Picture / Segment ------------------------------------------------------

@@ -35,13 +35,17 @@ class State(TypedDict, total=False):
     groups related content together; it does not split statements from
     procedures.
 
-    `statements` carries the statement overlay from the role typer to the two
-    extractors and the persister: one Statement per group (real or
-    placeholder), each holding its members' node ids in `statement_of` and zero
-    or one Procedure. It is a channel of its own, deliberately NOT part of
-    `nodes`: a statement's content is its whole group's text, so a statement
-    sitting in the node stream would make the assembler emit every member after
-    the first one twice — once inside the statement and once as itself.
+    `statements` carries the statement overlay from the role typer to the
+    persister: one Statement HUB per group, each holding its block and its
+    members' node ids. It is a channel of its own, deliberately NOT part of
+    `nodes`: the hub's members are already in the stream, so placing the hub
+    there would represent every member twice — once as itself and once inside
+    its statement.
+
+    `procedures` carries the procedure overlay from the role typer to the
+    partitioners and the persister: one Procedure HUB per derivation block,
+    holding its members' node ids. Like `statements`, it is its own channel,
+    never part of `nodes`.
 
     The `*_results` channels are map-reduce scratch space: parallel Send
     workers append entries and the stage's collect step drains them back into
@@ -61,6 +65,13 @@ class State(TypedDict, total=False):
     statements: list[
         models.Statement
     ]  # the statement overlay, group order, from the role typer
+    procedures: list[models.Procedure]  # the procedure overlay, group order
+    variables: Annotated[
+        list[tuple[str, list[int], list[models.Variable]]], operator.add
+    ]  # (unit_kind, block, variable bindings) from the variable extractor
+    equations: Annotated[
+        list[tuple[str, list[int], list[models.Equation]]], operator.add
+    ]  # (unit_kind, block, equations) extracted per unit
     correction_results: Annotated[
         list[tuple[int, str]], operator.add
     ]  # (segment index, corrected markdown)

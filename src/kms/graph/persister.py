@@ -27,11 +27,20 @@ class IngestionPersisterNode:
         nodes = state.get('nodes', [])
         await writer.persist_nodes(nodes, source, state.get('source_metadata'))
 
-        # The two tiers arrive on two channels: `nodes` is the verbatim page,
-        # `statements` the overlay over it. ``persist_chain`` is what relates
-        # them, slotting each statement in at its members' place.
+        # The three tiers arrive on separate channels: `nodes` is the verbatim
+        # page, `statements` and `procedures` the hub overlays over it.
+        # ``persist_chain`` writes the pure provenance spine;
+        # ``persist_statements`` / ``persist_procedures`` point each hub at
+        # its member nodes via ``:MEMBER_OF``.
         statements = state.get('statements', [])
+        procedures = state.get('procedures', [])
         await writer.persist_statements(statements, source)
-        await writer.persist_procedures(statements, source)
-        await writer.persist_chain(nodes, statements, source)
+        await writer.persist_procedures(procedures, source)
+        await writer.persist_equations(
+            state.get('equations', []), procedures, source
+        )
+        await writer.persist_variables(
+            state.get('variables', []), procedures, source
+        )
+        await writer.persist_chain(nodes, source)
         return {}

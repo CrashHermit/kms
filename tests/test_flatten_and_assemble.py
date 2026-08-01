@@ -5,7 +5,7 @@ import asyncio
 import tempfile
 
 from kms.core import models
-from kms.ingestion import role_typer, statement_extractor
+from kms.ingestion import role_typer
 from kms.output import assembler
 
 
@@ -57,7 +57,7 @@ class _AllStatements:
     """Stands in for the LLM: every span is a statement."""
 
     async def acall(self, contents):
-        return role_typer.STATEMENT_ROLE
+        return [role_typer.STATEMENT_ROLE]
 
 
 def test_assembly_emits_each_block_once_after_the_overlay_is_built():
@@ -65,7 +65,7 @@ def test_assembly_emits_each_block_once_after_the_overlay_is_built():
     # Statement inside `nodes`, and the statement extractor then set that
     # node's content to the WHOLE group's text — so the assembler emitted every
     # member after the first twice, once inside the fused statement and once as
-    # itself. The overlay now travels on its own channel.
+    # itself. The overlay now travels on its own channel and carries no text.
     nodes = [
         models.ParagraphNode(content='Theorem 2.1.', id=0, segment_index=0),
         models.ParagraphNode(
@@ -82,7 +82,6 @@ def test_assembly_emits_each_block_once_after_the_overlay_is_built():
 
     typer = role_typer.RoleTyperNode(module=_AllStatements())
     state.update(asyncio.run(typer.run(state)))
-    asyncio.run(statement_extractor.StatementExtractorNode().run(state))
 
     text = assembler.assemble(
         state['nodes'],
@@ -95,7 +94,5 @@ def test_assembly_emits_each_block_once_after_the_overlay_is_built():
         'Hence e is unique.',
     ):
         assert text.count(content) == 1, f'{content!r} appears twice'
-    # The overlay still carries the full group text — that is its job.
-    assert state['statements'][0].content == (
-        'Theorem 2.1.\n\nProof. Let e be ...\n\nHence e is unique.'
-    )
+    # The overlay carries hub membership, not text.
+    assert state['statements'][0].members == [0, 1, 2]

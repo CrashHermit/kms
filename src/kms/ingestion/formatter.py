@@ -171,7 +171,9 @@ class Formatter(dspy.Module):
         result = await self.formatter.acall(markdown=markdown)
         recorder.record_example('formatter', {'markdown': markdown}, result)
         formatted = result.formatted or ''
-        logger.debug('format: %d chars in, %d chars out', len(markdown), len(formatted))
+        logger.debug(
+            'format: %d chars in, %d chars out', len(markdown), len(formatted)
+        )
         return formatted
 
     def forward(self, markdown: str) -> str:
@@ -241,6 +243,8 @@ class FormatterNode:
             The updated segment backbone.
         """
         results = state.get('format_results', [])
-        segments = models.merge_results_into_segments(state['segments'], results, 'content')
+        segments = models.merge_results_into_segments(
+            state['segments'], results, 'content'
+        )
         logger.info('formatter: %d page(s) formatted', len(results))
         return {'segments': segments}

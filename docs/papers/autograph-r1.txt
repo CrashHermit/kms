@@ -1,0 +1,1519 @@
+                                             AutoGraph-R1: End-to-End Reinforcement Learning for Knowledge
+                                                                  Graph Construction
+                                                             Hong Ting Tsang1 , Jiaxin Bai1, * , Haoyu Huang1 , Qiao Xiao2 ,
+                                                              Tianshi Zheng1 , Baixuan Xu1 , Shujie Liu3 , Yangqiu Song1
+                                                                 1
+                                                                   The Hong Kong University of Science and Technology
+                                                                                  2
+                                                                                    Cornell University
+                                                                                 3
+                                                                                   Microsoft Research
+                                                              {httsangaj, jbai}@connect.ust.hk, yqsong@cse.ust.hk
+                                                                               shujliu@microsoft.com
+
+                                                                 Abstract                       extractors and heuristics (Han et al., 2024; Lairgi
+                                                                                                et al., 2024; Bai et al., 2025a), which then supports
+                                              Building effective knowledge graphs (KGs) for
+
+
+
+
+arXiv:2510.15339v3 [cs.CL] 20 Apr 2026
+                                                                                                downstream question answering (Gutiérrez et al.,
+                                              Retrieval-Augmented Generation (RAG) is piv-
+                                              otal for advancing question answering (QA)        2025a; Sun et al., 2024).
+                                              systems. However, its effectiveness is hin-          Despite its potential, the prevailing graph-based
+                                              dered by a fundamental disconnect: the knowl-     RAG paradigm suffers from a fundamental discon-
+                                              edge graph (KG) construction process is decou-    nect: the process is split into two isolated phases.
+                                              pled from its downstream application, yield-      First, a construction phase, where a graph is built
+                                              ing suboptimal graph structures. To bridge        and evaluated on intrinsic metrics like precision
+                                              this gap, we introduce AutoGraph-R1, the
+                                                                                                and coverage (Huang et al., 2025a). Second, an
+                                              first framework to directly optimize KG con-
+                                              struction for task performance using Reinforce-   application phase, where this static graph is used
+                                              ment Learning (RL). AutoGraph-R1 trains an        for a downstream task. The critical flaw in this ap-
+                                              LLM constructor by framing graph generation       proach is that a “good” graph by intrinsic standards
+                                              as a policy learning problem, where the re-       is not necessarily a “useful” one for the end task
+                                              ward is derived from the graph’s functional       (Xue and Zou, 2022). For instance, striving for
+                                              utility in a RAG pipeline. We design two          exhaustive completeness often creates noisy, frag-
+                                              novel, task-aware reward functions, one for       mented graphs where relevance signals are diluted
+                                              graphs as knowledge carriers and another as
+                                                                                                or critical reasoning paths are broken, as illustrated
+                                              knowledge indices. Across multiple QA bench-
+                                              marks, AutoGraph-R1 consistently enables          in Figure 1.
+                                              graph RAG methods to achieve significant per-        This disconnect persists because closing the loop
+                                              formance gains over using task-agnostic base-     between downstream performance and graph con-
+                                              line graphs. Our work shows it is possible to     struction is technically challenging. The construc-
+                                              close the loop between construction and ap-       tion process generating discrete (subject, predicate,
+                                              plication, shifting the paradigm from building    object) triples is inherently non-differentiable. Con-
+                                              intrinsically “good” graphs to building demon-
+                                                                                                sequently, standard gradient-based optimization
+                                              strably “useful” ones.
+                                                                                                cannot backpropagate performance signals from
+                                         1    Introduction                                      a downstream task, such as question answering ac-
+                                                                                                curacy, to guide the graph generation model. The
+                                         Retrieval-Augmented Generation (RAG) has be-           graph, once built, cannot learn from its failures. To
+                                         come a cornerstone for enhancing Large Lan-            bridge this gap, we employ Reinforcement Learn-
+                                         guage Models (LLMs), enabling them to ground           ing (RL). While prior work has used RL to refine
+                                         responses in external knowledge, reduce hallucina-     retrieval over search tools or improve query refor-
+                                         tions, and incorporate real-time, domain-specific      mulation (Jin et al., 2025; Jiang et al., 2025b; Luo
+                                         information (Gao et al., 2024a; Peng et al., 2024a).   et al., 2025), our work is the first to leverage RL
+                                         A particularly promising frontier is graph-based       to directly optimize the KG construction process
+                                         RAG, where LLMs leverage the structured nature         itself. We introduce AutoGraph-R1, a framework
+                                         of Knowledge Graphs (KGs) for complex data             that fine-tunes an LLM-based graph generator by
+                                         sensemaking and reasoning (Edge et al., 2025).         optimizing for downstream task performance. As
+                                         The typical pipeline begins by constructing a KG       shown in Figure 2, the graph generation model
+                                         from unstructured text, often using LLM-driven         learns a construction policy from raw text. The
+                                             * Corresponding author.                            utility of the generated graph is then evaluated in a
+Figure 1: Bridging the Gap Between KG Construction and Utility. (A) Traditional extraction is task-agnostic
+and optimized for intrinsic metrics, often failing to capture implicit connections or diluting relevance signals with
+noise. (B) AutoGraph-R1 aligns the graph structure with the specific downstream retriever. Driven by the reward, it
+learns to construct concrete reasoning pathways, or optimize graph connectivity to ensure robust signal propagation,
+delivering the specific structure required for the target task.
+
+downstream RAG pipeline, yielding a reward sig-                   significant performance gains on QA bench-
+nal. This task-aware reward is used to update the                 marks, validating that RL-driven graph con-
+generator’s parameters via policy gradient methods,               struction improves downstream task utility.
+guiding it to produce graphs that are not just factu-
+ally accurate but functionally optimal, for instance,       2     Related Work
+by creating valid paths that facilitate complex rea-        2.1    Graph-based Retrieval-Augmented
+soning.                                                            Generation
+   We specifically focus on question answering
+over benchmark datasets requiring multi-document            Large Language Models (LLMs), despite demon-
+reasoning (Yang et al., 2018; Trivedi et al., 2022;         strating strong reasoning capabilities (DeepSeek-
+Mallen et al., 2023). Our framework’s reward func-          AI et al., 2025a), remain susceptible to factual hal-
+tion is based on the utility of the resulting graph,        lucinations (Ji et al., 2023; Huang et al., 2025b)
+evaluating whether it serves as an effective knowl-         and knowledge incompleteness (Peng et al., 2023).
+edge index for retrieving useful text chunks or pro-        Retrieval-Augmented Generation (RAG) (Lewis
+vides subgraphs that directly support the reasoning         et al., 2021; Gao et al., 2024b) mitigates these is-
+process. By designing these task-aware rewards,             sues by grounding LLMs in external knowledge
+we directly align the objectives of KG construction         sources, thereby improving factual accuracy and
+with end-task performance.                                  reasoning. A burgeoning area of research extends
+   In summary, our contributions are:                       RAG with graph-structured knowledge (Peng et al.,
+                                                            2024b; Xiang et al., 2025; Zhang et al., 2025a; Han
+   • We introduce AutoGraph-R1, a novel RL                  et al., 2025). In these pipelines, graphs serve two
+     framework that directly optimizes knowledge            primary functions. First, as knowledge indices,
+     graph construction for downstream utility,             where the graph organizes and connects raw text
+     bridging the critical gap between graph quality        chunks, and its structural properties are leveraged
+     and task performance.                                  for more sophisticated retrieval strategies (Liang
+   • We design and implement task-aware reward              et al., 2024; Liu et al., 2024b; Zhang et al., 2024b;
+     functions that successfully align KG structure         Wang et al., 2023; Li et al., 2024a). Methods
+     with the demands of complex reasoning tasks,           like HippoRAG (Gutiérrez et al., 2025a,b) exem-
+     compelling the model to build functionally             plify this by exploiting structural connections to
+     superior graphs.                                       access relevant information more effectively (Xiao
+                                                            et al., 2025). Second, as knowledge carriers, where
+   • Through extensive experiments, we demon-               the graph itself is the primary information source,
+     strate that integrating AutoGraph-R1’s graphs          and the model reasons directly over recovered sub-
+     into a state-of-the-art RAG pipeline yields            graphs (Shen et al., 2025b; Liu et al., 2024a). This
+paradigm is adopted by approaches such as Think-             Prior to its widespread adoption for LLM align-
+on-Graph (Ma et al., 2025; Sun et al., 2024), Sub-        ment, RL had been explored for knowledge base
+graphRAG (Li et al., 2025a), StructRAG (Li et al.,        tasks, such as bidirectional text-to-graph conver-
+2024b), and KnowGPT (Zhang et al., 2024a).                sion (Dognin et al., 2021) and abductive reasoning
+The construction of KGs has evolved from tra-             over knowledge graphs (Bai et al., 2024). More
+ditional rule-based systems like OpenIE (Angeli           recently, RL has proven effective in training LLMs
+et al., 2015) to more flexible LLM-based pipelines        to interact with external tools, such as search en-
+such as PiVE (Han et al., 2024), iText2KG                 gines (Jin et al., 2025; Jiang et al., 2025b; Li et al.,
+(Lairgi et al., 2024), KGGEN (Mo et al., 2025),           2025b; Zhang et al., 2025b; Jiang et al., 2025a).
+GraphRAG (Edge et al., 2025), LightRAG (Guo               Notably, frameworks like Graph-R1 (Luo et al.,
+et al., 2025) and AutoSchemaKG (Bai et al., 2025a).       2025) have shown that RL can teach an LLM to
+While powerful, these LLM-driven methods typi-            effectively navigate graph-structured tools to im-
+cally generate a static graph based on fixed prompts      prove retrieval. However, these works use RL to
+or heuristics, often evaluated using intrinsic metrics.   learn a policy for navigating or querying an existing
+However, the optimal structure of a KG is highly          knowledge source. Our approach is fundamentally
+dependent on variety of downstream applications           different: we use RL to learn a policy for construct-
+(Gubanov et al., 2024; Wu et al., 2024; Zhao et al.,      ing the knowledge source from raw text. While
+2024; He et al., 2024; Liu et al., 2024c; Bai et al.,     work like (Zhang and Zhao, 2025) utilizes RL to
+2025b; Huang et al., 2026). For instance, a graph         complete or refine existing KGs during reasoning,
+acting as a text index may prioritize fine-grained        to our knowledge, this is the first application of
+partitioning, while one used for reasoning chains         RL to directly optimize end-to-end graph gener-
+requires long-range connectivity (Jin et al., 2024;       ation from corpora based on its measured utility
+Huang et al., 2024). This creates the disconnect we       in a downstream task. This distinction forms the
+identified earlier: a graph built to be “good” in iso-    motivation for AutoGraph-R1.
+lation may be functionally poor for a specific task.
+Our work addresses this gap by optimizing graph           3     Preliminaries
+construction directly for downstream performance,
+a problem that, to our knowledge, has not been            In this section, we formalize the key concepts
+systematically investigated, despite progress in KG       underlying AutoGraph-R1, including knowledge
+refinement and completion techniques (Chen et al.,        graph construction, graph-based retrieval, and an-
+2024b,a; Zhang et al., 2022; Dong et al., 2023b).         swer generation within a RAG pipeline.
+
+2.2   Reinforcement Learning for Language                 3.1    Knowledge Graph Construction
+      Model Optimization                                  We define a knowledge graph (KG) as a directed,
+Reinforcement learning (RL) (Kaelbling et al.,            labeled graph G = (V, E, R), constructed from a
+1996) offers a powerful framework for optimiz-            set of documents D. Here, V is the set of nodes, R
+ing the sequential decision-making capabilities of        the set of relation types, and E ⊆ V × R × V the
+LLMs by enabling them to learn through environ-           set of edges represented as triples (s, r, o). Nodes
+mental interaction and reward feedback (Kaufmann          s, o ∈ V may correspond to entities, events, or con-
+et al., 2024; Xi et al., 2025). As LLMs have become       cepts, and r ∈ R denotes a relation type. Follow-
+more powerful through fine-tuning, methodologi-           ing prior work (Zhang et al., 2025a), we consider
+cal advances—from Reinforcement Learning from             two principal configurations for the graph’s role.
+Human Feedback (RLHF) (Ouyang et al., 2022)                  Graphs as Knowledge Carriers In this configu-
+to more scalable and cost-effective algorithms like       ration, the graph serves as a self-contained knowl-
+Proximal Policy Optimization (PPO) (Schulman              edge base. It consists of factual triples (s, r, o) ∈ E,
+et al., 2017), Dynamic Sampling Policy Optimiza-          where nodes s, o ∈ V are entities and r ∈ R is the
+tion (DAPO) (Yu et al., 2025), and Group Relative         relation. These triples act as discrete, structured
+Policy Optimization (GRPO) (DeepSeek-AI et al.,           knowledge units that are retrieved and processed
+2025a)—have enabled successful applications in            directly by the downstream model.
+diverse domains, including open-domain retrieval             Graphs for Knowledge Indexing Alternatively,
+and scientific discovery. (Zheng et al., 2025; Yu         the graph functions as a structured index over the
+et al., 2024; Zhu et al., 2025; Shen et al., 2025a).      raw document corpus D. Nodes are augmented
+with pointers to text spans, denoted τ (v). Formally,    retrieval paradigms: Graph RAG (retrieval over en-
+the node set can be partitioned into entity nodes        tity triples) and Graph Text RAG (retrieval over text
+Ve and document or chunk nodes Vd , such that            nodes through graph index).
+V = Ve ∪ Vd . This hybrid structure allows the              As shown in Figure 2, AutoGraph-R1 consists
+graph to guide retrieval not only of structured facts    of three components: (1) a KG construction policy
+but also of the original, unstructured text passages.    model πθKG , instantiated as a large language model
+                                                         (LLM), which maps a list of documents D into
+3.2    Retrieval Module                                  a graph G; (2) a frozen RAG server with a fixed
+Given a query q, the goal of the retrieval module        answer generator π ans , which retrieves from G and
+is to produce a set of evidence units C(q) that will     produces an answer ŷ to the input query q; (3)
+be passed to the LLM for answer generation. We           a task-specific reward function R(q, ŷ, y, G) that
+consider two complementary retrieval strategies.         evaluates how well the constructed graph supports
+                                                         QA, where y is the gold answer.
+   Graph Knowledge Retriever This retriever, de-
+                                                            Task-Aware Training Loop A central design
+noted Rgraph , operates directly on the graph struc-
+                                                         choice in AutoGraph-R1, inspired by s3 (Jiang
+ture. Given a query q, it identifies relevant compo-
+                                                         et al., 2025b), is to freeze the retrieval module
+nents such as individual triples, multi-hop paths, or
+                                                         while the KG construction policy πθKG adapts. Dur-
+entire subgraphs. Formally, we define its output as
+                                                         ing training, each sample (q, y, Dq ) comprising a
+a set of structured evidence P(q) = Rgraph (q, G).
+                                                         query, a gold answer, and relevant documents, trig-
+The elements of P(q) are then linearized into text
+                                                         gers a full end-to-end loop of KG construction,
+to serve as context for the LLM.
+                                                         retrieval, and answer generation. Crucially, the
+   Graph-based Text Retriever This retriever, de-
+                                                         definition of a "useful" graph is contingent on the
+noted Rtext , uses the graph as an index to find
+                                                         retrieval paradigm. We therefore tailor the train-
+relevant text passages from the source corpus. It
+                                                         ing process for two distinct scenarios, aligning the
+leverages graph connectivity to identify promising
+                                                         KG’s structure with its intended function.
+document nodes. Formally, Rtext (q, G) 7→ T (q),
+                                                            Training with a Graph Knowledge Retriever.
+where T (q) ⊆ {τ (v) | v ∈ Vd } is a set of raw text
+                                                         When the KG acts as a knowledge carrier, retrieval
+passages linked from document nodes.
+                                                         quality is measured by its ability to provide a self-
+3.3    Answer Generation                                 contained, structured context for reasoning. To
+                                                         isolate the impact of graph structure, we employ
+The final answer generation step uses a large lan-       a simple subgraph retriever. Given a query q, we
+guage model π ans to synthesize an answer ŷ from        extract its named entities to serve as anchors and
+the query q and the retrieved evidence C(q). The         retrieve the n-hop neighborhood surrounding them
+evidence context C(q) is composed of either the          to form the context P(q). This design intentionally
+linearized graph structures P(q) from the graph          bypasses dense vector similarity, forcing the reward
+knowledge retriever or the text passages T (q) from      signal to reflect the graph’s relational completeness
+the graph-based text retriever. The final answer ŷ      and structural integrity. The policy is rewarded for
+is generated by conditioning the LLM on the query        creating graphs where the correct answer is directly
+and evidence: ŷ = π ans (q, C(q)). This unified         deducible from the retrieved subgraph.
+framework allows our optimization process to ap-            Training with a Graph-based Text Retriever.
+ply to both types of graph construction, directly        When the KG serves as a knowledge index, its util-
+linking the structure of G to its utility in the final   ity is determined by how well it guides the retriever
+QA-task.                                                 to relevant text passages. We adapt the HippoRAG-
+                                                         2 retriever (Gutiérrez et al., 2025b) for this pur-
+4     AutoGraph-R1                                       pose. First, candidate triples (s, r, o) are selected
+                                                         based on embedding similarity to the query q (us-
+4.1    RL for Graph Construction
+                                                         ing Qwen-3-0.6B). However, unlike the original
+AutoGraph-R1, an end-to-end reinforcement                method, we then use only these triple-level similari-
+learning (RL) framework that directly optimizes          ties to initialize a Personalized PageRank algorithm
+knowledge graph (KG) construction with down-             over the constructed graph G. This process prop-
+stream task performance as the reward signal. The        agates relevance scores through the graph struc-
+framework unifies two common graph-augmented             ture, ultimately identifying text nodes that are struc-
+                         AutoGraph-R1 Graph Constructor Training                                                   Inference
+
+                Supporting Docs:                                                                            AutoGraph-R1
+                                                                           When was the institute that                         General
+                 The Collegian is                                                                              Graph
+                   owned by …
+                                                                         owned The Collegian founded?                          Corpus
+                                                                                                            Construction
+
+
+
+                                        AutoGraph-R1
+                                                                                          Graph
+                                           Graph                                                                               Queries
+                                                                                         Retrieval
+                                        Construction
+
+
+
+                Distractor Docs:                                 Reward                                    Graph Retrieval
+                                         GRPO                                                  Reward
+                This is a list of Old                  Knowledge-Carrying Capability                                            Correct
+               Scotch Collegians …
+                                        Training       Knowledge-Indexing Capability
+                                                                                             Computation    & Generation
+                                                                                                                                Answer
+
+
+
+
+Figure 2: Overview of the AutoGraph-R1 Framework. AutoGraph-R1 optimizes knowledge graph construction for
+downstream utility using reinforcement learning. During the training phase (left), a graph constructor is fine-tuned
+with GRPO. The reward signal is derived from the performance of a graph retriever on the generated KG, directly
+measuring the graph’s functional quality. During the inference phase (right), the trained constructor is used to build
+a large-scale KG from a general corpus, which then serves a downstream graph-based RAG system.
+
+turally connected to the most pertinent facts, from                                       Graph Knowledge Retriever Retrieval operates
+which the top-N passages are returned. The pol-                                        on subgraphs or relation paths. The key require-
+icy is therefore incentivized to build graphs where                                    ment is that the gold answer y should be deducible
+structural connectivity, not just semantic similarity,                                 from G. An answer y is considered deducible
+is a reliable signal for identifying crucial evidence                                  from G if the retrieved triples or subgraphs con-
+passages, including both direct and complementary                                      tain sufficient relational information to logically
+information that might otherwise be overlooked.                                        infer the gold answer y for a given query q, either
+   In both scenarios, by freezing the retriever and                                    directly through explicit facts or indirectly through
+aligning the reward with its specific mechanism,                                       reasoning over connected triples. We therefore de-
+AutoGraph-R1 ensures the graph construction pol-                                       fine a binary reward, the Knowledge-Carrying
+icy learns to produce graphs that are optimized for                                    Reward, RC , which measures the deducibility of
+a given downstream retrieval strategy.                                                 gold answer in the constructed KG. An external
+                                                                                       LLM judge is prompted with (q, y, G) and deter-
+4.2   Reward Design for Functional Graph                                               mines whether y can be deduced from the retrieved
+      Construction                                                                     triples:
+A primary challenge in optimizing this end-to-end                                                                                   
+pipeline is the sparse and indirect nature of the                                             RC (q, y, G) = I deducible(q, y | G)        (1)
+learning signal, where a single reward is given after
+                                                                                       Graph-based Text Retriever Retrieval operates
+a long sequence of construction actions. This cre-
+                                                                                       over the graph structure of the KG to locate relevant
+ates a severe credit assignment problem and places
+                                                                                       text passages. To enhance the knowledge-indexing
+a heavy burden on the quality of the reward signal
+                                                                                       capability, we use Knowledge-Indexing Reward,
+itself. While the final answer’s F1 score has been
+                                                                                       RI , as the reward function. This aligns with the
+explored as a reward in prior work (Jin et al., 2025),
+                                                                                       fundamental objective of these retrievers by mea-
+we find its properties make it a challenging choice
+                                                                                       suring the effectiveness of the retrieved passages in
+for our goal of guiding graph construction. The
+                                                                                       capturing the relevant information. The reward is
+F1 score is brittle; minor phrasing variations in the
+                                                                                       defined as follows:
+LLM output can cause swings in the metric, an is-
+sue that persists even with deterministic decoding.                                                                Top-k(G, q) ∩ Dgold
+This instability results in a noisy reward that can                                          RI (q, Dgold , G) =                          (2)
+                                                                                                                         Dgold
+impede or destabilize policy optimization. Our ap-
+proach is therefore motivated by the need to design                                    where Dgold denotes the gold passages for q, and
+more direct and stable, task-specific rewards better                                   Top-k(G, q) are the retrieved passages.
+suited to our problem.
+   To overcome these challenges, we design two                                         4.3     GRPO for Graph Construction
+distinct reward functions that provide a more direct                                   To optimize the knowledge graph (KG) construc-
+and stable learning signal by measuring the func-                                      tor policy πθKG , we employ Group-Relative Pol-
+tional utility of the graph for a specific retrieval                                   icy Optimization (GRPO) (Shao et al., 2024), a
+task.                                                                                  memory-efficient alternative to Proximal Policy
+Optimization (PPO). GRPO is well-suited for our              edge retriever, or R = RI (Eq. 2) when a graph-
+LLM-based framework, as it eliminates the need               based text retriever is used. ϵ is a small clipping
+for a separate value model by using a relative re-           hyperparameter that ensures stable updates by pre-
+ward baseline derived from a group of sampled                venting the new policy from straying too far from
+graph outputs. This approach reduces computa-                the old policy.
+tional overhead and memory usage, enabling scal-
+able training for large-scale graph construction             5     Experiments
+tasks.
+                                                             Our experiments are designed to answer three pri-
+   The GRPO objective updates πθKG to favor
+                                                             mary research questions: RQ1. Does optimizing
+graphs that maximize downstream QA perfor-
+                                                             KG construction with a downstream task reward
+mance, incorporating a clipping mechanism to en-
+                                                             lead to better end-to-end RAG performance com-
+sure stable updates. We simplify the training proce-
+                                                             pared to standard, task-agnostic KG construction?
+dure by removing the KL divergence term to lower
+                                                             RQ2. Is this performance improvement consistent
+the computational overhead and save memory us-
+                                                             across different graph-based RAG paradigms (i.e.,
+age without damaging the training (Liu et al., 2025;
+                                                             graph as a knowledge carrier vs. a knowledge in-
+Hu et al., 2025). The objective is defined as:
+                                                             dex) and across different model scales? RQ3. Does
+                                                             optimizing for downstream utility also improve the
+     JGRPO (θ)                                               intrinsic quality (e.g., factual precision and recall)
+                           |ai |
+                                                             of the graph, and how do different reward functions
+                 X   G X
+                  1                 
+                                                             bias the final graph structure?
+  = E s∼D                        min ri,t (θ)Âi ,   (3)
+     {ai }∼πθold G
+                     i=1 t=1
+                                                           5.1    Datasets and Corpora
+                clip(ri,t (θ), 1 − ϵ, 1 + ϵ)Âi              Training Datasets For the reinforcement learning
+                                                             phase, we utilize two multi-hop QA datasets: Hot-
+Here, the policy πθKG takes the document list s as           potQA (Yang et al., 2018) and Musique (Trivedi
+input. In this equation, s corresponds to the input          et al., 2022). These datasets provide the complex
+document list drawn from the training distribution           reasoning challenges necessary to train our policy
+D.                                                           model.
+   Construction of Training Inputs (D): The                     Evaluation Datasets For final RAG evaluation,
+composition of s is tailored to the specific retrieval       we use a diverse set of five QA datasets, each
+paradigm to shape the learning signal. To create             comprising 1,000 samples. These include two
+a challenging training environment for the text re-          general QA benchmarks, Natural Questions (NQ)
+trieval scenario, we implement a hard negative               (Kwiatkowski et al., 2019) and PopQA (Mallen
+mining strategy. For each query in the training              et al., 2023), and three multi-hop QA benchmarks,
+set (HotpotQA and Musique), we use a Qwen3-8B                HotpotQA (Yang et al., 2018), 2WikiMultihopQA
+(Zhang et al., 2025c) embedding model to iden-               (Ho et al., 2020), and Musique (Trivedi et al., 2022).
+tify the most semantically similar non-gold pas-             These datasets enable a comprehensive evaluation
+sage from the corpus, which is then added as a               of AutoGraph-R1 on downstream task-utility.
+distractor. In contrast, for the graph knowledge                Corpora. For the general QA datasets (NQ,
+retriever scenario, no distractors are used, as the          PopQA), the knowledge corpus is built from
+primary objective is to optimize the informational           the introductory sections of the December 2021
+completeness of the graph constructed from source            Wikipedia dump Izacard et al. (2022). For the
+documents, improving the knowledge-carrying ca-              multi-hop QA datasets, the corpus for each is con-
+pability of graph rather than its ability to filter irrel-   structed from the documents associated with its
+evant content. Âi = Riσ−µR
+                            R
+                              represents the Group-          1,000 evaluation samples, following the methodol-
+Relative Advantage for the entire graph ai , which           ogy in Gutiérrez et al. (2025a).
+is derived by normalizing its reward relative to the
+group’s mean µR and standard deviation σR . The              5.2    Experiments Configs
+downstream reward signal, Ri , for the i-th graph            Models We experiment with fine-tuning both
+sample is determined by the specific training setup:         Qwen2.5-3B and Qwen2.5-7B (Qwen et al., 2025)
+R = RC (Eq. 1) when employing a graph knowl-                 as the KG construction model (πθKG ). For all RAG
+evaluations, we use a frozen Qwen2.5-7B as the          nition (NER) on the query and then expands 1-hop
+answer generation LLM. The Qwen3-0.6B model             from the identified entities to form the retrieval
+is used consistently for all embedding tasks in both    context. Third, we include a Dense Triple Re-
+training and evaluation. RL Training Configu-           triever, which uses the Qwen3-0.6B model to re-
+ration We fine-tune the KG construction policy          trieve triples based on the semantic similarity be-
+using the GRPO algorithm (Shao et al., 2024) on         tween their embeddings and the query embedding.
+two H100 GPUs. For each training sample, the            For these methods, the top-10 retrieved paths or
+policy iteratively generates triples for each docu-     triples are used as context. For graph-based text
+ment. The training setup is tailored to the retrieval   retrieval, where the graph serves as an index over
+paradigm. For the graph-based text retriever, the       a text corpus, we use HippoRAG (Gutiérrez et al.,
+model operates on a fixed pool of 15 documents          2025a) and HippoRAG-2 (Gutiérrez et al., 2025b).
+per query, retrieving the top-N passages, where N       Both methods perform query-to-edge retrieval to
+equals the number of gold supporting passages. For      identify relevant triples, which then seed a Person-
+the graph knowledge retriever, we retrieve a 3-hop      alized PageRank (PPR) algorithm over the KG to
+subgraph, to ensure that a sufficient context is al-    score and rank text passages. The top-5 ranked
+ways retrieved for reasoning. Evaluation Protocol       passages are then returned as evidence.
+For evaluation, a KG is first constructed over the
+entire document corpus for each dataset. Then, de-      5.4   Results and Analysis
+pending on the type of retriever, the corresponding     AutoGraph-R1 consistently improves RAG perfor-
+RAG is performed using this static graph. We re-        mance across different paradigms, models, and
+port the final answer F1 score as the primary metric,   scales. Our primary finding is that optimizing KG
+consistent with prior work.                             construction for downstream utility leads to sig-
+                                                        nificant end-to-end F1 score improvements over
+5.3   Baselines                                         a standard zero-shot constructor, and this holds
+To rigorously isolate the impact of downstream-         true for both Qwen and Llama (see Appendix A.5)
+aware optimization, we benchmark AutoGraph-R1           model families. As shown in Table 1, when the KG
+against a controlled, task-agnostic baseline using      acts as a knowledge carrier, our method yields sub-
+SOTA retrieval methods, while holding all other         stantial average F1 gains, up to +4.39 (Qwen-3B)
+pipeline components constant.                           and +2.97 (Qwen-7B). Similarly, when the KG is
+   KG Construction Baseline To benchmark the            a knowledge index, performance increases by up
+performance of our RL-optimized constructor, we         to +2.09 (Qwen-3B) and +1.48 (Qwen-7B) aver-
+establish a baseline using a zero-shot approach.        age F1 points. This robust improvement across
+Specifically, we construct the baseline knowledge       different models and RAG paradigms confirms that
+graphs using Qwen models guided by the identi-          task-aware optimization is broadly effective.
+cal prompt used during fine-tuning. This standard,         AutoGraph-R1 demonstrably improves the
+task-agnostic method allows us to isolate the im-       graph’s core function as a knowledge index. The
+pact to directly measure the gains attributable to      magnitude of F1 gains is more modest in the text
+our downstream-aware optimization, isolating the        retrieval setting. This is an expected outcome, stem-
+impact of the construction policy by excluding aux-     ming from the dual nature of using full text pas-
+iliary refinement steps used in complex pipelines.      sages as evidence. On one hand, their rich context
+   RAG Method Baselines We evaluate the KGs             can enable the generator to succeed even with im-
+constructed by both AutoGraph-R1 and the zero-          perfect retrieval, masking some F1 gains. On the
+shot baseline using a suite of state-of-the-art RAG     other hand, this verbosity can introduce noise, un-
+methods to measure their functional utility. For        like the concise, structured triples provided by the
+graph knowledge retrieval, where the graph itself       graph knowledge retriever. To isolate the direct
+is the source of information, we test three distinct    impact on retrieval quality, we evaluate passage re-
+approaches. First, we use ToG (Sun et al., 2024),       call@5. Table 1 reveals significant improvements
+setting both the width and depth to 3. It performs      across all models. We observe consistent gains in
+beam search on the graph and uses the Qwen3-0.6B        average recall (e.g., + over 4.0 points for Qwen-
+model for relation pruning to discover meaning-         3B), confirming that our RL framework success-
+ful paths. Second, we employ a Subgraph Re-             fully optimizes the graph structure to act as a more
+triever, which first performs Named Entity Recog-       effective index, reliably guiding text retrievers to
+Table 1: Comprehensive performance evaluation of AutoGraph-R1 across Qwen models. The table is divided into
+two sections: (Top) Graph Knowledge Retrievers evaluated on F1 score, and (Bottom) Graph-based Text Retrievers
+evaluated on both F1 score and Passage Recall@5 (R@5). AutoGraph-R1 (“Ours”) consistently outperforms the
+zero-shot baselines across all metrics and datasets.
+
+                             NQ*                      PopQA*                        HotpotQA                2WikiMultihopQA                      Musique                        Avg.
+Methods
+                              F1                        F1                             F1                         F1                               F1                            F1
+                                                                      Graph Knowledge Retrievers (F1 Only)
+Qwen2.5-3B
+Subgraph (Base)              26.43                      54.48                         39.02                           34.15                        13.82                     33.58
+Subgraph (Ours)            28.03↑1.60                 59.46↑4.98                    40.77↑1.75                      34.71↑0.56                   15.13↑1.31                35.62↑2.04
+Triples (Base)               30.53                      51.67                         40.76                           32.18                        17.81                     34.58
+Triples (Ours)             33.67↑3.14                 56.76↑5.09                    46.94↑6.18                      36.09↑3.91                   21.41↑3.60                38.97↑4.39
+ToG (Base)                   26.32                      54.92                         41.77                           43.54                        18.21                     36.95
+ToG (Ours)                 29.27↑2.95                 61.40↑6.48                    44.56↑2.79                      49.33↑5.79                   18.42↑0.21                40.60↑3.65
+Qwen2.5-7B
+Subgraph (Base)              28.07                      55.43                         41.66                           33.97                        15.24                     34.87
+Subgraph (Ours)            28.54↑0.47                 60.94↑5.51                    43.59↑1.93                      37.43↑3.46                   15.65↑0.41                37.23↑2.36
+Triples (Base)               33.26                      55.56                         44.99                           35.57                        20.43                     37.96
+Triples (Ours)             33.98↑0.72                 58.02↑2.46                    48.28↑3.29                      36.04↑0.47                   20.56↑0.13                39.38↑1.42
+ToG (Base)                   25.59                      57.53                         43.93                           46.03                        18.46                     38.31
+ToG (Ours)                 29.36↑3.77                 62.85↑5.32                    44.68↑0.75                      50.20↑4.17                   19.31↑0.85                41.28↑2.97
+
+                                                                   Graph-based Text Retrievers (F1 & Recall@5)
+                      F1            R@5          F1             R@5            F1            R@5               F1            R@5            F1            R@5             F1             R@5
+Qwen2.5-3B
+HippoRAG (Base)      36.28         79.50        65.55           92.10         53.22         68.41           48.97            70.84         27.44         46.50          46.29            71.47
+HippoRAG (Ours)    38.28↑2.00    93.00↑13.5   65.93↑0.38      95.60↑3.50    55.39↑2.17    68.82↑0.41      51.69↑2.72       74.02↑3.18    28.11↑0.67    47.65↑1.15     47.88↑1.59       75.82↑4.35
+HippoRAG2 (Base)     35.88         82.20        65.02           92.20         53.70         70.06           50.98            73.49         25.70         46.93          46.25            72.98
+HippoRAG2 (Ours)   38.45↑2.57    94.00↑11.8   66.23↑1.21      95.40↑3.20    56.28↑2.58    71.21↑1.15      52.80↑1.82       76.42↑2.93    27.93↑2.23    49.13↑2.20     48.34↑2.09       77.23↑4.25
+Qwen2.5-7B
+HippoRAG (Base)      37.16         93.30        65.95           92.90         55.50         69.97           53.01            72.87         26.03         47.19          47.53            75.24
+HippoRAG (Ours)    38.80↑1.64    94.30↑1.00   67.85↑1.90      95.80↑2.90    57.19↑1.69    71.40↑1.43      53.60↑0.59       76.16↑3.29    26.97↑0.94    48.44↑1.25     48.88↑1.35       77.22↑1.98
+HippoRAG2 (Base)     37.02         94.10        65.74           92.80         57.08         72.03           54.99            75.98         26.77         48.55          48.32            76.69
+HippoRAG2 (Ours)   38.68↑1.66    95.00↑0.90   67.72↑1.97      96.30↑3.50    58.98↑1.90    73.61↑1.58      56.46↑1.47       78.66↑2.68    27.18↑0.41    49.23↑0.68     49.80↑1.48       78.56↑1.87
+
+Table 2: Further analysis on whether GRPO training increases the triple extraction intrinsic quality, measured by
+Precision, Recall and, F1 defined in previous work (Huang et al., 2025a; Bai et al., 2025a).
+
+                                                               HotpotQA                     2WikiMultihopQA                              Musique                          2021Wiki
+KG Construction Model
+                                                      Acc          Recall      F1         Acc       Recall            F1         Acc      Recall        F1          Acc     Recall          F1
+Qwen2.5-7B-Instruct                                   98.50        93.68     95.65       94.80         91.19        92.68        96.77    95.27       95.73     95.03          91.39      92.92
+ + GRPO with Knowledge-Carrying Reward                97.53        96.66     96.71       95.51         96.55        95.25        97.14    96.75       96.45     96.17          96.66      96.15
+ + GRPO with Knowledge-Indexing Reward                98.96        94.81     96.59       98.35         94.54        96.16        99.53    93.14       95.81     97.44          95.01      95.99
+Qwen2.5-3B-Instruct                                   94.41        91.00     91.92       83.53         79.34        81.01        92.07    89.52       90.31     87.79          86.01      86.63
+ + GRPO with Knowledge-Carrying Reward                96.52        94.24     94.80       95.91         96.28        95.80        97.01    94.74       95.22     96.70          95.58      95.76
+ + GRPO with Knowledge-Indexing Reward                97.11        93.15     94.64       96.19         93.66        94.48        96.20    93.87       94.55     98.22          96.04      96.85
+
+
+the correct evidence.                                                                            duces graphs with higher recall, aligning with its
+   Optimizing for downstream utility also en-                                                    goal of ensuring all necessary facts for reasoning
+hances the intrinsic factual quality of the graph.                                               are present. In contrast, the Knowledge-Indexing
+We investigated whether extrinsic optimization                                                   Reward (RI ), optimized for text retrieval, yields
+comes at the cost of intrinsic quality by measuring                                              graphs with higher precision, reflecting its need
+the precision, recall, and F1 score of the extracted                                             for a clean, high-fidelity index. This finding high-
+triples against the source text (Huang et al., 2025a)                                            lights that AutoGraph-R1 not only improves graph
+using Deepseek-V3 model as a judge (DeepSeek-                                                    quality but also tailors the graph’s structure to its
+AI et al., 2025b). The results in Table 2 show a                                                 specific downstream function. For analysis on com-
+clear positive correlation. Across all datasets, KGs                                             parisons with 70B+ baselines, On-Policy RL versus
+fine-tuned with AutoGraph-R1 exhibit higher in-                                                  offline fine-tuning, and the structural analysis of
+trinsic F1 scores than their zero-shot counterparts.                                             fintuned LLM constructed KG, please refer to the
+This indicates our RL framework does not sacri-                                                  ablation studies in Appendix A.
+fice factual accuracy for functional utility; rather, it
+improves both simultaneously.                                                                    5.5      Ablation: Impact of Reward Function
+                                                                                                          Design
+   The choice of reward function induces spe-
+cific and beneficial structural biases in the KG. A                                              To validate our task-specific rewards (RC and RI ),
+deeper analysis of Table 2 reveals that the two re-                                              we compare them against the final answer’s F1
+ward functions specialize the graph’s structure. The                                             score as a direct reward signal. We trained two
+Knowledge-Carrying Reward (RC ), optimized                                                       additional KG constructor models using this F1
+for graph knowledge retrieval, consistently pro-                                                 reward, keeping all other hyperparameters identi-
+Table 3: Ablation Study on Reward Functions for Qwen2.5-7B. (Top) Graph Knowledge Retrievers evaluated on
+F1. (Bottom) Graph-based Text Retrievers evaluated on F1 and Recall@5. Our task-specific rewards (RC , RI )
+consistently outperform the naive F1 Reward and zero-shot baseline across settings.
+
+                                     NQ*                PopQA*                       HotpotQA             2WikiMultihopQA            Musique                Avg.
+       Methods
+                                      F1                  F1                            F1                      F1                     F1                    F1
+                                                                     Graph Knowledge Retrievers (F1 Only)
+       Subgraph (Base)            28.07                   55.43                        41.66                      33.97                  15.24              34.87
+       Subgraph (F1 Reward)     27.36↓0.71              55.09↓0.34                   41.15↓0.51                   35.13                  15.70              34.89
+       Subgraph (RC )             28.54                   60.94                        43.59                      37.43                  15.65              37.23
+       Triples (Base)             33.26                   55.56                        44.99                      35.57               20.43                37.96
+       Triples (F1 Reward)      31.52↓1.74              53.85↓1.71                   44.52↓0.47                 30.68↓4.89          18.00↓2.43           35.71↓2.25
+       Triples (RC )              33.98                   58.02                        48.28                      36.04               20.56                39.38
+       ToG (Base)                    25.59                57.53                        43.93                      46.03               18.46                 38.31
+       ToG (F1 Reward)               27.64              56.95↓0.58                     45.19                      51.10             18.37↓0.09              39.85
+       ToG (RC )                     29.36                62.85                        44.68                      50.20               19.31                 41.28
+
+                                                               Graph-based Text Retrievers (F1 & Recall@5)
+                                F1       R@5       F1            R@5            F1             R@5         F1             R@5       F1       R@5       F1             R@5
+       HippoRAG (Base)         37.16    93.30     65.95         92.90         55.50          69.97        53.01         72.87      26.03    47.19     47.53          75.25
+       HippoRAG (F1 Reward)    39.66    93.90   63.74↓2.21    92.10↓0.80    53.74↓1.76     69.18↓0.79   49.58↓3.43    72.71↓0.16   28.68    47.71   47.08↓0.45     75.12↓0.13
+       HippoRAG (RI )          38.80    94.30     67.85         95.80         57.19          71.40        53.60         76.16      26.97    48.44     48.88          77.22
+       HippoRAG2 (Base)        37.02    94.10     65.74         92.80         57.08          72.03        54.99         75.98      26.77    48.55     48.32          76.69
+       HippoRAG2 (F1 Reward)   38.33    94.80   62.92↓2.82    92.00↓0.80    55.19↓1.89     71.07↓0.96   50.23↓4.76    72.81↓3.17   27.51    48.75   46.83↓1.49     75.88↓0.81
+       HippoRAG2 (RI )         38.68    95.00     67.72         96.30         58.98          73.61        56.46         78.66      27.18    49.23     49.80          78.56
+
+
+
+cal to our main setup. As shown in Table 3, the                                                between traditional graph quality metrics and end-
+F1-rewarded model underperforms the zero-shot                                                  task utility. Experiments across five QA bench-
+baseline by over −2.2 average F1 on the Triples Re-                                            marks demonstrate consistent improvements over
+triever and actively degrades both HippoRAG and                                                strong baselines in both graph knowledge and
+HippoRAG2 performance. In contrast, our task-                                                  graph-based text retrieval. Overall, our work shows
+specific rewards deliver consistent gains across                                               that reinforcement learning can effectively connect
+all settings, confirming that measuring functional                                             the graph construction process with downstream
+graph utility directly is essential for stable RL-                                             QA performance, ensuring that knowledge graphs
+based KG construction. Detailed training dynamics                                              are optimized for their intended applications.
+are provided in Appendix B.
+                                                                                               7     Limitations
+5.6    Computational Cost
+The per-sample training cost is bounded: graph                                                 While AutoGraph-R1 advances the state of task-
+construction operates over a small, fixed document                                             aware knowledge graph construction, several limi-
+pool (15 documents for text retrieval; 2–5 for graph                                           tations warrant discussion:
+retrieval), and the RC judge prompt (Figure 11) is                                                Dependency on Frozen Retrievers. Our frame-
+a minimal binary Yes/No query that can be batched                                              work optimizes the graph construction policy to
+efficiently. Table 4 reports wall-clock times on                                               maximize utility for a specific, frozen retrieval mod-
+2×H100 GPUs, which are well within academic                                                    ule. While this ensures high performance for the
+lab budgets.                                                                                   target pipeline, it implicitly couples the graph struc-
+                                                                                               ture to the retriever’s inductive biases. A graph op-
+Table 4: Wall-clock training times for AutoGraph-R1                                            timized for a graph knowledge retriever effectively
+on 2×H100 GPUs.                                                                                learns to construct reasoning pathways, which may
+                                                                                               not be the optimal topology for a distinct retrieval
+       Experiment Setting                                    Time
+                                                                                               paradigm (e.g., a BM25 retriever).
+       7B Graph-based Text Retriever                     ∼8h 38m
+       3B Graph-based Text Retriever                     ∼5h 11m                                  Reward Computation Bottleneck. Our use
+       7B Graph Knowledge Retriever                      ∼3h 15m                               of task-aware rewards (RC and RI ) necessitates
+       3B Graph Knowledge Retriever                      ∼2h 18m                               executing a full retrieval and evaluation loop dur-
+                                                                                               ing training. For the Knowledge-Carrying reward
+                                                                                               specifically, this involves querying a LLM judge
+6     Conclusion
+                                                                                               for every generated sample to verify deducibility.
+In this work, we introduced AutoGraph-R1, the                                                  This introduces computational overhead compared
+first reinforcement learning framework for knowl-                                              to offline or heuristic-based training objectives, po-
+edge graph construction that directly optimizes                                                tentially limiting the scalability of our method to
+downstream RAG performance. By incorporating                                                   extremely large training datasets without substan-
+task-aware rewards, our approach bridges the gap                                               tial compute resources.
+   Model Scale and Generalization. Due to com-           Acknowledgments
+putational constraints, our experiments were pri-
+marily conducted on LLMs in the 1B to 7B pa-             The authors of this paper were supported by the
+rameter range (Qwen2.5 and Llama-3.2). While             ITSP Platform Research Project (ITS/189/23FP)
+we demonstrate that fine-tuned smaller models can        from ITC of Hong Kong, SAR, China, and the AoE
+outperform larger zero-shot baselines, we have not       (AoE/E-601/24-N), the RIF (R6021-20), the GRF
+yet empirically verified the scaling laws of our RL      (16205322) and the JRFS (JRFS2526-6S10) from
+framework on massive foundation models (e.g.,            RGC of Hong Kong, SAR, China. We also thank
+70B+ parameters). Additionally, our evaluation is        the support from the Microsoft Accelerate Founda-
+limited to English-language benchmarks; the effec-       tion Models Research (AFMR) grant program.
+tiveness of our reward-driven policy in multilingual
+or low-resource settings remains an open question.
+                                                         References
+   Dependency on Associated Passages. Our                Gabor Angeli, Melvin Jose Johnson Premkumar, and
+training pipeline assumes access to associated pas-        Christopher D. Manning. 2015. Leveraging Lin-
+sages alongside query-answer pairs, i.e., train-           guistic Structure For Open Domain Information Ex-
+ing data of the form (query, gold_answer, as-              traction. In Proceedings of the 53rd Annual Meet-
+                                                           ing of the Association for Computational Linguistics
+sociated_passages). While such data is avail-              and the 7th International Joint Conference on Natu-
+able in standard multi-hop QA benchmarks (e.g.,            ral Language Processing (Volume 1: Long Papers),
+HotpotQA, Musique), this assumption may not                pages 344–354, Beijing, China. Association for Com-
+hold in more general settings where only (query,           putational Linguistics.
+gold_answer) pairs are available. Collecting asso-
+                                                         Jiaxin Bai, Wei Fan, Qi Hu, Qing Zong, Chunyang
+ciated passages constitutes an additional annotation        Li, Hong Ting Tsang, Hongyu Luo, Yauwai Yim,
+cost, which may limit the applicability of our frame-       Haoyu Huang, Xiao Zhou, Feng Qin, Tianshi Zheng,
+work in low-resource or domain-specific scenarios.          Xi Peng, Xin Yao, Huiwen Yang, Leijie Wu, Yi Ji,
+We leave the exploration of passage-free training           Gong Zhang, Renhai Chen, and Yangqiu Song.
+                                                            2025a. AutoSchemaKG: Autonomous Knowledge
+strategies as an important direction for future work.       Graph Construction through Dynamic Schema In-
+                                                            duction from Web-Scale Corpora. arXiv preprint.
+                                                            ArXiv:2505.23628 [cs].
+
+8   Ethics Statement                                     Jiaxin Bai, Yicheng Wang, Tianshi Zheng, Yue Guo,
+                                                            Xin Liu, and Yangqiu Song. 2024. Advancing Abduc-
+                                                            tive Reasoning in Knowledge Graphs through Com-
+                                                            plex Logical Hypothesis Generation. arXiv preprint.
+This work complies with the ACL Code of Ethics.             ArXiv:2312.15643 [cs].
+Our research focuses on optimizing the structural
+utility of knowledge graphs and does not involve         Jiaxin Bai, Zihao Wang, Yukun Zhou, Hang Yin, Weizhi
+human subjects or the collection of non-public              Fei, Qi Hu, Zheye Deng, Jiayang Cheng, Tianshi
+                                                            Zheng, Hong Ting Tsang, Yisen Gao, Zhongwei Xie,
+data. All experiments utilize established, pub-             Yufei Li, Lixin Fan, Binhang Yuan, Wei Wang, Lei
+licly available datasets (HotpotQA, Musique, NQ,            Chen, Xiaofang Zhou, and Yangqiu Song. 2025b.
+PopQA). We acknowledge that generative mod-                 Top Ten Challenges Towards Agentic Neural Graph
+els and retrieval-augmented systems can inadver-            Databases. arXiv preprint. ArXiv:2501.14224 [cs].
+tently propagate biases present in their training cor-
+                                                         Shengyuan Chen, Yunfeng Cai, Huang Fang, Xiao
+pora (e.g., Wikipedia) or pre-trained base models.         Huang, and Mingming Sun. Differentiable Neuro-
+Furthermore, while our method aims to improve              Symbolic Reasoning on Large-Scale Knowledge
+retrieval accuracy, the automated construction of          Graphs.
+knowledge graphs carries a risk of generating or
+                                                         Shengyuan Chen, Qinggang Zhang, Junnan Dong, Wen
+amplifying hallucinations if the source text is factu-     Hua, Jiannong Cao, and Xiao Huang. 2024a. Neuro-
+ally incorrect. We encourage practitioners to audit        Symbolic Entity Alignment via Variational Inference.
+both the source corpora and the constructed graphs,        arXiv preprint. ArXiv:2410.04153 [cs].
+particularly when applying this framework in sen-
+                                                         Shengyuan Chen, Qinggang Zhang, Junnan Dong, Wen
+sitive domains such as healthcare or finance. This         Hua, Qing Li, and Xiao Huang. 2024b. Entity Align-
+paper uses LLMs to assist with grammar and writ-           ment with Noisy Annotations from Large Language
+ing quality.                                               Models. arXiv preprint. ArXiv:2405.16806 [cs].
+DeepSeek-AI, Daya Guo, Dejian Yang, Haowei Zhang,         Zirui Guo, Lianghao Xia, Yanhua Yu, Tu Ao, and
+  Junxiao Song, Ruoyu Zhang, Runxin Xu, Qihao Zhu,           Chao Huang. 2025. LightRAG: Simple and Fast
+  Shirong Ma, Peiyi Wang, Xiao Bi, and 1 others.             Retrieval-Augmented Generation. arXiv preprint.
+  2025a. DeepSeek-R1: Incentivizing Reasoning Ca-           ArXiv:2410.05779 [cs].
+  pability in LLMs via Reinforcement Learning. arXiv
+  preprint. ArXiv:2501.12948 [cs].                        Bernal Jiménez Gutiérrez, Yiheng Shu, Yu Gu, Michi-
+                                                            hiro Yasunaga, and Yu Su. 2025a. HippoRAG:
+DeepSeek-AI, Aixin Liu, Bei Feng, Bing Xue, Bingx-          Neurobiologically Inspired Long-Term Memory
+  uan Wang, Bochao Wu, Chengda Lu, Chenggang                for Large Language Models.        arXiv preprint.
+  Zhao, Chengqi Deng, Chenyu Zhang, Chong Ruan,             ArXiv:2405.14831 [cs].
+  Damai Dai, Daya Guo, Dejian Yang, Deli Chen,
+  Dongjie Ji, Erhang Li, Fangyun Lin, Fucong Dai,         Bernal Jiménez Gutiérrez, Yiheng Shu, Weijian Qi,
+  and 181 others. 2025b. DeepSeek-V3 Technical Re-          Sizhe Zhou, and Yu Su. 2025b. From RAG
+  port. arXiv preprint. ArXiv:2412.19437 [cs].              to Memory: Non-Parametric Continual Learning
+                                                            for Large Language Models.      arXiv preprint.
+Pierre Dognin, Inkit Padhi, Igor Melnyk, and Payel Das.     ArXiv:2502.14802 [cs].
+   2021. ReGen: Reinforcement Learning for Text and
+                                                          Haoyu Han, Harry Shomer, Yu Wang, Yongjia Lei,
+   Knowledge Base Generation using Pretrained Lan-
+                                                            Kai Guo, Zhigang Hua, Bo Long, Hui Liu, and Jil-
+   guage Models. In Proceedings of the 2021 Confer-
+                                                            iang Tang. 2025. RAG vs. GraphRAG: A System-
+   ence on Empirical Methods in Natural Language Pro-
+                                                            atic Evaluation and Key Insights. arXiv preprint.
+   cessing, pages 1084–1099, Online and Punta Cana,
+                                                            ArXiv:2502.11371 [cs].
+   Dominican Republic. Association for Computational
+   Linguistics.                                           Jiuzhou Han, Nigel Collier, Wray Buntine, and Ehsan
+                                                             Shareghi. 2024. PiVe: Prompting with Iterative Ver-
+Hanze Dong, Wei Xiong, Deepanshu Goyal, Yihan                ification Improving Graph-based Generative Capa-
+  Zhang, Winnie Chow, Rui Pan, Shizhe Diao, Jipeng           bility of LLMs. arXiv preprint. ArXiv:2305.12392
+  Zhang, Kashun Shum, and Tong Zhang. 2023a.                 [cs].
+  RAFT: Reward rAnked FineTuning for Genera-
+  tive Foundation Model Alignment. arXiv preprint.        Mengliang He, Aimin Zhou, and Xiaoming Shi. En-
+  ArXiv:2304.06767 [cs].                                   hancing Textbook Question Answering with Knowl-
+                                                           edge Graph-Augmented Large Language Models.
+Junnan Dong, Qinggang Zhang, Xiao Huang, Qiaoyu
+  Tan, Daochen Zha, and Zhao Zihao. 2023b. Active         Xiaoxin He, Yijun Tian, Yifei Sun, Nitesh V. Chawla,
+  Ensemble Learning for Knowledge Graph Error De-           Thomas Laurent, Yann LeCun, Xavier Bresson,
+  tection. In Proceedings of the Sixteenth ACM Interna-     and Bryan Hooi. 2024. G-Retriever: Retrieval-
+  tional Conference on Web Search and Data Mining,          Augmented Generation for Textual Graph Under-
+  pages 877–885, Singapore Singapore. ACM.                  standing and Question Answering. arXiv preprint.
+                                                            ArXiv:2402.07630 [cs].
+Darren Edge, Ha Trinh, Newman Cheng, Joshua
+  Bradley, Alex Chao, Apurva Mody, Steven Truitt,         Xanh Ho, Anh-Khoa Duong Nguyen, Saku Sugawara,
+  Dasha Metropolitansky, Robert Osazuwa Ness, and           and Akiko Aizawa. 2020. Constructing A Multi-
+  Jonathan Larson. 2025. From Local to Global: A            hop QA Dataset for Comprehensive Evaluation of
+  Graph RAG Approach to Query-Focused Summa-                Reasoning Steps. arXiv preprint. ArXiv:2011.01060
+  rization. arXiv preprint. ArXiv:2404.16130 [cs].          [cs].
+
+                                                          Jingcheng Hu, Yinmin Zhang, Qi Han, Daxin Jiang, Xi-
+Yunfan Gao, Yun Xiong, Xinyu Gao, Kangxiang Jia, Jin-
+                                                             angyu Zhang, and Heung-Yeung Shum. 2025. Open-
+  liu Pan, Yuxi Bi, Yi Dai, Jiawei Sun, Meng Wang, and
+                                                             Reasoner-Zero: An Open Source Approach to Scal-
+  Haofen Wang. 2024a. Retrieval-augmented genera-
+                                                             ing Up Reinforcement Learning on the Base Model.
+  tion for large language models: A survey. Preprint,
+                                                             arXiv preprint. ArXiv:2503.24290 [cs].
+  arXiv:2312.10997.
+                                                          Haoyu Huang, Chong Chen, Zeang Sheng, Yang Li, and
+Yunfan Gao, Yun Xiong, Xinyu Gao, Kangxiang Jia, Jin-       Wentao Zhang. 2025a. Can LLMs be Good Graph
+  liu Pan, Yuxi Bi, Yi Dai, Jiawei Sun, Meng Wang, and      Judge for Knowledge Graph Construction? arXiv
+  Haofen Wang. 2024b. Retrieval-Augmented Gener-            preprint. ArXiv:2411.17388 [cs].
+  ation for Large Language Models: A Survey. arXiv
+  preprint. ArXiv:2312.10997 [cs].                        Haoyu Huang, Hong Ting Tsang, Jiaxin Bai, Xi Peng,
+                                                            Gong Zhang, and Yangqiu Song. 2026.          At-
+Michael Gubanov, Anna Pyayt, and Aleksandra Karo-           lasKV: Augmenting LLMs with Billion-Scale Knowl-
+  lak. 2024. CancerKG.ORG A Web-scale, Interactive,         edge Graphs in 20GB VRAM. arXiv preprint.
+  Verifiable Knowledge Graph-LLM Hybrid for Assist-         ArXiv:2510.17934 [cs].
+  ing with Optimal Cancer Treatment and Care. In
+  Proceedings of the 33rd ACM International Confer-       Jiatan Huang, Mingchen Li, Zonghai Yao, Zhichao
+  ence on Information and Knowledge Management,              Yang, Yongkang Xiao, Feiyun Ouyang, Xiaohan Li,
+  pages 4497–4505. ArXiv:2501.00223 [cs].                    Shuo Han, and Hong Yu. 2024. RiTeK: A Dataset
+  for Large Language Models Complex Reasoning                Uszkoreit, Quoc Le, and Slav Petrov. 2019. Natu-
+  over Textual Knowledge Graphs. arXiv preprint.             ral Questions: A Benchmark for Question Answer-
+  ArXiv:2410.13987 [cs].                                     ing Research. Transactions of the Association for
+                                                             Computational Linguistics, 7:452–466. Place: Cam-
+Lei Huang, Weijiang Yu, Weitao Ma, Weihong Zhong,            bridge, MA Publisher: MIT Press.
+  Zhangyin Feng, Haotian Wang, Qianglong Chen,
+  Weihua Peng, Xiaocheng Feng, Bing Qin, and Ting          Yassir Lairgi, Ludovic Moncla, Rémy Cazabet, Khalid
+  Liu. 2025b. A Survey on Hallucination in Large Lan-        Benabdeslem, and Pierre Cléau. 2024. iText2KG:
+  guage Models: Principles, Taxonomy, Challenges,            Incremental Knowledge Graphs Construction Us-
+  and Open Questions. ACM Transactions on Informa-           ing Large Language Models.        arXiv preprint.
+  tion Systems, 43(2):1–55. ArXiv:2311.05232 [cs].           ArXiv:2409.03284 [cs].
+
+Gautier Izacard, Patrick Lewis, Maria Lomeli, Lucas        Patrick Lewis, Ethan Perez, Aleksandra Piktus,
+  Hosseini, Fabio Petroni, Timo Schick, Jane Dwivedi-        Fabio Petroni, Vladimir Karpukhin, Naman Goyal,
+  Yu, Armand Joulin, Sebastian Riedel, and Edouard           Heinrich Küttler, Mike Lewis, Wen-tau Yih,
+  Grave. 2022. Atlas: Few-shot Learning with Re-             Tim Rocktäschel, Sebastian Riedel, and Douwe
+  trieval Augmented Language Models. arXiv preprint.         Kiela. 2021. Retrieval-Augmented Generation for
+  ArXiv:2208.03299 [cs].                                     Knowledge-Intensive NLP Tasks. arXiv preprint.
+                                                             ArXiv:2005.11401 [cs].
+Ziwei Ji, Nayeon Lee, Rita Frieske, Tiezheng Yu, Dan
+  Su, Yan Xu, Etsuko Ishii, Yejin Bang, Delong Chen,       Mufei Li, Siqi Miao, and Pan Li. 2025a. Sim-
+  Wenliang Dai, Ho Shu Chan, Andrea Madotto, and            ple Is Effective: The Roles of Graphs and
+  Pascale Fung. 2023. Survey of Hallucination in Nat-       Large Language Models in Knowledge-Graph-Based
+  ural Language Generation. ACM Computing Surveys,          Retrieval-Augmented Generation. arXiv preprint.
+  55(12):1–38. ArXiv:2202.03629 [cs].                       ArXiv:2410.20724 [cs].
+
+Pengcheng Jiang, Jiacheng Lin, Lang Cao, Runchu            Shilong Li, Yancheng He, Hangyu Guo, Xingyuan Bu,
+  Tian, SeongKu Kang, Zifeng Wang, Jimeng Sun, and           Ge Bai, Jie Liu, Jiaheng Liu, Xingwei Qu, Yang-
+  Jiawei Han. 2025a. DeepRetrieval: Hacking Real             guang Li, Wanli Ouyang, Wenbo Su, and Bo Zheng.
+  Search Engines and Retrievers with Large Language          2024a. GraphReader: Building Graph-based Agent
+  Models via Reinforcement Learning. arXiv preprint.         to Enhance Long-Context Abilities of Large Lan-
+  ArXiv:2503.00223 [cs].                                     guage Models. arXiv preprint. ArXiv:2406.14550
+                                                             [cs].
+Pengcheng Jiang, Xueqiang Xu, Jiacheng Lin, Jin-
+  feng Xiao, Zifeng Wang, Jimeng Sun, and Jiawei           Yangning Li, Weizhi Zhang, Yuyao Yang, Wei-Chieh
+  Han. 2025b. s3: You Don’t Need That Much Data              Huang, Yaozu Wu, Junyu Luo, Yuanchen Bei,
+  to Train a Search Agent via RL. arXiv preprint.            Henry Peng Zou, Xiao Luo, Yusheng Zhao, Chunkit
+  ArXiv:2505.14146 [cs].                                     Chan, Yankai Chen, Zhongfen Deng, Yinghui Li, Hai-
+                                                             Tao Zheng, Dongyuan Li, Renhe Jiang, Ming Zhang,
+Bowen Jin, Chulin Xie, Jiawei Zhang, Kashob Ku-              Yangqiu Song, and Philip S. Yu. 2025b. Towards
+  mar Roy, Yu Zhang, Zheng Li, Ruirui Li, Xian-              Agentic RAG with Deep Reasoning: A Survey of
+  feng Tang, Suhang Wang, Yu Meng, and Jiawei Han.           RAG-Reasoning Systems in LLMs. arXiv preprint.
+  2024. Graph Chain-of-Thought: Augmenting Large             ArXiv:2507.09477 [cs].
+  Language Models by Reasoning on Graphs. arXiv
+  preprint. ArXiv:2404.07103 [cs].                         Zhuoqun Li, Xuanang Chen, Haiyang Yu, Hongyu Lin,
+                                                             Yaojie Lu, Qiaoyu Tang, Fei Huang, Xianpei Han,
+Bowen Jin, Hansi Zeng, Zhenrui Yue, Jinsung Yoon,            Le Sun, and Yongbin Li. 2024b. StructRAG: Boost-
+  Sercan Arik, Dong Wang, Hamed Zamani, and Jiawei           ing Knowledge Intensive Reasoning of LLMs via
+  Han. 2025. Search-R1: Training LLMs to Reason              Inference-time Hybrid Information Structurization.
+  and Leverage Search Engines with Reinforcement             arXiv preprint. ArXiv:2410.08815 [cs].
+  Learning. arXiv preprint. ArXiv:2503.09516 [cs].
+                                                           Xun Liang, Simin Niu, Zhiyu li, Sensen Zhang, Shichao
+L. P. Kaelbling, M. L. Littman, and A. W. Moore. 1996.       Song, Hanyu Wang, Jiawei Yang, Feiyu Xiong,
+   Reinforcement Learning: A Survey. arXiv preprint.         Bo Tang, and Chenyang Xi. 2024. Empowering
+   ArXiv:cs/9605103.                                         Large Language Models to Set up a Knowledge Re-
+                                                             trieval Indexer via Self-Learning. arXiv preprint.
+Timo Kaufmann, Paul Weng, Viktor Bengs, and Eyke             ArXiv:2405.16933 [cs].
+  Hüllermeier. 2024. A Survey of Reinforcement
+  Learning from Human Feedback. arXiv preprint.            Haochen Liu, Song Wang, Yaochen Zhu, Yushun Dong,
+  ArXiv:2312.14925 [cs].                                     and Jundong Li. 2024a. Knowledge Graph-Enhanced
+                                                             Large Language Models via Path Selection. arXiv
+Tom Kwiatkowski, Jennimaria Palomaki, Olivia Red-            preprint. ArXiv:2406.13862 [cs].
+  field, Michael Collins, Ankur Parikh, Chris Alberti,
+  Danielle Epstein, Illia Polosukhin, Jacob Devlin, Ken-   Wei Liu, Ailun Yu, Daoguang Zan, Bo Shen, Wei
+  ton Lee, Kristina Toutanova, Llion Jones, Matthew         Zhang, Haiyan Zhao, Zhi Jin, and Qianxiang Wang.
+  Kelcey, Ming-Wei Chang, Andrew M. Dai, Jakob              2024b. GraphCoder: Enhancing Repository-Level
+  Code Completion via Code Context Graph-based           Cheng Peng, Xi Yang, Aokun Chen, Kaleb E. Smith,
+  Retrieval and Language Model. arXiv preprint.            Nima PourNejatian, Anthony B. Costa, Cheryl Mar-
+  ArXiv:2406.07003 [cs].                                   tin, Mona G. Flores, Ying Zhang, Tanja Magoc, Glo-
+                                                           ria Lipori, Duane A. Mitchell, Naykky S. Ospina,
+Xiangyan Liu, Bo Lan, Zhiyuan Hu, Yang Liu,                Mustafa M. Ahmed, William R. Hogan, Elizabeth A.
+  Zhicheng Zhang, Fei Wang, Michael Shieh, and Wen-        Shenkman, Yi Guo, Jiang Bian, and Yonghui Wu.
+  meng Zhou. 2024c. CodexGraph: Bridging Large             2023. A Study of Generative Large Language Model
+  Language Models and Code Repositories via Code           for Medical Research and Healthcare. npj Digital
+  Graph Databases. arXiv preprint. ArXiv:2408.03910        Medicine, 6(1):210. ArXiv:2305.13523 [cs].
+  [cs].
+                                                         Qwen, An Yang, Baosong Yang, Beichen Zhang,
+Zichen Liu, Changyu Chen, Wenjun Li, Penghui Qi,          Binyuan Hui, Bo Zheng, Bowen Yu, Chengyuan Li,
+  Tianyu Pang, Chao Du, Wee Sun Lee, and Min Lin.         Dayiheng Liu, Fei Huang, Haoran Wei, Huan Lin,
+  2025. Understanding R1-Zero-Like Training: A Crit-      Jian Yang, Jianhong Tu, Jianwei Zhang, Jianxin Yang,
+  ical Perspective. arXiv preprint. ArXiv:2503.20783      Jiaxi Yang, Jingren Zhou, Junyang Lin, and 24 others.
+  [cs].                                                   2025. Qwen2.5 Technical Report. arXiv preprint.
+                                                          ArXiv:2412.15115 [cs].
+Haoran Luo, Haihong E, Guanting Chen, Qika Lin,          John Schulman, Filip Wolski, Prafulla Dhariwal,
+  Yikai Guo, Fangzhi Xu, Zemin Kuang, Meina Song,          Alec Radford, and Oleg Klimov. 2017. Proximal
+  Xiaobao Wu, Yifan Zhu, and Luu Anh Tuan. 2025.           Policy Optimization Algorithms. arXiv preprint.
+  Graph-R1: Towards Agentic GraphRAG Frame-                ArXiv:1707.06347 [cs].
+  work via End-to-end Reinforcement Learning. arXiv
+  preprint. ArXiv:2507.21892 [cs].                       Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu,
+                                                           Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan
+Shengjie Ma, Chengjin Xu, Xuhui Jiang, Muzhi Li,           Zhang, Y. K. Li, Y. Wu, and Daya Guo. 2024.
+  Huaren Qu, Cehao Yang, Jiaxin Mao, and Jian Guo.         DeepSeekMath: Pushing the Limits of Mathemat-
+  2025. Think-on-Graph 2.0: Deep and Faithful Large        ical Reasoning in Open Language Models. arXiv
+  Language Model Reasoning with Knowledge-guided           preprint. ArXiv:2402.03300 [cs].
+  Retrieval Augmented Generation. arXiv preprint.
+  ArXiv:2407.10805 [cs].                                 Haozhan Shen, Peng Liu, Jingcheng Li, Chunxin
+                                                           Fang, Yibo Ma, Jiajia Liao, Qiaoli Shen, Zilun
+Alex Mallen, Akari Asai, Victor Zhong, Rajarshi Das,       Zhang, Kangjia Zhao, Qianqian Zhang, Ruochen Xu,
+  Daniel Khashabi, and Hannaneh Hajishirzi. 2023.          and Tiancheng Zhao. 2025a. VLM-R1: A Stable
+  When Not to Trust Language Models: Investigat-           and Generalizable R1-style Large Vision-Language
+  ing Effectiveness of Parametric and Non-Parametric       Model. arXiv preprint. ArXiv:2504.07615 [cs].
+  Memories. arXiv preprint. ArXiv:2212.10511 [cs].
+                                                         Xiangqing Shen, Fanfan Wang, and Rui Xia. 2025b.
+Belinda Mo, Kyssen Yu, Joshua Kazdan, Proud Mpala,         Reason-Align-Respond: Aligning LLM Reasoning
+  Lisa Yu, Chris Cundy, Charilaos Kanatsoulis, and         with Knowledge Graphs for KGQA. arXiv preprint.
+  Sanmi Koyejo. 2025. KGGen: Extracting Knowl-             ArXiv:2505.20971 [cs].
+  edge Graphs from Plain Text with Language Models.
+  arXiv preprint. ArXiv:2502.09956 [cs].                 Jiashuo Sun, Chengjin Xu, Lumingyuan Tang, Saizhuo
+                                                            Wang, Chen Lin, Yeyun Gong, Lionel M. Ni, Heung-
+Long Ouyang, Jeff Wu, Xu Jiang, Diogo Almeida, Car-         Yeung Shum, and Jian Guo. 2024. Think-on-Graph:
+  roll L. Wainwright, Pamela Mishkin, Chong Zhang,          Deep and Responsible Reasoning of Large Lan-
+  Sandhini Agarwal, Katarina Slama, Alex Ray, John          guage Model on Knowledge Graph. arXiv preprint.
+  Schulman, Jacob Hilton, Fraser Kelton, Luke Miller,       ArXiv:2307.07697 [cs].
+  Maddie Simens, Amanda Askell, Peter Welinder,          Harsh Trivedi, Niranjan Balasubramanian, Tushar Khot,
+  Paul Christiano, Jan Leike, and Ryan Lowe. 2022.         and Ashish Sabharwal. 2022. MuSiQue: Multi-
+  Training language models to follow instructions with     hop Questions via Single-hop Question Composition.
+  human feedback. arXiv preprint. ArXiv:2203.02155         arXiv preprint. ArXiv:2108.00573 [cs].
+  [cs].
+                                                         Yu Wang, Nedim Lipka, Ryan A. Rossi, Alexa Siu,
+Boci Peng, Yun Zhu, Yongchao Liu, Xiaohe Bo,               Ruiyi Zhang, and Tyler Derr. 2023. Knowledge
+  Haizhou Shi, Chuntao Hong, Yan Zhang, and Siliang        Graph Prompting for Multi-Document Question An-
+  Tang. 2024a. Graph retrieval-augmented generation:       swering. arXiv preprint. ArXiv:2308.11730 [cs]
+  A survey. Preprint, arXiv:2408.08921.                    version: 3.
+
+Boci Peng, Yun Zhu, Yongchao Liu, Xiaohe Bo,             Junde Wu, Jiayuan Zhu, Yunli Qi, Jingkun Chen, Min
+  Haizhou Shi, Chuntao Hong, Yan Zhang, and Siliang        Xu, Filippo Menolascina, and Vicente Grau. 2024.
+  Tang. 2024b. Graph Retrieval-Augmented Genera-           Medical Graph RAG: Towards Safe Medical Large
+  tion: A Survey. arXiv preprint. ArXiv:2408.08921         Language Model via Graph Retrieval-Augmented
+  [cs].                                                    Generation. arXiv preprint. ArXiv:2408.04187 [cs].
+Yunjia Xi, Jianghao Lin, Yongzhao Xiao, Zheli Zhou,       Xie, Yuyao Yang, Wei-Chieh Huang, Chunyu Miao,
+  Rong Shan, Te Gao, Jiachen Zhu, Weiwen Liu, Yong        Henry Peng Zou, Xiao Luo, Yusheng Zhao, Yankai
+  Yu, and Weinan Zhang. 2025. A Survey of LLM-            Chen, Chunkit Chan, Peilin Zhou, Xinyang Zhang,
+  based Deep Search Agents: Paradigm, Optimiza-           Chenwei Zhang, Jingbo Shang, and 4 others. 2025b.
+  tion, Evaluation, and Challenges. arXiv preprint.       From Web Search towards Agentic Deep Research:
+  ArXiv:2508.05668 [cs].                                  Incentivizing Search with Reasoning Agents. arXiv
+                                                          preprint. ArXiv:2506.18959 [cs].
+Zhishang Xiang, Chuanjie Wu, Qinggang Zhang,
+  Shengyuan Chen, Zijin Hong, Xiao Huang, and Jin-      Yanzhao Zhang, Mingxin Li, Dingkun Long, Xin Zhang,
+  song Su. 2025. When to use Graphs in RAG: A Com-        Huan Lin, Baosong Yang, Pengjun Xie, An Yang,
+  prehensive Analysis for Graph Retrieval-Augmented       Dayiheng Liu, Junyang Lin, Fei Huang, and Jingren
+  Generation. arXiv preprint. ArXiv:2506.05690 [cs].      Zhou. 2025c. Qwen3 Embedding: Advancing Text
+                                                          Embedding and Reranking Through Foundation Mod-
+Qiao Xiao, Hong Ting Tsang, and Jiaxin Bai.               els. arXiv preprint. ArXiv:2506.05176 [cs].
+  2025.     TERAG: Token-Efficient Graph-Based
+  Retrieval-Augmented Generation. arXiv preprint.       Yichi Zhang, Binbin Hu, Zhuo Chen, Lingbing Guo,
+  ArXiv:2509.18667 [cs].                                  Ziqi Liu, Zhiqiang Zhang, Lei Liang, Huajun Chen,
+                                                          and Wen Zhang. 2024b. Multi-domain Knowledge
+Bingcong Xue and Lei Zou. 2022. Knowledge Graph           Graph Collaborative Pre-training and Prompt Tun-
+  Quality Management: a Comprehensive Survey.             ing for Diverse Downstream Tasks. arXiv preprint.
+  IEEE Transactions on Knowledge and Data Engi-           ArXiv:2405.13085 [cs] version: 1.
+  neering, pages 1–1.
+                                                        Zhiqiang Zhang and Wen Zhao. 2025. A Collaborative
+Zhilin Yang, Peng Qi, Saizheng Zhang, Yoshua Ben-         Reasoning Framework Powered by Reinforcement
+  gio, William W. Cohen, Ruslan Salakhutdinov, and        Learning and Large Language Models for Complex
+  Christopher D. Manning. 2018. HotpotQA: A               Questions Answering over Knowledge Graph. In
+  Dataset for Diverse, Explainable Multi-hop Ques-        Proceedings of the 31st International Conference on
+  tion Answering. arXiv preprint. ArXiv:1809.09600        Computational Linguistics, pages 10672–10684, Abu
+  [cs].                                                   Dhabi, UAE. Association for Computational Linguis-
+                                                          tics.
+Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan,
+  Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan,       Xinjie Zhao, Moritz Blum, Rui Yang, Boming Yang,
+  Gaohong Liu, Lingjun Liu, Xin Liu, Haibin Lin,          Luis Márquez Carpintero, Mónica Pina-Navarro,
+  Zhiqi Lin, Bole Ma, Guangming Sheng, Yuxuan             Tony Wang, Xin Li, Huitao Li, Yanran Fu, Rongrong
+  Tong, Chi Zhang, Mofan Zhang, Wang Zhang, and           Wang, Juntao Zhang, and Irene Li. 2024. AGENTi-
+  16 others. 2025. DAPO: An Open-Source LLM Rein-         Graph: An Interactive Knowledge Graph Platform for
+  forcement Learning System at Scale. arXiv preprint.     LLM-based Chatbots Utilizing Private Data. arXiv
+  ArXiv:2503.14476 [cs].                                  preprint. ArXiv:2410.11531 [cs].
+Zishun Yu, Yunzhe Tao, Liyu Chen, Tao Sun, and          Tianshi Zheng, Zheye Deng, Hong Ting Tsang, Weiqi
+  Hongxia Yang. 2024. $\mathcal{B}$-Coder: Value-         Wang, Jiaxin Bai, Zihao Wang, and Yangqiu Song.
+  Based Deep Reinforcement Learning for Program           2025. From Automation to Autonomy: A Survey
+  Synthesis. arXiv preprint. ArXiv:2310.03173 [cs].       on Large Language Models in Scientific Discovery.
+                                                          arXiv preprint. ArXiv:2505.13259 [cs].
+Qinggang Zhang, Shengyuan Chen, Yuanchen Bei,
+  Zheng Yuan, Huachi Zhou, Zijin Hong, Junnan Dong,     Changtai Zhu, Siyin Wang, Ruijun Feng, Kai Song,
+  Hao Chen, Yi Chang, and Xiao Huang. 2025a. A Sur-       and Xipeng Qiu. 2025. ConvSearch-R1: Enhanc-
+  vey of Graph Retrieval-Augmented Generation for         ing Query Reformulation for Conversational Search
+  Customized Large Language Models. arXiv preprint.       with Reasoning via Reinforcement Learning. arXiv
+  ArXiv:2501.13958 [cs] version: 1.                       preprint. ArXiv:2505.15776 [cs].
+Qinggang Zhang, Junnan Dong, Hao Chen, Daochen
+  Zha, Zailiang Yu, and Xiao Huang. 2024a.
+  KnowGPT: Knowledge Graph based Prompting
+  for Large Language Models.     arXiv preprint.
+  ArXiv:2312.06185 [cs].
+Qinggang Zhang, Junnan Dong, Keyu Duan, Xiao
+  Huang, Yezi Liu, and Linchuan Xu. 2022. Con-
+  trastive Knowledge Graph Error Detection. In Pro-
+  ceedings of the 31st ACM International Conference
+  on Information & Knowledge Management, pages
+  2590–2599. ArXiv:2211.10030 [cs].
+Weizhi Zhang, Yangning Li, Yuanchen Bei, Junyu
+ Luo, Guancheng Wan, Liangwei Yang, Chenxuan
+A     Ablation Study                                   to compute rewards. Table 7 compares the perfor-
+                                                       mance when training with a 3B-parameter Judge
+A.1    Comparison with State-of-the-Art Large
+                                                       versus a 7B-parameter Judge. The results indicate
+       Models
+                                                       that a larger Judge generally provides a higher-
+To assess the efficacy of our reward-driven op-        fidelity signal, leading to better final RAG perfor-
+timization, we compared our fine-tuned 3B and          mance across the board.
+7B models against a suite of state-of-the-art
+(SOTA) large-scale models, including Llama-3.3-        A.4   Integration with Existing KG-RAG
+70B, Qwen2.5-72B, and GPT-5-mini and etc.                    Pipelines
+   Table 5 present the results. Our findings demon-    To verify the transferability of our method, we in-
+strate that AutoGraph-R1 allows smaller models to      tegrated our fine-tuned Qwen-7B model into the
+achieve parity with, and often surpass, models that    official HippoRAG (Gutiérrez et al., 2025a) code-
+are significantly larger. Specifically:                base, replacing their default zero-shot construction
+                                                       model. As shown in Table 8, our model functions
+    • On Graph Retrievers, our Qwen-7B model
+                                                       as a plug-and-play enhancement, improving both
+      demonstrates remarkable efficiency, surpass-
+                                                       F1 and Recall metrics across datasets.
+      ing most zero-shot models on both Subgraph
+      and Triples retriever, while maintaining com-    A.5   Additional Results on Llama Models
+      petitive parity on the ToG retriever.            In this section, we present the performance im-
+    • On Text Retrievers, our Qwen-7B model            provements of AutoGraph-R1 when applied to the
+      outperforms the baselines for HippoRAG           Llama-3.2 model family. These results (Tables 9,
+      and HippoRAG2, validating that our method        10, and 11) demonstrate that our method general-
+      builds more effective knowledge indices than     izes effectively across different LLM architectures.
+      general-purpose large models.                    A.6   Structural Analysis of Constructed KGs
+A.2 Ablation Study on Training Methodology             To understand how our reward functions alter the
+    (RL vs. RAFT)                                      topology of the generated graphs, we analyzed the
+To determine if our performance gains stem specif-     structural metrics of KGs generated by the Qwen
+ically from On-Policy RL (GRPO) or simply from         model family across four datasets: 2021Wiki,
+reward-guided data selection, we conducted an ab-      2WikiMultihopQA, HotpotQA, and Musique. Ta-
+lation study comparing GRPO against a RAFT (Re-        ble 12 presents the granular statistics for both 3B
+ward rAnked FineTuning) approach (Dong et al.,         and 7B models across all evaluated datasets. The
+2023a). In the RAFT setup, we utilized our re-         analysis reveals two distinct, reward-driven strate-
+ward functions to filter generated KGs offline and     gies:
+fine-tuned the model on high-reward samples.              • Optimizing for Completeness (Knowledge-
+   Table 6 presents the results on the Qwen2.5-7B           Carrying Reward): The model trained for
+model. Both strategies significantly outperform the         graph retrieval (Knowledge-Carrying) main-
+zero-shot baseline, confirming that our reward func-        tains a high number of triples but generates a
+tions capture genuine signal for downstream utility.        dramatically larger vocabulary of unique rela-
+Comparing the two, GRPO consistently yields su-             tion types (e.g., +34% on average for Qwen-
+perior results, achieving the highest average F1            7B). This is direct evidence that the model
+score in 4 out of 5 retrieval settings. While RAFT          learns to be more descriptive, discovering nu-
+remains a highly competitive and computationally            anced, long-tail relations instead of generic
+efficient alternative, even slightly outperforming          ones. This creates a richer graph structure
+GRPO on the ToG retriever the results suggest that          necessary for multi-hop reasoning.
+the active exploration inherent in on-policy RL en-
+ables the model to discover more robust structural        • Optimizing for Precision (Knowledge-
+strategies than offline filtering alone.                    Indexing Reward): Conversely, the model
+                                                            trained for the text retriever (Knowledge-
+A.3    Impact of Judge Model Capacity                       Indexing) learns to be more concise. It
+We investigated the sensitivity of our training             produces fewer total triples per document
+framework to the capacity of the Judge model used           (e.g., -12% on average for Qwen-7B) and a
+Table 5: Comprehensive performance evaluation of various large-scale models as KG constructors. The table
+compares zero-shot KG construction performance across Graph Knowledge Retrievers (F1 Only) and Graph-based
+Text Retrievers (F1 & Recall). Results show that even powerful models like GPT-5-mini and Llama-3.3-70B exhibit
+performance variances, highlighting the importance of task-specific optimization.
+
+                                          NQ*            PopQA*          HotpotQA        2WikiMultihopQA      Musique              Avg.
+           Methods
+                                           F1              F1               F1                 F1               F1                  F1
+                                                       Graph Knowledge Retrievers (F1 Only)
+           DeepSeek-V3
+           Subgraph Retriever             27.20              61.42            42.36              34.96            13.29         35.85
+           Triples Retriever              33.89              54.61            44.84              32.67            19.13         37.03
+           ToG Retriever                  28.29              64.02            44.72              50.98            17.99         41.20
+           GPT-5-mini
+           Subgraph Retriever             27.09              58.62            41.25              32.78            14.34         34.82
+           Triples Retriever              34.62              54.99            43.07              29.66            18.29         36.13
+           ToG Retriever                  28.20              62.65            44.14              49.11            18.78         40.58
+           Llama-3.3-70B
+           Subgraph Retriever             26.90              62.05            41.81              34.56            16.11         36.29
+           Triples Retriever              32.95              54.65            44.00              31.84            19.55         36.60
+           ToG Retriever                  26.31              62.48            45.45              50.42            18.59         40.65
+           gpt-oss-120b
+           Subgraph Retriever             26.92              58.83            40.60              33.35            13.39         34.62
+           Triples Retriever              32.95              54.43            42.91              29.66            19.10         35.81
+           ToG Retriever                  26.00              60.82            43.52              48.43            18.30         39.41
+           Qwen2.5-72B-Instruct
+           Subgraph Retriever             28.12              62.23            42.57              36.17            14.85         36.79
+           Triples Retriever              34.23              54.68            44.10              32.47            20.07         37.11
+           ToG Retriever                  28.73              64.21            45.54              50.19            18.37         41.41
+           Qwen3-235B
+           Subgraph Retriever             27.62              60.90            41.49              35.59            15.83         36.29
+           Triples Retriever              34.12              55.12            41.67              32.81            20.71         36.89
+           ToG Retriever                  27.68              63.54            45.35              49.68            21.77         41.60
+           gemini-2.5-flash-lite
+           Subgraph Retriever             27.81              60.42            40.95              35.21            15.18         35.91
+           Triples Retriever              33.52              54.73            44.02              33.02            19.91         37.04
+           ToG Retriever                  25.90              62.55            42.69              49.55            19.60         40.06
+           AutoGraph-R1 (Qwen-3B)
+           Subgraph Retriever             28.03              59.46            40.77              34.71            15.13         35.62
+           Triples Retriever              33.67              56.76            46.94              36.09            21.41         38.97
+           ToG Retriever                  29.27              61.40            44.56              49.33            18.42         40.60
+           AutoGraph-R1 (Qwen-7B)
+           Subgraph Retriever             28.54              60.94            43.59              37.43            15.65         37.23
+           Triples Retriever              33.98              58.02            48.28              36.04            20.56         39.38
+           ToG Retriever                  29.36              62.85            44.68              50.20            19.31         41.28
+
+                                                    Graph-based Text Retrievers (F1 & Recall@5)
+                                     F1       R@5       F1       R@5     F1       R@5     F1         R@5     F1       R@5     F1          R@5
+           DeepSeek-V3
+           HippoRAG                 39.82    93.90     66.29    94.90   54.33    68.30   49.59      72.69   27.79    47.23   47.56        75.40
+           HippoRAG2                38.45    93.70     65.73    96.10   54.89    69.68   52.23      75.17   28.14    47.76   47.89        76.48
+           GPT-5-mini
+           HippoRAG                 39.28    93.80     66.12    94.70   54.22    68.60   47.59      69.92   28.70    47.80   47.18        74.96
+           HippoRAG2                39.20    94.20     65.47    94.20   55.85    69.28   49.44      69.77   28.80    49.00   47.75        75.29
+           Llama-3.3-70B
+           HippoRAG                 39.29    94.30     63.57    94.00   56.14    60.00   52.70      73.12   28.32    47.41   48.00        73.77
+           HippoRAG2                39.29    94.50     65.18    95.50   56.29    70.71   53.93      75.89   26.97    48.27   48.33        76.97
+           gpt-oss-120b
+           HippoRAG                 39.52    93.70     64.82    92.90   53.11    65.61   47.79      68.57   25.37    45.43   46.12        73.24
+           HippoRAG2                39.45    93.60     64.78    93.10   54.53    66.51   49.49      69.49   27.03    46.97   47.06        73.93
+           Qwen2.5-72B-Instruct
+           HippoRAG                 39.73    94.60     65.18    94.00   53.98    67.92   50.68      73.06   26.42    46.93   47.20        75.30
+           HippoRAG2                39.29    95.10     65.71    94.60   57.34    70.42   53.21      76.00   26.71    48.63   48.45        76.95
+           Qwen3-235B
+           HippoRAG                 39.56    93.90     65.32    95.40   55.07    68.02   51.94      72.67   27.72    47.58   47.92        75.51
+           HippoRAG2                39.68    94.30     67.25    95.60   54.81    68.52   51.76      74.37   28.91    48.13   48.48        76.18
+           gemini-2.5-flash-lite
+           HippoRAG                 40.06    94.40     64.54    94.40   55.39    66.88   51.55      72.19   27.32    46.36   47.77        74.85
+           HippoRAG2                39.73    94.10     65.48    95.30   54.55    68.93   51.73      74.37   28.34    47.81   47.97        76.10
+           AutoGraph-R1 (Qwen-3B)
+           HippoRAG                 38.28    93.00     65.93    95.60   55.39    68.82   51.69      74.02   28.11    47.65   47.88        75.82
+           HippoRAG2                38.45    94.00     66.23    95.40   56.28    71.21   52.80      76.42   27.93    49.13   48.34        77.23
+           AutoGraph-R1 (Qwen-7B)
+           HippoRAG                 38.80    94.30     67.85    95.80   57.19    71.40   53.60      76.16   26.97    48.44   48.88        77.22
+           HippoRAG2                38.68    95.00     67.72    96.30   58.98    73.61   56.46      78.66   27.18    49.23   49.80        78.56
+Table 6: Ablation study comparing On-Policy RL (GRPO) against Offline Filtering (RAFT) for Qwen2.5-7B. Both
+methods leverage our reward functions. Results show that reward-guided training consistently improves over the
+baseline, with GRPO and RAFT offering competitive trade-offs.
+
+           Retriever       Method                NQ        PopQA      HotpotQA        2Wiki    Musique         Avg.
+                                     Graph Retrievers (Knowledge-Carrying Reward)
+                           Base                  28.07     55.43      41.66           33.97    15.24           34.87
+           Subgraph        GRPO (On-Policy)      28.54     60.94      43.59           37.43    15.65           37.23
+                           RAFT (Offline)        28.72     61.27      42.14           35.78    15.41           36.66
+                           Base                  33.26     55.56      44.99           35.57    20.43           37.96
+           Triples         GRPO (On-Policy)      33.98     58.02      48.28           36.04    20.56           39.38
+                           RAFT (Offline)        34.72     56.42      44.91           31.78    20.21           37.61
+                           Base                  25.59     57.53      43.93           46.03    18.46           38.31
+           ToG             GRPO (On-Policy)      29.36     62.85      44.68           50.20    19.31           41.28
+                           RAFT (Offline)        29.65     63.30      45.47           50.10    20.32           41.77
+                                      Text Retrievers (Knowledge-Indexing Reward)
+                           Base                  37.16     65.95      55.50           53.01    26.03           47.53
+           HippoRAG        GRPO (On-Policy)      38.80     67.85      57.19           53.60    26.97           48.88
+                           RAFT (Offline)        39.60     66.22      55.77           51.01    29.29           48.38
+                           Base                  37.02     65.74      57.08           54.99    26.77           48.32
+           HippoRAG2       GRPO (On-Policy)      38.68     67.72      58.98           56.46    27.18           49.80
+                           RAFT (Offline)        38.83     65.21      56.49           52.47    29.44           48.49
+
+
+
+
+Table 7: Ablation on Judge Model Size. We report the downstream RAG F1 scores using Qwen-7B as the KG
+constructor. Training with a stronger Judge (7B) generally yields better downstream performance than a smaller
+Judge (3B).
+
+                 Retriever    Judge      NQ       PopQA       HotpotQA        2wiki     Musique        Avg
+                                3B      27.10      61.76           39.71      37.31       14.87        36.15
+                 Subgraph
+                                7B      28.54      60.94           43.59      37.43       15.65        37.23
+                                3B      34.20      59.20           48.40      31.12       19.04        38.39
+                 Triples
+                                7B      33.98      58.02           48.28      36.04       20.56        39.38
+                                3B      28.95      62.86           43.68      47.43       20.05        40.59
+                 ToG
+                                7B      29.36      62.85           44.68      50.20       19.31        41.28
+
+
+
+
+Table 8: Performance of the HippoRAG KG Construction pipeline when replacing the default KG constructor with
+our fine-tuned Qwen-7B model. The consistent improvement confirms that our optimized KG construction transfers
+benefits to established third-party RAG systems.
+
+           Method                         NQ       PopQA           HotpotQA      2wiki        Musique          Avg
+           HippoRAG F1 Score
+           Original (Base 7B)            28.78        37.83          41.34       33.66         18.85           32.09
+           + Our Fine-tuned 7B           28.47        38.04          42.84       32.24         20.74           32.47
+           HippoRAG Recall Score
+           Original (Base 7B)            63.89        51.65          83.60       76.76         53.88           65.96
+           + Our Fine-tuned 7B           63.28        52.10          84.00       78.35         54.01           66.35
+                 more focused set of relations. This demon-                         F1-based RL leads to unstable training Figure
+                 strates an optimization for efficiency, where                   3a illustrates the instability inherent in using the
+                 the model actively filters out noise to create a                final F1 score as a reward. The reward curve (Fig-
+                 cleaner, high-signal "index" for text retrieval.                ure 3a) exhibits high variance and lacks a clear,
+                                                                                 monotonic upward trend compared with using task
+   These results confirm that AutoGraph-R1 is                                    specific reward, indicating a noisy learning signal.
+not a monolithic filter but a targeted optimization
+framework that reshapes the KG topology to maxi-                                 C    Training Dynamics of AutoGraph-R1
+mize downstream utility.                                                         To verify the stability and effectiveness of our RL
+                                                                                 framework, we analyze the learning curves for both
+B                Impact of Using F1 Reward on
+                                                                                 retrieval scenarios. Figure 4 illustrates the train-
+                 Training Dynamics of AutoGraph-R1                               ing process for the Graph Knowledge Retriever
+To validate our choice of using task-specific re-                                using the Deducible Reward (RC ). We observe a
+wards (RC and RI ), we conducted an ablation                                     steady increase in the reward signal, indicating that
+study comparing them against the final answer’s F1                               the model progressively learns to construct graphs
+score as a direct reward signal. While the down-                                 with higher deductive validity. Similarly, Figure
+stream performance results are reported in Table 3,                              5 depicts the dynamics for the Graph-based Text
+here we analyze the training dynamics to further                                 Retriever using the Knowledge-Indexing Reward
+explain why the F1 reward is an inferior choice for                              (RI ). The clear upward trend in recall-based re-
+guiding graph construction.                                                      ward, coupled with stable advantage estimates, con-
+                                                                                 firms that AutoGraph-R1 successfully optimizes
+                  critic/rewards/f1_score (Smoothed, Window=10)                  the graph structure for indexing utility without
+           0.7                                                                   suffering from the volatility often associated with
+           0.6                                                                   sparse RL rewards.
+           0.5
+F1 Score
+                                                                                 D    Training Dynamics of Llama Models
+           0.4
+           0.3                                Run Name
+                                                                                 Our initial experiments with the Llama model se-
+                                          Graph-Retriever-F1-7B                  ries showed a tendency to generate repetitive triples,
+           0.2                            Graph-Text-Retriever-F1-7B
+                                                                                 leading to unstable training dynamics. As seen in
+                 0           10            20            30            40   50
+                                                 Step                            Figure 6, the model’s generation length became er-
+                              (a) Volatile reward signal.                        ratic, with the mean response length fluctuating and
+                     critic/advantages/mean (Smoothed, Window=10)                the maximum often saturating the context window,
+                                                                                 indicating severe repetition loops.
+            0.10
+                                                                                    To mitigate this issue, we augmented the reward
+            0.05                                                                 for Llama experiments with a repetition penalty.
+Mean        0.00                                                                 The modified reward is defined as Reward =
+            0.05                                                                 RC/I − λrep · Prep , where λrep is a scaling hyper-
+                             Run Name                                            parameter controlling the strength of the penalty,
+            0.10         Graph-Retriever-F1-7B
+                         Graph-Text-Retriever-F1-7B                              and the repetition penalty is calculated as Prep =
+                     0         10           20            30           40   50   (|Tgen | − |Tunique |)/|Tgen |. Furthermore, we ap-
+                                                  Step
+                                                                                 plied a hard constraint that sets the reward to 0
+                            (b) Stagnant advantage gain.
+                                                                                 if Prep > 0.3. This approach effectively discour-
+Figure 3: Unstable Training Dynamics Using a Naive                               ages repetition, encouraging the model to produce
+F1 Reward. Training curves for the ablation study                                diverse and high-quality facts.
+where the final RAG F1 score is used as the reward. (a)
+The F1 reward signal is highly volatile and shows no
+clear upward trend, providing a noisy and ineffective
+learning signal. (b) Consequently, the advantage gain
+remains flat and centered around zero, confirming that
+the policy is failing to find a consistent direction for
+improvement. This leads to stalled optimization, as
+reflected in the poor downstream results.
+Table 9: Impact of our Knowledge-Carrying reward finetuned KG constructor on Graph Knowledge Retriever
+performance across the Llama model family.
+
+                                         Simple QA                             Multihop QA                    Overall
+     Methods
+                                NQ*            PopQA*          HotpotQA      2WikiMultihopQA    Musique       Avg.
+     Llama-3.2-1B
+     Subgraph (Base)            23.17          26.14           27.11         19.36              9.13          20.98
+     Subgraph (Ours)            25.72↑2.55     47.32↑21.18     35.84↑8.73    25.05↑5.69         11.90↑2.77    29.17↑8.19
+     Triples Retriever (Base)   21.51          24.55           29.86         18.54              10.79         21.05
+     Triples Retriever (Ours)   24.96↑3.45     41.23↑16.68     36.25↑6.39    23.88↑5.34         13.89↑3.10    28.04↑6.99
+     ToG (Base)                 20.77          18.17           25.63         15.29              7.79          17.53
+     ToG (Ours)                 19.74          34.20↑16.03     30.70↑5.07    21.35↑6.06         9.60↑1.81     23.12↑5.59
+     Llama-3.2-3B
+     Subgraph (Base)            25.19          44.07           34.86         26.23              12.26         28.52
+     Subgraph (Ours)            27.34↑2.15     53.50↑9.43      40.89↑6.03    33.91↑7.68         15.50↑3.24    34.23↑5.71
+     Triples Retriever (Base)   26.18          43.80           39.11         27.03              15.21         30.27
+     Triples Retriever (Ours)   30.93↑4.75     51.50↑7.70      43.67↑4.56    31.49↑4.46         18.21↑3.00    35.16↑4.89
+     ToG (Base)                 20.00          31.33           31.93         27.20              11.14         24.32
+     ToG (Ours)                 23.78↑3.78     48.55↑17.22     40.60↑8.67    39.79↑12.59        17.31↑6.17    34.01↑9.69
+
+
+
+
+Table 10: Impact of our Knowledge-Indexing reward finetuned KG constructor on Graph-based Text Retriever
+performance across the Llama model family.
+
+                                   Simple QA                                  Multihop QA                     Overall
+     Methods
+                            NQ*              PopQA*          HotpotQA       2WikiMultihopQA    Musique       Avg.
+     Llama-3.2-1B
+     HippoRAG (Base)        28.94            39.16           39.37          27.26              18.89         30.72
+     HippoRAG (Ours)        35.49↑6.55       52.63↑13.47     47.31↑7.94     38.13↑10.87        20.17↑1.28    38.75↑8.03
+     HippoRAG2 (Base)       29.79            40.64           37.90          29.82              20.21         31.67
+     HippoRAG2 (Ours)       35.61↑5.82       51.66↑11.02     50.97↑13.07    41.24↑11.42        21.58↑1.37    40.21↑8.54
+     Llama-3.2-3B
+     HippoRAG (Base)        38.35            58.81           50.68          44.26              23.63         43.15
+     HippoRAG (Ours)        38.77↑0.42       59.62↑0.81      54.82↑4.14     47.03↑2.77         25.26↑1.63    45.10↑1.95
+     HippoRAG2 (Base)       38.20            60.18           52.86          46.44              23.78         44.29
+     HippoRAG2 (Ours)       38.54↑0.34       61.05↑0.87      54.43↑1.57     48.79↑2.35         23.44         45.25↑0.96
+
+
+
+
+     Table 11: Evaluating Knowledge Indexing Quality via Passage Recall across the Llama model family.
+
+                                   Simple QA                                  Multihop QA                     Overall
+     Methods
+                            NQ*              PopQA*          HotpotQA       2WikiMultihopQA    Musique       Avg.
+     Llama-3.2-1B
+     HippoRAG (Base)        57.50            51.30           37.86          36.78              24.35         41.56
+     HippoRAG (Ours)        66.30↑8.80       71.60↑20.30     56.56↑18.70    56.29↑19.51        33.99↑9.64    56.95↑15.39
+     HippoRAG2 (Base)       65.00            54.80           42.02          38.90              26.48         45.44
+     HippoRAG2 (Ours)       83.00↑18.00      73.70↑18.90     60.51↑18.49    58.19↑19.29        36.44↑9.96    62.37↑16.93
+     Llama-3.2-3B
+     HippoRAG (Base)        87.70            85.40           60.80          63.97              39.02         67.38
+     HippoRAG (Ours)        90.90↑3.20       88.50↑3.10      66.23↑5.43     68.77↑4.80         41.63↑2.61    71.21↑3.83
+     HippoRAG2 (Base)       89.70            86.70           63.85          66.42              40.69         69.47
+     HippoRAG2 (Ours)       91.20↑1.50       89.00↑2.30      68.00↑4.15     71.57↑5.15         43.23↑2.54    72.60↑3.13
+                   critic/rewards/deducable (Smoothed, Window=10)                                               critic/advantages/mean (Smoothed, Window=10)
+            0.65            Run Name                                                                     0.05
+            0.60           Graph-Retriever-3B
+                           Graph-Retriever-7B
+            0.55                                                                                         0.00
+
+Deducable
+            0.50                                                                                 Mean    0.05
+            0.45
+                                                                                                         0.10         Run Name
+            0.40                                                                                                     Graph-Retriever-3B
+            0.35                                                                                                     Graph-Retriever-7B
+                                                                                                         0.15
+                   0             10             20            30            40             50                   0          10             20             30            40            50
+                                                      Step                                                                                       Step
+                                 (a) Reward convergence.                                                               (b) Positive advantage gain.
+
+Figure 4: Effective Training Dynamics with the Deducible Reward (RC ). Training curves for the Graph
+Knowledge Retriever setting. (a) The reward, measuring answer deducibility, steadily increases and converges,
+demonstrating the policy is successfully learning its objective. (b) The advantage gain trends towards a small
+negative value, indicating that the value function’s estimate of expected reward is rising quickly while the policy
+makes stable, incremental improvements. This dynamic, coupled with the rising absolute reward, points to effective
+and controlled optimization.
+
+
+
+                       critic/rewards/recall (Smoothed, Window=10)                                              critic/advantages/mean (Smoothed, Window=10)
+                                                                                                         0.25
+                                                                                                                                                           Run Name
+            0.6                                                                                          0.20                                  Graph-Text-Retriever-DistractorSize-15-3B
+                                                                                                                                               Graph-Text-Retriever-DistractorSize-15-7B
+                                                                                                         0.15
+            0.5
+                                                                                                         0.10
+Recall      0.4                                                                                  Mean
+                                                                                                         0.05
+            0.3                                                  Run Name                                0.00
+                                                     Graph-Text-Retriever-DistractorSize-15-3B
+                                                     Graph-Text-Retriever-DistractorSize-15-7B           0.05
+            0.2
+                   0            10              20            30            40            50                    0          10             20             30            40            50
+                                                      Step                                                                                       Step
+                                 (a) Reward convergence.                                                               (b) Positive advantage gain.
+
+Figure 5: Effective Training Dynamics with the Knowledge-Indexing Reward (RI ). Training curves for the
+Graph-based Text Retriever setting. (a) The reward, measuring passage recall, shows a clear upward trend of
+improvement. (b) The advantage gain dynamic, paired with the rising reward curve, confirms that the policy is
+effectively learning from this stable, task-specific signal.
+
+
+
+
+                   response_length/mean (Smoothed, Window=10)                                                   response_length/max (Smoothed, Window=10)
+            1400                            Run Name                                                                                  Run Name
+                           Llama3.2-3B-Graph-Retriever-with-repetition-penalty                          15000        Llama3.2-3B-Graph-Retriever-with-repetition-penalty
+                           Llama3.2-3B-Graph-Retriever-without-repetition-penalty                                    Llama3.2-3B-Graph-Retriever-without-repetition-penalty
+            1200                                                                                        12500
+                                                                                                        10000
+Mean                                                                                             Max
+            1000                                                                                         7500
+                                                                                                         5000
+             800
+                                                                                                         2500
+                       0          10            20            30            40             50                    0         10             20             30            40            50
+                                                       Step                                                                                       Step
+                       (a) Mean response length during training.                                           (b) Maximum response length during training.
+
+Figure 6: Response Length Dynamics of Llama Models. The Llama models showed unstable response lengths
+due to repetition issues. (a) Mean response length fluctuated significantly. (b) Maximum response length often
+reached the context window limit, indicating severe repetition loops.
+E     Case Studies: The Functional                           Case Study 1: Zero-Shot KG (ToG Retriever) - Failed
+      Advantage of AutoGraph-R1                              Answer
+
+To qualitatively illustrate the benefits of our task-        Question: Which film has the director who died first,
+                                                             The Goose Woman or You Can No Longer Remain
+aware optimization, we present two case studies              Silent?
+                                                             Retrieved Triples:
+from the 2WikiMultiHopQA dataset. These ex-                  "(You Can No Longer Remain Silent, directed
+amples demonstrate the adaptive nature of the                by, Robert A. Stemmle)",
+                                                             "(Robert A. Stemmle, died in, Baden-Baden,
+utility objective: whereas Figure 1 showed the               Germany)",
+model learning to establish concrete pathways,               "(The Goose Woman, directed by, Clarence
+                                                             Brown)",
+these case studies highlight its ability to bridge           "(Clarence Brown, was a, American film
+disconnected reasoning chains. Together, they con-           director)"
+                                                             ... (and other irrelevant triples)
+firm that AutoGraph-R1 does not simply maximize
+or minimize graph size, but actively constructs the          Case Study 1: AutoGraph-R1 KG (ToG Retriever) -
+specific topology required for the downstream rea-           Correct Answer
+soning task.                                                 Question: Which film has the director who died first,
+                                                             The Goose Woman or You Can No Longer Remain
+E.1    Case Study 1: Comparative Reasoning                   Silent?
+                                                             Retrieved Triples:
+The first case study examines a question requiring           "(You Can No Longer Remain Silent, directed
+                                                             by, Robert A. Stemmle)",
+a comparison between the death dates of two film             "(Robert A. Stemmle, died on, 24 February
+                                                             1974)",
+directors. This task requires the KG to contain              "(The Goose Woman, directed by, Clarence
+specific, comparable facts (i.e., dates) for multiple        Brown)",
+                                                             "(Clarence Brown, died on, August 17,
+entities. As shown in Figure 7, the zero-shot KG             1987)",
+fails because it does not extract the specific death         ...
+dates needed for comparison. In contrast, the KG
+constructed by AutoGraph-R1 contains the neces-          Figure 7: Qualitative comparison for a comparative
+sary date information, as the RL training has taught     reasoning question. The zero-shot KG lacks specific
+                                                         death dates, leading to failure. The AutoGraph-R1 KG,
+the constructor that dates are critical for such ques-   optimized for task utility, successfully extracts the criti-
+tions. This complete evidence enables the LLM to         cal dates needed for comparison.
+easily answer the question correctly.
+                                                             Case Study 2: Zero-Shot KG (ToG Retriever) - Failed
+E.2    Case Study 2: Path-Based Reasoning                    Answer
+The second case study involves a 2-hop question              Question: Who is the child of the director of film
+that requires finding a path from a film to its direc-       Los Pagares De Mendieta?
+                                                             Retrieved Triples:
+tor, and then from the director to their child. This         "(Los Pagares de Mendieta, directed by,
+task depends on the structural connectivity of the           Leopoldo Torres R0̆0edos)",
+                                                             "(Leopoldo Torres R0̆0edos, age at death,
+graph.                                                       60)",
+   As shown in Figure 8, the zero-shot KG (top)              ... (and other facts about the director, but not their
+                                                             child)
+fails critically. While it successfully extracts the
+first link in the path—‘ (Los Pagares de Mendieta,           Case Study 2: AutoGraph-R1 KG (ToG Retriever) -
+directed by, Leopoldo Torres Ríos)‘—it fails to ex-          Correct Answer
+
+tract the second, crucial link about the director’s          Question: Who is the child of the director of film
+                                                             Los Pagares De Mendieta?
+child. The reasoning path is broken after the first          Retrieved Triples:
+hop, causing the QA system to fail. In contrast,             "(Los Pagares de Mendieta, directed by,
+                                                             Leopoldo Torres R0̆0edos)",
+the AutoGraph-R1 KG (bottom) explicitly contains             "(Leopoldo Torres R0̆0edos, father of,
+the complete 2-hop reasoning path. It successfully           Leopoldo Torre Nilsson)",
+                                                             ...
+extracts both ‘(Los Pagares de Mendieta, directed
+by, Leopoldo Torres Ríos)‘ and ‘(Leopoldo Tor-
+res Ríos, father of, Leopoldo Torre Nilsson)‘. The       Figure 8: Qualitative comparison for a 2-hop path-
+                                                         based question. The zero-shot KG extracts the first link
+RL process has rewarded the constructor for build-       (director of the film) but misses the second (child of the
+ing these essential connective trails, recognizing       director), breaking the reasoning path. The AutoGraph-
+that entity linkage across different relationships is    R1 KG successfully constructs the full path.
+crucial for multi-hop QA.
+F    AutoGraph-R1 Training Algorithm                              Graph Construction
+
+The end-to-end training process for the AutoGraph-                Graph Generation System Prompt:
+R1 KG constructor is formalized in Algorithm 1.                   You are an expert knowledge graph constructor. Your
+                                                                  task is to extract factual information from the pro-
+The core idea is to iteratively construct a knowledge             vided text and represent it strictly as a JSON array of
+graph for a given query and its context documents,                knowledge graph triples.
+                                                                  Output Format
+evaluate the graph’s utility using a task-specific                    - The output must be a **JSON array**.
+reward function, and then update the constructor’s                    - Each element in the array must be a **JSON
+policy using the collected rewards.                               object** with exactly three non-empty keys:
+                                                                         - "subject": the main entity, concept, event, or
+                                                                  attribute.
+G    Prompts                                                             - "relation": a concise, descriptive phrase or
+                                                                  verb that describes the relationship (e.g., "founded
+This section details the specific prompts used in                 by", "started on", "is a", "has circulation of").
+our experimental pipeline. The process begins with                       - "object": the entity, concept, value, event, or
+the graph construction prompt (Figure 10), which                  attribute that the subject has a relationship with.
+                                                                  Constraints
+guides the LLM to extract triples from raw text.                      - **Do not include any text other than the JSON
+During RL training, the Knowledge-Carrying Re-                    output.**
+ward (RC ) is determined using the deducibility                       - Do not add explanations, comments, or format-
+                                                                  ting outside of the JSON array.
+judge prompt shown in Figure 11. For the fi-                          - Extract **all possible and relevant triples**.
+nal RAG answer generation step, we use distinct                       - All keys must exist and all values must be non-
+                                                                  empty strings.
+prompts tailored to the retrieved context: one for                    - The "subject" and "object" can be specific en-
+linearized graph triples (Figure 12) and another                  tities (e.g., "Radio City", "Football in Albania",
+for raw text passages (Figure 13). Finally, Figure                "Echosmith") or specific values (e.g., "3 July 2001",
+                                                                  "1,310,696").
+9 shows the prompts used for our intrinsic graph                      - If no triples can be extracted, return exactly: ‘[]‘.
+quality analysis, where an LLM judge generates                    Extracts for: {passage}
+and answers multiple-choice questions to evaluate
+factual coverage.
+                                                               Figure 10: The prompt used for both zero-shot KG con-
+    Multiple-Choice Question Generation and Answering          struction and fine-tuning KG constructor model during
+                                                               RL.
+    MCQ Generation Prompt:
+    You are an expert in generating multiple-choice ques-
+    tions (MCQs) from scientific texts. Your task is to
+                                                                  Deducible Judge
+    generate 5 multiple-choice questions based on the
+    following passage.
+    Each question should:                                         Deducible Judge Prompt:
+       - Focus on factual claims, numerical data, defini-         As an advanced reading comprehension assistant,
+    tions, or relational knowledge from the passage.              your task is to evaluate whether the provided knowl-
+       - Have 4 options (one correct answer and three             edge graph (KG) context contains sufficient informa-
+    plausible distractors).                                       tion to deduce the given true answer to the question.
+       - Clearly indicate the correct answer.                     Analyze the KG context carefully and determine if it
+    The output should be in JSON format, with each                fully supports the true answer without requiring ex-
+    question as a dictionary containing:                          ternal knowledge. Respond with only ’Yes’ or ’No’,
+       - "question": The MCQ question.                            indicating whether the true answer can be deduced
+       - "options": A list of 4 options (e.g., ["A: ..", "B:      from the KG context.
+    ..", "C: ..", "D: .."]).                                      Knowledge graph (KG) context:{triples string}
+       - "answer": The correct answer (e.g., "A").                Question:{query}
+    Passage: {passage}                                            True Answer:{answer}
+                                                                  Can the true answer be deduced from the KG context?
+    MCQ Answering Prompt:                                         Answer ’Yes’ or ’No’ only.
+    Given the contexts or evidences: {contexts}
+    Here is a multiple-choice question:
+    Question: {question}                                       Figure 11: The prompts for freeze LLM to determine
+    Options: A. {options_0} B. {options_1} C. {op-             the Knowledge-Carrying Reward (RC ). The ’Yes’ or
+    tions_2} D. {options_3}
+    Please select the correct answer by choosing A, B, C,
+                                                               ’No’ response serves as the binary reward signal.
+    or D. Respond with only the letter of your choice.
+
+
+Figure 9: The prompt provided to the LLM judge
+(DeepSeek-V3) to evaluate triples extraction quality
+      Graph Retriever Answer Generation
+                                                                 Graph Text Retriever Answer Generation
+      Answer Generation Prompt For Graph Retriever:
+                                                                 Answer Generation Prompt:
+      As an advanced reading comprehension assistant,
+                                                                 As an advanced reading comprehension assistant,
+      your task is to analyze extracted information and
+                                                                 your task is to analyze text passages and correspond-
+      corresponding questions meticulously. If the knowl-
+                                                                 ing questions meticulously. If the information is not
+      edge graph information is not enough, you can use
+                                                                 enough, you can use your own knowledge to answer
+      your own knowledge to answer the question. Your
+                                                                 the question. Your response start after "Thought: ",
+      response start after "Thought: ", where you will me-
+                                                                 where you will methodically break down the reason-
+      thodically break down the reasoning process, illus-
+                                                                 ing process, illustrating how you arrive at conclusions.
+      trating how you arrive at conclusions. Conclude with
+                                                                 Conclude with "Answer: " to present a concise, defini-
+      "Answer: " to present a concise, definitive response
+                                                                 tive response as a noun phrase, no elaborations.
+      as a noun phrase, no elaborations.
+                                                                 {Retrieved Texts}
+      {triples string}
+                                                                 {question}
+      {question}
+                                                                 Thought:
+      Thought:
+
+
+Figure 12: The prompt used by the final answer gener-        Figure 13: The prompt used by the final answer gen-
+ator when the retrieved evidence consists of linearized      erator when the retrieved evidence consists of raw text
+knowledge graph triples.                                     passages.
+
+
+
+
+Algorithm 1 AutoGraph-R1 Training Loop
+ 1: Input: Training dataset S = {(qi , yi , Dqi )}N
+                                                  i=1 , where Dqi are the context documents for query qi .
+ 2: Input: KG constructor policy πθKG (an LLM).
+ 3: Input: Frozen retriever Rfrozen (either a graph knowledge retriever or a graph-based text retriever).
+ 4: Input: Chosen reward function Rtask (either RC or RI ).
+ 5: Initialize: Policy parameters θ.
+ 6: for each training step do
+ 7:        Sample a minibatch of data {(q, y, Dq )} from S.
+ 8:        Initialize an empty list of trajectories ‘trajectories‘.
+ 9:        for each sample (q, y, Dq ) in the minibatch do
+10:                                                           ▷ Step 1: Construct the Knowledge Graph
+11:         Generate the graph by sampling from the policy: G ∼ πθKG (· | Dq ).
+12:                                                           ▷ Step 2: Determine Task-Specific Reward
+13:         if Rtask is Knowledge-Carrying Reward (RC ) then
+14:             Use the frozen retriever Rgraph to get evidence P(q) from G.
+15:             Calculate reward r = RC (q, y, P(q)) using Eq. (1).
+16:         else if Rtask is Knowledge-Indexing Reward (RI ) then
+17:             Use the frozen retriever Rtext to get passages T (q) from G.
+18:             Calculate reward r = RI (q, y, T (q)) using Eq. (2).
+19:         end if
+20:         Store the generation trajectory (actions taken to build G) and the final reward r in ‘trajectories‘.
+21:     end for
+22:                                                                  ▷ Step 3: Update Policy Parameters
+23:     Compute the policy gradient ∇θ J(θ) using the stored ‘trajectories‘ and a policy optimization
+    algorithm (e.g., GRPO).
+24:     Update the policy parameters: θ ← θ − η · ∇θ J(θ).
+25: end for
+26: Return: Optimized KG constructor parameters θ.
+Table 12: Detailed statistics of Knowledge Graphs constructed by different models across four benchmarks. The
+table tracks the total count of extracted entities, relations, triples, the density of extraction (Triples/Doc), and the
+diversity of the relation vocabulary (Unique Relation Types).
+
+      Dataset           Model Variant              Total Ent.        Total Rel.    Total Trip.    Trip./Doc   Unique Rel.
+                        Qwen-3B (Base)                  57,369        56,908         56,908         8.13        20,879
+                        Qwen-3B (Knwl-Carrying)         67,660        65,413         65,413         9.34        28,933
+                        Qwen-3B (Knwl-Indexing)         68,631        68,670         68,670         9.81        19,246
+      2021Wiki
+                        Qwen-7B (Base)                  75,521        70,264         70,264         10.04       23,887
+                        Qwen-7B (Knwl-Carrying)         65,324        66,370         66,370         9.48        32,173
+                        Qwen-7B (Knwl-Indexing)         72,529        61,324         61,324         8.76        22,201
+                        Qwen-3B (Base)                  37,333        38,140         38,140         6.23        9,881
+                        Qwen-3B (Knwl-Carrying)         44,520        43,623         43,623         7.13        13,177
+                        Qwen-3B (Knwl-Indexing)         42,681        43,632         43,632         7.13        8,940
+      2WikiMultihop
+                        Qwen-7B (Base)                  45,740        46,074         46,074         7.53        11,362
+                        Qwen-7B (Knwl-Carrying)         42,995        44,997         44,997         7.35        16,920
+                        Qwen-7B (Knwl-Indexing)         44,675        40,192         40,192         6.57        10,609
+                        Qwen-3B (Base)                  70,592        73,674         73,674         7.99        23,994
+                        Qwen-3B (Knwl-Carrying)         77,593        76,943         76,943         8.34        30,816
+                        Qwen-3B (Knwl-Indexing)         80,355        83,920         83,920         9.10        21,411
+      HotpotQA
+                        Qwen-7B (Base)                  82,253        81,237         81,237         8.81        24,996
+                        Qwen-7B (Knwl-Carrying)         74,647        76,700         76,700         8.32        33,335
+                        Qwen-7B (Knwl-Indexing)         79,861        71,598         71,598         7.76        23,677
+                        Qwen-3B (Base)                  77,462        78,988         78,988         6.78        29,255
+                        Qwen-3B (Knwl-Carrying)         89,247        88,331         88,331         7.58        39,115
+                        Qwen-3B (Knwl-Indexing)         91,223        93,930         93,930         8.06        27,132
+      Musique
+                        Qwen-7B (Base)                  97,294        91,395         91,395         7.84        32,310
+                        Qwen-7B (Knwl-Carrying)         89,547        92,605         92,605         7.94        40,078
+                        Qwen-7B (Knwl-Indexing)         96,242        82,145         82,145         7.05        30,521
+
+                                     Average Structural Metrics (Qwen-7B Family)
+                              Metric                         Base       Carrying       Indexing
+                              Avg. Triples per Doc           8.56          8.27          7.54
+                              Total Unique Rel. Types       23,139        30,627        21,752
+

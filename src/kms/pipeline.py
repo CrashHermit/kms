@@ -14,7 +14,8 @@ Stage order:
     corrector -> formatter -> extractor -> seam_merger (even, odd) -> splitter
               -> instruction_finder -> instruction_distributor
               -> pedagogical_component_finder -> role_typer
-              -> statement_extractor -> procedure_extractor
+              -> statement_partitioner -> procedure_partitioner
+              -> equation_variable
               -> ingestion_persister
 
 Two phases split at the seam merger. Ingestion is per-page: `segments` (already
@@ -41,22 +42,34 @@ One semantic chain then runs, each stage asking ONE question. The pedagogical
 component finder walks `nodes` once and cuts it into UNTYPED spans —
 boundaries only, including the cut between a statement and the working that
 resolves it, so the old semantic proof/solution boundary call is now a
-structural detection. The role typer then labels each span `statement` (a
-block) or `procedure` (a derivation), and the statement and procedure
-extractors fill in each one's content, which is transcription rather than
-judgement. That overlay rides its own `statements` channel: a statement's
-content is its whole group's text, so it sits BESIDE `nodes`, never in it —
-in the stream it would make every stage that walks nodes (the assembler
-included) read the group twice. The chain is split this way because fusing
-these questions made each one worse — the finder read a missing "Solution."
+structural detection. The role typer then labels each span with a union of
+roles — ``statement`` (a block), ``procedure`` (a derivation), or both —
+creating the hubs. When a block carries both, the statement and procedure
+partitioners find the line, narrowing each hub to its own portion of the
+block's nodes. That overlay rides its own `statements` and `procedures`
+channels: a hub is an identifier over its group's member node ids, with the
+raw text left on the nodes — so it sits BESIDE `nodes`, never in it: in the
+stream it would make every stage that walks nodes (the assembler included)
+read the group twice. The chain is split this way because fusing these
+questions made each one worse — the finder read a missing "Solution."
 marker as "no derivation".
+
+The equation/variable node then runs over every eligible unit — each
+statement first, then every unabsorbed node — routing each for equation and
+variable presence, extracting equations, and feeding them as context into the
+variable bindings. Its output rides the `equations` and `variables` channels
+to the persister: one `:Equation` per equation hung off its owning
+`:Statement` (`:HAS_EQUATION`) or plain `:Node` (`:HAS_EQUATION`), one
+`:Variable` per binding.
 
 The ingestion persister is the terminal stage. It runs after every stream
 mutation, so the persisted node ids match the overlay's members and instruction
 nodes are excluded: it writes the provenance layer (a `:Source` root with its
-`:Node` chain), the ``:Statement`` overlay threaded into that same chain in
-each group's place, and the procedural layer (`:Procedure` per derivation,
-hung off its statement by `:HAS_PROCEDURE`). `:Act` steps and their
+pure `:Node` chain), the ``:Statement`` overlay hung off its member nodes via
+`:MEMBER_OF`, and the procedural layer (`:Procedure` per derivation,
+pointing at its own member nodes by `:MEMBER_OF`), plus the equation and
+variable layers (`:Equation` via `:HAS_EQUATION`, `:Variable` via
+`:HAS_VARIABLE`). `:Act` steps and their
 `:FIRST`/`:THEN` threading are declared but not yet written — step
 decomposition is a future pass. A no-op when Neo4j isn't configured. After
 the graph returns, `run()` only assembles the markdown: assembly walks
@@ -78,12 +91,12 @@ from kms.ingestion import (
     formatter,
     instruction_distributor,
     instruction_finder,
+    partitioner,
     pedagogical_component_finder,
-    procedure_extractor,
     role_typer,
     seam_merger,
     splitter,
-    statement_extractor,
+    variable_extractor,
 )
 from kms.output import assembler
 
@@ -99,8 +112,10 @@ def build_graph() -> 'CompiledStateGraph':
     page's markup, the extractor parses the result into structural nodes, the
     seam merger heals page-split
     nodes and flattens to the global stream, and the pedagogical component
-    finder then cuts that stream into untyped spans for the role typer and the
-    two extractors to classify and fill in.
+    finder then cuts that stream into untyped spans for the role typer to
+    label, the partitioners to draw the statement/procedure line where both
+    are present, before the equation/variable node pulls equations and
+    bindings out and the persister writes every tier.
 
     Returns:
         The compiled graph.
@@ -114,14 +129,33 @@ def build_graph() -> 'CompiledStateGraph':
         language_model=llm.text_lm()
     )
     splitter_module = splitter.Splitter(language_model=llm.text_lm())
-    instruction_finder_module = instruction_finder.InstructionFinder(language_model=llm.text_lm())
-    instruction_distributor_module = instruction_distributor.InstructionDistributor(
+    instruction_finder_module = instruction_finder.InstructionFinder(
         language_model=llm.text_lm()
     )
-    component_finder_module = pedagogical_component_finder.PedagogicalComponentFinder(
-        language_model=llm.text_lm()
+    instruction_distributor_module = (
+        instruction_distributor.InstructionDistributor(
+            language_model=llm.text_lm()
+        )
+    )
+    component_finder_module = (
+        pedagogical_component_finder.PedagogicalComponentFinder(
+            language_model=llm.text_lm()
+        )
     )
     role_typer_module = role_typer.RoleTyper(language_model=llm.text_lm())
+    statement_partitioner_module = partitioner.StatementPartitioner(
+        language_model=llm.text_lm()
+    )
+    procedure_partitioner_module = partitioner.ProcedurePartitioner(
+        language_model=llm.text_lm()
+    )
+    router_module = variable_extractor.Router(language_model=llm.text_lm())
+    equation_module = variable_extractor.EquationExtractor(
+        language_model=llm.text_lm()
+    )
+    variable_module = variable_extractor.VariableExtractor(
+        language_model=llm.text_lm()
+    )
 
     # --- LangGraph nodes ---
     corrector_node = corrector.CorrectorNode(module=corrector_module)
@@ -135,14 +169,27 @@ def build_graph() -> 'CompiledStateGraph':
         module=instruction_finder_module
     )
     node_persister_node = persister.IngestionPersisterNode()
-    component_finder_node = pedagogical_component_finder.PedagogicalComponentFinderNode(
-        module=component_finder_module
+    component_finder_node = (
+        pedagogical_component_finder.PedagogicalComponentFinderNode(
+            module=component_finder_module
+        )
     )
     role_typer_node = role_typer.RoleTyperNode(module=role_typer_module)
-    statement_extractor_node = statement_extractor.StatementExtractorNode()
-    procedure_extractor_node = procedure_extractor.ProcedureExtractorNode()
-    instruction_distributor_node = instruction_distributor.InstructionDistributorNode(
-        module=instruction_distributor_module
+    statement_partitioner_node = partitioner.StatementPartitionerNode(
+        module=statement_partitioner_module
+    )
+    procedure_partitioner_node = partitioner.ProcedurePartitionerNode(
+        module=procedure_partitioner_module
+    )
+    equation_variable_node = variable_extractor.EquationAndVariableNode(
+        router_module=router_module,
+        equation_module=equation_module,
+        variable_module=variable_module,
+    )
+    instruction_distributor_node = (
+        instruction_distributor.InstructionDistributorNode(
+            module=instruction_distributor_module
+        )
     )
 
     graph = StateGraph(state.State)
@@ -167,8 +214,9 @@ def build_graph() -> 'CompiledStateGraph':
     graph.add_node('ingestion_persister', node_persister_node.run)
     graph.add_node('pedagogical_component_finder', component_finder_node.run)
     graph.add_node('role_typer', role_typer_node.run)
-    graph.add_node('statement_extractor', statement_extractor_node.run)
-    graph.add_node('procedure_extractor', procedure_extractor_node.run)
+    graph.add_node('statement_partitioner', statement_partitioner_node.run)
+    graph.add_node('procedure_partitioner', procedure_partitioner_node.run)
+    graph.add_node('equation_variable', equation_variable_node.run)
 
     # A stage's dispatch is a conditional edge off the previous collect: it
     # either fans out Sends to the worker or short-circuits straight to its own
@@ -224,9 +272,10 @@ def build_graph() -> 'CompiledStateGraph':
     # node ids match the overlay's members and instruction nodes are excluded.
     graph.add_edge('instruction_distributor', 'pedagogical_component_finder')
     graph.add_edge('pedagogical_component_finder', 'role_typer')
-    graph.add_edge('role_typer', 'statement_extractor')
-    graph.add_edge('statement_extractor', 'procedure_extractor')
-    graph.add_edge('procedure_extractor', 'ingestion_persister')
+    graph.add_edge('role_typer', 'statement_partitioner')
+    graph.add_edge('statement_partitioner', 'procedure_partitioner')
+    graph.add_edge('procedure_partitioner', 'equation_variable')
+    graph.add_edge('equation_variable', 'ingestion_persister')
     graph.add_edge('ingestion_persister', END)
 
     return graph.compile()
@@ -244,9 +293,10 @@ async def run(
 
     The Mistral OCR API turns each page into reading-ordered markdown plus
     extracted figures (no GPU, no docling); the graph then corrects, parses,
-    heals, builds the statement overlay, and (when Neo4j is configured)
-    persists the ``:Node`` provenance layer and the ``:Statement`` overlay plus
-    its procedural layer on top of it. Graph persistence is skipped entirely
+    heals, builds the statement overlay, extracts equations and variable
+    bindings, and (when Neo4j is configured) persists the ``:Node`` provenance
+    layer, the ``:Statement`` overlay, and the procedural, equation and
+    variable layers on top of it. Graph persistence is skipped entirely
     when Neo4j isn't configured — a DB-less run still returns the assembled
     markdown but persists no nodes or statements.
 

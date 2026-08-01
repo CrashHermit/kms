@@ -25,9 +25,9 @@ from kms.core import models
 
 # Tolerant match for an image placeholder: ![N]() with optional surrounding
 # whitespace and an empty link target.
-_PLACEHOLDER = re.compile(r"!\[\s*(\d+)\s*\]\(\s*\)")
+_PLACEHOLDER = re.compile(r'!\[\s*(\d+)\s*\]\(\s*\)')
 
-IMAGES_DIRNAME = "images"
+IMAGES_DIRNAME = 'images'
 
 
 def _consolidate_picture(
@@ -43,11 +43,11 @@ def _consolidate_picture(
     Returns:
         The markdown-relative link (`images/segNNNN_imgYYY.png`).
     """
-    suffix = Path(picture.image_path).suffix or ".png"
-    dest_name = f"seg{segment_index:04d}_img{picture.index:03d}{suffix}"
+    suffix = Path(picture.image_path).suffix or '.png'
+    dest_name = f'seg{segment_index:04d}_img{picture.index:03d}{suffix}'
     shutil.copyfile(picture.image_path, images_dir / dest_name)
     # Forward-slashed regardless of platform so the link is valid markdown.
-    return f"{IMAGES_DIRNAME}/{dest_name}"
+    return f'{IMAGES_DIRNAME}/{dest_name}'
 
 
 def _resolve_content(
@@ -76,7 +76,9 @@ def _resolve_content(
         picture = pictures_by_index.get(int(match.group(1)))
         if picture is None:
             return match.group(0)
-        return f"![]({_consolidate_picture(picture, segment_index, images_dir)})"
+        return (
+            f'![]({_consolidate_picture(picture, segment_index, images_dir)})'
+        )
 
     return _PLACEHOLDER.sub(_replace, content)
 
@@ -84,7 +86,7 @@ def _resolve_content(
 def assemble(
     nodes: list[models.ASTNode],
     segments: list[models.Segment],
-    output_dir: str | Path = "output",
+    output_dir: str | Path = 'output',
 ) -> str:
     """Resolve image links and return the node stream as one markdown string.
 
@@ -127,4 +129,4 @@ def assemble(
             )
         )
 
-    return "\n\n".join(parts) + "\n"
+    return '\n\n'.join(parts) + '\n'

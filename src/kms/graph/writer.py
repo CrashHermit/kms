@@ -4,20 +4,26 @@ Neo4j.
 
 ``persist_nodes`` upserts ``:Source`` and ``:Node`` vertices (no edges).
 
-``persist_chain`` writes the merged walkable chain: ``:HEAD`` from
-``:Source`` to the first element, then ``:NEXT`` threading non-absorbed
-prose :Node and :Statement vertices in document order. Absorbed raw
-nodes are persisted but skipped in the chain.
+``persist_chain`` writes the pure provenance chain: ``:HEAD`` from
+``:Source`` to the first ``:Node``, then ``:NEXT`` threading every node in
+document order. Nothing is skipped and no statement is slotted in — the
+chain is the verbatim stream.
 
-``persist_statements`` writes the ``:Statement`` overlay as bare vertices.
-No edge runs from ``:Source`` to them: a statement is reached through the
-merged ``:NEXT`` chain, and scoped to its book by the indexed ``source``
-property (see ``schema``). An edge per statement would duplicate that index
-and hang the whole book off one supernode.
+``persist_statements`` writes the ``:Statement`` overlay as bare vertices,
+plus ``:MEMBER_OF`` edges from each member node. No edge runs from
+``:Source`` to them: a statement is reached from the raw blocks that informed
+it, and scoped to its book by the indexed ``source`` property (see
+``schema``). An edge per statement would duplicate that index and hang the
+whole book off one supernode.
 
 ``persist_procedures`` writes ``:Procedure`` vertices and
-``:HAS_PROCEDURE`` edges from their statements. ``:Act`` step chains are
+``:MEMBER_OF`` edges from their member nodes. ``:Act`` step chains are
 declared but not yet written.
+
+``persist_equations`` writes ``:Equation`` vertices hung off their owning
+``:Statement`` or ``:Procedure`` via ``:HAS_EQUATION`` — the semantic unit
+reached from its member nodes — or off the plain ``:Node``, equally via
+``:HAS_EQUATION``, when the source unit is outside any hub.
 
 Writes are batched: structural node labels are grouped by their per-type
 label and each batch is one MERGE. Statements, procedures and acts each
@@ -29,6 +35,11 @@ from typing import Any
 
 from kms.core import models
 from kms.graph.db import database, driver
+from kms.graph.equations import (
+    EQUATION_LABEL,
+    equation_pairs,
+    equation_rows,
+)
 from kms.graph.nodes import (
     NODE_LABEL,
     SOURCE_LABEL,
@@ -43,14 +54,19 @@ from kms.graph.procedures import (
     PROCEDURE_LABEL,
     act_rows,
     first_pairs,
-    has_procedure_pairs,
+    procedure_member_pairs,
     procedure_rows,
     then_pairs,
 )
 from kms.graph.statements import (
     STATEMENT_LABEL,
+    statement_member_pairs,
     statement_properties,
-    statement_uuid,
+)
+from kms.graph.variables import (
+    VARIABLE_LABEL,
+    has_variable_pairs,
+    variable_rows,
 )
 
 
@@ -73,7 +89,7 @@ async def persist_nodes(
     """Upsert the book's ``:Source`` root and its ``:Node`` vertices.
 
     Vertices only — no ``:NEXT`` or ``:HEAD`` edges (those are written
-    by ``persist_chain`` with the merged statement/prose ordering).
+    by ``persist_chain`` in document order).
     """
     if not nodes:
         return
@@ -96,151 +112,73 @@ async def persist_nodes(
             await session.run(query, rows=rows)
 
 
-def _chain_elements(
-    nodes: list[models.ASTNode],
-    statements: list[models.Statement],
-    source: str,
-) -> list[dict]:
-    """The merged chain's elements, in document order.
+def _chain_nodes(nodes: list[models.ASTNode], source: str) -> list[str]:
+    """Every node's uuid in document order — the pure provenance chain.
 
-    Walks the raw node stream, slotting each statement in at its first
-    member's place and skipping the members it absorbed — the absorbed nodes
-    are still persisted for provenance, they just aren't in the walkable
-    chain.
-
-    Each element carries its ``label`` as well as its uuid. The label is not
-    decoration: node and statement uuids are disjoint but a lookup by uuid
-    alone still has to scan, and the per-label uniqueness constraints are what
-    make the MATCHes in ``persist_chain`` indexed.
+    The chain is the verbatim stream, nothing skipped: statements are not
+    elements of it — they hang off their member nodes via
+    ``:MEMBER_OF`` (see ``persist_statements``).
 
     Args:
         nodes: The flat node stream, in document order.
-        statements: The statement overlay.
         source: The stable book identity.
 
     Returns:
-        One ``{label, uuid}`` per chain element, in document order.
+        One uuid per node, in document order.
     """
-    absorbed: set[int] = set()
-    statement_by_first_node: dict[int, models.Statement] = {}
-    for statement in statements:
-        absorbed.update(statement.statement_of)
-        # A statement's id IS its first member's id, so it keys both its place
-        # in the stream and its own uuid — one identity, read one way.
-        statement_by_first_node[statement.id] = statement
-
-    elements: list[dict] = []
-    for node in nodes:
-        node_id = node.id
-        if node_id is None:
-            continue
-        statement = statement_by_first_node.get(node_id)
-        if statement is not None:
-            elements.append(
-                {
-                    'label': STATEMENT_LABEL,
-                    'uuid': statement_uuid(source, statement.id),
-                }
-            )
-        elif node_id not in absorbed:
-            elements.append(
-                {'label': NODE_LABEL, 'uuid': node_uuid(source, node_id)}
-            )
-    return elements
+    return [node_uuid(source, node.id) for node in nodes if node.id is not None]
 
 
-def _merged_chain(
-    nodes: list[models.ASTNode],
-    statements: list[models.Statement],
-    source: str,
-) -> list[dict]:
-    """The consecutive element pairs of the merged ``:NEXT`` chain.
+def _chain_pairs(chain: list[str]) -> list[dict]:
+    """The consecutive pairs of the provenance ``:NEXT`` chain.
 
     Args:
-        nodes: The flat node stream, in document order.
-        statements: The statement overlay.
-        source: The stable book identity.
+        chain: The ordered node uuids.
 
     Returns:
-        One ``{from, from_label, to, to_label}`` per ``:NEXT`` edge.
+        One ``{from, to}`` per ``:NEXT`` edge.
     """
-    elements = _chain_elements(nodes, statements, source)
     return [
-        {
-            'from': current['uuid'],
-            'from_label': current['label'],
-            'to': following['uuid'],
-            'to_label': following['label'],
-        }
-        for current, following in zip(elements, elements[1:], strict=False)
+        {'from': current, 'to': following}
+        for current, following in zip(chain, chain[1:], strict=False)
     ]
-
-
-def _merged_head(
-    nodes: list[models.ASTNode],
-    statements: list[models.Statement],
-    source: str,
-) -> dict | None:
-    """The merged chain's first element, or None if the chain is empty.
-
-    Args:
-        nodes: The flat node stream, in document order.
-        statements: The statement overlay.
-        source: The stable book identity.
-
-    Returns:
-        Its ``{label, uuid}``, or None.
-    """
-    elements = _chain_elements(nodes, statements, source)
-    return elements[0] if elements else None
 
 
 async def persist_chain(
     nodes: list[models.ASTNode],
-    statements: list[models.Statement],
     source: str,
 ) -> None:
-    """Write the merged ``:NEXT`` chain and ``:HEAD`` edge.
+    """Write the pure provenance ``:NEXT`` chain and ``:HEAD`` edge.
 
-    The chain mixes non-absorbed prose ``:Node`` vertices with
-    ``:Statement`` vertices in document order. Absorbed raw nodes are
-    skipped — they still exist in the graph for provenance but are not
-    in the walkable chain.
-
-    Both tiers are matched BY LABEL. Cypher cannot parameterise a label, so
-    the pairs are bucketed by their ``(from_label, to_label)`` combination —
-    at most four — and each bucket is one query with its labels written in. A
-    label-free ``MATCH (a {uuid: …})`` would scan every vertex in the database
-    and, worse, would silently do the wrong thing the moment two tiers shared
-    a uuid.
+    ``:HEAD`` runs from ``:Source`` to the first ``:Node``, then ``:NEXT``
+    threads every node in document order. Nothing is skipped and no statement
+    is slotted in: the chain is the verbatim stream, and the statement
+    overlay hangs off it via ``(:Node)-[:MEMBER_OF]->(:Statement)``
+    (see ``persist_statements``).
     """
     if not nodes:
         return
-    pairs = _merged_chain(nodes, statements, source)
-    head = _merged_head(nodes, statements, source)
-    source_key = source_uuid(source)
-
-    buckets: dict[tuple[str, str], list[dict]] = defaultdict(list)
-    for pair in pairs:
-        buckets[(pair['from_label'], pair['to_label'])].append(pair)
+    chain = _chain_nodes(nodes, source)
+    if not chain:
+        return
+    pairs = _chain_pairs(chain)
+    head = chain[0]
 
     async with driver().session(database=database()) as session:
-        if head:
-            head_label = head['label']
-            await session.run(
-                f'MATCH (s:{SOURCE_LABEL} {{uuid: $source}}), '
-                f'(n:{head_label} {{uuid: $head}}) '
-                f'MERGE (s)-[:HEAD]->(n)',
-                source=source_key,
-                head=head['uuid'],
-            )
-        for (from_label, to_label), rows in buckets.items():
+        await session.run(
+            f'MATCH (s:{SOURCE_LABEL} {{uuid: $source}}), '
+            f'(n:{NODE_LABEL} {{uuid: $head}}) '
+            f'MERGE (s)-[:HEAD]->(n)',
+            source=source_uuid(source),
+            head=head,
+        )
+        if pairs:
             await session.run(
                 f'UNWIND $pairs AS pair '
-                f'MATCH (a:{from_label} {{uuid: pair.from}}), '
-                f'(b:{to_label} {{uuid: pair.to}}) '
+                f'MATCH (a:{NODE_LABEL} {{uuid: pair.from}}), '
+                f'(b:{NODE_LABEL} {{uuid: pair.to}}) '
                 f'MERGE (a)-[:NEXT]->(b)',
-                pairs=rows,
+                pairs=pairs,
             )
 
 
@@ -254,15 +192,19 @@ def statement_rows(
 async def persist_statements(
     statements: list[models.Statement], source: str
 ) -> None:
-    """Upsert the book's ``:Statement`` overlay as bare vertices.
+    """Upsert the book's ``:Statement`` overlay as bare vertices, plus the
+    ``:MEMBER_OF`` edges from each member node.
 
-    Deliberately edgeless: ``persist_chain`` threads each statement into the
-    walkable ``:NEXT`` chain at its group's place, and book-scoped lookup goes
-    through the ``statement_source`` index rather than a traversal.
+    Statements are deliberately out of the chain — the walkable ``:NEXT``
+    spine is the pure provenance node stream — and each one points at the raw
+    blocks that are its members: one ``(:Node)-[:MEMBER_OF]->(:Statement)``
+    edge per member of the group. Book-scoped lookup goes through the
+    ``statement_source`` index rather than a traversal.
     """
     if not statements:
         return
     rows = statement_rows(statements, source)
+    pairs = statement_member_pairs(statements, source)
 
     async with driver().session(database=database()) as session:
         await session.run(
@@ -271,20 +213,29 @@ async def persist_statements(
             f'SET s += row',
             rows=rows,
         )
+        if pairs:
+            await session.run(
+                f'UNWIND $pairs AS pair '
+                f'MATCH (n:{NODE_LABEL} {{uuid: pair.node}}), '
+                f'(s:{STATEMENT_LABEL} {{uuid: pair.statement}}) '
+                f'MERGE (n)-[:MEMBER_OF]->(s)',
+                pairs=pairs,
+            )
 
 
 async def persist_procedures(
-    statements: list[models.Statement], source: str
+    procedures: list[models.Procedure],
+    source: str,
 ) -> None:
-    """Upsert the procedural layer: one ``:Procedure`` per derivation hung
-    off its statement via ``:HAS_PROCEDURE``."""
-    procedure_batch = procedure_rows(statements, source)
+    """Upsert the procedural layer: one ``:Procedure`` hub per derivation,
+    pointing at its member nodes via ``:MEMBER_OF``."""
+    procedure_batch = procedure_rows(procedures, source)
     if not procedure_batch:
         return
-    acts = act_rows(statements, source)
-    owners = has_procedure_pairs(statements, source)
-    firsts = first_pairs(statements, source)
-    thens = then_pairs(statements, source)
+    acts = act_rows(procedures, source)
+    members = procedure_member_pairs(procedures, source)
+    firsts = first_pairs(procedures, source)
+    thens = then_pairs(procedures, source)
 
     async with driver().session(database=database()) as session:
         await session.run(
@@ -300,13 +251,14 @@ async def persist_procedures(
                 f'SET a += row',
                 rows=acts,
             )
-        await session.run(
-            f'UNWIND $pairs AS pair '
-            f'MATCH (s:{STATEMENT_LABEL} {{uuid: pair.statement}}), '
-            f'(p:{PROCEDURE_LABEL} {{uuid: pair.procedure}}) '
-            f'MERGE (s)-[:HAS_PROCEDURE]->(p)',
-            pairs=owners,
-        )
+        if members:
+            await session.run(
+                f'UNWIND $pairs AS pair '
+                f'MATCH (n:{NODE_LABEL} {{uuid: pair.node}}), '
+                f'(p:{PROCEDURE_LABEL} {{uuid: pair.procedure}}) '
+                f'MERGE (n)-[:MEMBER_OF]->(p)',
+                pairs=members,
+            )
         if firsts:
             await session.run(
                 f'UNWIND $pairs AS pair '
@@ -322,4 +274,124 @@ async def persist_procedures(
                 f'(b:{ACT_LABEL} {{uuid: pair.to}}) '
                 f'MERGE (a)-[:THEN]->(b)',
                 pairs=thens,
+            )
+
+
+async def persist_variables(
+    variables: list[tuple[str, list[int], list[models.Variable]]],
+    procedures: list[models.Procedure],
+    source: str,
+) -> None:
+    """Upsert the ``:Variable`` nodes and ``:HAS_VARIABLE`` edges.
+
+    One ``:Variable`` per binding. A variable hangs off the unit it was
+    extracted from: the ``:Equation`` when ``equation_index`` is set, its
+    owning ``:Statement`` or ``:Procedure`` hub, or the plain ``:Node``
+    otherwise — mirroring how equations resolve their container. Cypher
+    cannot parameterise a label, so the pairs are split by
+    ``container_label`` and each bucket is one query with its label written
+    in.
+    """
+    variable_batch = variable_rows(variables, source)
+    if not variable_batch:
+        return
+    pairs = has_variable_pairs(variables, procedures, source)
+    equation_pairs = [p for p in pairs if p['container_label'] == 'equation']
+    statement_pairs = [p for p in pairs if p['container_label'] == 'statement']
+    procedure_pairs = [p for p in pairs if p['container_label'] == 'procedure']
+    node_pairs = [p for p in pairs if p['container_label'] == 'node']
+
+    async with driver().session(database=database()) as session:
+        await session.run(
+            f'UNWIND $rows AS row '
+            f'MERGE (v:{VARIABLE_LABEL} {{uuid: row.uuid}}) '
+            f'SET v += row',
+            rows=variable_batch,
+        )
+        if equation_pairs:
+            await session.run(
+                f'UNWIND $pairs AS pair '
+                f'MATCH (e:{EQUATION_LABEL} {{uuid: pair.container}}), '
+                f'(v:{VARIABLE_LABEL} {{uuid: pair.variable}}) '
+                f'MERGE (e)-[:HAS_VARIABLE]->(v)',
+                pairs=equation_pairs,
+            )
+        if statement_pairs:
+            await session.run(
+                f'UNWIND $pairs AS pair '
+                f'MATCH (s:{STATEMENT_LABEL} {{uuid: pair.container}}), '
+                f'(v:{VARIABLE_LABEL} {{uuid: pair.variable}}) '
+                f'MERGE (s)-[:HAS_VARIABLE]->(v)',
+                pairs=statement_pairs,
+            )
+        if procedure_pairs:
+            await session.run(
+                f'UNWIND $pairs AS pair '
+                f'MATCH (p:{PROCEDURE_LABEL} {{uuid: pair.container}}), '
+                f'(v:{VARIABLE_LABEL} {{uuid: pair.variable}}) '
+                f'MERGE (p)-[:HAS_VARIABLE]->(v)',
+                pairs=procedure_pairs,
+            )
+        if node_pairs:
+            await session.run(
+                f'UNWIND $pairs AS pair '
+                f'MATCH (n:{NODE_LABEL} {{uuid: pair.container}}), '
+                f'(v:{VARIABLE_LABEL} {{uuid: pair.variable}}) '
+                f'MERGE (n)-[:HAS_VARIABLE]->(v)',
+                pairs=node_pairs,
+            )
+
+
+async def persist_equations(
+    equations: list[tuple[str, list[int], list[models.Equation]]],
+    procedures: list[models.Procedure],
+    source: str,
+) -> None:
+    """Upsert the ``:Equation`` nodes and their attachment edges.
+
+    One ``:Equation`` per extracted equation. An equation hangs off the unit
+    it was extracted from: its owning ``:Statement``, ``:Procedure`` or plain
+    ``:Node`` — every unit is an equally valid extraction source — via
+    ``:HAS_EQUATION``. Cypher cannot parameterise a label, so the pairs are
+    split by ``container_label`` and each bucket is one query with its label
+    written in.
+    """
+    equation_batch = equation_rows(equations, source)
+    if not equation_batch:
+        return
+    pairs = equation_pairs(equations, procedures, source)
+    statement_pairs = [p for p in pairs if p['container_label'] == 'statement']
+    procedure_pairs = [p for p in pairs if p['container_label'] == 'procedure']
+    node_pairs = [p for p in pairs if p['container_label'] == 'node']
+
+    async with driver().session(database=database()) as session:
+        await session.run(
+            f'UNWIND $rows AS row '
+            f'MERGE (e:{EQUATION_LABEL} {{uuid: row.uuid}}) '
+            f'SET e += row',
+            rows=equation_batch,
+        )
+        if statement_pairs:
+            await session.run(
+                f'UNWIND $pairs AS pair '
+                f'MATCH (s:{STATEMENT_LABEL} {{uuid: pair.container}}), '
+                f'(e:{EQUATION_LABEL} {{uuid: pair.equation}}) '
+                f'MERGE (s)-[:HAS_EQUATION]->(e)',
+                pairs=statement_pairs,
+            )
+        if procedure_pairs:
+            await session.run(
+                f'UNWIND $pairs AS pair '
+                f'MATCH (p:{PROCEDURE_LABEL} {{uuid: pair.container}}), '
+                f'(e:{EQUATION_LABEL} {{uuid: pair.equation}}) '
+                f'MERGE (p)-[:HAS_EQUATION]->(e)',
+                pairs=procedure_pairs,
+            )
+        if node_pairs:
+            await session.run(
+                f'UNWIND $pairs AS pair '
+                f'MATCH (n:{NODE_LABEL} {{uuid: pair.container}}), '
+                f'(e:{EQUATION_LABEL} {{uuid: pair.equation}}) '
+                f'MERGE (n)-[:HAS_EQUATION]->(e)',
+                pairs=node_pairs,
             )

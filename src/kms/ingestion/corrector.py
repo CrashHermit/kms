@@ -211,7 +211,9 @@ class Corrector(dspy.Module):
         Returns:
             The proofread transcription, with genuine errors corrected.
         """
-        result = await self.proofreader.acall(page_image=page_image, transcription=transcription)
+        result = await self.proofreader.acall(
+            page_image=page_image, transcription=transcription
+        )
         recorder.record_example(
             'corrector',
             {'page_image': page_image, 'transcription': transcription},
@@ -296,6 +298,8 @@ class CorrectorNode:
             The updated segment backbone.
         """
         results = state.get('correction_results', [])
-        segments = models.merge_results_into_segments(state['segments'], results, 'content')
+        segments = models.merge_results_into_segments(
+            state['segments'], results, 'content'
+        )
         logger.info('corrector: %d page(s) proofread', len(results))
         return {'segments': segments}

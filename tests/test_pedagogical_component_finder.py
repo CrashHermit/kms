@@ -33,7 +33,7 @@ def test_banks_a_bounded_span_and_emits_member_ids():
     assert spans == [[1, 2]]
 
 
-def test_statement_and_derivation_are_cut_into_separate_spans():
+def test_banks_multiple_bounded_spans_in_document_order():
     module = _ScriptedFinder(
         [
             [

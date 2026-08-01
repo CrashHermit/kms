@@ -1,7 +1,8 @@
-"""Statement-overlay graph mapping and the merged chain.
+"""Statement-overlay graph mapping, the pure provenance chain, and the
+:MEMBER_OF edges.
 
-Pure mapping plus the chain write, which runs against a fake driver — the
-Cypher is asserted, nothing is sent anywhere.
+Pure mapping plus the chain/overlay writes, which run against a fake driver —
+the Cypher is asserted, nothing is sent anywhere.
 """
 
 import asyncio
@@ -11,17 +12,25 @@ from kms.graph import nodes, statements, writer
 
 
 def test_statement_uuid_is_deterministic():
-    assert statements.statement_uuid('hefferon.pdf', 7) == (
-        statements.statement_uuid('hefferon.pdf', 7)
+    assert statements.statement_uuid('hefferon.pdf', [7]) == (
+        statements.statement_uuid('hefferon.pdf', [7])
     )
 
 
-def test_statement_uuid_distinguishes_id_and_source():
-    assert statements.statement_uuid('hefferon.pdf', 7) != (
-        statements.statement_uuid('hefferon.pdf', 8)
+def test_statement_uuid_distinguishes_block_and_source():
+    assert statements.statement_uuid('hefferon.pdf', [7]) != (
+        statements.statement_uuid('hefferon.pdf', [8])
     )
-    assert statements.statement_uuid('hefferon.pdf', 7) != (
-        statements.statement_uuid('lebl.pdf', 7)
+    assert statements.statement_uuid('hefferon.pdf', [7]) != (
+        statements.statement_uuid('lebl.pdf', [7])
+    )
+
+
+def test_statement_uuid_covers_the_whole_block():
+    # The identity is the whole block id set: a single-node block and a
+    # multi-node block that starts at the same node never collide.
+    assert statements.statement_uuid('book.pdf', [7]) != (
+        statements.statement_uuid('book.pdf', [7, 8])
     )
 
 
@@ -29,26 +38,18 @@ def test_statement_uuids_are_disjoint_from_node_uuids():
     # A statement and its first member node name the same PLACE but are two
     # vertices in two tiers. They used to share a key, which was only
     # survivable while they were literally one fused `:Node:Statement` vertex.
-    assert statements.statement_uuid('book.pdf', 7) != nodes.node_uuid(
+    assert statements.statement_uuid('book.pdf', [7]) != nodes.node_uuid(
         'book.pdf', 7
     )
 
 
-def test_statement_properties_carry_content_and_provenance():
-    statement = models.Statement(
-        id=4, content='Theorem 2.1.', statement_of=[4, 5]
-    )
+def test_statement_properties_carry_uuid_and_provenance_only():
+    # A statement hub carries no text — the raw blocks carry it.
+    statement = models.Statement(block=[4, 5], members=[4, 5])
     props = statements.statement_properties(statement, 'book.pdf')
-    assert props['uuid'] == statements.statement_uuid('book.pdf', 4)
-    assert props['content'] == 'Theorem 2.1.'
+    assert props['uuid'] == statements.statement_uuid('book.pdf', [4, 5])
     assert props['source'] == nodes.source_uuid('book.pdf')
-
-
-def test_statement_properties_drop_empty_content():
-    statement = models.Statement(id=4, statement_of=[4])
-    assert 'content' not in statements.statement_properties(
-        statement, 'book.pdf'
-    )
+    assert 'content' not in props
 
 
 def _stream():
@@ -60,50 +61,50 @@ def _stream():
     ]
 
 
-def test_chain_slots_the_statement_in_and_skips_its_members():
-    statement = models.Statement(id=1, statement_of=[1, 2])
-    elements = writer._chain_elements(_stream(), [statement], 'book.pdf')
-    assert [element['label'] for element in elements] == [
-        'Node',
-        'Statement',
-        'Node',
-    ]
-    assert [element['uuid'] for element in elements] == [
+def test_chain_is_the_pure_node_stream_in_document_order():
+    # The provenance chain is the verbatim stream: even nodes absorbed into a
+    # statement stay in it — statements are not chain elements.
+    chain = writer._chain_nodes(_stream(), 'book.pdf')
+    assert chain == [
         nodes.node_uuid('book.pdf', 0),
-        statements.statement_uuid('book.pdf', 1),
+        nodes.node_uuid('book.pdf', 1),
+        nodes.node_uuid('book.pdf', 2),
         nodes.node_uuid('book.pdf', 3),
     ]
 
 
-def test_chain_pairs_carry_both_endpoints_labels():
-    # Cypher cannot parameterise a label, so persist_chain buckets on these —
-    # a label-free MATCH would scan, and would break outright if two tiers ever
-    # shared a uuid.
-    statement = models.Statement(id=1, statement_of=[1, 2])
-    pairs = writer._merged_chain(_stream(), [statement], 'book.pdf')
-    assert [(pair['from_label'], pair['to_label']) for pair in pairs] == [
-        ('Node', 'Statement'),
-        ('Statement', 'Node'),
-    ]
-
-
-def test_head_is_the_first_element_with_its_label():
-    statement = models.Statement(id=0, statement_of=[0, 1])
-    head = writer._merged_head(_stream(), [statement], 'book.pdf')
-    assert head == {
-        'label': 'Statement',
-        'uuid': statements.statement_uuid('book.pdf', 0),
+def test_chain_pairs_thread_every_consecutive_node_pair():
+    chain = writer._chain_nodes(_stream(), 'book.pdf')
+    pairs = writer._chain_pairs(chain)
+    assert pairs[0] == {
+        'from': nodes.node_uuid('book.pdf', 0),
+        'to': nodes.node_uuid('book.pdf', 1),
     }
-
-
-def test_head_of_an_overlay_free_stream_is_the_first_node():
-    head = writer._merged_head(_stream(), [], 'book.pdf')
-    assert head == {'label': 'Node', 'uuid': nodes.node_uuid('book.pdf', 0)}
+    assert len(pairs) == 3
 
 
 def test_an_empty_stream_has_no_chain():
-    assert writer._chain_elements([], [], 'book.pdf') == []
-    assert writer._merged_head([], [], 'book.pdf') is None
+    assert writer._chain_nodes([], 'book.pdf') == []
+    assert writer._chain_pairs([]) == []
+
+
+def test_statement_member_pairs_link_every_member_node():
+    statement = models.Statement(block=[1, 2], members=[1, 2])
+    pairs = statements.statement_member_pairs([statement], 'book.pdf')
+    assert pairs == [
+        {
+            'node': nodes.node_uuid('book.pdf', 1),
+            'statement': statements.statement_uuid('book.pdf', [1, 2]),
+        },
+        {
+            'node': nodes.node_uuid('book.pdf', 2),
+            'statement': statements.statement_uuid('book.pdf', [1, 2]),
+        },
+    ]
+
+
+def test_statement_member_pairs_are_empty_without_statements():
+    assert statements.statement_member_pairs([], 'book.pdf') == []
 
 
 class _FakeSession:
@@ -132,27 +133,52 @@ class _FakeDriver:
         return _FakeSession(self.log)
 
 
-def test_persist_chain_matches_every_endpoint_by_label(monkeypatch):
+def test_persist_chain_writes_head_and_next_over_pure_nodes(monkeypatch):
     driver = _FakeDriver()
     monkeypatch.setattr(writer, 'driver', lambda: driver)
     monkeypatch.setattr(writer, 'database', lambda: 'neo4j')
-    statement = models.Statement(id=1, statement_of=[1, 2])
-
-    asyncio.run(writer.persist_chain(_stream(), [statement], 'book.pdf'))
+    # The statement overlay is irrelevant to the chain: its members stay in
+    # the verbatim stream.
+    asyncio.run(writer.persist_chain(_stream(), 'book.pdf'))
 
     queries = [query for query, _ in driver.log]
-    # The HEAD edge and both :NEXT buckets name the label they match on. A
-    # label-free `MATCH (a {uuid: ...})` scans every vertex in the database and
-    # would match across tiers outright if two ever shared a uuid.
-    assert 'MATCH (a {uuid:' not in ' '.join(queries)
-    assert any('(n:Node {uuid: $head})' in query for query in queries)
+    assert any(
+        '(s:Source {uuid: $source})' in query
+        and '(n:Node {uuid: $head})' in query
+        and '(s)-[:HEAD]->(n)' in query
+        for query in queries
+    )
     assert any(
         '(a:Node {uuid: pair.from})' in query
-        and '(b:Statement {uuid: pair.to})' in query
-        for query in queries
-    )
-    assert any(
-        '(a:Statement {uuid: pair.from})' in query
         and '(b:Node {uuid: pair.to})' in query
+        and '(a)-[:NEXT]->(b)' in query
         for query in queries
     )
+    # The chain never mentions the statement tier: statements hang off their
+    # member nodes via :MEMBER_OF, they are not chain elements. A
+    # label-free `MATCH (a {uuid: ...})` would scan every vertex in the
+    # database.
+    assert 'Statement' not in ' '.join(queries)
+    assert 'MATCH (a {uuid:' not in ' '.join(queries)
+
+
+def test_persist_statements_writes_member_edges_from_every_member(
+    monkeypatch,
+):
+    driver = _FakeDriver()
+    monkeypatch.setattr(writer, 'driver', lambda: driver)
+    monkeypatch.setattr(writer, 'database', lambda: 'neo4j')
+    statement = models.Statement(block=[1, 2], members=[1, 2])
+
+    asyncio.run(writer.persist_statements([statement], 'book.pdf'))
+
+    queries = [query for query, _ in driver.log]
+    assert any(
+        '(n:Node {uuid: pair.node})' in query
+        and '(s:Statement {uuid: pair.statement})' in query
+        and '(n)-[:MEMBER_OF]->(s)' in query
+        for query in queries
+    )
+    # The membership link is real graph structure: one edge per member node,
+    # absorbed ones included.
+    assert 'MATCH (a {uuid:' not in ' '.join(queries)

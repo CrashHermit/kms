@@ -16,10 +16,10 @@ of a derivation and folded the working into the block. Split out, the boundary
 walk keeps its reliable job, and this pass sees ONE span at a time with nothing
 else to get right.
 
-The distinction is CLOSED and BINARY — exactly two answers — which is what makes
-it a different kind of question from ``block_typer``'s open ``type`` (definition
-/ theorem / law / mechanism / …). Kind is a label, type is a property
-(``docs/SCHEMA.md``).
+The distinction is a UNION of two roles — exactly three answers: a block can
+contain a ``statement`` (a block), a ``procedure`` (a derivation), or BOTH. A
+block that both poses something and works it out gets both roles; the
+statement/procedure partitioners then find the line between the portions.
 
 Absence stays structural (``docs/SCHEMA.md``, principle 4): this pass never asks
 "is there something to work out?" — it only labels the spans it is given. A unit
@@ -39,7 +39,8 @@ into the assembled output. ``Statement`` is no longer an ``ASTNode`` at all, so 
 stream can no longer hold one.
 
 Entry point ``type_roles(spans, nodes_by_id)`` (async): returns the statement
-overlay the rest of the pipeline consumes. Persistence-agnostic.
+and procedure hub overlays the rest of the pipeline consumes. Persistence-
+agnostic.
 """
 
 import asyncio
@@ -51,8 +52,8 @@ from kms.core import llm, logs, models, recorder, state
 
 logger = logging.getLogger(__name__)
 
-# The two roles. Closed and binary — NOT the open `type` vocabulary, which
-# block_typer induces downstream.
+# The two roles. A union: a block may contain a statement, a procedure, or
+# both — the role typer's answer is the subset present.
 STATEMENT_ROLE = 'statement'
 PROCEDURE_ROLE = 'procedure'
 SPAN_ROLES = [STATEMENT_ROLE, PROCEDURE_ROLE]
@@ -60,85 +61,52 @@ SPAN_ROLES = [STATEMENT_ROLE, PROCEDURE_ROLE]
 
 class Classify(dspy.Signature):
     r"""
-    Decide whether one span of textbook text is a BLOCK or a DERIVATION. Answer
-    with exactly one word: "statement" or "procedure". This is domain-neutral —
-    the text may come from a math, physics, CS, or biology textbook.
+    Decide what a pedagogical block contains. Answer with the subset of two
+    roles present in the block — "statement", "procedure", or both. This is
+    domain-neutral: the text may come from a math, physics, CS, or biology
+    textbook.
 
-    "statement" — a BLOCK. The text POSES or ASSERTS something. It is one of:
-    - a DECLARATIVE STATEMENT: a definition, theorem, proposition, lemma,
-      corollary, axiom, or a domain's law / model / rule / principle. It says
-      that something IS SO.
-    - a POSED TASK: a worked example's statement ("Example 4.2. Compute
-      $\int_0^1 x^2 dx$."), or an exercise for the reader ("12. Prove that
-      $\sqrt 2$ is irrational."). It says what is to be DONE, without doing it.
+    "statement" — the block STATES something. It says that something is so, or
+    asks for something to be done: a claim, a definition, a problem posed to
+    the reader. If the block opens with its own label naming it as a unit of
+    the book — "Definition 2.5.1", "Theorem 3.4", "Example 6.7", "Exercise
+    12", or a bare leading number ("12.", "2.1.12") — it states something,
+    whatever follows that label.
 
-    "procedure" — a DERIVATION. The text WORKS SOMETHING OUT, and it belongs to
-    a block stated before it: a proof, a solution, a derivation, a worked
-    calculation. Signs of working: it substitutes, integrates, factors, splits
-    into cases, applies a named result, computes, or concludes ("hence",
+    "procedure" — the block WORKS something out: a proof, a solution, a
+    derivation, a worked calculation that resolves what a block before it
+    stated. Signs of working: substituting, integrating, factoring, splitting
+    into cases, applying a named result, computing, concluding ("hence",
     "therefore", "so we get", "this completes the proof").
 
-    WORKING IS NOT ONLY ALGEBRA. Text that RESOLVES the block before it is a
-    derivation even when it manipulates no symbols at all. All of these are
-    "procedure":
-    - EXHIBITING an answer: "Note that $y = 0$ is a solution. But another
-      solution is the function ..." — it supplies what the block asked for, so
-      it is the solution.
-    - ANALYSING the block's own case or figure: "Here both $G_2$ and $G_3$ are
-      subgraphs of $G_1$. But only $G_2$ is an induced subgraph, because ..." —
-      it works the posed example out in prose.
-    - VERIFYING or JUSTIFYING: checking a condition holds, saying why a result
-      follows, or explaining why something FAILS ("$G_4$ is NOT a subgraph,
-      because ..."). The question is never "does it contain equations?" but
-      "does this text ANSWER or WORK OUT what came before it?" If yes, it is
-      "procedure".
+    WORKING IS NOT ONLY ALGEBRA. Text that RESOLVES a statement is a procedure
+    even when it manipulates no symbols at all: exhibiting an answer ("Note
+    that $y = 0$ is a solution. But another solution is the function ..."),
+    analysing the posed case or figure, verifying or justifying ("$G_4$ is NOT
+    a subgraph, because ..."). Ask "does this text work out what came before
+    it?" — not "does it contain equations?".
 
-    A COMPUTATION SESSION IS A DERIVATION. Unlabelled transcript lines and their
+    A COMPUTATION SESSION IS A PROCEDURE. Unlabelled transcript lines and their
     printed output — "sage: f = x^15 + 1", "sage: f.roots()", "[(12, 1), (10,
-    1), (4, 1)]", a shell or REPL session, a table of computed values — are the
-    working of the block above them, so they are "procedure". A trailing
-    sentence that comments on that output ("The output above lists each root
-    along with its multiplicity.") is part of the same derivation.
+    1), (4, 1)]", a shell or REPL session, a table of computed values — are
+    the working of a block above them, so they are "procedure".
 
-    ITS OWN LABEL MAKES IT A BLOCK — CHECK THIS FIRST. If the text OPENS with a
-    label naming it as a unit of the book — "Definition 2.5.1", "SAGE Example
-    2.5.4.", "Theorem 3.4", "Lemma 1.2", "Example 6.7", or a bare leading number
-    ("12.", "949", "2.1.12") — the answer is "statement", WHATEVER FOLLOWS THAT
-    LABEL. A labelled example that goes on to work itself out, or that contains
-    a worked session and its printed output, is STILL a block: books label
-    blocks, not derivations. A derivation never carries a block label of its own
-    — it either opens with a derivation marker ("Proof.", "Solution.") or is
-    unlabelled text continuing from the block before it.
+    A derivation never carries a block label of its own — it either opens with
+    a derivation marker ("Proof.", "Solution.") or is unlabelled text
+    continuing from the block before it. For unlabelled text, never answer
+    "statement" only because a marker word is missing.
 
-    A LEADING EXERCISE NUMBER COUNTS AS A LABEL EVEN WITH NO PUNCTUATION AFTER
-    IT, and even when everything after it is a bare expression with no words. In
-    a problem set the items run "949 25 - 7", "952 x + 8", "957 6 · 3 + 5", "963
-    20 ÷ (4 + 6) · 5" — a number, then the thing the reader must evaluate. Every
-    one of those is an EXERCISE, so the answer is "statement". Do NOT read the
-    arithmetic as "computing" and call it a derivation: nothing is being worked
-    out, the expression is the task itself and no result is shown. An unnumbered
-    expression that PRODUCES a result ("= 18", "so $x = 4$") is different — that
-    is working.
-
-    OTHERWISE, THE TEST IS WHAT THE TEXT DOES, NOT HOW IT IS LABELLED. A
-    "Proof." or "Solution." marker means "procedure", but MOST derivations in
-    some books carry no marker at all — a worked example's solution frequently
-    just runs on from the statement. For UNLABELLED text, never answer
-    "statement" only because a marker word is missing. Conversely, a block that
-    merely MENTIONS a method ("Use the power rule to compute the following.") is
-    still posing a task, so it is "statement".
-
-    Judge the span in front of you on its own terms. If it both states something
-    and then works it out, answer "procedure" only if the working is the bulk of
-    it; a statement with a trailing clause is still "statement".
+    Judge the block in front of you on its own terms. If it only states
+    something, include only "statement". If it only works something out,
+    include only "procedure". If it both states something and then works it
+    out, include BOTH.
     """
 
     contents: str = dspy.InputField(
         description="The span's text (markdown + LaTeX), in document order."
     )
-    role: str = dspy.OutputField(
-        description='Exactly one of "statement" (a statement that poses or asserts) or "procedure" '
-        '(a derivation that works something out).'
+    roles: list[str] = dspy.OutputField(
+        description='Exactly the subset of roles the block contains: "statement" (states something) or "procedure" (works something out). Both when it states something and then works it out.'
     )
 
 
@@ -154,32 +122,39 @@ class RoleTyper(dspy.Module):
         self.classify = dspy.ChainOfThought(Classify)
         self.set_lm(language_model or llm.text_lm())
 
-    async def aforward(self, contents: str) -> str:
+    async def aforward(self, contents: str) -> list[str]:
         """Classify one span.
 
         Args:
             contents: The span's text, in document order.
 
         Returns:
-            The span's role, falling back to ``statement`` for an unusable
-            answer.
+            The span's roles — a subset of ``{statement, procedure}``,
+            falling back to ``['statement']`` for an unusable answer.
         """
         result = await self.classify.acall(contents=contents)
         recorder.record_example('role_typer', {'contents': contents}, result)
-        answer = ' '.join((result.role or '').split()).lower()
+        roles = sorted(
+            {
+                ' '.join(role.split()).lower()
+                for role in (result.roles or [])
+                if ' '.join(role.split()).lower() in SPAN_ROLES
+            }
+        )
         # `statement` is the fallback: it is the far more common role, and a
-        # block wrongly demoted to a derivation would be attached to (and
-        # hidden under) its neighbour.
-        role = answer if answer in SPAN_ROLES else STATEMENT_ROLE
+        # block wrongly demoted to a derivation would lose its statement hub
+        # entirely.
+        if not roles:
+            roles = [STATEMENT_ROLE]
         logger.debug(
-            'role: %s%s | from %r',
-            role,
-            '' if answer in SPAN_ROLES else f' (fallback, model said {answer!r})',
+            'roles: %s%s | from %r',
+            roles,
+            '' if roles else f' (fallback, model said {result.roles!r})',
             logs.elide(contents),
         )
-        return role
+        return roles
 
-    def forward(self, contents: str) -> str:
+    def forward(self, contents: str) -> list[str]:
         """Sync forward for DSPy optimisers."""
         return asyncio.run(self.aforward(contents))
 
@@ -203,27 +178,43 @@ def contents_of(span: list[int], nodes_by_id: dict[int, models.ASTNode]) -> str:
     )
 
 
-def _mark_statement(node: models.ASTNode, span: list[int]) -> models.Statement:
-    """Build the span's Statement from its first node.
+def _mark_statement(span: list[int]) -> models.Statement:
+    """Build the span's Statement hub.
 
-    The statement's id is the span's first member id — that is what keys it to
-    its place in the stream, where ``writer._merged_chain`` slots it in — but
-    it is an entity beside the stream, not a replacement for the node it was
-    built from. Taking the id from the SPAN rather than from ``node.id`` is
-    what makes ``id == statement_of[0]`` true by construction, and keeps the
-    required ``int`` free of the node's optional one.
+    The hub's identity is the WHOLE span — the block's member node ids, frozen
+    at creation (see ``graph.statements.statement_uuid``) — and its members
+    start as the whole block until the statement partitioner narrows them to
+    the statement portion.
 
     Args:
-        node: The span's first node, for its content.
-        span: The span's member node ids, first one first.
+        span: The span's member node ids, in document order.
 
     Returns:
-        The span's statement.
+        The span's statement hub.
     """
     return models.Statement(
-        id=span[0],
-        content=node.content,
-        statement_of=span,
+        block=list(span),
+        members=list(span),
+    )
+
+
+def _mark_procedure(span: list[int]) -> models.Procedure:
+    """Build the span's Procedure hub.
+
+    The hub's identity is the WHOLE span — the block's member node ids, frozen
+    at creation (see ``graph.procedures.procedure_uuid``) — and its members
+    start as the whole span until the procedure partitioner narrows them to
+    the derivation portion.
+
+    Args:
+        span: The span's member node ids, in document order.
+
+    Returns:
+        The span's procedure hub.
+    """
+    return models.Procedure(
+        block=list(span),
+        members=list(span),
     )
 
 
@@ -231,12 +222,13 @@ async def type_roles(
     spans: list[list[int]],
     nodes_by_id: dict[int, models.ASTNode],
     module: RoleTyper | None = None,
-) -> list[models.Statement]:
-    """Diagnose each group's composition and build the statement overlay.
+) -> tuple[list[models.Statement], list[models.Procedure]]:
+    """Diagnose each group's composition and build the hub overlays.
 
-    Every group produces a Statement (real or placeholder). Groups with a
-    procedure portion get a Procedure attached (real or placeholder). Nothing
-    here writes to the node stream — see the module docstring.
+    Every PCF collection produces a Statement hub when it contains a
+    statement role and a Procedure hub when it contains a procedure role —
+    the two are independent, even when they share a block. Nothing here
+    writes to the node stream — see the module docstring.
 
     Args:
         spans: The untyped spans, each a list of member node ids.
@@ -244,42 +236,50 @@ async def type_roles(
         module: The role-typing module. Created fresh if None.
 
     Returns:
-        The statement overlay, one entry per span, in span order.
+        The ``(statements, procedures)`` hub overlays, in span order.
     """
     if not spans:
         logger.info('role typer: no spans')
-        return []
+        return [], []
     module = module or RoleTyper()
 
-    roles = await asyncio.gather(*(module.acall(contents_of(span, nodes_by_id)) for span in spans))
+    roles_by_span = await asyncio.gather(
+        *(module.acall(contents_of(span, nodes_by_id)) for span in spans)
+    )
     statements: list[models.Statement] = []
-    for span, role in zip(spans, roles, strict=True):
+    procedures: list[models.Procedure] = []
+    for span, roles in zip(spans, roles_by_span, strict=True):
         first_member_id = span[0]
         if first_member_id not in nodes_by_id:
             continue
-        statement = _mark_statement(nodes_by_id[first_member_id], span)
-        if role == PROCEDURE_ROLE:
-            statement.procedures.append(models.Procedure(index=0))
-        statements.append(statement)
+        # Defensive: a module that returns garbage must not delete the block
+        # — `statement` is the far more common role.
+        role_set = {role for role in (roles or []) if role in SPAN_ROLES} or {
+            STATEMENT_ROLE
+        }
+        if STATEMENT_ROLE in role_set:
+            statements.append(_mark_statement(span))
+        if PROCEDURE_ROLE in role_set:
+            procedures.append(_mark_procedure(span))
 
     logger.info(
         'role typer: %d span(s) -> %d statement(s), %d procedure(s)',
         len(spans),
         len(statements),
-        sum(len(statement.procedures) for statement in statements),
+        len(procedures),
     )
-    return statements
+    return statements, procedures
 
 
 # --- LangGraph node: split the untyped spans into blocks and derivations ---
 
 
 class RoleTyperNode:
-    """Diagnoses each group and creates its Statement and Procedure.
+    """Diagnoses each group and creates its Statement and Procedure hubs.
 
-    Produces the ``statements`` channel — one statement per group, carrying its
-    members and zero or one Procedure — for the two extractors and the
-    persister. The ``nodes`` channel is read, never written.
+    Produces the ``statements`` and ``procedures`` channels — one hub per
+    role present in each group, each holding its members' node ids. The
+    ``nodes`` channel is read, never written.
 
     Args:
         module: The role-typing module. Created fresh if None.
@@ -289,17 +289,18 @@ class RoleTyperNode:
         self.module = module or RoleTyper()
 
     async def run(self, state: state.State) -> dict:
-        """Diagnose groups and build the statement overlay.
+        """Diagnose groups and build the hub overlays.
 
         Args:
             state: The pipeline state, holding the node stream and spans.
 
         Returns:
-            The `statements` channel. `nodes` is left exactly as it was.
+            The `statements` and `procedures` channels. `nodes` is left
+            exactly as it was.
         """
         nodes = state.get('nodes', [])
         nodes_by_id = {node.id: node for node in nodes if node.id is not None}
-        statements = await type_roles(
+        statements, procedures = await type_roles(
             state.get('spans', []), nodes_by_id, self.module
         )
-        return {'statements': statements}
+        return {'statements': statements, 'procedures': procedures}

@@ -3,12 +3,10 @@ Pedagogical component finder — a cursor-walk over the flat structural node
 stream that cuts it into the spans the pedagogical units occupy.
 
 The BOUNDARY stage of the entity layer, and only that: it says where each unit
-starts and stops, never what any of them is. Three passes downstream answer
-that, one question each — ``role_typer`` (block or derivation?), ``block_typer``
-(which kind of block?) and ``statement_extractor`` (label / number / title /
-contents). Splitting them keeps this walk on the job it is reliable at —
-structural boundary detection — instead of fusing it with a softer
-classification call.
+starts and stops, never what any of them is. The pass downstream answers that
+— ``role_typer`` (block or derivation?). Splitting the two keeps this walk on
+the job it is reliable at — structural boundary detection — instead of fusing
+it with a softer classification call.
 
 It is a forward walk:
 
@@ -42,24 +40,22 @@ Design commitments:
     statements of fact, worked examples and exercises — so the finder is
     domain-free.
   * BOUNDARIES ONLY, NO CLASSIFICATION. The walk emits untyped spans. Whether a
-    span is a block (definition, theorem, example, exercise, law, …) or a worked
+    span is a block (definition, theorem, example, exercise, law, …) or a
     derivation (proof, solution, calculation) is ``role_typer``'s question, and
-    which kind of block it is is ``block_typer``'s. Note the cut between a
-    statement and its derivation is still made HERE — that is a boundary, not a
-    label.
-  * A STATEMENT AND ITS DERIVATION ARE TWO SPANS. A theorem and its proof are
-    adjacent spans, not one fused span split later. The cut is structural: it
-    lands where the text stops posing or asserting and starts working, whether
-    or not the book marks it ("Proof.", "Solution."). This replaces the old
-    per-type attributors' semantic ``proof_start`` / ``solution_start`` call
-    with a detection.
+    which kind of block it is is a later pass's. The finder clusters WHOLE
+    units — including each unit's own working.
+  * A BLOCK OWNS ITS WORKING. A theorem and its proof, an example and its
+    solution, are ONE span: the cut between a statement and its derivation is
+    deliberately NOT made here. The role typer decides whether a block carries
+    a statement, a procedure, or both, and the member partitioners find the
+    line between the portions.
   * SPANS ARE A SPARSE OVERLAY. Nodes keep their stable ids; a span just records
     the node ids that are its members. Nothing about the node list is mutated or
     renumbered. Spans may overlap — a long paragraph can straddle two units.
 
 ``PedagogicalComponentFinderNode`` (bottom of this file) runs the walk and
 writes the untyped spans to the ``spans`` channel, which ``role_typer`` then
-splits into the entity overlay and the procedure spans.
+classifies into the statement and procedure hubs.
 """
 
 import asyncio
@@ -92,13 +88,14 @@ class WindowNode(BaseModel):
 class Span(BaseModel):
     """One span the LLM found, as an inclusive range of local positions.
 
-    Untyped by design: WHAT the span is — a block or the derivation that
-    resolves one, and which kind of block — is decided by the passes downstream
-    (``role_typer``, ``block_typer``). This stage only says where one unit
-    stops and the next begins.
+    Untyped by design: WHAT the span is — a block or a derivation — is decided
+    by the passes downstream (``role_typer``). This stage only says where one
+    unit stops and the next begins.
     """
 
-    start: int = Field(description='First local position of the span (inclusive).')
+    start: int = Field(
+        description='First local position of the span (inclusive).'
+    )
     end: int = Field(description='Last local position of the span (inclusive).')
 
 
@@ -122,15 +119,21 @@ class Signature(dspy.Signature):
       question).
     - an EXERCISE from a problem set (labelled by a number, usually with no
       solution shown).
-    - a WORKED DERIVATION that resolves one of the above: a proof, a solution, a
-      derivation, a worked calculation.
     - a PRESCRIBED PROCEDURE: an ordered run of steps the reader is told to
       carry out — a project's "Steps", a lab protocol, an algorithm given as
-      numbered instructions. Like a derivation it is a sequence of acts in
-      order, but it is PRESCRIBED rather than worked: it says what the reader
-      is to DO, where a derivation shows what the author DID. The whole run is
-      ONE span — its lead-in ("We recommend proceeding in the following
-      order:") together with every numbered step — never one span per step.
+      numbered instructions. The whole run is ONE span — its lead-in ("We
+      recommend proceeding in the following order:") together with every
+      numbered step — never one span per step.
+
+    A BLOCK OWNS ITS WORKING — never split a unit from what resolves it. A
+    theorem's proof, an example's solution, a posed problem's worked
+    calculation, a computation session and its printed output: all of that
+    belongs to the SAME span as the block that posed it. Cut where one UNIT
+    ends and the NEXT begins — never between a unit and its own derivation. A
+    derivation that follows a block is part of that block's span, whether or
+    not it is marked ("Proof.", "Solution.", "Proof of Theorem 2.4."). A
+    derivation that stands ALONE — no block before it in the document, as in an
+    answers section — is a unit in its own right: emit it as its own span.
 
     NEVER SKIP A LABELLED UNIT. Every node that opens with its own label —
     "Definition 2.5.1", "Theorem 3.4", "Example 6.7", "SAGE Example 2.5.4.",
@@ -150,57 +153,6 @@ class Signature(dspy.Signature):
     in ONE span. Ask what the number does — does it name a problem the book can
     refer back to, or sequence a step inside something already named?
 
-    A STATEMENT AND ITS DERIVATION ARE ALWAYS TWO SEPARATE SPANS. Never merge a
-    theorem with its proof, or an example with its solution, into one span — cut
-    between them. If a statement has TWO derivations ("Proof 1 ...", "Proof 2
-    ..."), that is THREE spans.
-
-    THE DERIVATION CUT — A MARKER IS COMMON BUT NEVER REQUIRED. Many books mark
-    a derivation explicitly ("Proof.", "Solution.", "Proof of Theorem 2.4."),
-    and that marker always starts a new span. But MANY BOOKS DO NOT: a worked
-    example very often runs straight from the posed task into the working with
-    no marker word at all. The ABSENCE of "Solution." IS NOT a reason to keep it
-    in one span. Cut on what the text DOES:
-    - POSING / STATING ("Solve $y' = y^2$, $y(0)=A$.", "Show that $f$ is
-      bounded.", a theorem's claim) — one span ENDS here.
-    - WORKING ("We know how to solve this equation. First assume ... so ...
-      hence ...", integrating, substituting, case-splitting, computing,
-      concluding) — the NEXT span starts here.
-
-    WORKING IS NOT ONLY ALGEBRA — cut for these too, even with no symbols
-    manipulated:
-    - text that EXHIBITS the answer the block asked for ("Note that $y = 0$ is a
-      solution. But another solution is the function ...");
-    - text that ANALYSES the block's own example or figures ("Here both $G_2$
-      and $G_3$ are subgraphs of $G_1$. But only $G_2$ is induced, because ...",
-      "$G_4$ is NOT a subgraph, even though ...");
-    - text that VERIFIES or JUSTIFIES what was posed. A figure that ILLUSTRATES
-      the posed example, and sits before any working, belongs to the STATEMENT
-      span; the discussion that then works through it starts the NEXT span. But
-      a working span still ENDS where the working ends — do not let it run on to
-      absorb the figures, captions and narrative that follow it. Ask "does this
-      text answer or work out what came before it?" — cut before the first node
-      where the answer is yes, and cut again after the last one. Cut AT THAT
-      TURN — where the text stops posing or asserting and starts deriving. An
-      example whose solution is "integrated" into it is still two spans: split
-      it at the turn. Only when a unit shows NO working at all (a bare exercise
-      for the reader, a definition, an unproved statement) is there nothing to
-      cut.
-
-    THE LABEL RULE AND THE CUT RULE WORK TOGETHER — a labelled unit that goes on
-    to work itself out is TWO spans, not one. The label opens the first span;
-    the working opens the second. Both rules apply to the same block:
-
-        node 0: "Example 1.2.3: For some constant $A$, solve $y' = y^2$."   <-
-        span A starts node 1: "We know how to solve this. Assume $A \neq 0$, so
-        ..."      <- span A ends, node 2: "If $A = 0$ then $y = 0$ is a
-        solution."                       span B covers 1-2
-
-    Emit [0,0] and [1,2] — NOT one span [0,2]. The same holds when the working
-    is a code or computation session with its output: label first, session
-    after. Never let "this block owns its label" become a reason to swallow the
-    working into it.
-
     NOT SPANS AT ALL: ordinary narrative prose, section headers, figures,
     running text between blocks. Return nothing for them.
 
@@ -217,12 +169,12 @@ class Signature(dspy.Signature):
     - Keep subparts together: a stem with parts (a)(b)(c) or (i)(ii)(iii) is ONE
       block; a repeated base number with letter suffixes (12a, 12b, 12c) is ONE
       block. Do NOT split subparts into separate spans.
-    - A derivation's span starts at its marker node ("Proof.", "Solution.") when
-      there is one, and otherwise at the FIRST node that starts working the unit
-      out — and runs to the end of the derivation.
-    - Stop at the boundary: the next unit's label, a derivation marker, the turn
-      from posing or stating into working, a section header, or a clear return
-      to ordinary narrative.
+    - Run a unit through its own working: the span covers the block's label and
+      posing, then the derivation that resolves it (its proof, solution, or
+      calculation) — all the way to where the next unit or ordinary narrative
+      begins. A labelled unit that goes on to work itself out is ONE span.
+    - Stop at the boundary: the next unit's label, a section header, or a clear
+      return to ordinary narrative.
 
     SEPARATE UNITS: distinct base numbers are distinct units (exercise 12 and
     exercise 13 are two spans, never merged) — this concerns problems in a
@@ -247,8 +199,8 @@ class Signature(dspy.Signature):
     spans: list[Span] = dspy.OutputField(
         description='Every pedagogical unit found in current_nodes, as position spans, in '
         'document order — declarative statements, worked examples, exercises, '
-        'instructions, and worked derivations alike. Boundaries only — do NOT '
-        'classify them. Empty list if none.'
+        'and prescribed procedures alike. Boundaries only — do NOT classify '
+        'them. Empty list if none.'
     )
 
 
@@ -437,7 +389,9 @@ class PedagogicalComponentFinderNode:
         module: The finder module. Created fresh if None.
     """
 
-    def __init__(self, module: PedagogicalComponentFinder | None = None) -> None:
+    def __init__(
+        self, module: PedagogicalComponentFinder | None = None
+    ) -> None:
         self.module = module or PedagogicalComponentFinder()
 
     async def run(self, state: state.State) -> dict:

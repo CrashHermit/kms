@@ -134,3 +134,18 @@ def node_properties(node: models.ASTNode, source: str) -> dict:
         'segment_index': node.segment_index,
     }
     return {key: value for key, value in props.items() if value is not None}
+
+
+def block_key(block: list[int]) -> str:
+    """Render a PCF block (ordered node ids) as a deterministic string.
+
+    The hub uuids derive from the whole block — not a single anchor node — so
+    two overlapping spans sharing a start never collide.
+
+    Args:
+        block: The block's member node ids, in document order.
+
+    Returns:
+        The block's deterministic string form, for uuid derivation.
+    """
+    return '#'.join(str(node_id) for node_id in block)

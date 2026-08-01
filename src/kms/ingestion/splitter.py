@@ -74,7 +74,9 @@ class SplitExercise(BaseModel):
 class NodeSplit(BaseModel):
     """A node that packs two or more exercises, and its split pieces."""
 
-    position: int = Field(description='The window position of the node that packs the exercises.')
+    position: int = Field(
+        description='The window position of the node that packs the exercises.'
+    )
     exercises: list[SplitExercise] = Field(
         description='The individual exercises it holds, in order (two or more).'
     )
@@ -143,7 +145,9 @@ class Splitter(dspy.Module):
         self.splitter = dspy.ChainOfThought(Signature)
         self.set_lm(language_model or llm.text_lm())
 
-    async def aforward(self, current_nodes: list[WindowNode]) -> list[NodeSplit]:
+    async def aforward(
+        self, current_nodes: list[WindowNode]
+    ) -> list[NodeSplit]:
         """Judge one window.
 
         Args:
@@ -153,7 +157,9 @@ class Splitter(dspy.Module):
             The window's split decisions.
         """
         result = await self.splitter.acall(current_nodes=current_nodes)
-        recorder.record_example('splitter', {'current_nodes': current_nodes}, result)
+        recorder.record_example(
+            'splitter', {'current_nodes': current_nodes}, result
+        )
         splits = list(result.splits or [])
         # Whether a given packed node splits is the stage's known run-to-run
         # variance (docs/HANDOFF.md, known issues), so log the per-window
@@ -174,7 +180,9 @@ class Splitter(dspy.Module):
         return asyncio.run(self.aforward(current_nodes))
 
 
-async def _gather_decisions(nodes: list[models.ASTNode], module: Splitter, budget: int) -> Decision:
+async def _gather_decisions(
+    nodes: list[models.ASTNode], module: Splitter, budget: int
+) -> Decision:
     """Walk the stream in windows and collect every split, keyed by node id.
 
     A split is per-node (a node's content is wholly inside one window), so the
@@ -210,7 +218,8 @@ async def _gather_decisions(nodes: list[models.ASTNode], module: Splitter, budge
             items = [
                 exercise
                 for exercise in split_result.exercises
-                if (exercise.content or '').strip() or (exercise.number or '').strip()
+                if (exercise.content or '').strip()
+                or (exercise.number or '').strip()
             ]
             # Only a genuine group is a split.
             if node_id is not None and len(items) >= 2:
@@ -219,7 +228,9 @@ async def _gather_decisions(nodes: list[models.ASTNode], module: Splitter, budge
     return decision
 
 
-def _rebuild(nodes: list[models.ASTNode], decision: Decision) -> list[models.ASTNode]:
+def _rebuild(
+    nodes: list[models.ASTNode], decision: Decision
+) -> list[models.ASTNode]:
     """Materialise the normalised stream.
 
     Replaces each split node with one node per piece, passes everything else
@@ -295,7 +306,7 @@ class SplitterNode:
     A single sequential walk (a cursor over the stream cannot be sharded), so
     this is a plain graph node. It runs after the seam merger and before the
     instruction finder; overwriting the `nodes` channel is safe because no
-    entity overlay exists yet — nothing references the old ids.
+    hub overlay exists yet — nothing references the old ids.
 
     Args:
         module: The splitting module. Created fresh if None.
@@ -313,5 +324,7 @@ class SplitterNode:
         Returns:
             The normalised `nodes` channel.
         """
-        nodes = await split_exercises(state.get('nodes', []), module=self.module)
+        nodes = await split_exercises(
+            state.get('nodes', []), module=self.module
+        )
         return {'nodes': nodes}

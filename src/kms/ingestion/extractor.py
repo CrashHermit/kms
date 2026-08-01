@@ -92,7 +92,9 @@ class DSPyModel(BaseModel):
     type: str = Field(
         description='The block type: paragraph, math, code, list, table, image, caption, header, bibliographic, note, or furniture.'
     )
-    content: str | None = Field(default=None, description='The content of the node')
+    content: str | None = Field(
+        default=None, description='The content of the node'
+    )
 
 
 def _partition(
@@ -113,7 +115,11 @@ def _partition(
     kept: list[DSPyModel] = []
     discarded: list[DSPyModel] = []
     for block in blocks:
-        target = discarded if (block.type or '').strip().lower() in _DISCARDED_TYPES else kept
+        target = (
+            discarded
+            if (block.type or '').strip().lower() in _DISCARDED_TYPES
+            else kept
+        )
         target.append(block)
     return kept, discarded
 
@@ -318,7 +324,9 @@ class Extractor(dspy.Module):
             The page's top-level structural nodes, in document order.
         """
         result = await self.extractor.acall(segment_markdown=segment_markdown)
-        recorder.record_example('extractor', {'segment_markdown': segment_markdown}, result)
+        recorder.record_example(
+            'extractor', {'segment_markdown': segment_markdown}, result
+        )
         nodes = list(result.nodes or [])
         logger.debug(
             'extract: %d chars -> %d node(s) | %s',
@@ -408,7 +416,9 @@ class ExtractorNode:
             The updated segment backbone.
         """
         results = state.get('extract_results', [])
-        segments = models.merge_results_into_segments(state['segments'], results, 'nodes')
+        segments = models.merge_results_into_segments(
+            state['segments'], results, 'nodes'
+        )
         logger.info(
             'extractor: %d page(s) -> %d node(s)',
             len(results),
