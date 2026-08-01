@@ -39,6 +39,11 @@ from kms.graph.equations import (
     equation_pairs,
     equation_rows,
 )
+from kms.graph.instructions import (
+    INSTRUCTION_LABEL,
+    governs_pairs,
+    instruction_rows,
+)
 from kms.graph.nodes import (
     NODE_LABEL,
     SOURCE_LABEL,
@@ -218,6 +223,38 @@ async def persist_statements(
                 f'MATCH (n:{NODE_LABEL} {{uuid: pair.node}}), '
                 f'(s:{STATEMENT_LABEL} {{uuid: pair.statement}}) '
                 f'MERGE (n)-[:MEMBER_OF]->(s)',
+                pairs=pairs,
+            )
+
+
+async def persist_instructions(
+    instructions: list[models.Instruction], source: str
+) -> None:
+    """Upsert the ``:Instruction`` hubs and their ``:GOVERNS`` edges.
+
+    One hub per lead-in, carrying the page's own sentence, pointing at each
+    exercise node it governs. The edge runs from the hub outward: governance
+    is a claim the instruction makes about those nodes, not a grouping they
+    belong to, so an exercise keeps its statement membership untouched.
+    """
+    if not instructions:
+        return
+    rows = instruction_rows(instructions, source)
+    pairs = governs_pairs(instructions, source)
+
+    async with driver().session(database=database()) as session:
+        await session.run(
+            f'UNWIND $rows AS row '
+            f'MERGE (i:{INSTRUCTION_LABEL} {{uuid: row.uuid}}) '
+            f'SET i += row',
+            rows=rows,
+        )
+        if pairs:
+            await session.run(
+                f'UNWIND $pairs AS pair '
+                f'MATCH (i:{INSTRUCTION_LABEL} {{uuid: pair.instruction}}), '
+                f'(n:{NODE_LABEL} {{uuid: pair.node}}) '
+                f'MERGE (i)-[:GOVERNS]->(n)',
                 pairs=pairs,
             )
 

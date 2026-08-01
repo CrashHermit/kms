@@ -191,6 +191,34 @@ class Procedure:
 
 
 @dataclass(slots=True)
+class Instruction:
+    """A shared lead-in and the exercises it governs.
+
+    A hub, like ``Statement`` and ``Procedure``: it identifies the nodes a
+    directive applies to and carries no member text. It differs in where it
+    comes from — not a PCF span, but the lead-in node the instruction finder
+    tagged, which the distributor then removes from the stream once the
+    governance is recorded here.
+
+    A hub rather than text copied onto each governed node, because copying
+    put SYNTHESIZED text into the provenance layer: ``directive`` is the
+    model's normalised imperative ("simplify"), which is not what the page
+    says ("In the following exercises, simplify."), and a ``:Node`` is
+    defined as one verbatim block of the page. The page's own sentence lives
+    here in ``text``, once, as printed.
+
+    ``node_id`` is the lead-in's own id in the flattened stream, frozen
+    before removal. It is the hub's identity (see
+    ``graph.instructions.instruction_uuid``) and its document position.
+    """
+
+    node_id: int
+    text: str
+    directive: str | None = None
+    members: list[int] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class Statement:
     """A pedagogical statement — what a block states.
 

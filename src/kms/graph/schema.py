@@ -12,7 +12,15 @@ efficient. Idempotent DDL (``IF NOT EXISTS``), so ``ensure_schema`` is safe to
 run on every startup.
 """
 
-from kms.graph import db, equations, nodes, procedures, statements, variables
+from kms.graph import (
+    db,
+    equations,
+    instructions,
+    nodes,
+    procedures,
+    statements,
+    variables,
+)
 
 
 def schema_statements() -> list[str]:
@@ -32,6 +40,8 @@ def schema_statements() -> list[str]:
         f'FOR (v:{variables.VARIABLE_LABEL}) REQUIRE v.uuid IS UNIQUE',
         f'CREATE CONSTRAINT equation_uuid IF NOT EXISTS '
         f'FOR (e:{equations.EQUATION_LABEL}) REQUIRE e.uuid IS UNIQUE',
+        f'CREATE CONSTRAINT instruction_uuid IF NOT EXISTS '
+        f'FOR (i:{instructions.INSTRUCTION_LABEL}) REQUIRE i.uuid IS UNIQUE',
         f'CREATE INDEX node_source IF NOT EXISTS '
         f'FOR (n:{nodes.NODE_LABEL}) ON (n.source)',
         f'CREATE INDEX statement_source IF NOT EXISTS '

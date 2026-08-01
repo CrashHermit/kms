@@ -62,6 +62,9 @@ class State(TypedDict, total=False):
     spans: list[
         list[int]
     ]  # untyped unit spans from the group finder, document order
+    instructions: list[
+        models.Instruction
+    ]  # lead-in governance hubs, document order, from the distributor
     statements: list[
         models.Statement
     ]  # the statement overlay, group order, from the role typer
