@@ -187,6 +187,31 @@ class Signature(dspy.Signature):
     - list: Bullet/numbered list (steps, features, recall items, or a run of
       exercises). Emit the whole list as a single list node — do not split it
       into per-item nodes.
+      A RUN OF CONSECUTIVE NUMBERED ITEMS IS ONE LIST NODE. This holds when a
+      blank line separates each item, and it holds when the items are short:
+      "1005. $|8-4|$", "1006. $|9-6|$", "1007. …" arriving as separate lines
+      is ONE list node, never four paragraphs. A blank line between items of
+      a run is list formatting, not a block boundary — the run is one block
+      because the items are one series, and where the series starts and ends
+      is the only judgement to make.
+      A RUN ENDS AT THE FIRST BLOCK THAT IS NOT A NUMBERED ITEM. A heading,
+      an unnumbered sentence, or any prose sitting between two items closes
+      the list; that block is its OWN node of whatever type it is; and the
+      numbering that resumes after it opens a SECOND list node. Numbers that
+      continue the same series across such a break still make two runs — the
+      block between them belongs to neither, so it cannot be inside either.
+      Never absorb an unnumbered sentence into a list node. The commonest
+      form of this is a lead-in that introduces the items after it — "In the
+      following exercises, simplify each expression." between item 1022 and
+      item 1023. It is unnumbered, so it ends the first run and is its own
+      paragraph node; it is not a list item and never belongs in the list's
+      content. Swallowing it deletes it as a block: a later stage recognises
+      shared instructions only as whole nodes, so a lead-in buried inside a
+      list is a directive that never reaches the exercises it governs.
+      Do not break a run into per-item nodes. Doing so changes how many nodes
+      the page has and every node id downstream with it, and the splitter —
+      the stage whose job is separating packed exercises into one node each —
+      only sees a run it can separate if the run reaches it whole.
     - table: Markdown table body only (grid rows). Do not put standalone caption
       or title lines inside table — those belong in caption when they appear as
       separate blocks.
@@ -213,10 +238,15 @@ class Signature(dspy.Signature):
       whatever type that text is. Emitting only the label deletes the rest of
       the line. Never do that.
       This is about a NAMED label, never about numbering. A numbered or
-      lettered item — "282. $$9d^2 - 12d = -4$$", "3. Read appendix A" — is
-      ONE node that keeps its number in the content exactly as written. The
-      number is that item's identity and later stages match on it, so never
-      split the number onto a node of its own and never drop it.
+      lettered item — "282. $$9d^2 - 12d = -4$$", "3. Read appendix A" —
+      keeps its number in the content exactly as written: never split the
+      number onto a node of its own, never promote it to a header, and never
+      drop it. The number is that item's identity and later stages match on
+      it.
+      That rule says where the NUMBER goes, not how many nodes a run of
+      numbered items makes. A numbered item standing on its own is one node;
+      a RUN of consecutive numbered items is one list node (see list above).
+      Neither reading ever puts a number on a node by itself.
     - bibliographic: A reference to an external work — a published paper, book,
       chapter, report, or web resource. It cites a work rather than saying
       something: authors and a year with a title, and usually a venue,
