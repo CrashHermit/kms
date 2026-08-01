@@ -145,6 +145,38 @@ class Signature(dspy.Signature):
     Judge by effect rather than by this list: if the transcription asserts
     something the page does not, correct it.
 
+    SUB-PART MARKERS
+
+    A marker that letters an exercise's parts — `ⓐ`, `ⓑ`, `ⓒ`, `(a)`, `a)` —
+    is content, and OCR misreads it often, because it is a glyph rather than a
+    letter: `ⓐ` comes back as `$\odot$`, as `©`, as `a`, or as nothing at all.
+
+    Restore the marker the image shows, spelled with the glyph the image
+    prints. This licenses nothing beyond the marker itself: the words, the
+    notation, and the markup around it stay exactly as transcribed. Restoring
+    `ⓐ` in "ⓐ m = 3" does not also mean writing `m = 3` as `$m = 3$` — math
+    delimiters are Formatting, they belong to a later pass, and adding them
+    here is a change this pass is forbidden to make even when the page image
+    shows the mathematics typeset.
+
+    Three ways to get the marker wrong, all of them seen:
+
+    - DELETING the markers. "round to the nearest ⓐ hundred ⓑ thousand ⓒ ten
+      thousand" is three sub-parts; transcribed as "the nearest hundred,
+      thousand, ten thousand" it is one instruction and the exercise has
+      silently lost two of its questions. Never resolve a misread marker by
+      dropping it or by replacing it with punctuation. This pass does not
+      delete.
+    - RESPELLING them. If the page prints `ⓐ`, write `ⓐ` — not `(a)`, not
+      `a)`, not `**a**`. Choosing one house form across a book is a later
+      pass's job and it works from what you leave; guessing here just hides
+      what the page did.
+    - Letting one page disagree with itself. The same marker misread twice on
+      one page gets the same answer both times.
+
+    The letter itself is an identifier — the prose says "by part (b)" — so it
+    is never renumbered or re-lettered, only restored.
+
     WHAT NOT TO TOUCH
 
     - The document's substance. Transcribe the source's own errors faithfully —
@@ -170,6 +202,12 @@ class Signature(dspy.Signature):
       low-redundancy content: every author, title, year, page range, and
       identifier is checked against the image and kept.
     - Wording. Do not reword anything that matches the image.
+    - Punctuation that changes no meaning, in BOTH directions. A doubled comma
+      in a lead-in ("In the following exercises,, simplify.") asserts nothing
+      the page denies, so leave it; equally, do not introduce one the
+      transcription lacks. Punctuation that does change meaning — a decimal
+      point, a negation, a delimiter inside notation — is Quantity or
+      Substitution above and is corrected like anything else.
     - Boundaries. Content that starts or ends abruptly at the edge of the page
       stays that way — do not complete or trim it.
 

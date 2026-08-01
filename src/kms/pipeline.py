@@ -281,7 +281,8 @@ async def run(
     source: str | None = None,
     title: str | None = None,
     author: str | None = None,
-) -> str:
+    markdown: bool = False,
+) -> dict:
     """Run the full pipeline on a PDF.
 
     The Mistral OCR API turns each page into reading-ordered markdown plus
@@ -290,8 +291,17 @@ async def run(
     bindings, and (when Neo4j is configured) persists the ``:Node`` provenance
     layer, the ``:Statement`` overlay, and the procedural, equation and
     variable layers on top of it. Graph persistence is skipped entirely
-    when Neo4j isn't configured — a DB-less run still returns the assembled
-    markdown but persists no nodes or statements.
+    when Neo4j isn't configured — a DB-less run still returns its state but
+    persists no nodes or statements.
+
+    The graph is the product; the markdown is not. Assembling a document ran
+    unconditionally and returned a string the only caller measured the length
+    of and dropped, so it is now opt-in and, when asked for, written to
+    ``<output_dir>/document.md`` rather than handed back to be discarded.
+    Figure consolidation is NOT opt-in: it used to happen as a side effect of
+    assembly, and gathering each page's extracted figures into one
+    ``<output_dir>/images/`` directory is worth doing whether or not anyone
+    wants a document.
 
     Args:
         pdf_path: The source PDF.
@@ -301,9 +311,13 @@ async def run(
             the PDF's filename.
         title: Optional book title, stored on the ``:Source`` node.
         author: Optional book author, stored on the ``:Source`` node.
+        markdown: Also assemble the node stream into
+            ``<output_dir>/document.md``. Off by default.
 
     Returns:
-        The assembled markdown document as a string.
+        The pipeline's final state — the node stream, the segment backbone,
+        and the statement, procedure, instruction, equation and variable
+        overlays.
     """
     # Deferred so importing the pipeline does not require the OCR extra.
     from kms.ingestion import ocr
@@ -332,8 +346,15 @@ async def run(
             {'recursion_limit': 1000},
         )
         nodes = result['nodes']
-        return assembler.assemble(
-            nodes, result['segments'], output_dir=output_dir
-        )
+        if markdown:
+            document = assembler.assemble(
+                nodes, result['segments'], output_dir=output_dir
+            )
+            (output_dir / 'document.md').write_text(document)
+        else:
+            assembler.consolidate_figures(
+                nodes, result['segments'], output_dir=output_dir
+            )
+        return result
     finally:
         await db.close_driver()

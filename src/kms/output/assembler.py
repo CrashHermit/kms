@@ -83,19 +83,16 @@ def _resolve_content(
     return _PLACEHOLDER.sub(_replace, content)
 
 
-def assemble(
+def _walk(
     nodes: list[models.ASTNode],
     segments: list[models.Segment],
-    output_dir: str | Path = 'output',
-) -> str:
-    """Resolve image links and return the node stream as one markdown string.
+    output_dir: Path,
+) -> list[str]:
+    """Resolve every node's placeholders, copying each referenced picture.
 
-    Walks the global node stream in document order. Each node carries its
-    originating `segment_index`, so an `![N]()` placeholder resolves against
-    that page's pictures — the segments are consulted only for their picture
-    inventories now that the nodes are flat. Only pictures actually referenced
-    by a surviving placeholder are copied into `<output_dir>/images/`;
-    anything filtered out upstream simply never gets linked.
+    The single walk both consumers share: consolidating the figures is a side
+    effect of resolving the placeholders that point at them, so the two cannot
+    be done independently without walking twice.
 
     Args:
         nodes: The flat, ordered node stream.
@@ -103,10 +100,8 @@ def assemble(
         output_dir: Directory the consolidated images are written into.
 
     Returns:
-        The assembled markdown, image placeholders resolved to relative
-        links under ``<output_dir>/images/``.
+        One resolved markdown string per node with content, in document order.
     """
-    output_dir = Path(output_dir)
     images_dir = output_dir / IMAGES_DIRNAME
     images_dir.mkdir(parents=True, exist_ok=True)
 
@@ -128,5 +123,52 @@ def assemble(
                 node.content, node.segment_index, pictures_by_index, images_dir
             )
         )
+    return parts
 
-    return '\n\n'.join(parts) + '\n'
+
+def consolidate_figures(
+    nodes: list[models.ASTNode],
+    segments: list[models.Segment],
+    output_dir: str | Path = 'output',
+) -> None:
+    """Copy every referenced figure into ``<output_dir>/images/``.
+
+    The half of assembly that is not about markdown. A run that wants no
+    document still wants its figures gathered out of the per-page
+    ``Segments/Segment_XXXX/Images/`` directories into one place under
+    collision-free names, so this is callable on its own.
+
+    Only pictures a surviving placeholder actually points at are copied;
+    anything filtered out upstream simply never gets linked.
+
+    Args:
+        nodes: The flat, ordered node stream.
+        segments: The segment backbone, for its picture inventories.
+        output_dir: Directory the consolidated images are written into.
+    """
+    _walk(nodes, segments, Path(output_dir))
+
+
+def assemble(
+    nodes: list[models.ASTNode],
+    segments: list[models.Segment],
+    output_dir: str | Path = 'output',
+) -> str:
+    """Resolve image links and return the node stream as one markdown string.
+
+    Walks the global node stream in document order. Each node carries its
+    originating `segment_index`, so an `![N]()` placeholder resolves against
+    that page's pictures — the segments are consulted only for their picture
+    inventories now that the nodes are flat. Consolidates the referenced
+    figures on the way through, exactly as ``consolidate_figures`` does.
+
+    Args:
+        nodes: The flat, ordered node stream.
+        segments: The segment backbone, for its picture inventories.
+        output_dir: Directory the consolidated images are written into.
+
+    Returns:
+        The assembled markdown, image placeholders resolved to relative
+        links under ``<output_dir>/images/``.
+    """
+    return '\n\n'.join(_walk(nodes, segments, Path(output_dir))) + '\n'
