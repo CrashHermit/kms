@@ -67,11 +67,11 @@ class State(TypedDict, total=False):
     ]  # the statement overlay, group order, from the role typer
     procedures: list[models.Procedure]  # the procedure overlay, group order
     variables: Annotated[
-        list[tuple[str, list[int], list[models.Variable]]], operator.add
-    ]  # (unit_kind, block, variable bindings) from the variable extractor
+        list[tuple[int, list[models.Variable]]], operator.add
+    ]  # (node_id, variable bindings) from the variable extractor
     equations: Annotated[
-        list[tuple[str, list[int], list[models.Equation]]], operator.add
-    ]  # (unit_kind, block, equations) extracted per unit
+        list[tuple[int, list[models.Equation]]], operator.add
+    ]  # (node_id, equations) extracted per node
     correction_results: Annotated[
         list[tuple[int, str]], operator.add
     ]  # (segment index, corrected markdown)

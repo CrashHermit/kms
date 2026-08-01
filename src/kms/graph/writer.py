@@ -20,10 +20,9 @@ whole book off one supernode.
 ``:MEMBER_OF`` edges from their member nodes. ``:Act`` step chains are
 declared but not yet written.
 
-``persist_equations`` writes ``:Equation`` vertices hung off their owning
-``:Statement`` or ``:Procedure`` via ``:HAS_EQUATION`` — the semantic unit
-reached from its member nodes — or off the plain ``:Node``, equally via
-``:HAS_EQUATION``, when the source unit is outside any hub.
+``persist_equations`` writes ``:Equation`` vertices hung off their
+provenance ``:Node`` via ``:HAS_EQUATION`` — statement and procedure hubs
+inherit equations through ``:MEMBER_OF``.
 
 Writes are batched: structural node labels are grouped by their per-type
 label and each batch is one MERGE. Statements, procedures and acts each
@@ -278,27 +277,21 @@ async def persist_procedures(
 
 
 async def persist_variables(
-    variables: list[tuple[str, list[int], list[models.Variable]]],
-    procedures: list[models.Procedure],
+    variables: list[tuple[int, list[models.Variable]]],
     source: str,
 ) -> None:
     """Upsert the ``:Variable`` nodes and ``:HAS_VARIABLE`` edges.
 
-    One ``:Variable`` per binding. A variable hangs off the unit it was
-    extracted from: the ``:Equation`` when ``equation_index`` is set, its
-    owning ``:Statement`` or ``:Procedure`` hub, or the plain ``:Node``
-    otherwise — mirroring how equations resolve their container. Cypher
-    cannot parameterise a label, so the pairs are split by
-    ``container_label`` and each bucket is one query with its label written
-    in.
+    One ``:Variable`` per binding. A variable hangs off the ``:Equation``
+    when ``equation_index`` is set, otherwise off the ``:Node`` it was
+    extracted from. Cypher cannot parameterise a label, so the pairs are
+    split by ``container_label`` — only two: ``equation`` and ``node``.
     """
     variable_batch = variable_rows(variables, source)
     if not variable_batch:
         return
-    pairs = has_variable_pairs(variables, procedures, source)
+    pairs = has_variable_pairs(variables, source)
     equation_pairs = [p for p in pairs if p['container_label'] == 'equation']
-    statement_pairs = [p for p in pairs if p['container_label'] == 'statement']
-    procedure_pairs = [p for p in pairs if p['container_label'] == 'procedure']
     node_pairs = [p for p in pairs if p['container_label'] == 'node']
 
     async with driver().session(database=database()) as session:
@@ -316,22 +309,6 @@ async def persist_variables(
                 f'MERGE (e)-[:HAS_VARIABLE]->(v)',
                 pairs=equation_pairs,
             )
-        if statement_pairs:
-            await session.run(
-                f'UNWIND $pairs AS pair '
-                f'MATCH (s:{STATEMENT_LABEL} {{uuid: pair.container}}), '
-                f'(v:{VARIABLE_LABEL} {{uuid: pair.variable}}) '
-                f'MERGE (s)-[:HAS_VARIABLE]->(v)',
-                pairs=statement_pairs,
-            )
-        if procedure_pairs:
-            await session.run(
-                f'UNWIND $pairs AS pair '
-                f'MATCH (p:{PROCEDURE_LABEL} {{uuid: pair.container}}), '
-                f'(v:{VARIABLE_LABEL} {{uuid: pair.variable}}) '
-                f'MERGE (p)-[:HAS_VARIABLE]->(v)',
-                pairs=procedure_pairs,
-            )
         if node_pairs:
             await session.run(
                 f'UNWIND $pairs AS pair '
@@ -343,26 +320,19 @@ async def persist_variables(
 
 
 async def persist_equations(
-    equations: list[tuple[str, list[int], list[models.Equation]]],
-    procedures: list[models.Procedure],
+    equations: list[tuple[int, list[models.Equation]]],
     source: str,
 ) -> None:
-    """Upsert the ``:Equation`` nodes and their attachment edges.
+    """Upsert the ``:Equation`` nodes and ``:HAS_EQUATION`` edges.
 
-    One ``:Equation`` per extracted equation. An equation hangs off the unit
-    it was extracted from: its owning ``:Statement``, ``:Procedure`` or plain
-    ``:Node`` — every unit is an equally valid extraction source — via
-    ``:HAS_EQUATION``. Cypher cannot parameterise a label, so the pairs are
-    split by ``container_label`` and each bucket is one query with its label
-    written in.
+    One ``:Equation`` per extracted equation. An equation hangs off the
+    ``:Node`` it was extracted from via ``:HAS_EQUATION`` — a single
+    label, no bucketing needed.
     """
     equation_batch = equation_rows(equations, source)
     if not equation_batch:
         return
-    pairs = equation_pairs(equations, procedures, source)
-    statement_pairs = [p for p in pairs if p['container_label'] == 'statement']
-    procedure_pairs = [p for p in pairs if p['container_label'] == 'procedure']
-    node_pairs = [p for p in pairs if p['container_label'] == 'node']
+    pairs = equation_pairs(equations, source)
 
     async with driver().session(database=database()) as session:
         await session.run(
@@ -371,27 +341,11 @@ async def persist_equations(
             f'SET e += row',
             rows=equation_batch,
         )
-        if statement_pairs:
+        if pairs:
             await session.run(
                 f'UNWIND $pairs AS pair '
-                f'MATCH (s:{STATEMENT_LABEL} {{uuid: pair.container}}), '
-                f'(e:{EQUATION_LABEL} {{uuid: pair.equation}}) '
-                f'MERGE (s)-[:HAS_EQUATION]->(e)',
-                pairs=statement_pairs,
-            )
-        if procedure_pairs:
-            await session.run(
-                f'UNWIND $pairs AS pair '
-                f'MATCH (p:{PROCEDURE_LABEL} {{uuid: pair.container}}), '
-                f'(e:{EQUATION_LABEL} {{uuid: pair.equation}}) '
-                f'MERGE (p)-[:HAS_EQUATION]->(e)',
-                pairs=procedure_pairs,
-            )
-        if node_pairs:
-            await session.run(
-                f'UNWIND $pairs AS pair '
-                f'MATCH (n:{NODE_LABEL} {{uuid: pair.container}}), '
+                f'MATCH (n:{NODE_LABEL} {{uuid: pair.node}}), '
                 f'(e:{EQUATION_LABEL} {{uuid: pair.equation}}) '
                 f'MERGE (n)-[:HAS_EQUATION]->(e)',
-                pairs=node_pairs,
+                pairs=pairs,
             )

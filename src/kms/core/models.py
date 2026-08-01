@@ -130,8 +130,8 @@ class Variable:
     where a compact notation stands for a fuller meaning.
 
     When ``equation_index`` is set, the variable belongs to an equation
-    rather than to the enclosing unit — the ``:HAS_VARIABLE`` edge will
-    point from that ``:Equation`` instead of from the unit.
+    extracted from the same node — the ``:HAS_VARIABLE`` edge will point
+    from that ``:Equation`` instead of from the ``:Node``.
     """
 
     symbol: str
@@ -193,17 +193,6 @@ class Statement:
 
     block: list[int]
     members: list[int] = field(default_factory=list)
-
-
-# --- Unit kinds for the extraction channels -------------------------------
-#
-# The equation/variable channels key each entry by the unit it was extracted
-# from: ``(unit_kind, block, results)``. The kind namespaces the block list,
-# because a statement and a procedure from the SAME block carry the same
-# ``block`` — their artifact uuids would collide without it.
-UNIT_STATEMENT = 'statement'
-UNIT_PROCEDURE = 'procedure'
-UNIT_NODE = 'node'
 
 
 # --- Picture / Segment ------------------------------------------------------

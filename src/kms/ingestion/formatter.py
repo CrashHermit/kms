@@ -85,6 +85,13 @@ class Signature(dspy.Signature):
     - `\[ … \]` becomes `$$ … $$`
     - a display equation left bare — a standalone equation line, or an `array`
       / `aligned` / `cases` / `equation` environment — is wrapped in `$$ … $$`
+    - consecutive display-math blocks that are halves of one equation are joined
+      into a single `$$ … $$` block. Judge the second block: if it opens with a
+      relational operator (`=`, `<`, `>`, `\leq`, `\geq`, `\neq`,
+      `\equiv`), a binary operator (`+`, `-`, `\times`, `\cdot`, `\pm`),
+      or a term that obviously continues the first expression, the two are one
+      equation — remove the delimiter pair between them and join the content
+      with a line break. Two independent back-to-back equations stay separate.
 
     Change the delimiters only, never the expression between them. Convert all
     of them, not the first few, and do this even when the page has other things

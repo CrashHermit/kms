@@ -8,10 +8,16 @@ which is quarantined in ``db``.
   plus an HTTPS Query-API transport for sandboxes where Bolt is blocked.
 - ``nodes`` — ``models.ASTNode`` → ``:Node`` (+ its per-type label) and the
   ``:Source`` root. The provenance tier every semantic vertex points back at.
-- ``statements`` — ``models.Statement`` → a bare ``:Statement``. Content
-  is a single string written by the statement extractor.
+- ``statements`` — ``models.Statement`` → a bare ``:Statement`` hub.
+  Statements carry no text; their members' raw nodes carry it.
 - ``procedures`` — ``models.Procedure`` → ``:Procedure`` and its ``:Act`` step
   chain (declared but not yet written — the step decomposer is a future pass).
+- ``equations`` — ``models.Equation`` → ``:Equation`` hung off its
+  provenance ``:Node`` via ``:HAS_EQUATION``; hubs inherit through
+  ``:MEMBER_OF``.
+- ``variables`` — ``models.Variable`` → ``:Variable`` hung off its ``:Node``
+  or ``:Equation`` via ``:HAS_VARIABLE``; hubs inherit through
+  ``:MEMBER_OF``.
 - ``schema`` — idempotent constraint/index bootstrap for every label.
 - ``writer`` — the I/O half: ``persist_nodes`` / ``persist_statements`` /
   ``persist_procedures``, each batched and idempotent.

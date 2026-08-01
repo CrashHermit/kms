@@ -1,4 +1,7 @@
-"""Variable extractor — pure functions and context assembly. No network/LLM."""
+"""Variable extractor — per-node iteration and context assembly.
+No network/LLM."""
+
+import asyncio
 
 from kms.core import models, walker
 from kms.ingestion import variable_extractor
@@ -12,129 +15,210 @@ def _math(content, node_id=0):
     return models.MathNode(content=content, id=node_id)
 
 
-# --- _units -----------------------------------------------------------------
+# --- extract_equations_and_variables (using scripted modules) --------------
 
 
-def test_units_are_statements_procedures_then_unabsorbed_nodes():
-    stmt = models.Statement(block=[1, 2], members=[1, 2])
-    proc = models.Procedure(block=[5, 6], members=[5, 6])
-    nodes = [
-        _paragraph('a', node_id=1),
-        _paragraph('b', node_id=2),
-        _paragraph('c', node_id=5),
-        _paragraph('d', node_id=6),
-        _paragraph('e', node_id=9),
-    ]
-    assert variable_extractor._units(nodes, [stmt], [proc]) == [
-        (models.UNIT_STATEMENT, [1, 2], [1, 2]),
-        (models.UNIT_PROCEDURE, [5, 6], [5, 6]),
-        (models.UNIT_NODE, [9], [9]),
-    ]
+class _ScriptedRouter:
+    """Returns a fixed (has_equation, has_variable) for every node."""
+
+    def __init__(self, *flags):
+        self._flags = list(flags)
+
+    async def aforward(self, content, content_before=None, content_after=None):
+        return self._flags.pop(0)
 
 
-def test_units_cover_a_both_block_with_two_hubs():
-    # A statement and a procedure carry the SAME block but are distinct units
-    # — the kind namespaces the block, so their artifacts never collide.
-    stmt = models.Statement(block=[0, 1, 2, 3], members=[0, 1])
-    proc = models.Procedure(block=[0, 1, 2, 3], members=[2, 3])
-    nodes = [
-        _paragraph('a', node_id=0),
-        _paragraph('b', node_id=1),
-        _paragraph('c', node_id=2),
-        _paragraph('d', node_id=3),
-        _paragraph('e', node_id=4),
-    ]
-    units = variable_extractor._units(nodes, [stmt], [proc])
-    assert units == [
-        (models.UNIT_STATEMENT, [0, 1, 2, 3], [0, 1]),
-        (models.UNIT_PROCEDURE, [0, 1, 2, 3], [2, 3]),
-        (models.UNIT_NODE, [4], [4]),
-    ]
+class _ScriptedEquation:
+    """Returns a fixed list of equations per call."""
+
+    def __init__(self, *eq_lists):
+        self._eq_lists = list(eq_lists)
+
+    async def aforward(self, content, content_before=None, content_after=None):
+        return list(self._eq_lists.pop(0))
 
 
-def test_units_skip_nodes_without_ids():
-    nodes = [models.ParagraphNode(content='no id')]
-    assert variable_extractor._units(nodes, [], []) == []
+class _ScriptedVariable:
+    """Returns a fixed list of variables per call."""
+
+    def __init__(self, *var_lists):
+        self._var_lists = list(var_lists)
+
+    async def aforward(
+        self, content, content_before=None, content_after=None,
+        equations=None,
+    ):
+        return list(self._var_lists.pop(0))
 
 
-# --- _renderable_nodes ------------------------------------------------------
-
-
-def test_renderable_nodes_returns_position_content_pairs():
+def test_iterates_every_node_with_content():
     nodes = [
         _paragraph('First.', node_id=0),
         _paragraph('Second.', node_id=1),
-        _paragraph('Third.', node_id=2),
     ]
-    assert variable_extractor._renderable_nodes(nodes, [], []) == [
-        (0, 'First.'),
-        (1, 'Second.'),
-        (2, 'Third.'),
-    ]
+    router = _ScriptedRouter((True, False), (False, True))
+    eq_mod = _ScriptedEquation(
+        [models.Equation(latex='$$x=1$$')],
+        [],  # second node: no equations
+    )
+    var_mod = _ScriptedVariable(
+        [models.Variable(symbol='y', meaning='why', kind='variable')],
+    )
+    eqs, vars_ = asyncio.run(
+        variable_extractor.extract_equations_and_variables(
+            nodes,
+            router_module=router,
+            equation_module=eq_mod,
+            variable_module=var_mod,
+        )
+    )
+    assert eqs == [(0, [models.Equation(latex='$$x=1$$')])]
+    assert vars_ == [(1, [models.Variable(symbol='y', meaning='why', kind='variable')])]
 
 
-def test_renderable_nodes_skips_empty_content():
+def test_skips_nodes_without_content():
+    nodes = [
+        _paragraph('', node_id=0),
+        _paragraph('Has content.', node_id=1),
+    ]
+    router = _ScriptedRouter((True, False))
+    eq_mod = _ScriptedEquation(
+        [models.Equation(latex='$$z=3$$')],
+    )
+    var_mod = _ScriptedVariable([])
+    eqs, vars_ = asyncio.run(
+        variable_extractor.extract_equations_and_variables(
+            nodes,
+            router_module=router,
+            equation_module=eq_mod,
+            variable_module=var_mod,
+        )
+    )
+    # Node 0 skipped (empty content), only node 1 processed.
+    assert eqs == [(1, [models.Equation(latex='$$z=3$$')])]
+    assert vars_ == []
+
+
+def test_skips_nodes_without_ids():
+    nodes = [
+        models.ParagraphNode(content='no id'),
+    ]
+    eqs, vars_ = asyncio.run(
+        variable_extractor.extract_equations_and_variables(
+            nodes,
+            router_module=_ScriptedRouter(),
+            equation_module=_ScriptedEquation(),
+            variable_module=_ScriptedVariable(),
+        )
+    )
+    assert eqs == []
+    assert vars_ == []
+
+
+def test_router_gates_both_extractors():
+    # has_equation=True, has_variable=True → both extractors run.
+    nodes = [_paragraph('Both.', node_id=0)]
+    router = _ScriptedRouter((True, True))
+    eq_mod = _ScriptedEquation(
+        [models.Equation(latex='$$e=mc^2$$')],
+    )
+    var_mod = _ScriptedVariable(
+        [models.Variable(symbol='m', meaning='mass', kind='variable')],
+    )
+    eqs, vars_ = asyncio.run(
+        variable_extractor.extract_equations_and_variables(
+            nodes,
+            router_module=router,
+            equation_module=eq_mod,
+            variable_module=var_mod,
+        )
+    )
+    assert len(eqs) == 1
+    assert len(vars_) == 1
+
+
+def test_router_gates_neither_with_both_false():
+    nodes = [_paragraph('Nothing.', node_id=0)]
+    router = _ScriptedRouter((False, False))
+    # These would be called but the router says no for both.
+    eqs, vars_ = asyncio.run(
+        variable_extractor.extract_equations_and_variables(
+            nodes,
+            router_module=router,
+            equation_module=_ScriptedEquation(),
+            variable_module=_ScriptedVariable(),
+        )
+    )
+    assert eqs == []
+    assert vars_ == []
+
+
+def test_equations_feed_into_variable_extractor():
+    # The equation output from a node is passed as context to the variable
+    # extractor on the same node.
+    nodes = [_paragraph('Eq + var.', node_id=0)]
+    router = _ScriptedRouter((True, True))
+    eq_mod = _ScriptedEquation(
+        [models.Equation(latex='$$F=ma$$', name="Newton's second law")],
+    )
+
+    seen_equations = []
+
+    class _RecordingVariable:
+        async def aforward(
+            self, content, content_before=None, content_after=None,
+            equations=None,
+        ):
+            seen_equations.append(equations)
+            return []
+
+    asyncio.run(
+        variable_extractor.extract_equations_and_variables(
+            nodes,
+            router_module=router,
+            equation_module=eq_mod,
+            variable_module=_RecordingVariable(),
+        )
+    )
+    assert len(seen_equations) == 1
+    assert seen_equations[0] is not None
+    assert seen_equations[0][0].name == "Newton's second law"
+
+
+def test_context_walking_is_per_node():
+    # Each node gets its own before/after context from the node stream.
     nodes = [
         _paragraph('First.', node_id=0),
-        _paragraph('', node_id=1),
-        _paragraph(None, node_id=2),
-        _paragraph('Last.', node_id=3),
-    ]
-    assert variable_extractor._renderable_nodes(nodes, [], []) == [
-        (0, 'First.'),
-        (3, 'Last.'),
+        _paragraph('Focus.', node_id=1),
+        _paragraph('After.', node_id=2),
     ]
 
+    seen_contexts = []
 
-def test_renderable_nodes_replaces_group_with_its_block_text():
-    stmt = models.Statement(block=[1, 2], members=[1, 2])
-    nodes = [
-        _paragraph('Prologue.', node_id=0),
-        _paragraph('absorbed', node_id=1),
-        _paragraph('also absorbed', node_id=2),
-        _paragraph('After.', node_id=3),
-    ]
-    assert variable_extractor._renderable_nodes(nodes, [stmt], []) == [
-        (0, 'Prologue.'),
-        (1, 'absorbed\n\nalso absorbed'),
-        (3, 'After.'),
-    ]
+    class _CapturingRouter:
+        async def aforward(self, content, content_before=None,
+                           content_after=None):
+            seen_contexts.append((content_before, content_after))
+            return True, False
 
-
-def test_renderable_nodes_handles_a_both_block_as_one_entry():
-    stmt = models.Statement(block=[1, 2, 3], members=[1, 2])
-    proc = models.Procedure(block=[1, 2, 3], members=[2, 3])
-    nodes = [
-        _paragraph('Prologue.', node_id=0),
-        _paragraph('posed', node_id=1),
-        _paragraph('shared', node_id=2),
-        _paragraph('working', node_id=3),
-        _paragraph('After.', node_id=4),
-    ]
-    # One entry per BLOCK at its start position, the whole block's text.
-    assert variable_extractor._renderable_nodes(nodes, [stmt], [proc]) == [
-        (0, 'Prologue.'),
-        (1, 'posed\n\nshared\n\nworking'),
-        (4, 'After.'),
-    ]
+    asyncio.run(
+        variable_extractor.extract_equations_and_variables(
+            nodes,
+            router_module=_CapturingRouter(),
+            equation_module=_ScriptedEquation(
+                [], [], [],
+            ),
+            variable_module=_ScriptedVariable(),
+        )
+    )
+    # All three nodes have content, so three calls.
+    assert len(seen_contexts) == 3
+    # Node 1 (focus) should see node 0 before and node 2 after.
+    assert seen_contexts[1][0] == 'First.'
+    assert seen_contexts[1][1] == 'After.'
 
 
-def test_renderable_nodes_handles_overlapping_statements():
-    first = models.Statement(block=[0, 1], members=[0, 1])
-    second = models.Statement(block=[1, 2], members=[1, 2])
-    nodes = [
-        _paragraph('a', node_id=0),
-        _paragraph('b', node_id=1),
-        _paragraph('c', node_id=2),
-    ]
-    # The second block's start (1) is used for its position.
-    assert variable_extractor._renderable_nodes(nodes, [first, second], []) == [
-        (0, 'a\n\nb'),
-        (1, 'b\n\nc'),
-    ]
-
-
-# --- walker.context_around with renderable list -----------------------------
+# --- context_around with renderable list (walker tests, unchanged) ---------
 
 
 def test_context_around_gives_before_and_after():
@@ -159,8 +243,6 @@ def test_context_around_at_end_gives_no_after():
 
 
 def test_context_around_respects_token_budgets():
-    # Three 300-char items (~76 tokens each): the first two fit
-    # (~152 tokens), the third would push past the 200-token cap.
     chunk = 'a' * 300
     items = [
         (0, 'Prologue.'),

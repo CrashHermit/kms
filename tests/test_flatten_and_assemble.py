@@ -5,7 +5,7 @@ import asyncio
 import tempfile
 
 from kms.core import models
-from kms.ingestion import role_typer
+from kms.ingestion import hub_builder
 from kms.output import assembler
 
 
@@ -57,7 +57,7 @@ class _AllStatements:
     """Stands in for the LLM: every span is a statement."""
 
     async def acall(self, contents):
-        return [role_typer.STATEMENT_ROLE]
+        return [hub_builder.STATEMENT_ROLE]
 
 
 def test_assembly_emits_each_block_once_after_the_overlay_is_built():
@@ -80,7 +80,7 @@ def test_assembly_emits_each_block_once_after_the_overlay_is_built():
     # (the component finder is allowed to emit those).
     state = {'nodes': nodes, 'spans': [[0, 1, 2], [1, 2], [3]]}
 
-    typer = role_typer.RoleTyperNode(module=_AllStatements())
+    typer = hub_builder.HubBuilderNode(role_module=_AllStatements())
     state.update(asyncio.run(typer.run(state)))
 
     text = assembler.assemble(

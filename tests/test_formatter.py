@@ -93,3 +93,14 @@ def test_prompt_forbids_touching_figure_placeholders():
     assert '![N]()' in prompt
     for forbidden in ('Order.', 'Numbering and labels.', 'Code and verbatim'):
         assert forbidden in prompt
+
+
+def test_prompt_joins_split_display_equations():
+    # A display equation broken across two `$$` blocks by the OCR must be
+    # rejoined: the equation extractor runs per-node downstream and expects
+    # each MathNode to carry one complete equation.
+    prompt = formatter.Signature.__doc__
+    assert 'halves of one equation are joined' in prompt
+    assert 'relational operator' in prompt
+    assert 'binary operator' in prompt
+    assert 'back-to-back equations stay separate' in prompt

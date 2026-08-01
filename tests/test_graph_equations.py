@@ -1,4 +1,4 @@
-"""Equation-layer graph mapping and the attachment edges.
+"""Equation-layer graph mapping and the :HAS_EQUATION attachment edges.
 
 Pure mapping plus the equation write, which runs against a fake driver — the
 Cypher is asserted, nothing is sent anywhere.
@@ -7,13 +7,7 @@ Cypher is asserted, nothing is sent anywhere.
 import asyncio
 
 from kms.core import models
-from kms.graph import (
-    equations,
-    nodes,
-    procedures,
-    statements,
-    writer,
-)
+from kms.graph import equations, nodes, writer
 
 
 def _equation(latex='$$E = mc^2$$', name=None, domain=None):
@@ -21,66 +15,42 @@ def _equation(latex='$$E = mc^2$$', name=None, domain=None):
 
 
 def _channel():
-    # (unit_kind, block, [Equation]) triples: one statement unit (block
-    # [1, 2]), one procedure unit (the SAME block — a different kind), and
-    # one plain node unit (block [3]).
+    # (node_id, [Equation]) pairs: one equation on node 1, two on node 2,
+    # none on node 3.
     return [
-        (
-            models.UNIT_STATEMENT,
-            [1, 2],
-            [
-                _equation(name='mass-energy equivalence'),
-                _equation(latex='$$V = IR$$', domain='circuit analysis'),
-            ],
-        ),
-        (
-            models.UNIT_PROCEDURE,
-            [1, 2],
-            [_equation(latex='$$a^2 = b^2 + c^2$$')],
-        ),
-        (models.UNIT_NODE, [3], [_equation(latex='$$y = mx + b$$')]),
+        (1, [_equation(name='mass-energy equivalence')]),
+        (2, [
+            _equation(latex='$$V = IR$$', domain='circuit analysis'),
+            _equation(latex='$$a^2 = b^2 + c^2$$'),
+        ]),
     ]
 
 
-def _procedures():
-    return [models.Procedure(block=[1, 2], members=[1, 2])]
-
-
 def test_equation_uuid_is_deterministic():
-    assert equations.equation_uuid(
-        'hefferon.pdf', models.UNIT_STATEMENT, [7], 0
-    ) == equations.equation_uuid('hefferon.pdf', models.UNIT_STATEMENT, [7], 0)
+    assert equations.equation_uuid('hefferon.pdf', 7, 0) == (
+        equations.equation_uuid('hefferon.pdf', 7, 0)
+    )
 
 
-def test_equation_uuid_distinguishes_kind_block_and_index():
-    assert equations.equation_uuid(
-        'hefferon.pdf', models.UNIT_STATEMENT, [7], 0
-    ) != equations.equation_uuid('hefferon.pdf', models.UNIT_PROCEDURE, [7], 0)
-    assert equations.equation_uuid(
-        'hefferon.pdf', models.UNIT_STATEMENT, [7], 0
-    ) != equations.equation_uuid('hefferon.pdf', models.UNIT_STATEMENT, [8], 0)
-    assert equations.equation_uuid(
-        'hefferon.pdf', models.UNIT_STATEMENT, [7], 0
-    ) != equations.equation_uuid('hefferon.pdf', models.UNIT_STATEMENT, [7], 1)
+def test_equation_uuid_distinguishes_node_and_index():
+    assert equations.equation_uuid('hefferon.pdf', 7, 0) != (
+        equations.equation_uuid('hefferon.pdf', 8, 0)
+    )
+    assert equations.equation_uuid('hefferon.pdf', 7, 0) != (
+        equations.equation_uuid('hefferon.pdf', 7, 1)
+    )
 
 
 def test_equation_uuids_are_disjoint_from_other_tiers():
-    eq = equations.equation_uuid('book.pdf', models.UNIT_STATEMENT, [7], 0)
+    eq = equations.equation_uuid('book.pdf', 7, 0)
     assert eq != nodes.node_uuid('book.pdf', 7)
-    assert eq != statements.statement_uuid('book.pdf', [7])
 
 
 def test_equation_properties_carry_latex_and_provenance():
     props = equations.equation_properties(
-        _equation(name='heat equation'),
-        'book.pdf',
-        models.UNIT_STATEMENT,
-        [4],
-        0,
+        _equation(name='heat equation'), 'book.pdf', 4, 0
     )
-    assert props['uuid'] == equations.equation_uuid(
-        'book.pdf', models.UNIT_STATEMENT, [4], 0
-    )
+    assert props['uuid'] == equations.equation_uuid('book.pdf', 4, 0)
     assert props['source'] == nodes.source_uuid('book.pdf')
     assert props['latex'] == '$$E = mc^2$$'
     assert props['name'] == 'heat equation'
@@ -88,52 +58,41 @@ def test_equation_properties_carry_latex_and_provenance():
 
 def test_equation_properties_drop_empty_fields():
     props = equations.equation_properties(
-        _equation(), 'book.pdf', models.UNIT_STATEMENT, [4], 0
+        _equation(), 'book.pdf', 4, 0
     )
     assert 'name' not in props
     assert 'domain' not in props
 
 
-def test_equation_rows_flatten_across_units():
+def test_equation_rows_flatten_across_nodes():
     rows = equations.equation_rows(_channel(), 'book.pdf')
     assert [row['uuid'] for row in rows] == [
-        equations.equation_uuid('book.pdf', models.UNIT_STATEMENT, [1, 2], 0),
-        equations.equation_uuid('book.pdf', models.UNIT_STATEMENT, [1, 2], 1),
-        equations.equation_uuid('book.pdf', models.UNIT_PROCEDURE, [1, 2], 0),
-        equations.equation_uuid('book.pdf', models.UNIT_NODE, [3], 0),
+        equations.equation_uuid('book.pdf', 1, 0),
+        equations.equation_uuid('book.pdf', 2, 0),
+        equations.equation_uuid('book.pdf', 2, 1),
     ]
 
 
-def test_equation_pairs_hang_statement_equations_off_the_statement():
-    pairs = equations.equation_pairs(_channel(), _procedures(), 'book.pdf')
-    statement_pairs = [p for p in pairs if p['container_label'] == 'statement']
-    assert len(statement_pairs) == 2
+def test_equation_pairs_hang_every_equation_off_its_node():
+    pairs = equations.equation_pairs(_channel(), 'book.pdf')
+    assert pairs == [
+        {
+            'node': nodes.node_uuid('book.pdf', 1),
+            'equation': equations.equation_uuid('book.pdf', 1, 0),
+        },
+        {
+            'node': nodes.node_uuid('book.pdf', 2),
+            'equation': equations.equation_uuid('book.pdf', 2, 0),
+        },
+        {
+            'node': nodes.node_uuid('book.pdf', 2),
+            'equation': equations.equation_uuid('book.pdf', 2, 1),
+        },
+    ]
+    # Every equation hangs off a :Node — no statement/procedure labels.
     assert all(
-        p['container'] == statements.statement_uuid('book.pdf', [1, 2])
-        for p in statement_pairs
+        'node' in pair and 'equation' in pair for pair in pairs
     )
-    # The container is the statement hub, never a member node's uuid — those
-    # nodes are invisible in the chain.
-    assert all(
-        p['container'] != nodes.node_uuid('book.pdf', 1)
-        for p in statement_pairs
-    )
-
-
-def test_equation_pairs_hang_procedure_equations_off_the_procedure():
-    pairs = equations.equation_pairs(_channel(), _procedures(), 'book.pdf')
-    procedure_pairs = [p for p in pairs if p['container_label'] == 'procedure']
-    assert len(procedure_pairs) == 1
-    assert procedure_pairs[0]['container'] == procedures.procedure_uuid(
-        'book.pdf', [1, 2], 0
-    )
-
-
-def test_equation_pairs_fall_back_to_the_plain_node():
-    pairs = equations.equation_pairs(_channel(), _procedures(), 'book.pdf')
-    node_pairs = [p for p in pairs if p['container_label'] == 'node']
-    assert len(node_pairs) == 1
-    assert node_pairs[0]['container'] == nodes.node_uuid('book.pdf', 3)
 
 
 class _FakeSession:
@@ -162,32 +121,20 @@ class _FakeDriver:
         return _FakeSession(self.log)
 
 
-def test_persist_equations_matches_each_container_by_label(monkeypatch):
+def test_persist_equations_writes_node_has_equation_edges(monkeypatch):
     driver = _FakeDriver()
     monkeypatch.setattr(writer, 'driver', lambda: driver)
     monkeypatch.setattr(writer, 'database', lambda: 'neo4j')
 
-    asyncio.run(writer.persist_equations(_channel(), _procedures(), 'book.pdf'))
+    asyncio.run(writer.persist_equations(_channel(), 'book.pdf'))
 
     queries = [query for query, _ in driver.log]
-    # Statement-, procedure- and node-owned equations all MERGE the same
-    # :HAS_EQUATION edge off their own tier — every unit is an equally valid
-    # extraction source.
+    # All equations hang off :Node — a single label, no bucketing.
     assert any(
-        '(s:Statement {uuid: pair.container})' in query
-        and '(s)-[:HAS_EQUATION]->(e)' in query
-        for query in queries
-    )
-    assert any(
-        '(p:Procedure {uuid: pair.container})' in query
-        and '(p)-[:HAS_EQUATION]->(e)' in query
-        for query in queries
-    )
-    assert any(
-        '(n:Node {uuid: pair.container})' in query
+        '(n:Node {uuid: pair.node})' in query
+        and '(e:Equation {uuid: pair.equation})' in query
         and '(n)-[:HAS_EQUATION]->(e)' in query
         for query in queries
     )
-    # A label-free `MATCH (a {uuid: ...})` would scan every vertex in the
-    # database and would match across tiers outright if two ever shared a uuid.
+    # No label-free MATCH that would scan across tiers.
     assert 'MATCH (a {uuid:' not in ' '.join(queries)

@@ -7,18 +7,23 @@ The node runs over every content node in the stream. For each:
    bindings, both, or neither? Two independent booleans, one cheap call.
 
 2. **Equation extractor** — runs when ``has_equation`` is true. Extracts
-   equations from the content, giving each a LaTeX form, an optional
+   equations from the node's content, giving each a LaTeX form, an optional
    identity (resolved against the existing graph), and an optional domain.
 
 3. **Variable extractor** — runs when ``has_variable`` is true. Extracts
-   stand-in bindings from the content, with the equation list as additional
-   context when available — the same symbol resolution task, just richer
-   input.
+   stand-in bindings from the node's content, with the equation list as
+   additional context when available — the same symbol resolution task, just
+   richer input.
 
 All three modules share the same context window (content + before + after).
 The equation extractor feeds its output into the variable extractor so a
 variable inside ``$$\frac{\partial u}{\partial t} = \alpha \nabla^2 u$$``
 inherits the equation's identity as evidence for its meaning.
+
+Artifacts hang directly off the ``:Node`` they were extracted from via
+``:HAS_EQUATION`` / ``:HAS_VARIABLE``. Statement and procedure hubs inherit
+them through ``:MEMBER_OF`` — every equation and variable is reachable from
+every hub that covers its provenance node.
 """
 
 import asyncio
@@ -278,7 +283,7 @@ class EquationExtractor(dspy.Module):
 
 
 # ============================================================================
-# 3. Variable extractor (updated — accepts equations as context)
+# 3. Variable extractor (accepts equations as context)
 # ============================================================================
 
 
@@ -443,171 +448,55 @@ class VariableExtractor(dspy.Module):
 
 
 # ============================================================================
-# Helpers — unit resolution and context assembly
-# ============================================================================
-
-
-def _units(
-    nodes: list[models.ASTNode],
-    statements: list[models.Statement],
-    procedures: list[models.Procedure],
-) -> list[tuple[str, list[int], list[int]]]:
-    """The extraction units: statements, procedures, then unabsorbed nodes.
-
-    Each unit is a ``(unit_kind, block, members)`` triple — statements and
-    procedures by their block (frozen at creation), plain nodes by a
-    one-node block. A node inside a hub's members is never also a plain unit.
-
-    Args:
-        nodes: The flat node stream.
-        statements: The statement overlay.
-        procedures: The procedure overlay.
-
-    Returns:
-        One triple per extraction unit.
-    """
-    covered: set[int] = set()
-    units: list[tuple[str, list[int], list[int]]] = []
-    for statement in statements:
-        covered.update(statement.members)
-        units.append(
-            (models.UNIT_STATEMENT, statement.block, statement.members)
-        )
-    for procedure in procedures:
-        covered.update(procedure.members)
-        units.append(
-            (models.UNIT_PROCEDURE, procedure.block, procedure.members)
-        )
-    for node in nodes:
-        node_id = node.id
-        if node_id is None or node_id in covered:
-            continue
-        units.append((models.UNIT_NODE, [node_id], [node_id]))
-    return units
-
-
-def _member_text(
-    members: list[int], nodes_by_id: dict[int, models.ASTNode]
-) -> str:
-    """The members' content, joined in member order.
-
-    Hubs carry no text — this is the join performed on demand.
-
-    Args:
-        members: The unit's member node ids, in document order.
-        nodes_by_id: The full node stream keyed by stable id.
-
-    Returns:
-        The members' content joined blank-line separated.
-    """
-    return '\n\n'.join(
-        nodes_by_id[node_id].content
-        for node_id in members
-        if node_id in nodes_by_id
-        and nodes_by_id[node_id].content
-        and nodes_by_id[node_id].content.strip()
-    )
-
-
-def _renderable_nodes(
-    nodes: list[models.ASTNode],
-    statements: list[models.Statement],
-    procedures: list[models.Procedure],
-) -> list[tuple[int, str]]:
-    """Build a list of ``(stream_index, content)`` pairs for context walking.
-
-    One entry per BLOCK at its start position, with the whole block's text
-    (its hubs' members deduplicated), then unabsorbed plain nodes at their own
-    positions — sorted into document order.
-    """
-    nodes_by_id = {node.id: node for node in nodes if node.id is not None}
-    covered: set[int] = set()
-    seen_blocks: set[tuple[int, ...]] = set()
-    renderable: list[tuple[int, str]] = []
-    for statement in statements:
-        covered.update(statement.members)
-        block = tuple(statement.block)
-        if block in seen_blocks:
-            continue
-        seen_blocks.add(block)
-        content = _member_text(statement.block, nodes_by_id)
-        if content:
-            renderable.append((block[0], content))
-    for procedure in procedures:
-        covered.update(procedure.members)
-        block = tuple(procedure.block)
-        if block in seen_blocks:
-            continue
-        seen_blocks.add(block)
-        content = _member_text(procedure.block, nodes_by_id)
-        if content:
-            renderable.append((block[0], content))
-    for i, node in enumerate(nodes):
-        node_id = node.id
-        if node_id is None or node_id in covered:
-            continue
-        content = node.content
-        if content and content.strip():
-            renderable.append((i, content))
-    renderable.sort(key=lambda item: item[0])
-    return renderable
-
-
-# ============================================================================
-# Entry point — orchestrates the three modules over the units
+# Entry point — orchestrates the three modules over every provenance node
 # ============================================================================
 
 
 async def extract_equations_and_variables(
     nodes: list[models.ASTNode],
-    statements: list[models.Statement],
-    procedures: list[models.Procedure],
     router_module: Router | None = None,
     equation_module: EquationExtractor | None = None,
     variable_module: VariableExtractor | None = None,
 ) -> tuple[
-    list[tuple[str, list[int], list[models.Equation]]],
-    list[tuple[str, list[int], list[models.Variable]]],
+    list[tuple[int, list[models.Equation]]],
+    list[tuple[int, list[models.Variable]]],
 ]:
-    """Extract equations and variable bindings from every extraction unit.
+    """Extract equations and variable bindings from every provenance node.
 
-    A unit is a statement hub, a procedure hub, or an unabsorbed plain node
-    (see ``_units``). For each: the router decides what to extract, then the
-    equation and/or variable modules run as needed. The equation output feeds
-    into the variable extractor as additional context.
+    Walks the raw node stream in document order. For each node with content:
+    the router decides what to extract, then the equation and/or variable
+    modules run as needed. Context windows are built from the surrounding
+    nodes via ``walker.content_before`` / ``walker.content_after``. The
+    equation output feeds into the variable extractor as additional context.
 
     Args:
         nodes: The flat node stream.
-        statements: The statement overlay.
-        procedures: The procedure overlay.
         router_module: The router. Created fresh if None.
         equation_module: The equation extractor. Created fresh if None.
         variable_module: The variable extractor. Created fresh if None.
 
     Returns:
         The ``(equations, variables)`` pair — each a list of
-        ``(unit_kind, block, [result])`` entries.
+        ``(node_id, [result])`` entries.
     """
     router_module = router_module or Router()
     equation_module = equation_module or EquationExtractor()
     variable_module = variable_module or VariableExtractor()
-    renderable = _renderable_nodes(nodes, statements, procedures)
-    nodes_by_id = {node.id: node for node in nodes if node.id is not None}
-    units = _units(nodes, statements, procedures)
 
-    equations_result: list[tuple[str, list[int], list[models.Equation]]] = []
-    variables_result: list[tuple[str, list[int], list[models.Variable]]] = []
+    equations_result: list[tuple[int, list[models.Equation]]] = []
+    variables_result: list[tuple[int, list[models.Variable]]] = []
 
-    for unit_kind, block, members in units:
-        content = _member_text(members, nodes_by_id)
-        if not content or not content.strip():
+    for position, node in enumerate(nodes):
+        node_id = node.id
+        content = node.content
+        if node_id is None or not content or not content.strip():
             continue
 
-        content_before, content_after = walker.context_around(
-            renderable,
-            block[0],
-            backward_budget=DEFAULT_BACKWARD_BUDGET,
-            forward_budget=DEFAULT_FORWARD_BUDGET,
+        content_before = walker.content_before(
+            nodes, position, budget=DEFAULT_BACKWARD_BUDGET
+        )
+        content_after = walker.content_after(
+            nodes, position, budget=DEFAULT_FORWARD_BUDGET
         )
 
         has_equation, has_variable = await router_module.aforward(
@@ -616,31 +505,31 @@ async def extract_equations_and_variables(
             content_after=content_after,
         )
 
-        unit_equations: list[models.Equation] = []
+        node_equations: list[models.Equation] = []
         if has_equation:
-            unit_equations = await equation_module.aforward(
+            node_equations = await equation_module.aforward(
                 content=content,
                 content_before=content_before,
                 content_after=content_after,
             )
-            if unit_equations:
-                equations_result.append((unit_kind, block, unit_equations))
+            if node_equations:
+                equations_result.append((node_id, node_equations))
 
         if has_variable:
-            unit_variables = await variable_module.aforward(
+            node_variables = await variable_module.aforward(
                 content=content,
                 content_before=content_before,
                 content_after=content_after,
-                equations=unit_equations or None,
+                equations=node_equations or None,
             )
-            if unit_variables:
-                variables_result.append((unit_kind, block, unit_variables))
+            if node_variables:
+                variables_result.append((node_id, node_variables))
 
     logger.info(
-        'equations & variables: %d unit(s) -> %d equation(s), %d variable binding(s) total',
-        len(units),
-        sum(len(eqs) for _, _, eqs in equations_result),
-        sum(len(bindings) for _, _, bindings in variables_result),
+        'equations & variables: %d node(s) -> %d equation(s), %d variable binding(s) total',
+        len(nodes),
+        sum(len(eqs) for _, eqs in equations_result),
+        sum(len(bindings) for _, bindings in variables_result),
     )
     return equations_result, variables_result
 
@@ -651,9 +540,9 @@ async def extract_equations_and_variables(
 
 
 class EquationAndVariableNode:
-    """Extracts equations and variable bindings from every content unit.
+    """Extracts equations and variable bindings from every provenance node.
 
-    Runs after the role typer (which builds the statement hubs) and before
+    Runs after the partitioners (which narrow hub memberships) and before
     any fact extraction pass (which consumes both as context).
 
     Args:
@@ -676,18 +565,14 @@ class EquationAndVariableNode:
         """Extract equations and variable bindings from every eligible node.
 
         Args:
-            state: The pipeline state.
+            state: The pipeline state, holding the node stream.
 
         Returns:
             The ``equations`` and ``variables`` channels.
         """
         nodes = state.get('nodes', [])
-        statements = state.get('statements', [])
-        procedures = state.get('procedures', [])
         equations, variables = await extract_equations_and_variables(
             nodes,
-            statements,
-            procedures,
             router_module=self.router_module,
             equation_module=self.equation_module,
             variable_module=self.variable_module,

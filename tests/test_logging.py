@@ -14,8 +14,8 @@ import logging
 
 from kms.core import logs, models
 from kms.ingestion import (
+    hub_builder,
     pedagogical_component_finder,
-    role_typer,
     seam_merger,
 )
 
@@ -97,14 +97,13 @@ class _ScriptedRoles:
         return [self._roles.pop(0)]
 
 
-def test_role_typer_logs_the_block_derivation_split(caplog):
-    # "statements found but zero derivations" is the signature of an
-    # unmarked-derivation miss,
-    # so the two counts must be reported separately.
-    node = role_typer.RoleTyperNode(
-        module=_ScriptedRoles(['statement', 'procedure'])
+def test_hub_builder_logs_composition(caplog):
+    # The counts must be reported — statement, procedure, and both-block
+    # counts — for observability.
+    node = hub_builder.HubBuilderNode(
+        role_module=_ScriptedRoles(['statement', 'procedure'])
     )
-    with caplog.at_level(logging.INFO, logger='kms.ingestion.role_typer'):
+    with caplog.at_level(logging.INFO, logger='kms.ingestion.hub_builder'):
         out = asyncio.run(
             node.run({'nodes': _nodes('a', 'b'), 'spans': [[0], [1]]})
         )
@@ -112,11 +111,14 @@ def test_role_typer_logs_the_block_derivation_split(caplog):
     assert [p.block for p in out['procedures']] == [[1]]
 
 
-def test_role_typer_logs_zero_derivations(caplog):
-    node = role_typer.RoleTyperNode(module=_ScriptedRoles(['statement']))
-    with caplog.at_level(logging.INFO, logger='kms.ingestion.role_typer'):
+def test_hub_builder_logs_zero_derivations(caplog):
+    node = hub_builder.HubBuilderNode(
+        role_module=_ScriptedRoles(['statement'])
+    )
+    with caplog.at_level(logging.INFO, logger='kms.ingestion.hub_builder'):
         asyncio.run(node.run({'nodes': _nodes('a'), 'spans': [[0]]}))
     assert '1 statement(s), 0 procedure(s)' in caplog.text
+    assert '0 both-block(s)' in caplog.text
 
 
 def test_seam_merger_logs_the_flattened_stream_size(caplog):
