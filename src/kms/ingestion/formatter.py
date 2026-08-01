@@ -165,26 +165,47 @@ class Signature(dspy.Signature):
 
     A dollar sign that opens or closes real mathematics is never escaped.
 
-    REQUIRED — MATHEMATICS WRITTEN IN UNICODE GLYPHS
+    REQUIRED — NO MATHEMATICAL NOTATION IN UNICODE, ANYWHERE
 
-    Inside a math span — one already delimited, or one you are wrapping under
-    the rule above — write the notation in LaTeX rather than in Unicode
-    look-alikes:
+    Every piece of mathematical notation on the page is written in LaTeX. NOT
+    ONE Unicode mathematical character survives this pass — not in prose, not
+    in a heading, not in a list item, not in a table cell, not in a caption:
+
     - superscripts: `x⁴` -> `x^4`, `3ˣ` -> `3^x`, `x¹⁰` -> `x^{10}`
     - subscripts: `R₁` -> `R_1`
     - operators and relations: `×` -> `\times`, `÷` -> `\div`, `·` -> `\cdot`,
       `±` -> `\pm`, `≤` -> `\leq`, `≥` -> `\geq`, `≠` -> `\neq`, `√` -> `\sqrt`,
-      `∞` -> `\infty`, `→` -> `\to`, `⇒` -> `\Rightarrow`, `∈` -> `\in`
-    - Greek letters used as symbols: `α` -> `\alpha`, `π` -> `\pi`
+      `∞` -> `\infty`, `→` -> `\to`, `⇒` -> `\Rightarrow`,
+      `⇔` -> `\Leftrightarrow`, `∈` -> `\in`, `⊆` -> `\subseteq`,
+      `∪` -> `\cup`, `∩` -> `\cap`, `∀` -> `\forall`, `∃` -> `\exists`,
+      `∅` -> `\emptyset`, `∑` -> `\sum`, `∏` -> `\prod`, `∫` -> `\int`,
+      `∂` -> `\partial`, `∇` -> `\nabla`, `≈` -> `\approx`,
+      `≡` -> `\equiv`, `∼` -> `\sim`, `∘` -> `\circ`, `⊥` -> `\perp`
+    - Greek letters used as symbols: `α` -> `\alpha`, `π` -> `\pi`,
+      `Ω` -> `\Omega`
+    - anything else of the same kind: if a character is notation rather than
+      a word, it has a LaTeX spelling and that spelling is what you write.
+
+    A GLYPH IS ITSELF THE EVIDENCE. Finding one of these outside a math span
+    does not mean leaving it alone — it means you have found mathematics that
+    was never delimited. Convert the notation AND wrap it, under the wrapping
+    rule above: `x⁴` in the middle of a sentence becomes `$x^4$`, and
+    `α-mixing` becomes `$\alpha$-mixing`.
 
     This changes how the notation is ENCODED, never what it says: `x⁴` and
     `x^4` are the same power. Do not go further and rewrite the mathematics
     itself — do not simplify, reorder, factor, evaluate, or "tidy" an
     expression into a form you prefer.
 
-    Do this ONLY inside mathematics. A superscript that marks a footnote is a
-    reference marker, not an exponent: leave `Theorem 2¹` alone. Leave glyphs
-    in ordinary prose, in code, and in verbatim content untouched.
+    WHAT IS NOT NOTATION, and is therefore left exactly as written:
+    - A letter inside a word or a name. `Pólya`, `Erdős`, `café`, `Ω` when it
+      is a person's initial. Respelling a proper noun changes a fact.
+    - A reference marker. A superscript that points at a footnote is a
+      pointer, not an exponent: `Theorem 2¹` keeps its `¹`.
+    - Ordinary punctuation and typography — dashes, curly quotes, ellipses,
+      non-breaking spaces. These are not mathematics and get no LaTeX.
+    - Anything inside code or verbatim content, where every character is
+      already literal.
 
     Otherwise change the delimiters only, never the expression between them.
 
@@ -198,6 +219,13 @@ class Signature(dspy.Signature):
     - Lists. `-` for bullets and `1.` numbering for ordered lists, with nesting
       shown by indentation. Keep every item, its position, and any label the
       document gives it.
+    - Part markers. Textbooks letter an exercise's parts in whatever glyph the
+      typesetter had — `ⓐ`, `(a)`, `a)`, `a.` — and one page often mixes
+      several. Write them all one way: `(a)`, `(b)`, `(c)`.
+      Standardise the DECORATION only. The letter itself is the part's
+      identity, referred to elsewhere as "by part (b)", so `ⓑ` becomes `(b)`
+      and never `(a)`, never a bullet, and never nothing. A part marker is not
+      mathematics: it takes no `$` and no LaTeX.
     - Emphasis. Write italics as `*italic*` and bold as `**bold**`. Normalise
       the emphasis that is there; do not add emphasis to text that has none.
     - Tables. Pipe tables with a header separator row, one row per line.
@@ -223,7 +251,10 @@ class Signature(dspy.Signature):
       and symbols; standardise the markup, not the author.
     - Numbering and labels. Leave every identifier the document uses — section
       and theorem numbers, exercise numbers, part letters — exactly as written.
-      They are referred to elsewhere by name.
+      They are referred to elsewhere by name. Standardising a part marker's
+      decoration (see above) is the one permitted change and does not touch
+      the identifier: `ⓑ` and `(b)` are both part b. Never renumber, never
+      re-letter, never drop a label.
     - Order. Return the content in the order it arrives.
     - Page furniture. Leave running heads, folios, and marginal labels where
       they are; neither delete them nor add ones that are absent. A footnote
