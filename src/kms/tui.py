@@ -135,13 +135,7 @@ def _run_tui() -> None:
         title = advanced['title']
         author = advanced['author']
 
-    # ── 4. Markdown export ────────────────────────────────────────
-    write_markdown = inquirer.confirm(
-        message='Also assemble the pages into document.md?',
-        default=False,
-    ).execute()
-
-    # ── 5. Log level ──────────────────────────────────────────────
+    # ── 4. Log level ──────────────────────────────────────────────
     log_level = inquirer.select(
         message='Log verbosity:',
         choices=[
@@ -154,7 +148,7 @@ def _run_tui() -> None:
 
     _configure_logging(log_level)
 
-    # ── 6. Confirm and run ────────────────────────────────────────
+    # ── 5. Confirm and run ────────────────────────────────────────
     logger.info('PDF: %s', pdf_path)
     logger.info('Output: %s', out_dir)
     if pages:
@@ -184,7 +178,6 @@ def _run_tui() -> None:
             source=source,
             title=title,
             author=author,
-            markdown=write_markdown,
         )
     )
     logger.info(
@@ -195,8 +188,6 @@ def _run_tui() -> None:
         len(result.get('procedures') or []),
         len(result.get('instructions') or []),
     )
-    if write_markdown:
-        logger.info('Document written to %s/document.md', out_dir)
 
 
 if __name__ == '__main__':

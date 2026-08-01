@@ -162,8 +162,7 @@ class Variable:
 # pedagogical unit occupies — it carries no text, its members do. Deliberately
 # NOT an ASTNode: while it was one, a Statement could be — and was — assigned
 # into the stream in its first member's place, which made every consumer of
-# that stream read the group's text twice (the duplicated blocks in the
-# assembled output).
+# that stream read the group's text twice, and the persister write it twice.
 #
 # Statement and Procedure share no base class, and they share no common
 # fields: a Procedure is a Statement's CHILD rather than its sibling, and
