@@ -153,6 +153,74 @@ def test_router_gates_neither_with_both_false():
     assert vars_ == []
 
 
+# --- concurrency ------------------------------------------------------------
+
+
+def test_results_stay_in_document_order_when_nodes_run_concurrently():
+    # Nodes finish out of order (the first sleeps longest), but the channels
+    # must still read in document order — the persister and the overlay key
+    # off node ids, and a reordered channel makes runs non-reproducible.
+    nodes = [_paragraph(f'Node {i}.', node_id=i) for i in range(5)]
+
+    class _SlowestFirstVariable:
+        async def aforward(
+            self, content, content_before=None, content_after=None,
+            equations=None,
+        ):
+            index = int(content.split()[1].rstrip('.'))
+            await asyncio.sleep((5 - index) * 0.01)
+            return [
+                models.Variable(
+                    symbol=f's{index}', meaning='m', kind='variable'
+                )
+            ]
+
+    class _AlwaysVariable:
+        async def aforward(self, content, content_before=None,
+                           content_after=None):
+            return (False, True)
+
+    _, vars_ = asyncio.run(
+        variable_extractor.extract_equations_and_variables(
+            nodes,
+            router_module=_AlwaysVariable(),
+            equation_module=_ScriptedEquation(),
+            variable_module=_SlowestFirstVariable(),
+        )
+    )
+    assert [node_id for node_id, _ in vars_] == [0, 1, 2, 3, 4]
+    assert [b[0].symbol for _, b in vars_] == ['s0', 's1', 's2', 's3', 's4']
+
+
+def test_max_concurrency_bounds_nodes_in_flight():
+    nodes = [_paragraph(f'Node {i}.', node_id=i) for i in range(12)]
+    live = 0
+    peak = 0
+
+    class _TrackingRouter:
+        async def aforward(self, content, content_before=None,
+                           content_after=None):
+            nonlocal live, peak
+            live += 1
+            peak = max(peak, live)
+            await asyncio.sleep(0.01)
+            live -= 1
+            return (False, False)
+
+    asyncio.run(
+        variable_extractor.extract_equations_and_variables(
+            nodes,
+            router_module=_TrackingRouter(),
+            equation_module=_ScriptedEquation(),
+            variable_module=_ScriptedVariable(),
+            max_concurrency=3,
+        )
+    )
+    assert peak <= 3
+    # And it really did overlap — a serial walk would peak at 1.
+    assert peak > 1
+
+
 def test_equations_feed_into_variable_extractor():
     # The equation output from a node is passed as context to the variable
     # extractor on the same node.

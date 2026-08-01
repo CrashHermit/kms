@@ -37,6 +37,47 @@ def test_variable_uuid_is_deterministic():
     )
 
 
+def test_variable_uuid_distinguishes_bound_values():
+    # "$-m$ when ⓐ $m = 3$ ⓑ $m = -3$" — one block, one symbol, two bindings.
+    # Without the value in the key both MERGE onto the same vertex and the
+    # second binding silently overwrites the first.
+    assert variables.variable_uuid('ea2e.pdf', 7, 'm', '3') != (
+        variables.variable_uuid('ea2e.pdf', 7, 'm', '-3')
+    )
+
+
+def test_variable_uuid_unchanged_for_definitional_bindings():
+    # A binding with no value keeps the original three-part key, so uuids
+    # already written for definitional bindings stay stable.
+    assert variables.variable_uuid('ea2e.pdf', 7, 'b', None) == (
+        variables.variable_uuid('ea2e.pdf', 7, 'b')
+    )
+
+
+def test_variable_properties_carry_the_bound_value():
+    props = variables.variable_properties(
+        models.Variable(
+            symbol='x', meaning='the variable being evaluated',
+            kind='variable', value='6',
+        ),
+        'ea2e.pdf',
+        3,
+    )
+    assert props['value'] == '6'
+    assert props['symbol'] == 'x'
+
+
+def test_variable_properties_omit_absent_value():
+    props = variables.variable_properties(
+        models.Variable(
+            symbol='b', meaning='the cost of the blouse', kind='variable'
+        ),
+        'ea2e.pdf',
+        3,
+    )
+    assert 'value' not in props
+
+
 def test_variable_uuid_distinguishes_node_and_symbol():
     assert variables.variable_uuid('hefferon.pdf', 7, 'x') != (
         variables.variable_uuid('hefferon.pdf', 8, 'x')

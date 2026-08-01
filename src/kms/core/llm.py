@@ -29,6 +29,7 @@ cached so every module sharing a backend shares one instance (and therefore
 one connection pool and prompt cache).
 """
 
+import asyncio
 import os
 from functools import lru_cache
 
@@ -47,6 +48,32 @@ except ImportError:
 
 DEEPSEEK_ENV_KEY = 'DEEPSEEK_API_KEY'
 OPENROUTER_ENV_KEY = 'OPENROUTER_API_KEY'
+
+# How many LM calls a fanned-out stage may have in flight at once. The
+# sub-node stages (equation/variable, hub building) fan out one unit of work
+# per node or per span, which on a full book is tens of thousands — unbounded
+# that is a rate-limit failure, not parallelism. The page-level stages fan out
+# via LangGraph `Send` and are bounded by the page count instead.
+MAX_CONCURRENT_CALLS = int(os.environ.get('KMS_MAX_CONCURRENT_CALLS', '16'))
+
+
+def gate(limit: int | None = None) -> asyncio.Semaphore:
+    """A fresh semaphore bounding one stage's concurrent LM calls.
+
+    Deliberately built per call rather than shared in a module singleton: an
+    ``asyncio.Semaphore`` binds its waiters to the running loop, and the sync
+    ``forward`` paths each spin up their own loop via ``asyncio.run``. One
+    long-lived instance would leak waiters across loops; the shared thing here
+    is the *limit*, not the object.
+
+    Args:
+        limit: Override for the default cap. None uses
+            ``MAX_CONCURRENT_CALLS``.
+
+    Returns:
+        The semaphore.
+    """
+    return asyncio.Semaphore(limit or MAX_CONCURRENT_CALLS)
 
 
 def _require_key(env_key: str, example: str) -> str:

@@ -3,9 +3,10 @@ Graph representation of the variable binding layer — ``:Variable`` nodes
 extracted from provenance nodes.
 
 The variable extractor runs over every node in the stream and produces
-``models.Variable`` entries (symbol, meaning, kind). This module maps one onto
-its Neo4j form, mirroring ``graph.statements`` and ``graph.procedures``: pure
-mapping, free of the neo4j driver.
+``models.Variable`` entries (symbol, meaning, kind, and the bound value when
+the text assigns one). This module maps one onto its Neo4j form, mirroring
+``graph.statements`` and ``graph.procedures``: pure mapping, free of the neo4j
+driver.
 
 Representation: every variable carries the ``:Variable`` label and hangs off
 the unit it was extracted from via ``:HAS_VARIABLE``: the ``:Equation`` when
@@ -13,8 +14,11 @@ the binding lives inside one (``equation_index`` set), or the ``:Node``
 otherwise. Statement and procedure hubs inherit variables through their
 ``:MEMBER_OF`` edges.
 
-Identity: deterministic uuid5 over ``(source, node_id, symbol)``, disjoint
-from node/statement/procedure/equation uuids via the ``variable#`` segment.
+Identity: deterministic uuid5 over ``(source, node_id, symbol)``, plus the
+bound value when there is one — a block that binds the same symbol twice
+("$m = 3$" and "$m = -3$") would otherwise collapse both onto one vertex.
+Disjoint from node/statement/procedure/equation uuids via the ``variable#``
+segment.
 """
 
 from uuid import NAMESPACE_URL, uuid5
@@ -26,21 +30,32 @@ from kms.graph.equations import equation_uuid
 VARIABLE_LABEL = 'Variable'
 
 
-def variable_uuid(source: str, node_id: int, symbol: str) -> str:
+def variable_uuid(
+    source: str, node_id: int, symbol: str, value: str | None = None
+) -> str:
     """Stable, deterministic vertex key for a variable.
+
+    The bound value is part of the identity because ``(source, node_id,
+    symbol)`` alone is not unique: one block routinely binds one symbol
+    twice — "$-m$ when ⓐ $m = 3$ ⓑ $m = -3$" — and without the value the
+    second binding silently overwrites the first on MERGE. A definitional
+    binding (no value) keeps the original three-part key, so existing
+    variable uuids are unchanged.
 
     Args:
         source: The stable book identity.
         node_id: The provenance node the variable was extracted from.
         symbol: The variable's symbol.
+        value: The value bound to the symbol here, if any.
 
     Returns:
         The variable's hex uuid, disjoint from every node/statement/
         procedure uuid.
     """
-    return uuid5(
-        NAMESPACE_URL, f'{source}#variable#{node_id}#{symbol}'
-    ).hex
+    key = f'{source}#variable#{node_id}#{symbol}'
+    if value is not None:
+        key = f'{key}#{value}'
+    return uuid5(NAMESPACE_URL, key).hex
 
 
 def variable_properties(
@@ -57,11 +72,14 @@ def variable_properties(
         The property map, with None values omitted.
     """
     props = {
-        'uuid': variable_uuid(source, node_id, variable.symbol),
+        'uuid': variable_uuid(
+            source, node_id, variable.symbol, variable.value
+        ),
         'source': nodes.source_uuid(source),
         'symbol': variable.symbol,
         'meaning': variable.meaning,
         'kind': variable.kind,
+        'value': variable.value,
     }
     return {key: value for key, value in props.items() if value is not None}
 
@@ -101,7 +119,7 @@ def has_variable_pairs(
     for node_id, bindings in variables:
         for variable in bindings:
             variable_key = variable_uuid(
-                source, node_id, variable.symbol
+                source, node_id, variable.symbol, variable.value
             )
             if variable.equation_index is not None:
                 container = equation_uuid(

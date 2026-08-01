@@ -129,6 +129,20 @@ class Variable:
     in a function signature, a defined term in a legal document — anything
     where a compact notation stands for a fuller meaning.
 
+    Two kinds of binding, both carried here:
+
+    * **Definitional** — the symbol is bound to a MEANING: "let $\\alpha$ be
+      the learning rate", "$b$, the cost of the blouse". ``meaning`` holds it
+      and ``value`` is None.
+    * **Substitutional** — the symbol is bound to a VALUE, for this passage
+      only: "evaluate $x^2 + 5x - 8$ when $x = 6$". ``value`` holds the ``6``.
+
+    ``value`` exists because the substitution IS the exercise: without it two
+    exercises over the same expression are indistinguishable in the graph, and
+    nothing downstream can pose the question, check an answer, or build a
+    review card from the node. It is a string, not a number — a binding is as
+    often ``-3``, ``2\\pi``, or ``n+1`` as it is an integer.
+
     When ``equation_index`` is set, the variable belongs to an equation
     extracted from the same node — the ``:HAS_VARIABLE`` edge will point
     from that ``:Equation`` instead of from the ``:Node``.
@@ -138,6 +152,7 @@ class Variable:
     meaning: str
     kind: str
     equation_index: int | None = None
+    value: str | None = None
 
 
 # --- Semantic overlay -------------------------------------------------------
