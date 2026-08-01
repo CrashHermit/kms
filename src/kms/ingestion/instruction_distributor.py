@@ -1,14 +1,28 @@
 r"""
-Instruction distributor — prepends a grouped-exercise lead-in's shared directive
-onto the content of the exercise nodes it governs, then removes the lead-in node
-from the stream.
+Instruction distributor — records which exercise nodes a grouped-exercise
+lead-in governs, as a hub beside the stream, then removes the lead-in node.
 
 The instruction finder has already stamped ``NodeType.INSTRUCTION`` on every
 lead-in node. This pass walks the stream, anchors on each INSTRUCTION node, and
-asks the LLM which of the following exercise nodes it governs. For each governed
-exercise, the directive is prepended to the node's ``content`` so the exercise
-carries its own context and is usable on its own. The INSTRUCTION node is then
-removed from the stream — its job is done.
+asks the LLM which of the following exercise nodes it governs. The answer
+becomes one ``models.Instruction`` hub over those node ids. The INSTRUCTION
+node is then removed from the stream — its sentence lives on the hub.
+
+The hub sits BESIDE the nodes, like ``Statement`` and ``Procedure``, and for
+the same reason. This pass used to prepend the directive onto each governed
+node's ``content``, which put two kinds of wrong text into the provenance
+layer: the same sentence repeated once per governed exercise (55% of all
+``:Node.content`` written on a three-page fixture, 42% of it redundant), and,
+worse, a sentence the page does not contain — the model returns a normalised
+imperative ("simplify") where the page reads "In the following exercises,
+simplify." A ``:Node`` is defined as one verbatim block of the page, so the
+synthesized form could not live there. It is now ``directive`` on the hub,
+beside ``text``, which is the lead-in exactly as printed.
+
+The cost of the move is that a governed node no longer carries its directive
+in its own text: anything reading one node alone — an embedding, a window of
+context — sees the bare exercise and must traverse ``:GOVERNS`` for the
+instruction.
 
 The extent is judged by the LLM, not by numbers. A lead-in may name a range ("In
 Exercises 1.23-1.25, …") or may not ("Answer the following."), so a range parser
@@ -186,19 +200,23 @@ async def _govern_one(
     lead_in: models.ASTNode,
     candidates: list[models.ASTNode],
     module: InstructionDistributor,
-) -> None:
+) -> models.Instruction | None:
     """Growing-window walk for one lead-in.
 
-    Finds the governed run among the following exercise nodes and prepends the
-    instruction to their content, in place.
+    Finds the governed run among the following exercise nodes and records it
+    as a hub over their ids. Nothing is written onto the governed nodes: they
+    are verbatim page blocks and the directive is not part of what they say.
 
     Args:
         lead_in: The lead-in node.
         candidates: The exercise nodes that follow it, in document order.
         module: The governance module.
+
+    Returns:
+        The hub, or None when this lead-in governs nothing.
     """
     if not candidates:
-        return
+        return None
     size = LOOKAHEAD_BUDGET
     while True:
         window = _window(candidates, size)
@@ -218,17 +236,24 @@ async def _govern_one(
 
         if not governed:
             # This lead-in governs nothing here.
-            return
+            return None
         run_end = governed[-1]
 
         if exhausted or size >= MAX_LOOKAHEAD_BUDGET or run_end < last_local:
             # Bounded or nothing left to gather: bank.
-            if instruction:
-                for position in governed:
-                    window[position].content = (
-                        instruction + '\n\n' + (window[position].content or '')
-                    )
-            return
+            members = [
+                window[position].id
+                for position in governed
+                if window[position].id is not None
+            ]
+            if not members or lead_in.id is None:
+                return None
+            return models.Instruction(
+                node_id=lead_in.id,
+                text=lead_in.content or '',
+                directive=instruction or None,
+                members=members,
+            )
         # The run reaches the window edge — grow and re-read.
         size *= 2
 
@@ -236,16 +261,17 @@ async def _govern_one(
 async def distribute_instructions(
     nodes: list[models.ASTNode],
     module: InstructionDistributor | None = None,
-) -> list[models.ASTNode]:
-    """Distribute every lead-in's directive onto the exercises it governs.
+) -> tuple[list[models.ASTNode], list[models.Instruction]]:
+    """Resolve every lead-in's governance over the exercises that follow it.
 
     Args:
         nodes: The flat node stream, with INSTRUCTION nodes already tagged.
         module: The governance module. Created fresh if None.
 
     Returns:
-        The cleaned node stream — instruction nodes removed, governed
-        exercises enriched.
+        The cleaned node stream — instruction nodes removed, every other node
+        untouched — and one ``Instruction`` hub per lead-in that governs
+        anything, in document order.
     """
     lead_ins = [
         node for node in nodes if isinstance(node, models.InstructionNode)
@@ -255,7 +281,7 @@ async def distribute_instructions(
             'instruction distributor: no-op (0 lead-in(s), %d node(s))',
             len(nodes),
         )
-        return nodes
+        return nodes, []
 
     module = module or InstructionDistributor()
 
@@ -269,6 +295,7 @@ async def distribute_instructions(
         position_of.get(node.id) for node in lead_ins if node.id is not None
     )
     stream_end = len(nodes)
+    instructions: list[models.Instruction] = []
 
     for node in lead_ins:
         here = position_of.get(node.id)
@@ -288,19 +315,25 @@ async def distribute_instructions(
             for candidate in nodes[here + 1 : next_lead]
             if not isinstance(candidate, models.InstructionNode)
         ]
-        await _govern_one(node, candidates, module)
+        hub = await _govern_one(node, candidates, module)
+        if hub is not None:
+            instructions.append(hub)
 
-    # Remove instruction nodes from the stream.
+    # Remove instruction nodes from the stream. The lead-in's own sentence is
+    # not lost with them — it is on its hub, verbatim, stored once.
     cleaned = [
         node for node in nodes if not isinstance(node, models.InstructionNode)
     ]
     logger.info(
-        'instruction distributor: %d lead-in(s) removed, %d of %d node(s) remain',
+        'instruction distributor: %d lead-in(s) removed, %d hub(s) over %d '
+        'governed node(s), %d of %d node(s) remain',
         len(lead_ins),
+        len(instructions),
+        sum(len(hub.members) for hub in instructions),
         len(cleaned),
         len(nodes),
     )
-    return cleaned
+    return cleaned, instructions
 
 
 # --- LangGraph node ---
@@ -326,8 +359,10 @@ class InstructionDistributorNode:
             state: The pipeline state, holding the flat node stream.
 
         Returns:
-            The cleaned `nodes` channel.
+            The cleaned `nodes` channel and the `instructions` overlay.
         """
         nodes = state.get('nodes', [])
-        cleaned = await distribute_instructions(nodes, module=self.module)
-        return {'nodes': cleaned}
+        cleaned, instructions = await distribute_instructions(
+            nodes, module=self.module
+        )
+        return {'nodes': cleaned, 'instructions': instructions}

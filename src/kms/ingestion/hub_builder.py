@@ -345,11 +345,19 @@ async def _partition_both_block(
     nodes_by_id: dict[int, models.ASTNode],
     statement_partitioner: StatementPartitioner,
     procedure_partitioner: ProcedurePartitioner,
+    gate: asyncio.Semaphore,
 ) -> None:
-    """Find the line in a both-block and narrow each hub's members."""
+    """Find the line in a both-block and narrow each hub's members.
+
+    The two partitioners read the same window and write different hubs, so
+    they are independent — run them together rather than one after the other.
+    """
     window = _member_window(statement.members, nodes_by_id)
-    stmt_positions = await statement_partitioner.aforward(window)
-    proc_positions = await procedure_partitioner.aforward(window)
+    async with gate:
+        stmt_positions, proc_positions = await asyncio.gather(
+            statement_partitioner.aforward(window),
+            procedure_partitioner.aforward(window),
+        )
 
     stmt_selected = _selected_members(statement.members, stmt_positions)
     proc_selected = _selected_members(procedure.members, proc_positions)
@@ -365,6 +373,7 @@ async def build_hubs(
     role_module: RoleTyper | None = None,
     statement_partitioner: StatementPartitioner | None = None,
     procedure_partitioner: ProcedurePartitioner | None = None,
+    max_concurrency: int | None = None,
 ) -> tuple[list[models.Statement], list[models.Procedure]]:
     """Diagnose each span's composition, build hubs, and partition both-blocks.
 
@@ -382,6 +391,8 @@ async def build_hubs(
             None.
         procedure_partitioner: The procedure partitioner. Created fresh if
             None.
+        max_concurrency: Units in flight at once, for both the role-typing
+            and partitioning rounds. None uses ``llm.MAX_CONCURRENT_CALLS``.
 
     Returns:
         The ``(statements, procedures)`` hub overlays, in span order.
@@ -398,13 +409,20 @@ async def build_hubs(
         procedure_partitioner or ProcedurePartitioner()
     )
 
+    gate = llm.gate(max_concurrency)
+
+    async def _type_one(span: list[int]) -> list[str]:
+        """Classify one span's roles under the stage's concurrency cap."""
+        async with gate:
+            return await role_module.acall(_contents_of(span, nodes_by_id))
+
     roles_by_span = await asyncio.gather(
-        *(role_module.acall(_contents_of(span, nodes_by_id))
-          for span in spans)
+        *(_type_one(span) for span in spans)
     )
 
     statements: list[models.Statement] = []
     procedures: list[models.Procedure] = []
+    both_blocks: list[tuple[models.Statement, models.Procedure]] = []
 
     for span, roles in zip(spans, roles_by_span, strict=True):
         first_member_id = span[0]
@@ -422,18 +440,32 @@ async def build_hubs(
         procedure = _mark_procedure(span) if has_procedure else None
 
         if statement and procedure:
-            await _partition_both_block(
-                statement,
-                procedure,
-                nodes_by_id,
-                statement_partitioner,
-                procedure_partitioner,
-            )
+            both_blocks.append((statement, procedure))
 
         if statement:
             statements.append(statement)
         if procedure:
             procedures.append(procedure)
+
+    # Hub construction above is pure; the partitioning below is the stage's
+    # second round of I/O. Collecting the both-blocks first lets every one of
+    # them run together instead of one per loop iteration — on a proof-heavy
+    # book most blocks carry both roles, which made this the same serial
+    # bottleneck the equation/variable stage had.
+    if both_blocks:
+        await asyncio.gather(
+            *(
+                _partition_both_block(
+                    statement,
+                    procedure,
+                    nodes_by_id,
+                    statement_partitioner,
+                    procedure_partitioner,
+                    gate,
+                )
+                for statement, procedure in both_blocks
+            )
+        )
 
     both_count = sum(
         1 for s in statements

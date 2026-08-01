@@ -2,8 +2,8 @@
 LangGraph wiring for the document-processing pipeline.
 
 Builds the ordered graph that turns a PDF (via the Mistral OCR front-end) into
-a finished AST, then assembles it to a single markdown string (figures
-consolidated under ``<output_dir>/images/``) plus the statement overlay. The ingestion stages (corrector, extractor, seam merger) are
+a finished AST, the semantic overlays over it, and the Neo4j graph they are
+written to. The ingestion stages (corrector, extractor, seam merger) are
 map-reduce: a conditional edge fans out one Send per unit of work to the
 stage's worker, the workers append to a per-stage reducer channel, and the
 collect step drains that channel back into the ordered backbone before the next
@@ -48,8 +48,8 @@ partitioners find the line, narrowing each hub to its own portion of the
 block's nodes — all in one pass, gated directly by the role typer's output. That overlay rides its own `statements` and `procedures`
 channels: a hub is an identifier over its group's member node ids, with the
 raw text left on the nodes — so it sits BESIDE `nodes`, never in it: in the
-stream it would make every stage that walks nodes (the assembler included)
-read the group twice. The chain is split this way because fusing these
+stream it would make every stage that walks nodes read the group twice, and
+the persister write it twice. The chain is split this way because fusing these
 questions made each one worse — the finder read a missing "Solution."
 marker as "no derivation".
 
@@ -72,10 +72,13 @@ from its ``:Node``, `:Variable` via `:HAS_VARIABLE` from its ``:Node`` or
 ``:Equation``). Statement and procedure hubs inherit both through
 ``:MEMBER_OF``. `:Act` steps and their
 `:FIRST`/`:THEN` threading are declared but not yet written — step
-decomposition is a future pass. A no-op when Neo4j isn't configured. After
-the graph returns, `run()` only assembles the markdown: assembly walks
-`nodes`, consulting `segments` only for picture inventories, and returns the
-text without writing it to disk.
+decomposition is a future pass. A no-op when Neo4j isn't configured, in which
+case `run()` still returns its state and simply persists nothing.
+
+The `:Instruction` hubs come from the distributor rather than from this
+chain: a lead-in governs the exercises after it, so the governance is known
+before any semantic question is asked, and its members are node ids like any
+other hub's.
 """
 
 import os
@@ -98,7 +101,6 @@ from kms.ingestion import (
     splitter,
     variable_extractor,
 )
-from kms.output import assembler
 
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
@@ -281,7 +283,7 @@ async def run(
     source: str | None = None,
     title: str | None = None,
     author: str | None = None,
-) -> str:
+) -> dict:
     """Run the full pipeline on a PDF.
 
     The Mistral OCR API turns each page into reading-ordered markdown plus
@@ -290,12 +292,18 @@ async def run(
     bindings, and (when Neo4j is configured) persists the ``:Node`` provenance
     layer, the ``:Statement`` overlay, and the procedural, equation and
     variable layers on top of it. Graph persistence is skipped entirely
-    when Neo4j isn't configured — a DB-less run still returns the assembled
-    markdown but persists no nodes or statements.
+    when Neo4j isn't configured — a DB-less run still returns its state but
+    persists no nodes or statements.
+
+    The graph is the product. There is no document: a markdown assembly pass
+    survived here from before the graph tier existed, running on every run to
+    build a string the only caller measured the length of and threw away.
 
     Args:
         pdf_path: The source PDF.
-        output_dir: Directory the document's assets are written into.
+        output_dir: Directory the run's assets are written under — the OCR
+            front-end's per-page markdown and extracted figures, and the
+            recorded DSPy examples when ``KMS_RECORD`` is set.
         pages: 0-based pages to limit the OCR request to, or None for all.
         source: The book identity used as the graph's Neo4j key. Defaults to
             the PDF's filename.
@@ -303,7 +311,9 @@ async def run(
         author: Optional book author, stored on the ``:Source`` node.
 
     Returns:
-        The assembled markdown document as a string.
+        The pipeline's final state — the node stream, the segment backbone,
+        and the statement, procedure, instruction, equation and variable
+        overlays.
     """
     # Deferred so importing the pipeline does not require the OCR extra.
     from kms.ingestion import ocr
@@ -331,9 +341,6 @@ async def run(
             },
             {'recursion_limit': 1000},
         )
-        nodes = result['nodes']
-        return assembler.assemble(
-            nodes, result['segments'], output_dir=output_dir
-        )
+        return result
     finally:
         await db.close_driver()

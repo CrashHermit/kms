@@ -36,6 +36,12 @@ class IngestionPersisterNode:
         procedures = state.get('procedures', [])
         await writer.persist_statements(statements, source)
         await writer.persist_procedures(procedures, source)
+        # Governance hubs: the lead-ins removed from the stream, each pointing
+        # at the exercises it governs. Written after the nodes exist, since
+        # :GOVERNS matches them by uuid.
+        await writer.persist_instructions(
+            state.get('instructions', []), source
+        )
         await writer.persist_equations(
             state.get('equations', []), source
         )

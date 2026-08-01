@@ -129,6 +129,20 @@ class Variable:
     in a function signature, a defined term in a legal document — anything
     where a compact notation stands for a fuller meaning.
 
+    Two kinds of binding, both carried here:
+
+    * **Definitional** — the symbol is bound to a MEANING: "let $\\alpha$ be
+      the learning rate", "$b$, the cost of the blouse". ``meaning`` holds it
+      and ``value`` is None.
+    * **Substitutional** — the symbol is bound to a VALUE, for this passage
+      only: "evaluate $x^2 + 5x - 8$ when $x = 6$". ``value`` holds the ``6``.
+
+    ``value`` exists because the substitution IS the exercise: without it two
+    exercises over the same expression are indistinguishable in the graph, and
+    nothing downstream can pose the question, check an answer, or build a
+    review card from the node. It is a string, not a number — a binding is as
+    often ``-3``, ``2\\pi``, or ``n+1`` as it is an integer.
+
     When ``equation_index`` is set, the variable belongs to an equation
     extracted from the same node — the ``:HAS_VARIABLE`` edge will point
     from that ``:Equation`` instead of from the ``:Node``.
@@ -138,6 +152,7 @@ class Variable:
     meaning: str
     kind: str
     equation_index: int | None = None
+    value: str | None = None
 
 
 # --- Semantic overlay -------------------------------------------------------
@@ -147,8 +162,7 @@ class Variable:
 # pedagogical unit occupies — it carries no text, its members do. Deliberately
 # NOT an ASTNode: while it was one, a Statement could be — and was — assigned
 # into the stream in its first member's place, which made every consumer of
-# that stream read the group's text twice (the duplicated blocks in the
-# assembled output).
+# that stream read the group's text twice, and the persister write it twice.
 #
 # Statement and Procedure share no base class, and they share no common
 # fields: a Procedure is a Statement's CHILD rather than its sibling, and
@@ -172,6 +186,34 @@ class Procedure:
 
     block: list[int]
     index: int = 0
+    members: list[int] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class Instruction:
+    """A shared lead-in and the exercises it governs.
+
+    A hub, like ``Statement`` and ``Procedure``: it identifies the nodes a
+    directive applies to and carries no member text. It differs in where it
+    comes from — not a PCF span, but the lead-in node the instruction finder
+    tagged, which the distributor then removes from the stream once the
+    governance is recorded here.
+
+    A hub rather than text copied onto each governed node, because copying
+    put SYNTHESIZED text into the provenance layer: ``directive`` is the
+    model's normalised imperative ("simplify"), which is not what the page
+    says ("In the following exercises, simplify."), and a ``:Node`` is
+    defined as one verbatim block of the page. The page's own sentence lives
+    here in ``text``, once, as printed.
+
+    ``node_id`` is the lead-in's own id in the flattened stream, frozen
+    before removal. It is the hub's identity (see
+    ``graph.instructions.instruction_uuid``) and its document position.
+    """
+
+    node_id: int
+    text: str
+    directive: str | None = None
     members: list[int] = field(default_factory=list)
 
 

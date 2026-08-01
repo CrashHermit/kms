@@ -25,8 +25,8 @@ parses it.
 
 The markdown's figure references are rewritten from Mistral's ids to the
 pipeline's positional ``![N]()`` convention (1-based, reading order), matching
-the picture indices saved to disk, so the extractor and assembler resolve them
-like any other figure.
+the picture indices saved to disk, so the extractor resolves them like any
+other figure.
 """
 
 import base64
@@ -253,7 +253,7 @@ def build_segments(
     dropped. Figures are written under
     ``<output_dir>/Segments/Segment_XXXX/Images/``.
     ``models.Segment.image_path`` points at a page render that Mistral does not
-    produce; it is unused after OCR (the assembler resolves pictures via
+    produce; it is unused after OCR (a picture is resolved via
     ``segment_index`` + ``pictures``), so it is only a nominal path.
 
     Args:

@@ -1,12 +1,9 @@
-"""Flat-stream refactor: seam-birthed global node list + assembler resolving by
-segment_index."""
+"""Flat-stream refactor: the seam-birthed global node list."""
 
 import asyncio
-import tempfile
 
 from kms.core import models
 from kms.ingestion import hub_builder
-from kms.output import assembler
 
 
 def _segments():
@@ -43,16 +40,6 @@ def test_flatten_assigns_stable_ids_and_seg_index_across_pages():
     ]  # provenance survives the flatten
 
 
-def test_assemble_walks_flat_nodes_and_passes_unmatched_placeholder():
-    segs = _segments()
-    flat = models.flatten_segments(segs)
-    text = assembler.assemble(flat, segs, output_dir=tempfile.mkdtemp())
-    assert '# Ch 1' in text and '1. solve x' in text
-    assert (
-        '![1]()' in text
-    )  # no matching picture -> placeholder passes through, no crash
-
-
 class _AllStatements:
     """Stands in for the LLM: every span is a statement."""
 
@@ -60,12 +47,13 @@ class _AllStatements:
         return [hub_builder.STATEMENT_ROLE]
 
 
-def test_assembly_emits_each_block_once_after_the_overlay_is_built():
+def test_overlay_leaves_each_block_in_the_stream_exactly_once():
     # Regression: the role typer used to swap each span's first node for its
     # Statement inside `nodes`, and the statement extractor then set that
-    # node's content to the WHOLE group's text — so the assembler emitted every
-    # member after the first twice, once inside the fused statement and once as
-    # itself. The overlay now travels on its own channel and carries no text.
+    # node's content to the WHOLE group's text — so every member after the
+    # first was represented twice, once inside the fused statement and once as
+    # itself, and the persister wrote it that way. The overlay now travels on
+    # its own channel and carries no text.
     nodes = [
         models.ParagraphNode(content='Theorem 2.1.', id=0, segment_index=0),
         models.ParagraphNode(
@@ -83,16 +71,12 @@ def test_assembly_emits_each_block_once_after_the_overlay_is_built():
     typer = hub_builder.HubBuilderNode(role_module=_AllStatements())
     state.update(asyncio.run(typer.run(state)))
 
-    text = assembler.assemble(
-        state['nodes'],
-        [models.Segment(index=0, image_path='p0.png')],
-        output_dir=tempfile.mkdtemp(),
-    )
+    contents = [node.content for node in state['nodes']]
     for content in (
         'Theorem 2.1.',
         'Proof. Let e be ...',
         'Hence e is unique.',
     ):
-        assert text.count(content) == 1, f'{content!r} appears twice'
+        assert contents.count(content) == 1, f'{content!r} appears twice'
     # The overlay carries hub membership, not text.
     assert state['statements'][0].members == [0, 1, 2]

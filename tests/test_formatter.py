@@ -87,8 +87,9 @@ def test_collect_is_a_noop_without_results():
 
 
 def test_prompt_forbids_touching_figure_placeholders():
-    # The assembler resolves `![N]()` positionally; a formatter that rewrote
-    # them would silently lose every figure, so the prompt must say so.
+    # `![N]()` is resolved positionally against its page's extracted figures;
+    # a formatter that rewrote one would silently lose that figure, so the
+    # prompt must say so.
     prompt = formatter.Signature.__doc__
     assert '![N]()' in prompt
     for forbidden in ('Order.', 'Numbering and labels.', 'Code and verbatim'):

@@ -170,7 +170,7 @@ def _run_tui() -> None:
         logger.info('Cancelled.')
         return
 
-    markdown = asyncio.run(
+    result = asyncio.run(
         pipeline.run(
             pdf_path,
             output_dir=out_dir,
@@ -180,7 +180,14 @@ def _run_tui() -> None:
             author=author,
         )
     )
-    logger.info('Assembled document (%d characters).', len(markdown))
+    logger.info(
+        'Done: %d node(s), %d statement(s), %d procedure(s), '
+        '%d instruction(s).',
+        len(result.get('nodes') or []),
+        len(result.get('statements') or []),
+        len(result.get('procedures') or []),
+        len(result.get('instructions') or []),
+    )
 
 
 if __name__ == '__main__':
