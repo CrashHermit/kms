@@ -54,13 +54,13 @@ def test_persist_nodes_upserts_labels_and_next_chain():
     source = 'integration-test-book'
     stream = [
         models.ASTNode(
-            type=models.HeaderNode, content='§1', id=0, segment_index=0
+            type='header', content='§1', id=0, segment_index=0
         ),
         models.ASTNode(
-            type=models.ParagraphNode, content='a', id=1, segment_index=0
+            type='paragraph', content='a', id=1, segment_index=0
         ),
         models.ASTNode(
-            type=models.MathNode, content='$x$', id=2, segment_index=0
+            type='math', content='$x$', id=2, segment_index=0
         ),
     ]
 

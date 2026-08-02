@@ -54,37 +54,43 @@ from kms.core.recorder import Recorder
 logger = logging.getLogger(__name__)
 
 
-_TYPE_MAP: dict[str, type[models.ASTNode]] = {
-    'paragraph': models.ParagraphNode,
-    'math': models.MathNode,
-    'code': models.CodeNode,
-    'list': models.ListNode,
-    'table': models.TableNode,
-    'image': models.ImageNode,
-    'caption': models.CaptionNode,
-    'header': models.HeaderNode,
-    'bibliographic': models.BibliographicNode,
-    'note': models.NoteNode,
-}
+# Block types the stage identifies.  furniture is discarded before reaching
+# _node_for — the model may emit it, but it never becomes an ASTNode.
+_VALID_TYPES = frozenset(
+    {
+        'paragraph',
+        'math',
+        'code',
+        'list',
+        'table',
+        'image',
+        'caption',
+        'header',
+        'bibliographic',
+        'note',
+    }
+)
 
-# Block types the stage identifies in order to throw away. These never become
-# nodes, so they have no ``models.ASTNode`` class and never reach the stream —
-# see the module docstring on why the discard happens here.
-_DISCARDED_TYPES = frozenset({'furniture'})
+_BLOCK_FURNITURE = 'furniture'
 
 
 def _node_for(node_type: str, content: str | None) -> models.ASTNode:
-    """Create the right ASTNode subclass for one extracted block.
+    """Create an ASTNode from one extracted block.
 
     Args:
         node_type: The type string the LLM emitted.
         content: The block's markdown.
 
     Returns:
-        The node, falling back to a paragraph for an unknown type.
+        The typed AST node.
+
+    Raises:
+        ValueError: If the type string is not a known block type.
     """
-    node_class = _TYPE_MAP.get(node_type, models.ParagraphNode)
-    return node_class(content=content)
+    node_type = node_type.strip().lower()
+    if node_type not in _VALID_TYPES:
+        raise ValueError(f'Unknown block type: {node_type!r}')
+    return models.ASTNode(type=node_type, content=content)
 
 
 class DSPyModel(BaseModel):
@@ -118,7 +124,7 @@ def _partition(
     for block in blocks:
         target = (
             discarded
-            if (block.type or '').strip().lower() in _DISCARDED_TYPES
+            if (block.type or '').strip().lower() == _BLOCK_FURNITURE
             else kept
         )
         target.append(block)

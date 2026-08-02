@@ -168,7 +168,7 @@ class Router(dspy.Module):
                 },
                 result,
             )
-        return bool(result.has_equation), bool(result.has_variable)
+        return result.has_equation, result.has_variable
 
     def forward(
         self,

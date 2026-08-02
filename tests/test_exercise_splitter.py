@@ -16,15 +16,15 @@ class _ScriptedSplitter:
 
 def _nodes():
     return [
-        models.ParagraphNode(
+        models.ASTNode(type='paragraph', 
             content='In Exercises 3-4, compute the determinant.',
             id=0,
             segment_index=0,
         ),
-        models.ListNode(
+        models.ASTNode(type='list', 
             content='3 matrix A\n4 matrix B', id=1, segment_index=0
         ),
-        models.ParagraphNode(content='ordinary prose', id=2, segment_index=0),
+        models.ASTNode(type='paragraph', content='ordinary prose', id=2, segment_index=0),
     ]
 
 
@@ -47,8 +47,8 @@ def test_splits_a_packed_node():
         'ordinary prose',
     ]
     assert all(n.segment_index == 0 for n in out)
-    assert isinstance(out[1], models.ListNode)
-    assert isinstance(out[2], models.ListNode)
+    assert out[1].type == 'list'
+    assert out[2].type == 'list'
 
 
 def test_lead_in_broken_out():

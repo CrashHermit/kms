@@ -135,7 +135,7 @@ async def tag_instructions(
     module: InstructionFinder,
     budget: int = LOOKAHEAD_BUDGET,
 ) -> list[models.ASTNode]:
-    """Stamp every lead-in node as an ``InstructionNode``, in place.
+    """Stamp every lead-in node as an instruction, in place.
 
     Args:
         nodes: The flat node stream.
@@ -143,7 +143,7 @@ async def tag_instructions(
         budget: The per-window soft token budget.
 
     Returns:
-        The same node list, with lead-ins replaced by ``InstructionNode``.
+        The same node list, with lead-ins stamped as ``type='instruction'``.
     """
     module = module
     if not nodes:
@@ -157,7 +157,7 @@ async def tag_instructions(
             [
                 WindowNode(
                     position=position,
-                    type=node.kind,
+                    type=node.type,
                     content=node.content,
                 )
                 for position, node in enumerate(window)
@@ -167,7 +167,8 @@ async def tag_instructions(
             clamped = min(max(position, 0), last_local)
             global_index = cursor + clamped
             original = nodes[global_index]
-            nodes[global_index] = models.InstructionNode(
+            nodes[global_index] = models.ASTNode(
+                type='instruction',
                 content=original.content,
                 id=original.id,
                 segment_index=original.segment_index,
@@ -179,7 +180,7 @@ async def tag_instructions(
             )
         cursor = end
     tagged = [
-        node for node in nodes if isinstance(node, models.InstructionNode)
+        node for node in nodes if node.type == 'instruction'
     ]
     logger.info(
         'instruction finder: %d node(s) -> %d lead-in(s) tagged',

@@ -99,15 +99,17 @@ def source_properties(
 
 
 def node_label(node: models.ASTNode) -> str | None:
-    """The per-type label for a structural node, from its class name.
+    """The per-type label for a structural node, from its type string.
 
     Args:
         node: The structural node.
 
     Returns:
-        The label (e.g. ``Math``), or None if the class carries no suffix.
+        The title-cased label (e.g. ``Math``), or None when the node
+        carries no type.
     """
-    return type(node).__name__.removesuffix('Node')
+    ntype = node.type
+    return ntype.title() if ntype else None
 
 
 def node_properties(node: models.ASTNode, source: str) -> dict:
@@ -128,7 +130,7 @@ def node_properties(node: models.ASTNode, source: str) -> dict:
     props = {
         'uuid': node_uuid(source, node.id),
         'source': source_uuid(source),  # links back to the :Source node
-        'type': node.kind,
+        'type': node.type,
         'content': node.content,
         'index': node.id,
         'segment_index': node.segment_index,

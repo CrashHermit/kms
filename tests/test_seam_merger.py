@@ -16,15 +16,15 @@ def _segment(index, nodes):
 
 
 def _para(content):
-    return models.ParagraphNode(content=content)
+    return models.ASTNode(type='paragraph', content=content)
 
 
 def _ref(content):
-    return models.BibliographicNode(content=content)
+    return models.ASTNode(type='bibliographic', content=content)
 
 
 def _note(content):
-    return models.NoteNode(content=content)
+    return models.ASTNode(type='note', content=content)
 
 
 def _shown(

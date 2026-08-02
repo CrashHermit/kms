@@ -149,7 +149,7 @@ class InstructionDistributor(dspy.Module):
                 result,
             )
         instruction, positions = (
-            (result.instruction or '').strip(),
+            result.instruction.strip(),
             list(result.governed_positions or []),
         )
         logger.debug(
@@ -279,7 +279,7 @@ async def distribute_instructions(
         anything, in document order.
     """
     lead_ins = [
-        node for node in nodes if isinstance(node, models.InstructionNode)
+        node for node in nodes if node.type == 'instruction'
     ]
     if not lead_ins:
         logger.info(
@@ -318,7 +318,7 @@ async def distribute_instructions(
         candidates = [
             candidate
             for candidate in nodes[here + 1 : next_lead]
-            if not isinstance(candidate, models.InstructionNode)
+            if not candidate.type == 'instruction'
         ]
         hub = await _govern_one(node, candidates, module)
         if hub is not None:
@@ -327,7 +327,7 @@ async def distribute_instructions(
     # Remove instruction nodes from the stream. The lead-in's own sentence is
     # not lost with them — it is on its hub, verbatim, stored once.
     cleaned = [
-        node for node in nodes if not isinstance(node, models.InstructionNode)
+        node for node in nodes if node.type != 'instruction'
     ]
     logger.info(
         'instruction distributor: %d lead-in(s) removed, %d hub(s) over %d '

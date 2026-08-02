@@ -261,7 +261,7 @@ class Corrector(dspy.Module):
                 {'page_image': page_image, 'transcription': transcription},
                 result,
             )
-        corrected = result.corrected or ''
+        corrected = result.corrected
         logger.debug(
             'proofread: %d chars in, %d chars out',
             len(transcription),

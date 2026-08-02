@@ -13,8 +13,8 @@ def _segments():
             image_path='p0.png',
             pictures=[],
             nodes=[
-                models.HeaderNode(content='# Ch 1'),
-                models.ParagraphNode(content='intro'),
+                models.ASTNode(type='header', content='# Ch 1'),
+                models.ASTNode(type='paragraph', content='intro'),
             ],
         ),
         models.Segment(
@@ -22,8 +22,8 @@ def _segments():
             image_path='p1.png',
             pictures=[],
             nodes=[
-                models.ParagraphNode(content='body ![1]() fig'),
-                models.ParagraphNode(content='1. solve x'),
+                models.ASTNode(type='paragraph', content='body ![1]() fig'),
+                models.ASTNode(type='paragraph', content='1. solve x'),
             ],
         ),
     ]
@@ -44,7 +44,7 @@ class _AllStatements:
     """Stands in for the LLM: every span is a statement."""
 
     async def acall(self, contents):
-        return [hub_builder.STATEMENT_ROLE]
+        return (True, False)
 
 
 def test_overlay_leaves_each_block_in_the_stream_exactly_once():
@@ -55,14 +55,14 @@ def test_overlay_leaves_each_block_in_the_stream_exactly_once():
     # itself, and the persister wrote it that way. The overlay now travels on
     # its own channel and carries no text.
     nodes = [
-        models.ParagraphNode(content='Theorem 2.1.', id=0, segment_index=0),
-        models.ParagraphNode(
+        models.ASTNode(type='paragraph', content='Theorem 2.1.', id=0, segment_index=0),
+        models.ASTNode(type='paragraph', 
             content='Proof. Let e be ...', id=1, segment_index=0
         ),
-        models.ParagraphNode(
+        models.ASTNode(type='paragraph', 
             content='Hence e is unique.', id=2, segment_index=0
         ),
-        models.ParagraphNode(content='1.23 Compute it.', id=3, segment_index=0),
+        models.ASTNode(type='paragraph', content='1.23 Compute it.', id=3, segment_index=0),
     ]
     # One multi-node group and one single-node group, plus an overlapping span
     # (the component finder is allowed to emit those).

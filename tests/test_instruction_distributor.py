@@ -10,11 +10,11 @@ from kms.ingestion import instruction_distributor
 
 
 def _lead_in(content, node_id):
-    return models.InstructionNode(content=content, id=node_id)
+    return models.ASTNode(type='instruction', content=content, id=node_id)
 
 
 def _exercise(content, node_id):
-    return models.ParagraphNode(content=content, id=node_id)
+    return models.ASTNode(type='paragraph', content=content, id=node_id)
 
 
 class _ScriptedGovernance:
@@ -80,7 +80,7 @@ def test_lead_in_nodes_are_removed_from_the_stream():
     module = _ScriptedGovernance(('one', [0]), ('two', [0]))
     cleaned, instructions = _run(nodes, module)
 
-    assert all(not isinstance(node, models.InstructionNode) for node in cleaned)
+    assert all(not node.type == 'instruction' for node in cleaned)
     assert [node.id for node in cleaned] == [1, 3]
     assert [hub.node_id for hub in instructions] == [0, 2]
     assert [hub.members for hub in instructions] == [[1], [3]]

@@ -306,7 +306,7 @@ class Formatter(dspy.Module):
         result = await self.formatter.acall(markdown=markdown)
         if self._recorder:
             self._recorder.record('formatter', {'markdown': markdown}, result)
-        formatted = result.formatted or ''
+        formatted = result.formatted
         logger.debug(
             'format: %d chars in, %d chars out', len(markdown), len(formatted)
         )

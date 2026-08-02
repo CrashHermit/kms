@@ -4,8 +4,7 @@ Three semantic kinds over a provenance tier. Every mapping module is pure —
 deterministic uuids, property maps, edge pairs — and free of the neo4j driver,
 which is quarantined in ``db``.
 
-- ``db`` — the quarantined async Neo4j driver (connection, config, lifecycle),
-  plus an HTTPS Query-API transport for sandboxes where Bolt is blocked.
+- ``db`` — the quarantined async Neo4j driver (connection, config, lifecycle).
 - ``nodes`` — ``models.ASTNode`` → ``:Node`` (+ its per-type label) and the
   ``:Source`` root. The provenance tier every semantic vertex points back at.
 - ``statements`` — ``models.Statement`` → a bare ``:Statement`` hub.

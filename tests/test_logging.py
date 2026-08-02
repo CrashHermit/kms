@@ -55,7 +55,7 @@ def test_counts_renders_none_values_and_empty_input():
 
 def _nodes(*contents):
     return [
-        models.ParagraphNode(content=text, id=i, segment_index=0)
+        models.ASTNode(type='paragraph', content=text, id=i, segment_index=0)
         for i, text in enumerate(contents)
     ]
 
@@ -94,14 +94,14 @@ class _ScriptedRoles:
         self._roles = list(roles)
 
     async def acall(self, contents):
-        return [self._roles.pop(0)]
+        return self._roles.pop(0)
 
 
 def test_hub_builder_logs_composition(caplog):
     # The counts must be reported — statement, procedure, and both-block
     # counts — for observability.
     node = hub_builder.HubBuilderNode(
-        role_module=_ScriptedRoles(['statement', 'procedure'])
+        role_module=_ScriptedRoles([(True, False), (False, True)])
     )
     with caplog.at_level(logging.INFO, logger='kms.ingestion.hub_builder'):
         out = asyncio.run(
@@ -112,7 +112,7 @@ def test_hub_builder_logs_composition(caplog):
 
 
 def test_hub_builder_logs_zero_derivations(caplog):
-    node = hub_builder.HubBuilderNode(role_module=_ScriptedRoles(['statement']))
+    node = hub_builder.HubBuilderNode(role_module=_ScriptedRoles([(True, False)]))
     with caplog.at_level(logging.INFO, logger='kms.ingestion.hub_builder'):
         asyncio.run(node.run({'nodes': _nodes('a'), 'spans': [[0]]}))
     assert '1 statement(s), 0 procedure(s)' in caplog.text

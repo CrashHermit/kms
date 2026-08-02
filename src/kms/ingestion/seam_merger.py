@@ -248,7 +248,7 @@ class SeamMerger(dspy.Module):
                 },
                 result,
             )
-        return bool(result.is_split)
+        return result.is_split
 
     def forward(
         self,
@@ -380,13 +380,13 @@ def _to_seam_node_dto(node: models.ASTNode | None) -> SeamNodeDTO:
     """
     if node is None:
         return SeamNodeDTO(content=None, types=[])
-    return SeamNodeDTO(content=node.content, types=[node.kind])
+    return SeamNodeDTO(content=node.content, types=[node.type])
 
 
 # Node types that are never one half of a block split across a page break.
 # Both sit outside the body flow — a reference names a work, a note hangs off a
 # marker — so neither continues into its neighbour (see the module docstring).
-_APPARATUS = (models.BibliographicNode, models.NoteNode)
+_APPARATUS = {'bibliographic', 'note'}
 
 
 def _mergeable_indices(nodes: list[models.ASTNode]) -> list[int]:
@@ -405,7 +405,7 @@ def _mergeable_indices(nodes: list[models.ASTNode]) -> list[int]:
     return [
         index
         for index, node in enumerate(nodes)
-        if not isinstance(node, _APPARATUS)
+        if node.type not in _APPARATUS
     ]
 
 

@@ -8,11 +8,11 @@ from kms.ingestion import variable_extractor
 
 
 def _paragraph(content, node_id=0):
-    return models.ParagraphNode(content=content, id=node_id)
+    return models.ASTNode(type='paragraph', content=content, id=node_id)
 
 
 def _math(content, node_id=0):
-    return models.MathNode(content=content, id=node_id)
+    return models.ASTNode(type='math', content=content, id=node_id)
 
 
 # --- extract_equations_and_variables (using scripted modules) --------------
@@ -106,7 +106,7 @@ def test_skips_nodes_without_content():
 
 def test_skips_nodes_without_ids():
     nodes = [
-        models.ParagraphNode(content='no id'),
+        models.ASTNode(type='paragraph', content='no id'),
     ]
     eqs, vars_ = asyncio.run(
         variable_extractor.extract_equations_and_variables(

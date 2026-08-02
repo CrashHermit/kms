@@ -18,7 +18,7 @@ def test_node_uuid_distinguishes_index_and_source():
 
 
 def test_node_properties_maps_kind_content_and_provenance():
-    node = models.MathNode(content='$x^2$', id=3, segment_index=2)
+    node = models.ASTNode(type='math', content='$x^2$', id=3, segment_index=2)
     props = nodes.node_properties(node, 'book.pdf')
     assert props['type'] == 'math'
     assert props['content'] == '$x^2$'
@@ -26,28 +26,28 @@ def test_node_properties_maps_kind_content_and_provenance():
 
 
 def test_node_properties_keep_index_zero():
-    node = models.ParagraphNode(content='text', id=0, segment_index=0)
+    node = models.ASTNode(type='paragraph', content='text', id=0, segment_index=0)
     props = nodes.node_properties(node, 'book.pdf')
     assert props['index'] == 0
 
 
 def test_node_properties_omits_role_field():
-    node = models.ListNode(content='1. do it', id=5, segment_index=1)
+    node = models.ASTNode(type='list', content='1. do it', id=5, segment_index=1)
     assert 'role' not in nodes.node_properties(node, 'book.pdf')
 
 
 def test_node_label_derives_from_class_name():
-    assert nodes.node_label(models.MathNode()) == 'Math'
-    assert nodes.node_label(models.ParagraphNode()) == 'Paragraph'
-    assert nodes.node_label(models.InstructionNode()) == 'Instruction'
+    assert nodes.node_label(models.ASTNode(type='math', )) == 'Math'
+    assert nodes.node_label(models.ASTNode(type='paragraph', )) == 'Paragraph'
+    assert nodes.node_label(models.ASTNode(type='instruction', )) == 'Instruction'
 
 
-def test_node_label_for_base_astnode():
-    assert nodes.node_label(models.ASTNode()) == 'AST'
+def test_node_label_for_typeless_node():
+    assert nodes.node_label(models.ASTNode()) is None
 
 
 def test_node_properties_link_back_to_source():
-    node = models.MathNode(content='$x$', id=3, segment_index=2)
+    node = models.ASTNode(type='math', content='$x$', id=3, segment_index=2)
     assert nodes.node_properties(node, 'book.pdf')[
         'source'
     ] == nodes.source_uuid('book.pdf')

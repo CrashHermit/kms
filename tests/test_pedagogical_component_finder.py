@@ -16,10 +16,10 @@ class _ScriptedFinder:
 
 def _nodes():
     return [
-        models.ParagraphNode(content='intro prose', id=0),
-        models.HeaderNode(content='Example 1', id=1),
-        models.ParagraphNode(content='solve this', id=2),
-        models.ParagraphNode(content='more prose', id=3),
+        models.ASTNode(type='paragraph', content='intro prose', id=0),
+        models.ASTNode(type='header', content='Example 1', id=1),
+        models.ASTNode(type='paragraph', content='solve this', id=2),
+        models.ASTNode(type='paragraph', content='more prose', id=3),
     ]
 
 

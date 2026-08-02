@@ -54,10 +54,10 @@ def test_statement_properties_carry_uuid_and_provenance_only():
 
 def _stream():
     return [
-        models.ParagraphNode(content='prose', id=0),
-        models.ParagraphNode(content='Theorem 2.1.', id=1),
-        models.ParagraphNode(content='Proof. ...', id=2),
-        models.ParagraphNode(content='more prose', id=3),
+        models.ASTNode(type='paragraph', content='prose', id=0),
+        models.ASTNode(type='paragraph', content='Theorem 2.1.', id=1),
+        models.ASTNode(type='paragraph', content='Proof. ...', id=2),
+        models.ASTNode(type='paragraph', content='more prose', id=3),
     ]
 
 

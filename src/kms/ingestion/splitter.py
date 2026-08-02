@@ -211,7 +211,7 @@ async def _gather_decisions(
             [
                 WindowNode(
                     position=position,
-                    type=node.kind,
+                    type=node.type,
                     content=node.content,
                 )
                 for position, node in enumerate(window)
@@ -260,7 +260,8 @@ def _rebuild(
                 body = (item.content or '').strip()
                 content = f'{number} {body}'.strip() if number else body
                 out.append(
-                    type(node)(
+                    models.ASTNode(
+                        type=node.type,
                         content=content,
                         segment_index=node.segment_index,
                     )

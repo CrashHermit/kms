@@ -17,90 +17,17 @@ from typing import Any
 
 @dataclass(slots=True)
 class ASTNode:
-    """Base node in the flat document stream.
+    """One node in the flat document stream.
 
-    Subclassed by structural kind (paragraph, math, code, …).
+    The structural kind is a plain string (``paragraph``, ``math``,
+    ``header``, …) — no subclass hierarchy.  The extractor assigns it
+    and the graph tier reads it back via ``kind``.
     """
 
+    type: str | None = None
     content: str | None = None
     id: int | None = None
     segment_index: int | None = None
-
-    @property
-    def kind(self) -> str:
-        """Lowercase class name — the string the old NodeType enum held."""
-        return type(self).__name__.removesuffix('Node').lower()
-
-
-@dataclass(slots=True)
-class ParagraphNode(ASTNode):
-    """Prose text. Inline math stays in the paragraph."""
-
-
-@dataclass(slots=True)
-class MathNode(ASTNode):
-    """A standalone display-math block."""
-
-
-@dataclass(slots=True)
-class CodeNode(ASTNode):
-    """A fenced code block."""
-
-
-@dataclass(slots=True)
-class ListNode(ASTNode):
-    """A bullet or numbered list, kept whole."""
-
-
-@dataclass(slots=True)
-class TableNode(ASTNode):
-    """A markdown table body (grid rows only)."""
-
-
-@dataclass(slots=True)
-class ImageNode(ASTNode):
-    """An indexed figure placeholder, ``![N]()``."""
-
-
-@dataclass(slots=True)
-class CaptionNode(ASTNode):
-    """A figure caption, table title, note, or label."""
-
-
-@dataclass(slots=True)
-class HeaderNode(ASTNode):
-    """A section, chapter, or block heading."""
-
-
-@dataclass(slots=True)
-class BibliographicNode(ASTNode):
-    """One bibliographic reference to an external work.
-
-    A footnote citation or a single entry in a reference list — a work the
-    document points at rather than something the document says. Content only,
-    like every other structural node; parsing the entry into authors/year/
-    title/venue is a later concern.
-    """
-
-
-@dataclass(slots=True)
-class NoteNode(ASTNode):
-    """One authorial note bound to the body by a reference marker.
-
-    A footnote, endnote, or margin note: printed outside the running text but
-    saying something about the subject, unlike page furniture. Kept in the
-    stream and still eligible for the semantic chain — a footnote that defines
-    a term is a definition wherever it is printed. Its marker survives in
-    ``content``; resolving that marker back to the body node it annotates is a
-    later concern.
-    """
-
-
-@dataclass(slots=True)
-class InstructionNode(ASTNode):
-    """Exercise lead-in, set by the instruction finder."""
-
-    pass
 
 
 # --- Equation & variable binding ---------------------------------------------
