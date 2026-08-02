@@ -100,14 +100,14 @@ class _FakeDriver:
         return _FakeSession(self.queries)
 
 
-def test_persist_instructions_writes_hubs_then_governs_edges(monkeypatch):
+def test_persist_instructions_writes_hubs_then_governs_edges():
     fake = _FakeDriver()
-    monkeypatch.setattr(writer, 'driver', lambda: fake)
-    monkeypatch.setattr(writer, 'database', lambda: 'neo4j')
 
     asyncio.run(
         writer.persist_instructions(
-            [_instruction(node_id=0, members=[1, 2])], 'ea2e.pdf'
+            [_instruction(node_id=0, members=[1, 2])],
+            'ea2e.pdf',
+            session_factory=lambda: fake.session(database='neo4j'),
         )
     )
 
@@ -122,8 +122,13 @@ def test_persist_instructions_writes_hubs_then_governs_edges(monkeypatch):
     assert len(edge_params['pairs']) == 2
 
 
-def test_persist_instructions_is_a_noop_when_empty(monkeypatch):
+def test_persist_instructions_is_a_noop_when_empty():
     fake = _FakeDriver()
-    monkeypatch.setattr(writer, 'driver', lambda: fake)
-    asyncio.run(writer.persist_instructions([], 'ea2e.pdf'))
+    asyncio.run(
+        writer.persist_instructions(
+            [],
+            'ea2e.pdf',
+            session_factory=lambda: fake.session(database='neo4j'),
+        )
+    )
     assert fake.queries == []

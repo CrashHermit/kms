@@ -60,8 +60,10 @@ def test_variable_uuid_unchanged_for_definitional_bindings():
 def test_variable_properties_carry_the_bound_value():
     props = variables.variable_properties(
         models.Variable(
-            symbol='x', meaning='the variable being evaluated',
-            kind='variable', value='6',
+            symbol='x',
+            meaning='the variable being evaluated',
+            kind='variable',
+            value='6',
         ),
         'ea2e.pdf',
         3,

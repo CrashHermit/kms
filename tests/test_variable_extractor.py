@@ -169,7 +169,10 @@ def test_results_stay_in_document_order_when_nodes_run_concurrently():
 
     class _SlowestFirstVariable:
         async def aforward(
-            self, content, content_before=None, content_after=None,
+            self,
+            content,
+            content_before=None,
+            content_after=None,
             equations=None,
         ):
             index = int(content.split()[1].rstrip('.'))
@@ -181,8 +184,9 @@ def test_results_stay_in_document_order_when_nodes_run_concurrently():
             ]
 
     class _AlwaysVariable:
-        async def aforward(self, content, content_before=None,
-                           content_after=None):
+        async def aforward(
+            self, content, content_before=None, content_after=None
+        ):
             return (False, True)
 
     _, vars_ = asyncio.run(
@@ -203,8 +207,9 @@ def test_max_concurrency_bounds_nodes_in_flight():
     peak = 0
 
     class _TrackingRouter:
-        async def aforward(self, content, content_before=None,
-                           content_after=None):
+        async def aforward(
+            self, content, content_before=None, content_after=None
+        ):
             nonlocal live, peak
             live += 1
             peak = max(peak, live)

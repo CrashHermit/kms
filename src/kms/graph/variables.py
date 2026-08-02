@@ -72,9 +72,7 @@ def variable_properties(
         The property map, with None values omitted.
     """
     props = {
-        'uuid': variable_uuid(
-            source, node_id, variable.symbol, variable.value
-        ),
+        'uuid': variable_uuid(source, node_id, variable.symbol, variable.value),
         'source': nodes.source_uuid(source),
         'symbol': variable.symbol,
         'meaning': variable.meaning,

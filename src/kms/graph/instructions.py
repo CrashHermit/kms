@@ -53,9 +53,7 @@ def instruction_uuid(source: str, node_id: int) -> str:
     Returns:
         The instruction's hex uuid, disjoint from every other tier's.
     """
-    return uuid5(
-        NAMESPACE_URL, f'{source}#instruction#{node_id}'
-    ).hex
+    return uuid5(NAMESPACE_URL, f'{source}#instruction#{node_id}').hex
 
 
 def instruction_properties(

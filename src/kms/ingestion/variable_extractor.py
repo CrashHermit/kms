@@ -32,7 +32,7 @@ import logging
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import logs, models, state, walker
+from kms.core import llm, logs, models, state, walker
 from kms.core.recorder import Recorder
 
 logger = logging.getLogger(__name__)
@@ -477,53 +477,46 @@ class VariableExtractor(dspy.Module):
 # ============================================================================
 
 
-async def extract_equations_and_variables(
+async def _extract_one(
     nodes: list[models.ASTNode],
+    position: int,
+    node: models.ASTNode,
     router_module: Router,
     equation_module: EquationExtractor,
     variable_module: VariableExtractor,
-) -> tuple[
-    list[tuple[int, list[models.Equation]]],
-    list[tuple[int, list[models.Variable]]],
-]:
-    """Extract equations and variable bindings from every provenance node.
+    gate: asyncio.Semaphore,
+) -> tuple[int, list[models.Equation], list[models.Variable]]:
+    """Route one node and run the extractors it asks for.
 
-    Walks the raw node stream in document order. For each node with content:
-    the router decides what to extract, then the equation and/or variable
-    modules run as needed. Context windows are built from the surrounding
-    nodes via ``walker.content_before`` / ``walker.content_after``. The
-    equation output feeds into the variable extractor as additional context.
+    The three calls are a dependency chain — the router decides which of the
+    other two run, and the equation output feeds the variable extractor's
+    context — so within a node they stay sequential. The whole chain sits
+    inside the semaphore, which therefore bounds nodes in flight rather than
+    raw requests; that is the useful unit, since a node issues at most one
+    call at a time.
 
     Args:
-        nodes: The flat node stream.
+        nodes: The flat node stream, read-only — the context windows are cut
+            from it.
+        position: The focus node's index in *nodes*.
+        node: The focus node.
         router_module: The router.
         equation_module: The equation extractor.
         variable_module: The variable extractor.
+        gate: The stage's concurrency limiter.
 
     Returns:
-        The ``(equations, variables)`` pair — each a list of
-        ``(node_id, [result])`` entries.
+        ``(node_id, equations, variables)`` — either list may be empty.
     """
-    router_module = router_module
-    equation_module = equation_module
-    variable_module = variable_module
+    content = node.content
+    content_before = walker.content_before(
+        nodes, position, budget=DEFAULT_BACKWARD_BUDGET
+    )
+    content_after = walker.content_after(
+        nodes, position, budget=DEFAULT_FORWARD_BUDGET
+    )
 
-    equations_result: list[tuple[int, list[models.Equation]]] = []
-    variables_result: list[tuple[int, list[models.Variable]]] = []
-
-    for position, node in enumerate(nodes):
-        node_id = node.id
-        content = node.content
-        if node_id is None or not content or not content.strip():
-            continue
-
-        content_before = walker.content_before(
-            nodes, position, budget=DEFAULT_BACKWARD_BUDGET
-        )
-        content_after = walker.content_after(
-            nodes, position, budget=DEFAULT_FORWARD_BUDGET
-        )
-
+    async with gate:
         has_equation, has_variable = await router_module.aforward(
             content=content,
             content_before=content_before,
@@ -537,9 +530,8 @@ async def extract_equations_and_variables(
                 content_before=content_before,
                 content_after=content_after,
             )
-            if node_equations:
-                equations_result.append((node_id, node_equations))
 
+        node_variables: list[models.Variable] = []
         if has_variable:
             node_variables = await variable_module.aforward(
                 content=content,
@@ -547,11 +539,80 @@ async def extract_equations_and_variables(
                 content_after=content_after,
                 equations=node_equations or None,
             )
-            if node_variables:
-                variables_result.append((node_id, node_variables))
+
+    return node.id, node_equations, node_variables
+
+
+async def extract_equations_and_variables(
+    nodes: list[models.ASTNode],
+    router_module: Router,
+    equation_module: EquationExtractor,
+    variable_module: VariableExtractor,
+    max_concurrency: int | None = None,
+) -> tuple[
+    list[tuple[int, list[models.Equation]]],
+    list[tuple[int, list[models.Variable]]],
+]:
+    """Extract equations and variable bindings from every provenance node.
+
+    Every node with content is dispatched concurrently: the router decides
+    what to extract, then the equation and/or variable modules run as needed.
+    Context windows are built from the surrounding nodes via
+    ``walker.content_before`` / ``walker.content_after``. The equation output
+    feeds into the variable extractor as additional context.
+
+    Concurrency is safe here because the stage is a pure reader of *nodes*:
+    the windows are cut from the stream but nothing writes back to it, so
+    every unit sees the same context it would have seen running serially.
+    Results are collected in document order — ``asyncio.gather`` preserves
+    argument order — so the output is identical to a serial walk.
+
+    Args:
+        nodes: The flat node stream.
+        router_module: The router.
+        equation_module: The equation extractor.
+        variable_module: The variable extractor.
+        max_concurrency: Nodes in flight at once. None uses
+            ``llm.MAX_CONCURRENT_CALLS``.
+
+    Returns:
+        The ``(equations, variables)`` pair — each a list of
+        ``(node_id, [result])`` entries, in document order.
+    """
+    equations_result: list[tuple[int, list[models.Equation]]] = []
+    variables_result: list[tuple[int, list[models.Variable]]] = []
+
+    eligible = [
+        (position, node)
+        for position, node in enumerate(nodes)
+        if node.id is not None and node.content and node.content.strip()
+    ]
+
+    gate = llm.gate(max_concurrency)
+    extracted = await asyncio.gather(
+        *(
+            _extract_one(
+                nodes,
+                position,
+                node,
+                router_module,
+                equation_module,
+                variable_module,
+                gate,
+            )
+            for position, node in eligible
+        )
+    )
+
+    for node_id, node_equations, node_variables in extracted:
+        if node_equations:
+            equations_result.append((node_id, node_equations))
+        if node_variables:
+            variables_result.append((node_id, node_variables))
 
     logger.info(
-        'equations & variables: %d node(s) -> %d equation(s), %d variable binding(s) total',
+        'equations & variables: %d node(s) -> %d equation(s), '
+        '%d variable binding(s) total',
         len(nodes),
         sum(len(eqs) for _, eqs in equations_result),
         sum(len(bindings) for _, bindings in variables_result),

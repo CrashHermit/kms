@@ -254,7 +254,10 @@ async def persist_statements(
 
 
 async def persist_instructions(
-    instructions: list[models.Instruction], source: str
+    instructions: list[models.Instruction],
+    source: str,
+    *,
+    session_factory: Callable,
 ) -> None:
     """Upsert the ``:Instruction`` hubs and their ``:GOVERNS`` edges.
 
@@ -262,13 +265,19 @@ async def persist_instructions(
     exercise node it governs. The edge runs from the hub outward: governance
     is a claim the instruction makes about those nodes, not a grouping they
     belong to, so an exercise keeps its statement membership untouched.
+
+    Args:
+        instructions: The instruction hubs.
+        source: The stable book identity.
+        session_factory: A callable that returns an async context manager
+            with a ``run(query, **params)`` method.
     """
     if not instructions:
         return
     rows = instruction_rows(instructions, source)
     pairs = governs_pairs(instructions, source)
 
-    async with driver().session(database=database()) as session:
+    async with session_factory() as session:
         await session.run(
             f'UNWIND $rows AS row '
             f'MERGE (i:{INSTRUCTION_LABEL} {{uuid: row.uuid}}) '

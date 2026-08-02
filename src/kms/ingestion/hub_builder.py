@@ -424,13 +424,9 @@ async def build_hubs(
     async def _type_one(span: list[int]) -> list[str]:
         """Classify one span's roles under the stage's concurrency cap."""
         async with gate:
-            return await role_module.acall(
-                _contents_of(span, nodes_by_id)
-            )
+            return await role_module.acall(_contents_of(span, nodes_by_id))
 
-    roles_by_span = await asyncio.gather(
-        *(_type_one(span) for span in spans)
-    )
+    roles_by_span = await asyncio.gather(*(_type_one(span) for span in spans))
 
     statements: list[models.Statement] = []
     procedures: list[models.Procedure] = []
