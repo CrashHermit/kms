@@ -112,7 +112,9 @@ def test_hub_builder_logs_composition(caplog):
 
 
 def test_hub_builder_logs_zero_derivations(caplog):
-    node = hub_builder.HubBuilderNode(role_module=_ScriptedRoles([(True, False)]))
+    node = hub_builder.HubBuilderNode(
+        role_module=_ScriptedRoles([(True, False)])
+    )
     with caplog.at_level(logging.INFO, logger='kms.ingestion.hub_builder'):
         asyncio.run(node.run({'nodes': _nodes('a'), 'spans': [[0]]}))
     assert '1 statement(s), 0 procedure(s)' in caplog.text

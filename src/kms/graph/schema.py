@@ -16,6 +16,7 @@ from collections.abc import Callable
 
 from kms.graph import (
     equations,
+    facts,
     instructions,
     nodes,
     procedures,
@@ -43,10 +44,14 @@ def schema_statements() -> list[str]:
         f'FOR (e:{equations.EQUATION_LABEL}) REQUIRE e.uuid IS UNIQUE',
         f'CREATE CONSTRAINT instruction_uuid IF NOT EXISTS '
         f'FOR (i:{instructions.INSTRUCTION_LABEL}) REQUIRE i.uuid IS UNIQUE',
+        f'CREATE CONSTRAINT fact_uuid IF NOT EXISTS '
+        f'FOR (f:{facts.FACT_LABEL}) REQUIRE f.uuid IS UNIQUE',
         f'CREATE INDEX node_source IF NOT EXISTS '
         f'FOR (n:{nodes.NODE_LABEL}) ON (n.source)',
         f'CREATE INDEX statement_source IF NOT EXISTS '
         f'FOR (s:{statements.STATEMENT_LABEL}) ON (s.source)',
+        f'CREATE INDEX fact_source IF NOT EXISTS '
+        f'FOR (f:{facts.FACT_LABEL}) ON (f.source)',
     ]
 
 

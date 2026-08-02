@@ -26,20 +26,45 @@ def test_node_properties_maps_kind_content_and_provenance():
 
 
 def test_node_properties_keep_index_zero():
-    node = models.ASTNode(type='paragraph', content='text', id=0, segment_index=0)
+    node = models.ASTNode(
+        type='paragraph', content='text', id=0, segment_index=0
+    )
     props = nodes.node_properties(node, 'book.pdf')
     assert props['index'] == 0
 
 
 def test_node_properties_omits_role_field():
-    node = models.ASTNode(type='list', content='1. do it', id=5, segment_index=1)
+    node = models.ASTNode(
+        type='list', content='1. do it', id=5, segment_index=1
+    )
     assert 'role' not in nodes.node_properties(node, 'book.pdf')
 
 
 def test_node_label_derives_from_class_name():
-    assert nodes.node_label(models.ASTNode(type='math', )) == 'Math'
-    assert nodes.node_label(models.ASTNode(type='paragraph', )) == 'Paragraph'
-    assert nodes.node_label(models.ASTNode(type='instruction', )) == 'Instruction'
+    assert (
+        nodes.node_label(
+            models.ASTNode(
+                type='math',
+            )
+        )
+        == 'Math'
+    )
+    assert (
+        nodes.node_label(
+            models.ASTNode(
+                type='paragraph',
+            )
+        )
+        == 'Paragraph'
+    )
+    assert (
+        nodes.node_label(
+            models.ASTNode(
+                type='instruction',
+            )
+        )
+        == 'Instruction'
+    )
 
 
 def test_node_label_for_typeless_node():

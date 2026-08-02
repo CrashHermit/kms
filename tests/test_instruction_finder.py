@@ -16,7 +16,8 @@ class _ScriptedFinder:
 
 def _nodes():
     return [
-        models.ASTNode(type='paragraph', 
+        models.ASTNode(
+            type='paragraph',
             content='In the following exercises, simplify.',
             id=0,
         ),

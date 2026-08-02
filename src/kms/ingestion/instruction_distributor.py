@@ -278,9 +278,7 @@ async def distribute_instructions(
         untouched — and one ``Instruction`` hub per lead-in that governs
         anything, in document order.
     """
-    lead_ins = [
-        node for node in nodes if node.type == 'instruction'
-    ]
+    lead_ins = [node for node in nodes if node.type == 'instruction']
     if not lead_ins:
         logger.info(
             'instruction distributor: no-op (0 lead-in(s), %d node(s))',
@@ -326,9 +324,7 @@ async def distribute_instructions(
 
     # Remove instruction nodes from the stream. The lead-in's own sentence is
     # not lost with them — it is on its hub, verbatim, stored once.
-    cleaned = [
-        node for node in nodes if node.type != 'instruction'
-    ]
+    cleaned = [node for node in nodes if node.type != 'instruction']
     logger.info(
         'instruction distributor: %d lead-in(s) removed, %d hub(s) over %d '
         'governed node(s), %d of %d node(s) remain',

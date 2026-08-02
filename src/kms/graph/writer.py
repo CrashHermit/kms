@@ -39,6 +39,11 @@ from kms.graph.equations import (
     equation_pairs,
     equation_rows,
 )
+from kms.graph.facts import (
+    FACT_LABEL,
+    evidence_pairs,
+    fact_rows,
+)
 from kms.graph.instructions import (
     INSTRUCTION_LABEL,
     governs_pairs,
@@ -444,5 +449,46 @@ async def persist_equations(
                 f'MATCH (n:{NODE_LABEL} {{uuid: pair.node}}), '
                 f'(e:{EQUATION_LABEL} {{uuid: pair.equation}}) '
                 f'MERGE (n)-[:HAS_EQUATION]->(e)',
+                pairs=pairs,
+            )
+
+
+async def persist_facts(
+    facts: list[models.AtomicFact],
+    source: str,
+    *,
+    session_factory: Callable,
+) -> None:
+    """Upsert the ``:Fact`` nodes and their ``:EVIDENCE_FOR`` edges.
+
+    One ``:Fact`` per atomic fact, carrying its text and — when computed —
+    its embedding vector. Each provenance node the fact draws on points at
+    it via ``:EVIDENCE_FOR``, the same raw-material → construct anchor the
+    statement and procedure tiers use.
+
+    Args:
+        facts: The atomic facts, in document order, with embeddings filled.
+        source: The stable book identity.
+        session_factory: A callable that returns an async context manager
+            with a ``run(query, **params)`` method.
+    """
+    fact_batch = fact_rows(facts, source)
+    if not fact_batch:
+        return
+    pairs = evidence_pairs(facts, source)
+
+    async with session_factory() as session:
+        await session.run(
+            f'UNWIND $rows AS row '
+            f'MERGE (f:{FACT_LABEL} {{uuid: row.uuid}}) '
+            f'SET f += row',
+            rows=fact_batch,
+        )
+        if pairs:
+            await session.run(
+                f'UNWIND $pairs AS pair '
+                f'MATCH (n:{NODE_LABEL} {{uuid: pair.node}}), '
+                f'(f:{FACT_LABEL} {{uuid: pair.fact}}) '
+                f'MERGE (n)-[:EVIDENCE_FOR]->(f)',
                 pairs=pairs,
             )

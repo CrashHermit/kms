@@ -403,9 +403,7 @@ def _mergeable_indices(nodes: list[models.ASTNode]) -> list[int]:
         The indices of the mergeable nodes.
     """
     return [
-        index
-        for index, node in enumerate(nodes)
-        if node.type not in _APPARATUS
+        index for index, node in enumerate(nodes) if node.type not in _APPARATUS
     ]
 
 

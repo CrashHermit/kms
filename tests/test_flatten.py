@@ -55,14 +55,24 @@ def test_overlay_leaves_each_block_in_the_stream_exactly_once():
     # itself, and the persister wrote it that way. The overlay now travels on
     # its own channel and carries no text.
     nodes = [
-        models.ASTNode(type='paragraph', content='Theorem 2.1.', id=0, segment_index=0),
-        models.ASTNode(type='paragraph', 
-            content='Proof. Let e be ...', id=1, segment_index=0
+        models.ASTNode(
+            type='paragraph', content='Theorem 2.1.', id=0, segment_index=0
         ),
-        models.ASTNode(type='paragraph', 
-            content='Hence e is unique.', id=2, segment_index=0
+        models.ASTNode(
+            type='paragraph',
+            content='Proof. Let e be ...',
+            id=1,
+            segment_index=0,
         ),
-        models.ASTNode(type='paragraph', content='1.23 Compute it.', id=3, segment_index=0),
+        models.ASTNode(
+            type='paragraph',
+            content='Hence e is unique.',
+            id=2,
+            segment_index=0,
+        ),
+        models.ASTNode(
+            type='paragraph', content='1.23 Compute it.', id=3, segment_index=0
+        ),
     ]
     # One multi-node group and one single-node group, plus an overlapping span
     # (the component finder is allowed to emit those).

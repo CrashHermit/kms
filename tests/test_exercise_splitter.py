@@ -16,15 +16,18 @@ class _ScriptedSplitter:
 
 def _nodes():
     return [
-        models.ASTNode(type='paragraph', 
+        models.ASTNode(
+            type='paragraph',
             content='In Exercises 3-4, compute the determinant.',
             id=0,
             segment_index=0,
         ),
-        models.ASTNode(type='list', 
-            content='3 matrix A\n4 matrix B', id=1, segment_index=0
+        models.ASTNode(
+            type='list', content='3 matrix A\n4 matrix B', id=1, segment_index=0
         ),
-        models.ASTNode(type='paragraph', content='ordinary prose', id=2, segment_index=0),
+        models.ASTNode(
+            type='paragraph', content='ordinary prose', id=2, segment_index=0
+        ),
     ]
 
 

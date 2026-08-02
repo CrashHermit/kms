@@ -5,7 +5,8 @@ Stage order:
     corrector -> formatter -> extractor -> seam_merger (even, odd) -> splitter
               -> instruction_finder -> instruction_distributor
               -> pedagogical_component_finder -> hub_builder
-              -> equation_variable -> ingestion_persister
+              -> equation_variable -> atomic_facts -> fact_embedding
+              -> ingestion_persister
 
 Two phases. Ingestion is per-page map-reduce: the corrector proofreads each
 page's transcription against its image, the formatter standardises markup, the
@@ -18,7 +19,10 @@ One semantic chain follows. The pedagogical component finder cuts the stream
 into untyped spans; the hub builder classifies each span's roles and partitions
 both-blocks in one pass (router + gated partitioners). The equation/variable
 node extracts equations and variable bindings per provenance node, feeding
-equations as context into the variable extractor.
+equations as context into the variable extractor. The atomic fact pass then
+decomposes the final node stream into atomic facts for the downstream concept
+and relation passes, and the fact embedding stage enriches them with vectors
+in one batched pass.
 
 The ingestion persister writes everything: a ``:Source`` root, its ``:Node``
 provenance chain, ``:Statement`` and ``:Procedure`` hubs hung off member nodes
@@ -36,12 +40,14 @@ from typing import TYPE_CHECKING
 import dspy
 from langgraph.graph import END, START, StateGraph
 
-from kms.core import llm, state
+from kms.core import embeddings, llm, state
 from kms.core.recorder import Recorder
 from kms.graph import db, persister
 from kms.ingestion import (
+    atomic_fact_extractor,
     corrector,
     extractor,
+    fact_embedder,
     formatter,
     hub_builder,
     instruction_distributor,
@@ -155,6 +161,10 @@ def build_graph(
         language_model=text_language_model,
         recorder=recorder,
     )
+    atomic_fact_module = atomic_fact_extractor.AtomicFactExtractor(
+        language_model=text_language_model,
+        recorder=recorder,
+    )
 
     # --- LangGraph nodes ---
     corrector_node = corrector.CorrectorNode(module=corrector_module)
@@ -186,6 +196,13 @@ def build_graph(
         equation_module=equation_module,
         variable_module=variable_module,
     )
+    atomic_fact_node = atomic_fact_extractor.AtomicFactNode(
+        module=atomic_fact_module
+    )
+    fact_embedder_node = fact_embedder.FactEmbedderNode(
+        embedder=embeddings.embedder(),
+        embedding_configured=embeddings.is_configured(),
+    )
     instruction_distributor_node = (
         instruction_distributor.InstructionDistributorNode(
             module=instruction_distributor_module
@@ -215,6 +232,8 @@ def build_graph(
     graph.add_node('pedagogical_component_finder', component_finder_node.run)
     graph.add_node('hub_builder', hub_builder_node.run)
     graph.add_node('equation_variable', equation_variable_node.run)
+    graph.add_node('atomic_facts', atomic_fact_node.run)
+    graph.add_node('fact_embedding', fact_embedder_node.run)
 
     # A stage's dispatch is a conditional edge off the previous collect: it
     # either fans out Sends to the worker or short-circuits straight to its own
@@ -271,7 +290,9 @@ def build_graph(
     graph.add_edge('instruction_distributor', 'pedagogical_component_finder')
     graph.add_edge('pedagogical_component_finder', 'hub_builder')
     graph.add_edge('hub_builder', 'equation_variable')
-    graph.add_edge('equation_variable', 'ingestion_persister')
+    graph.add_edge('equation_variable', 'atomic_facts')
+    graph.add_edge('atomic_facts', 'fact_embedding')
+    graph.add_edge('fact_embedding', 'ingestion_persister')
     graph.add_edge('ingestion_persister', END)
 
     return graph.compile()
@@ -290,7 +311,8 @@ async def run(
     The Mistral OCR API turns each page into reading-ordered markdown plus
     extracted figures (no GPU, no docling); the graph then corrects, parses,
     heals, builds the statement overlay, extracts equations and variable
-    bindings, and (when Neo4j is configured) persists the ``:Node`` provenance
+    bindings and atomic facts, embeds the facts, and (when Neo4j is
+    configured) persists the ``:Node`` provenance
     layer, the ``:Statement`` overlay, and the procedural, equation and
     variable layers on top of it. Graph persistence is skipped entirely
     when Neo4j isn't configured — a DB-less run still returns the assembled
@@ -360,3 +382,4 @@ async def run(
         )
     finally:
         await db.close_driver()
+        await embeddings.embedder().aclose()

@@ -179,9 +179,7 @@ async def tag_instructions(
                 logs.elide(nodes[global_index].content),
             )
         cursor = end
-    tagged = [
-        node for node in nodes if node.type == 'instruction'
-    ]
+    tagged = [node for node in nodes if node.type == 'instruction']
     logger.info(
         'instruction finder: %d node(s) -> %d lead-in(s) tagged',
         node_count,

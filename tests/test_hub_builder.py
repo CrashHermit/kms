@@ -38,7 +38,9 @@ def test_creates_a_hub_per_role():
 
 def test_a_both_block_creates_both_independent_hubs():
     nodes = [
-        models.ASTNode(type='paragraph', content='Example 4.2. Compute ...', id=0),
+        models.ASTNode(
+            type='paragraph', content='Example 4.2. Compute ...', id=0
+        ),
         models.ASTNode(type='paragraph', content='The value is 4.', id=1),
     ]
     by_id = {node.id: node for node in nodes}
@@ -118,7 +120,10 @@ def test_node_run_on_an_empty_spans_channel_is_a_noop():
     node = hub_builder.HubBuilderNode(role_module=_ScriptedRoles([]))
     out = asyncio.run(
         node.run(
-            {'nodes': [models.ASTNode(type='paragraph', content='x', id=0)], 'spans': []}
+            {
+                'nodes': [models.ASTNode(type='paragraph', content='x', id=0)],
+                'spans': [],
+            }
         )
     )
     assert out['statements'] == []
@@ -138,9 +143,13 @@ class _ScriptedPositions:
 
 def _nodes():
     return {
-        0: models.ASTNode(type='paragraph', content='Example 4.2. Compute ...', id=0),
+        0: models.ASTNode(
+            type='paragraph', content='Example 4.2. Compute ...', id=0
+        ),
         1: models.ASTNode(type='paragraph', content='Integrate ...', id=1),
-        2: models.ASTNode(type='paragraph', content='Hence the value is 4.', id=2),
+        2: models.ASTNode(
+            type='paragraph', content='Hence the value is 4.', id=2
+        ),
     }
 
 

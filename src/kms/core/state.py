@@ -75,6 +75,9 @@ class State(TypedDict, total=False):
     equations: Annotated[
         list[tuple[int, list[models.Equation]]], operator.add
     ]  # (node_id, equations) extracted per node
+    atomic_facts: list[
+        models.AtomicFact
+    ]  # atomic facts from the final node stream, document order
     correction_results: Annotated[
         list[tuple[int, str]], operator.add
     ]  # (segment index, corrected markdown)

@@ -53,15 +53,9 @@ def test_persist_nodes_upserts_labels_and_next_chain():
 
     source = 'integration-test-book'
     stream = [
-        models.ASTNode(
-            type='header', content='§1', id=0, segment_index=0
-        ),
-        models.ASTNode(
-            type='paragraph', content='a', id=1, segment_index=0
-        ),
-        models.ASTNode(
-            type='math', content='$x$', id=2, segment_index=0
-        ),
+        models.ASTNode(type='header', content='§1', id=0, segment_index=0),
+        models.ASTNode(type='paragraph', content='a', id=1, segment_index=0),
+        models.ASTNode(type='math', content='$x$', id=2, segment_index=0),
     ]
 
     async def one(session, query):

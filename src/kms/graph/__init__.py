@@ -18,6 +18,9 @@ which is quarantined in ``db``.
   or ``:Equation`` via ``:HAS_VARIABLE``; hubs inherit through
   ``:MEMBER_OF``.
 - ``schema`` — idempotent constraint/index bootstrap for every label.
+- ``queries`` — the read side of the I/O layer: named, parameterised
+  lookbacks (existing concepts for dedup, distinct relation types for the
+  living schema) returning plain data over the injected session factory.
 - ``writer`` — the I/O half: ``persist_nodes`` / ``persist_statements`` /
   ``persist_procedures``, each batched and idempotent.
 - ``persister`` — ``IngestionPersisterNode``, the terminal stage that persists
