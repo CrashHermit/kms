@@ -31,7 +31,8 @@ import logging
 import dspy
 from pydantic import BaseModel
 
-from kms.core import llm, logs, models, recorder, state, walker
+from kms.core import logs, models, state, walker
+from kms.core.recorder import Recorder
 
 logger = logging.getLogger(__name__)
 
@@ -89,13 +90,16 @@ class InstructionFinder(dspy.Module):
     """Tags exercise lead-in nodes' type to ``NodeType.INSTRUCTION``.
 
     Args:
-        language_model: The LM to run on. Defaults to ``llm.text_lm()``.
+        language_model: The LM to run on.
     """
 
-    def __init__(self, language_model: dspy.LM | None = None) -> None:
+    def __init__(
+        self, language_model: dspy.LM, recorder: Recorder | None = None
+    ) -> None:
         super().__init__()
         self.finder = dspy.ChainOfThought(Signature)
-        self.set_lm(language_model or llm.text_lm())
+        self.set_lm(language_model)
+        self._recorder = recorder
 
     async def aforward(self, current_nodes: list[WindowNode]) -> list[int]:
         """Judge one window.
@@ -107,9 +111,12 @@ class InstructionFinder(dspy.Module):
             The window-local positions of the lead-in nodes.
         """
         result = await self.finder.acall(current_nodes=current_nodes)
-        recorder.record_example(
-            'instruction_finder', {'current_nodes': current_nodes}, result
-        )
+        if self._recorder:
+            self._recorder.record(
+                'instruction_finder',
+                {'current_nodes': current_nodes},
+                result,
+            )
         positions = list(result.instruction_positions or [])
         logger.debug(
             'tag: %d nodes in, lead-in position(s) %s',
@@ -125,20 +132,20 @@ class InstructionFinder(dspy.Module):
 
 async def tag_instructions(
     nodes: list[models.ASTNode],
-    module: InstructionFinder | None = None,
+    module: InstructionFinder,
     budget: int = LOOKAHEAD_BUDGET,
 ) -> list[models.ASTNode]:
     """Stamp every lead-in node as an ``InstructionNode``, in place.
 
     Args:
         nodes: The flat node stream.
-        module: The finder module. Created fresh if None.
+        module: The finder module.
         budget: The per-window soft token budget.
 
     Returns:
         The same node list, with lead-ins replaced by ``InstructionNode``.
     """
-    module = module or InstructionFinder()
+    module = module
     if not nodes:
         return nodes
     cursor, node_count = 0, len(nodes)
@@ -191,11 +198,11 @@ class InstructionFinderNode:
     Runs after the splitter and before the node persister.
 
     Args:
-        module: The finder module. Created fresh if None.
+        module: The finder module.
     """
 
-    def __init__(self, module: InstructionFinder | None = None) -> None:
-        self.module = module or InstructionFinder()
+    def __init__(self, module: InstructionFinder) -> None:
+        self.module = module
 
     async def run(self, state: state.State) -> dict:
         """Tag every exercise lead-in node.

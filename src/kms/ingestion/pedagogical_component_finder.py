@@ -64,7 +64,8 @@ import logging
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import llm, logs, models, recorder, state, walker
+from kms.core import logs, models, state, walker
+from kms.core.recorder import Recorder
 
 logger = logging.getLogger(__name__)
 
@@ -208,13 +209,16 @@ class PedagogicalComponentFinder(dspy.Module):
     """Finds the pedagogical units' span boundaries in the node stream.
 
     Args:
-        language_model: The LM to run on. Defaults to ``llm.text_lm()``.
+        language_model: The LM to run on.
     """
 
-    def __init__(self, language_model: dspy.LM | None = None) -> None:
+    def __init__(
+        self, language_model: dspy.LM, recorder: Recorder | None = None
+    ) -> None:
         super().__init__()
         self.finder = dspy.ChainOfThought(Signature)
-        self.set_lm(language_model or llm.text_lm())
+        self.set_lm(language_model)
+        self._recorder = recorder
 
     async def aforward(self, current_nodes: list[WindowNode]) -> list[Span]:
         """Judge one window.
@@ -226,11 +230,12 @@ class PedagogicalComponentFinder(dspy.Module):
             The spans found in the window, as local position ranges.
         """
         result = await self.finder.acall(current_nodes=current_nodes)
-        recorder.record_example(
-            'pedagogical_component_finder',
-            {'current_nodes': current_nodes},
-            result,
-        )
+        if self._recorder:
+            self._recorder.record(
+                'pedagogical_component_finder',
+                {'current_nodes': current_nodes},
+                result,
+            )
         spans = list(result.spans or [])
         logger.debug(
             'find: %d nodes in, %d span(s) out | first node %r',
@@ -267,7 +272,7 @@ def _normalize_spans(spans: list[Span], last_local: int) -> list[Span]:
 
 async def find_spans(
     nodes: list[models.ASTNode],
-    module: PedagogicalComponentFinder | None = None,
+    module: PedagogicalComponentFinder,
     budget: int = LOOKAHEAD_BUDGET,
     max_budget: int = MAX_LOOKAHEAD_BUDGET,
 ) -> list[list[int]]:
@@ -284,7 +289,7 @@ async def find_spans(
 
     Args:
         nodes: The flat, document-ordered node stream.
-        module: The finder module. Created fresh if None.
+        module: The finder module.
         budget: Soft token budget for the initial look-ahead window.
         max_budget: Cap past which a growing window is banked as-is.
 
@@ -293,7 +298,7 @@ async def find_spans(
         whether a span is a block or the derivation that resolves one is
         decided by ``role_typer``.
     """
-    module = module or PedagogicalComponentFinder()
+    module = module
     spans_out: list[list[int]] = []
     cursor, node_count = 0, len(nodes)
 
@@ -386,13 +391,11 @@ class PedagogicalComponentFinderNode:
     dispatch/worker/collect shape the parallel stages use.
 
     Args:
-        module: The finder module. Created fresh if None.
+        module: The finder module.
     """
 
-    def __init__(
-        self, module: PedagogicalComponentFinder | None = None
-    ) -> None:
-        self.module = module or PedagogicalComponentFinder()
+    def __init__(self, module: PedagogicalComponentFinder) -> None:
+        self.module = module
 
     async def run(self, state: state.State) -> dict:
         """Walk the node stream and write the untyped spans.

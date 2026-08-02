@@ -23,10 +23,13 @@ def _channel():
     # (node_id, [Variable]) pairs: two variables on node 1 (one free, one
     # bound to equation 0), one on node 2, none on node 3.
     return [
-        (1, [
-            _variable(symbol='x'),
-            _variable(symbol='E', equation_index=0),
-        ]),
+        (
+            1,
+            [
+                _variable(symbol='x'),
+                _variable(symbol='E', equation_index=0),
+            ],
+        ),
         (2, [_variable(symbol='y')]),
     ]
 
@@ -98,9 +101,7 @@ def test_variable_properties_carry_symbol_and_provenance():
         'book.pdf',
         4,
     )
-    assert props['uuid'] == variables.variable_uuid(
-        'book.pdf', 4, 'alpha'
-    )
+    assert props['uuid'] == variables.variable_uuid('book.pdf', 4, 'alpha')
     assert props['source'] == nodes.source_uuid('book.pdf')
     assert props['symbol'] == 'alpha'
     assert props['meaning'] == 'learning rate'
@@ -153,12 +154,16 @@ class _FakeDriver:
         return _FakeSession(self.log)
 
 
-def test_persist_variables_writes_node_and_equation_edges(monkeypatch):
+def test_persist_variables_writes_node_and_equation_edges():
     driver = _FakeDriver()
-    monkeypatch.setattr(writer, 'driver', lambda: driver)
-    monkeypatch.setattr(writer, 'database', lambda: 'neo4j')
 
-    asyncio.run(writer.persist_variables(_channel(), 'book.pdf'))
+    asyncio.run(
+        writer.persist_variables(
+            _channel(),
+            'book.pdf',
+            session_factory=lambda: driver.session(database='neo4j'),
+        )
+    )
 
     queries = [query for query, _ in driver.log]
     # Free variables hang off :Node.

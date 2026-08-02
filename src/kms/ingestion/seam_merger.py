@@ -51,7 +51,8 @@ import dspy
 from langgraph.types import Send
 from pydantic import BaseModel
 
-from kms.core import llm, logs, models, recorder, state
+from kms.core import logs, models, state
+from kms.core.recorder import Recorder
 
 logger = logging.getLogger(__name__)
 
@@ -201,13 +202,16 @@ class SeamMerger(dspy.Module):
     """Decides whether two adjacent edge nodes are halves of one block.
 
     Args:
-        language_model: The LM to run on. Defaults to ``llm.text_lm()``.
+        language_model: The LM to run on.
     """
 
-    def __init__(self, language_model: dspy.LM | None = None) -> None:
+    def __init__(
+        self, language_model: dspy.LM, recorder: Recorder | None = None
+    ) -> None:
         super().__init__()
         self.merger = dspy.ChainOfThought(Signature)
-        self.set_lm(language_model or llm.text_lm())
+        self.set_lm(language_model)
+        self._recorder = recorder
 
     async def aforward(
         self,
@@ -233,16 +237,17 @@ class SeamMerger(dspy.Module):
             bottom_top_edge_node=bottom_top_edge_node,
             bottom_node_context=bottom_node_context,
         )
-        recorder.record_example(
-            'seam_merger',
-            {
-                'top_bottom_edge_node': top_bottom_edge_node,
-                'bottom_top_edge_node': bottom_top_edge_node,
-                'top_node_context': top_node_context,
-                'bottom_node_context': bottom_node_context,
-            },
-            result,
-        )
+        if self._recorder:
+            self._recorder.record(
+                'seam_merger',
+                {
+                    'top_bottom_edge_node': top_bottom_edge_node,
+                    'bottom_top_edge_node': bottom_top_edge_node,
+                    'top_node_context': top_node_context,
+                    'bottom_node_context': bottom_node_context,
+                },
+                result,
+            )
         return bool(result.is_split)
 
     def forward(
@@ -280,13 +285,16 @@ class SeamRewriter(dspy.Module):
     stage would leave the odd pass judging against half-healed pages.
 
     Args:
-        language_model: The LM to run on. Defaults to ``llm.text_lm()``.
+        language_model: The LM to run on.
     """
 
-    def __init__(self, language_model: dspy.LM | None = None) -> None:
+    def __init__(
+        self, language_model: dspy.LM, recorder: Recorder | None = None
+    ) -> None:
         super().__init__()
         self.rewriter = dspy.ChainOfThought(MergeSignature)
-        self.set_lm(language_model or llm.text_lm())
+        self.set_lm(language_model)
+        self._recorder = recorder
 
     async def aforward(
         self,
@@ -328,7 +336,8 @@ class SeamRewriter(dspy.Module):
             or '',
         }
         result = await self.rewriter.acall(**inputs)
-        recorder.record_example('seam_rewriter', inputs, result)
+        if self._recorder:
+            self._recorder.record('seam_rewriter', inputs, result)
         return result.merged
 
     def forward(
@@ -494,17 +503,17 @@ class SeamMergerNode:
     """Heals cross-page splits using two parity passes to avoid races.
 
     Args:
-        module: The seam-judging module. Created fresh if None.
-        rewriter: The module that rejoins a split pair. Created fresh if None.
+        module: The seam-judging module.
+        rewriter: The module that rejoins a split pair.
     """
 
     def __init__(
         self,
-        module: SeamMerger | None = None,
-        rewriter: SeamRewriter | None = None,
+        module: SeamMerger,
+        rewriter: SeamRewriter,
     ) -> None:
-        self.module = module or SeamMerger()
-        self.rewriter = rewriter or SeamRewriter()
+        self.module = module
+        self.rewriter = rewriter
 
     def dispatch_even(self, state: state.State) -> list[Send] | str:
         """Fans out workers for even-indexed segment pairs (0-1, 2-3, …)."""

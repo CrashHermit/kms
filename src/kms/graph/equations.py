@@ -39,9 +39,7 @@ def equation_uuid(source: str, node_id: int, index: int) -> str:
     Returns:
         The equation's hex uuid, disjoint from every other uuid.
     """
-    return uuid5(
-        NAMESPACE_URL, f'{source}#equation#{node_id}#{index}'
-    ).hex
+    return uuid5(NAMESPACE_URL, f'{source}#equation#{node_id}#{index}').hex
 
 
 def equation_properties(

@@ -133,13 +133,17 @@ class _FakeDriver:
         return _FakeSession(self.log)
 
 
-def test_persist_chain_writes_head_and_next_over_pure_nodes(monkeypatch):
+def test_persist_chain_writes_head_and_next_over_pure_nodes():
     driver = _FakeDriver()
-    monkeypatch.setattr(writer, 'driver', lambda: driver)
-    monkeypatch.setattr(writer, 'database', lambda: 'neo4j')
     # The statement overlay is irrelevant to the chain: its members stay in
     # the verbatim stream.
-    asyncio.run(writer.persist_chain(_stream(), 'book.pdf'))
+    asyncio.run(
+        writer.persist_chain(
+            _stream(),
+            'book.pdf',
+            session_factory=lambda: driver.session(database='neo4j'),
+        )
+    )
 
     queries = [query for query, _ in driver.log]
     assert any(
@@ -162,15 +166,17 @@ def test_persist_chain_writes_head_and_next_over_pure_nodes(monkeypatch):
     assert 'MATCH (a {uuid:' not in ' '.join(queries)
 
 
-def test_persist_statements_writes_member_edges_from_every_member(
-    monkeypatch,
-):
+def test_persist_statements_writes_member_edges_from_every_member():
     driver = _FakeDriver()
-    monkeypatch.setattr(writer, 'driver', lambda: driver)
-    monkeypatch.setattr(writer, 'database', lambda: 'neo4j')
     statement = models.Statement(block=[1, 2], members=[1, 2])
 
-    asyncio.run(writer.persist_statements([statement], 'book.pdf'))
+    asyncio.run(
+        writer.persist_statements(
+            [statement],
+            'book.pdf',
+            session_factory=lambda: driver.session(database='neo4j'),
+        )
+    )
 
     queries = [query for query, _ in driver.log]
     assert any(

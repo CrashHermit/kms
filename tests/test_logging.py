@@ -112,9 +112,7 @@ def test_hub_builder_logs_composition(caplog):
 
 
 def test_hub_builder_logs_zero_derivations(caplog):
-    node = hub_builder.HubBuilderNode(
-        role_module=_ScriptedRoles(['statement'])
-    )
+    node = hub_builder.HubBuilderNode(role_module=_ScriptedRoles(['statement']))
     with caplog.at_level(logging.INFO, logger='kms.ingestion.hub_builder'):
         asyncio.run(node.run({'nodes': _nodes('a'), 'spans': [[0]]}))
     assert '1 statement(s), 0 procedure(s)' in caplog.text
@@ -124,7 +122,8 @@ def test_hub_builder_logs_zero_derivations(caplog):
 def test_seam_merger_logs_the_flattened_stream_size(caplog):
     segment = models.Segment(index=0, image_path='p0.png')
     segment.nodes = _nodes('a', 'b')
-    node = seam_merger.SeamMergerNode()
+    # The collect methods don't use the modules, only workers do.
+    node = seam_merger.SeamMergerNode(module=None, rewriter=None)  # type: ignore[arg-type]
     with caplog.at_level(logging.INFO, logger='kms.ingestion.seam_merger'):
         result = node.odd_collect(
             {'segments': [segment], 'seam_odd_results': []}

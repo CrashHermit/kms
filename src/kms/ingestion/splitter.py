@@ -36,7 +36,8 @@ import logging
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import llm, models, recorder, state, walker
+from kms.core import models, state, walker
+from kms.core.recorder import Recorder
 
 logger = logging.getLogger(__name__)
 
@@ -137,13 +138,16 @@ class Splitter(dspy.Module):
     """Splits nodes that pack multiple exercises into per-exercise nodes.
 
     Args:
-        language_model: The LM to run on. Defaults to ``llm.text_lm()``.
+        language_model: The LM to run on.
     """
 
-    def __init__(self, language_model: dspy.LM | None = None) -> None:
+    def __init__(
+        self, language_model: dspy.LM, recorder: Recorder | None = None
+    ) -> None:
         super().__init__()
         self.splitter = dspy.ChainOfThought(Signature)
-        self.set_lm(language_model or llm.text_lm())
+        self.set_lm(language_model)
+        self._recorder = recorder
 
     async def aforward(
         self, current_nodes: list[WindowNode]
@@ -157,9 +161,10 @@ class Splitter(dspy.Module):
             The window's split decisions.
         """
         result = await self.splitter.acall(current_nodes=current_nodes)
-        recorder.record_example(
-            'splitter', {'current_nodes': current_nodes}, result
-        )
+        if self._recorder:
+            self._recorder.record(
+                'splitter', {'current_nodes': current_nodes}, result
+            )
         splits = list(result.splits or [])
         # Whether a given packed node splits is the stage's known run-to-run
         # variance (docs/HANDOFF.md, known issues), so log the per-window
@@ -269,20 +274,20 @@ def _rebuild(
 
 async def split_exercises(
     nodes: list[models.ASTNode],
-    module: Splitter | None = None,
+    module: Splitter,
     budget: int = LOOKAHEAD_BUDGET,
 ) -> list[models.ASTNode]:
     """Split packed exercise nodes into per-exercise nodes.
 
     Args:
         nodes: The flat node stream.
-        module: The splitting module. Created fresh if None.
+        module: The splitting module.
         budget: The per-window soft token budget.
 
     Returns:
         A new, re-id'd node list (the canonical stream is mutated).
     """
-    module = module or Splitter()
+    module = module
     if not nodes:
         return nodes
     decision = await _gather_decisions(nodes, module, budget)
@@ -309,11 +314,11 @@ class SplitterNode:
     hub overlay exists yet — nothing references the old ids.
 
     Args:
-        module: The splitting module. Created fresh if None.
+        module: The splitting module.
     """
 
-    def __init__(self, module: Splitter | None = None) -> None:
-        self.module = module or Splitter()
+    def __init__(self, module: Splitter) -> None:
+        self.module = module
 
     async def run(self, state: state.State) -> dict:
         """Normalise the node stream so each exercise is its own node.

@@ -12,8 +12,9 @@ efficient. Idempotent DDL (``IF NOT EXISTS``), so ``ensure_schema`` is safe to
 run on every startup.
 """
 
+from collections.abc import Callable
+
 from kms.graph import (
-    db,
     equations,
     instructions,
     nodes,
@@ -49,9 +50,14 @@ def schema_statements() -> list[str]:
     ]
 
 
-async def ensure_schema() -> None:
+async def ensure_schema(session_factory: Callable) -> None:
     """Create the constraints and index if absent. Idempotent — safe on
-    every startup."""
-    async with db.driver().session(database=db.database()) as session:
+    every startup.
+
+    Args:
+        session_factory: A callable that returns an async context manager
+            with a ``run(query, **params)`` method.
+    """
+    async with session_factory() as session:
         for statement in schema_statements():
             await session.run(statement)

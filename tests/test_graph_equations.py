@@ -19,10 +19,13 @@ def _channel():
     # none on node 3.
     return [
         (1, [_equation(name='mass-energy equivalence')]),
-        (2, [
-            _equation(latex='$$V = IR$$', domain='circuit analysis'),
-            _equation(latex='$$a^2 = b^2 + c^2$$'),
-        ]),
+        (
+            2,
+            [
+                _equation(latex='$$V = IR$$', domain='circuit analysis'),
+                _equation(latex='$$a^2 = b^2 + c^2$$'),
+            ],
+        ),
     ]
 
 
@@ -57,9 +60,7 @@ def test_equation_properties_carry_latex_and_provenance():
 
 
 def test_equation_properties_drop_empty_fields():
-    props = equations.equation_properties(
-        _equation(), 'book.pdf', 4, 0
-    )
+    props = equations.equation_properties(_equation(), 'book.pdf', 4, 0)
     assert 'name' not in props
     assert 'domain' not in props
 
@@ -90,9 +91,7 @@ def test_equation_pairs_hang_every_equation_off_its_node():
         },
     ]
     # Every equation hangs off a :Node — no statement/procedure labels.
-    assert all(
-        'node' in pair and 'equation' in pair for pair in pairs
-    )
+    assert all('node' in pair and 'equation' in pair for pair in pairs)
 
 
 class _FakeSession:
@@ -121,12 +120,16 @@ class _FakeDriver:
         return _FakeSession(self.log)
 
 
-def test_persist_equations_writes_node_has_equation_edges(monkeypatch):
+def test_persist_equations_writes_node_has_equation_edges():
     driver = _FakeDriver()
-    monkeypatch.setattr(writer, 'driver', lambda: driver)
-    monkeypatch.setattr(writer, 'database', lambda: 'neo4j')
 
-    asyncio.run(writer.persist_equations(_channel(), 'book.pdf'))
+    asyncio.run(
+        writer.persist_equations(
+            _channel(),
+            'book.pdf',
+            session_factory=lambda: driver.session(database='neo4j'),
+        )
+    )
 
     queries = [query for query, _ in driver.log]
     # All equations hang off :Node — a single label, no bucketing.

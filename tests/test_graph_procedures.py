@@ -89,12 +89,16 @@ class _FakeDriver:
         return _FakeSession(self.log)
 
 
-def test_persist_procedures_points_each_member_at_the_procedure(monkeypatch):
+def test_persist_procedures_points_each_member_at_the_procedure():
     driver = _FakeDriver()
-    monkeypatch.setattr(writer, 'driver', lambda: driver)
-    monkeypatch.setattr(writer, 'database', lambda: 'neo4j')
 
-    asyncio.run(writer.persist_procedures([_procedure()], 'book.pdf'))
+    asyncio.run(
+        writer.persist_procedures(
+            [_procedure()],
+            'book.pdf',
+            session_factory=lambda: driver.session(database='neo4j'),
+        )
+    )
 
     queries = [query for query, _ in driver.log]
     assert any(

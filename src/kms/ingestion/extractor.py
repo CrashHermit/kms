@@ -48,7 +48,8 @@ import dspy
 from langgraph.types import Send
 from pydantic import BaseModel, Field
 
-from kms.core import llm, logs, models, recorder, state
+from kms.core import logs, models, state
+from kms.core.recorder import Recorder
 
 logger = logging.getLogger(__name__)
 
@@ -336,13 +337,16 @@ class Extractor(dspy.Module):
     """Parses one page's OCR markdown into structural block nodes.
 
     Args:
-        language_model: The LM to run on. Defaults to ``llm.text_lm()``.
+        language_model: The LM to run on.
     """
 
-    def __init__(self, language_model: dspy.LM | None = None) -> None:
+    def __init__(
+        self, language_model: dspy.LM, recorder: Recorder | None = None
+    ) -> None:
         super().__init__()
         self.extractor = dspy.ChainOfThought(Signature)
-        self.set_lm(language_model or llm.text_lm())
+        self.set_lm(language_model)
+        self._recorder = recorder
 
     async def aforward(self, segment_markdown: str) -> list[DSPyModel]:
         """Parse one page.
@@ -354,9 +358,10 @@ class Extractor(dspy.Module):
             The page's top-level structural nodes, in document order.
         """
         result = await self.extractor.acall(segment_markdown=segment_markdown)
-        recorder.record_example(
-            'extractor', {'segment_markdown': segment_markdown}, result
-        )
+        if self._recorder:
+            self._recorder.record(
+                'extractor', {'segment_markdown': segment_markdown}, result
+            )
         nodes = list(result.nodes or [])
         logger.debug(
             'extract: %d chars -> %d node(s) | %s',
@@ -378,11 +383,11 @@ class ExtractorNode:
     """Fans out per-segment workers and collects the extracted AST.
 
     Args:
-        module: The extractor module. Created fresh if None.
+        module: The extractor module.
     """
 
-    def __init__(self, module: Extractor | None = None) -> None:
-        self.module = module or Extractor()
+    def __init__(self, module: Extractor) -> None:
+        self.module = module
 
     def dispatch(self, state: state.State) -> list[Send] | str:
         """Fan out one worker per segment that has OCR'd content.

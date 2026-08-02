@@ -45,7 +45,10 @@ class _ScriptedVariable:
         self._var_lists = list(var_lists)
 
     async def aforward(
-        self, content, content_before=None, content_after=None,
+        self,
+        content,
+        content_before=None,
+        content_after=None,
         equations=None,
     ):
         return list(self._var_lists.pop(0))
@@ -73,7 +76,9 @@ def test_iterates_every_node_with_content():
         )
     )
     assert eqs == [(0, [models.Equation(latex='$$x=1$$')])]
-    assert vars_ == [(1, [models.Variable(symbol='y', meaning='why', kind='variable')])]
+    assert vars_ == [
+        (1, [models.Variable(symbol='y', meaning='why', kind='variable')])
+    ]
 
 
 def test_skips_nodes_without_content():
@@ -234,7 +239,10 @@ def test_equations_feed_into_variable_extractor():
 
     class _RecordingVariable:
         async def aforward(
-            self, content, content_before=None, content_after=None,
+            self,
+            content,
+            content_before=None,
+            content_after=None,
             equations=None,
         ):
             seen_equations.append(equations)
@@ -264,8 +272,9 @@ def test_context_walking_is_per_node():
     seen_contexts = []
 
     class _CapturingRouter:
-        async def aforward(self, content, content_before=None,
-                           content_after=None):
+        async def aforward(
+            self, content, content_before=None, content_after=None
+        ):
             seen_contexts.append((content_before, content_after))
             return True, False
 
@@ -274,7 +283,9 @@ def test_context_walking_is_per_node():
             nodes,
             router_module=_CapturingRouter(),
             equation_module=_ScriptedEquation(
-                [], [], [],
+                [],
+                [],
+                [],
             ),
             variable_module=_ScriptedVariable(),
         )

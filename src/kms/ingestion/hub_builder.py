@@ -29,7 +29,8 @@ import logging
 import dspy
 from pydantic import BaseModel
 
-from kms.core import llm, logs, models, recorder, state
+from kms.core import llm, logs, models, state
+from kms.core.recorder import Recorder
 
 logger = logging.getLogger(__name__)
 
@@ -108,13 +109,16 @@ class RoleTyper(dspy.Module):
     """Classifies one span's pedagogical composition.
 
     Args:
-        language_model: The LM to run on. Defaults to ``llm.text_lm()``.
+        language_model: The LM to run on.
     """
 
-    def __init__(self, language_model: dspy.LM | None = None) -> None:
+    def __init__(
+        self, language_model: dspy.LM, recorder: Recorder | None = None
+    ) -> None:
         super().__init__()
         self.classify = dspy.ChainOfThought(Classify)
-        self.set_lm(language_model or llm.text_lm())
+        self.set_lm(language_model)
+        self._recorder = recorder
 
     async def aforward(self, contents: str) -> list[str]:
         """Classify one span.
@@ -127,7 +131,8 @@ class RoleTyper(dspy.Module):
             falling back to ``['statement']`` for an unusable answer.
         """
         result = await self.classify.acall(contents=contents)
-        recorder.record_example('role_typer', {'contents': contents}, result)
+        if self._recorder:
+            self._recorder.record('role_typer', {'contents': contents}, result)
         roles = sorted(
             {
                 ' '.join(role.split()).lower()
@@ -185,20 +190,26 @@ class StatementPartitioner(dspy.Module):
     """Selects the statement-portion nodes of a both-block.
 
     Args:
-        language_model: The LM to run on. Defaults to ``llm.text_lm()``.
+        language_model: The LM to run on.
     """
 
-    def __init__(self, language_model: dspy.LM | None = None) -> None:
+    def __init__(
+        self, language_model: dspy.LM, recorder: Recorder | None = None
+    ) -> None:
         super().__init__()
         self.partitioner = dspy.ChainOfThought(StatementPartitionSignature)
-        self.set_lm(language_model or llm.text_lm())
+        self.set_lm(language_model)
+        self._recorder = recorder
 
     async def aforward(self, current_nodes: list[WindowMember]) -> list[int]:
         """Select the statement-portion positions of one block."""
         result = await self.partitioner.acall(current_nodes=current_nodes)
-        recorder.record_example(
-            'statement_partitioner', {'current_nodes': current_nodes}, result
-        )
+        if self._recorder:
+            self._recorder.record(
+                'statement_partitioner',
+                {'current_nodes': current_nodes},
+                result,
+            )
         positions = list(result.statement_positions or [])
         logger.debug(
             'statement partitioner: %d node(s) -> %d statement position(s)',
@@ -247,20 +258,26 @@ class ProcedurePartitioner(dspy.Module):
     """Selects the procedure-portion nodes of a both-block.
 
     Args:
-        language_model: The LM to run on. Defaults to ``llm.text_lm()``.
+        language_model: The LM to run on.
     """
 
-    def __init__(self, language_model: dspy.LM | None = None) -> None:
+    def __init__(
+        self, language_model: dspy.LM, recorder: Recorder | None = None
+    ) -> None:
         super().__init__()
         self.partitioner = dspy.ChainOfThought(ProcedurePartitionSignature)
-        self.set_lm(language_model or llm.text_lm())
+        self.set_lm(language_model)
+        self._recorder = recorder
 
     async def aforward(self, current_nodes: list[WindowMember]) -> list[int]:
         """Select the procedure-portion positions of one block."""
         result = await self.partitioner.acall(current_nodes=current_nodes)
-        recorder.record_example(
-            'procedure_partitioner', {'current_nodes': current_nodes}, result
-        )
+        if self._recorder:
+            self._recorder.record(
+                'procedure_partitioner',
+                {'current_nodes': current_nodes},
+                result,
+            )
         positions = list(result.procedure_positions or [])
         logger.debug(
             'procedure partitioner: %d node(s) -> %d procedure position(s)',
@@ -370,7 +387,7 @@ async def _partition_both_block(
 async def build_hubs(
     spans: list[list[int]],
     nodes_by_id: dict[int, models.ASTNode],
-    role_module: RoleTyper | None = None,
+    role_module: RoleTyper,
     statement_partitioner: StatementPartitioner | None = None,
     procedure_partitioner: ProcedurePartitioner | None = None,
     max_concurrency: int | None = None,
@@ -386,13 +403,14 @@ async def build_hubs(
     Args:
         spans: The untyped spans, each a list of member node ids.
         nodes_by_id: The full node stream keyed by stable id. Read-only.
-        role_module: The role typer. Created fresh if None.
-        statement_partitioner: The statement partitioner. Created fresh if
-            None.
-        procedure_partitioner: The procedure partitioner. Created fresh if
-            None.
-        max_concurrency: Units in flight at once, for both the role-typing
-            and partitioning rounds. None uses ``llm.MAX_CONCURRENT_CALLS``.
+        role_module: The role typer.
+        statement_partitioner: The statement partitioner. Optional —
+            required only when a both-block span is present.
+        procedure_partitioner: The procedure partitioner. Optional —
+            required only when a both-block span is present.
+        max_concurrency: Units in flight at once, for both the
+            role-typing and partitioning rounds. None uses
+            ``llm.MAX_CONCURRENT_CALLS``.
 
     Returns:
         The ``(statements, procedures)`` hub overlays, in span order.
@@ -401,20 +419,14 @@ async def build_hubs(
         logger.info('hub builder: no spans')
         return [], []
 
-    role_module = role_module or RoleTyper()
-    statement_partitioner = (
-        statement_partitioner or StatementPartitioner()
-    )
-    procedure_partitioner = (
-        procedure_partitioner or ProcedurePartitioner()
-    )
-
     gate = llm.gate(max_concurrency)
 
     async def _type_one(span: list[int]) -> list[str]:
         """Classify one span's roles under the stage's concurrency cap."""
         async with gate:
-            return await role_module.acall(_contents_of(span, nodes_by_id))
+            return await role_module.acall(
+                _contents_of(span, nodes_by_id)
+            )
 
     roles_by_span = await asyncio.gather(
         *(_type_one(span) for span in spans)
@@ -429,9 +441,9 @@ async def build_hubs(
         if first_member_id not in nodes_by_id:
             continue
 
-        role_set = {
-            role for role in (roles or []) if role in SPAN_ROLES
-        } or {STATEMENT_ROLE}
+        role_set = {role for role in (roles or []) if role in SPAN_ROLES} or {
+            STATEMENT_ROLE
+        }
 
         has_statement = STATEMENT_ROLE in role_set
         has_procedure = PROCEDURE_ROLE in role_set
@@ -468,7 +480,8 @@ async def build_hubs(
         )
 
     both_count = sum(
-        1 for s in statements
+        1
+        for s in statements
         if tuple(s.block) in {tuple(p.block) for p in procedures}
     )
     logger.info(
@@ -495,16 +508,16 @@ class HubBuilderNode:
     both-block members in one pass.
 
     Args:
-        role_module: The role typer. Created fresh if None.
-        statement_partitioner: The statement partitioner. Created fresh if
-            None.
-        procedure_partitioner: The procedure partitioner. Created fresh if
-            None.
+        role_module: The role typer.
+        statement_partitioner: The statement partitioner. Optional —
+            required only when a both-block span is present.
+        procedure_partitioner: The procedure partitioner. Optional —
+            required only when a both-block span is present.
     """
 
     def __init__(
         self,
-        role_module: RoleTyper | None = None,
+        role_module: RoleTyper,
         statement_partitioner: StatementPartitioner | None = None,
         procedure_partitioner: ProcedurePartitioner | None = None,
     ) -> None:
@@ -523,9 +536,7 @@ class HubBuilderNode:
             left exactly as it was.
         """
         nodes = state.get('nodes', [])
-        nodes_by_id = {
-            node.id: node for node in nodes if node.id is not None
-        }
+        nodes_by_id = {node.id: node for node in nodes if node.id is not None}
         statements, procedures = await build_hubs(
             state.get('spans', []),
             nodes_by_id,

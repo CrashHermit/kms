@@ -1,93 +1,43 @@
 """
-LangGraph wiring for the document-processing pipeline.
-
-Builds the ordered graph that turns a PDF (via the Mistral OCR front-end) into
-a finished AST, the semantic overlays over it, and the Neo4j graph they are
-written to. The ingestion stages (corrector, extractor, seam merger) are
-map-reduce: a conditional edge fans out one Send per unit of work to the
-stage's worker, the workers append to a per-stage reducer channel, and the
-collect step drains that channel back into the ordered backbone before the next
-stage runs. The later stages are plain sequential nodes (a growing look-ahead
-cursor cannot be sharded).
+LangGraph pipeline that turns a PDF into Neo4j graph nodes via Mistral OCR.
 
 Stage order:
     corrector -> formatter -> extractor -> seam_merger (even, odd) -> splitter
               -> instruction_finder -> instruction_distributor
               -> pedagogical_component_finder -> hub_builder
-              -> equation_variable
-              -> ingestion_persister
+              -> equation_variable -> ingestion_persister
 
-Two phases split at the seam merger. Ingestion is per-page: `segments` (already
-carrying Mistral's markdown + figures) is the backbone, the corrector proofreads
-each page's transcription against its image, and the formatter then standardises
-that page's markup — the two are exact inverses, the corrector changing content
-but never presentation and the formatter presentation but never content — before
-the (purely structural) extractor parses it into nodes. The extractor is also
-where page apparatus leaves the document: it identifies running heads, folios
-and colophons as `furniture` and discards them inside the stage, so no later
-stage — the seam merger first among them — ever sees a node for them. The formatter runs second
-because anything that deliberately makes the text diverge from the image has to
-come after the pass whose contract is that they agree. The seam merger heals nodes split
-across page breaks and then flattens the healed backbone into the global
-ordered `nodes` list (stable ids + segment_index). The splitter then normalises
-that stream — it rewrites any node that packs several exercises into one node
-per exercise (embedded lead-ins broken out onto their own nodes too) — so the
-finder sees atomic exercises. The instruction finder then tags every lead-in
-node with type INSTRUCTION; the instruction distributor prepends each lead-in's
-directive onto the governed exercise nodes and removes the lead-ins from the
-stream.
+Two phases. Ingestion is per-page map-reduce: the corrector proofreads each
+page's transcription against its image, the formatter standardises markup, the
+extractor parses it into structural nodes, and the seam merger heals cross-page
+splits then flattens the backbone into the global ``nodes`` stream. The
+splitter then normalises packed-exercise nodes, the instruction finder tags
+lead-ins, and the distributor prepends directives onto governed exercises.
 
-One semantic chain then runs, each stage asking ONE question. The pedagogical
-component finder walks `nodes` once and cuts it into UNTYPED spans —
-boundaries only, including the cut between a statement and the working that
-resolves it, so the old semantic proof/solution boundary call is now a
-structural detection. The role typer then labels each span with a union of
-roles — ``statement`` (a block), ``procedure`` (a derivation), or both —
-creating the hubs. When a block carries both, the statement and procedure
-partitioners find the line, narrowing each hub to its own portion of the
-block's nodes — all in one pass, gated directly by the role typer's output. That overlay rides its own `statements` and `procedures`
-channels: a hub is an identifier over its group's member node ids, with the
-raw text left on the nodes — so it sits BESIDE `nodes`, never in it: in the
-stream it would make every stage that walks nodes read the group twice, and
-the persister write it twice. The chain is split this way because fusing these
-questions made each one worse — the finder read a missing "Solution."
-marker as "no derivation".
+One semantic chain follows. The pedagogical component finder cuts the stream
+into untyped spans; the hub builder classifies each span's roles and partitions
+both-blocks in one pass (router + gated partitioners). The equation/variable
+node extracts equations and variable bindings per provenance node, feeding
+equations as context into the variable extractor.
 
-The equation/variable node then runs over every provenance node in the
-stream — routing each for equation and variable presence, extracting
-equations, and feeding them as context into the variable bindings. Its
-output rides the `equations` and `variables` channels to the persister:
-one `:Equation` per equation hung off its ``:Node`` (`:HAS_EQUATION`), one
-`:Variable` per binding (`:HAS_VARIABLE` from its ``:Node`` or its
-``:Equation``). Statement and procedure hubs inherit equations and
-variables through their ``:MEMBER_OF`` edges.
-
-The ingestion persister is the terminal stage. It runs after every stream
-mutation, so the persisted node ids match the overlay's members and instruction
-nodes are excluded: it writes the provenance layer (a `:Source` root with its
-pure `:Node` chain), the ``:Statement`` overlay hung off its member nodes via
-`:MEMBER_OF`, and the procedural layer (`:Procedure` per derivation,
-pointing at its own member nodes by `:MEMBER_OF`), plus the equation and variable layers (`:Equation` via `:HAS_EQUATION`
-from its ``:Node``, `:Variable` via `:HAS_VARIABLE` from its ``:Node`` or
-``:Equation``). Statement and procedure hubs inherit both through
-``:MEMBER_OF``. `:Act` steps and their
-`:FIRST`/`:THEN` threading are declared but not yet written — step
-decomposition is a future pass. A no-op when Neo4j isn't configured, in which
-case `run()` still returns its state and simply persists nothing.
-
-The `:Instruction` hubs come from the distributor rather than from this
-chain: a lead-in governs the exercises after it, so the governance is known
-before any semantic question is asked, and its members are node ids like any
-other hub's.
+The ingestion persister writes everything: a ``:Source`` root, its ``:Node``
+provenance chain, ``:Statement`` and ``:Procedure`` hubs hung off member nodes
+via ``:MEMBER_OF``, and ``:Equation`` / ``:Variable`` hung off their provenance
+``:Node`` via ``:HAS_EQUATION`` / ``:HAS_VARIABLE``. A no-op when Neo4j isn't
+configured. After the graph returns, ``run()`` assembles the markdown string
+and returns it without writing to disk.
 """
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import dspy
 from langgraph.graph import END, START, StateGraph
 
-from kms.core import llm, recorder, state
+from kms.core import llm, state
+from kms.core.recorder import Recorder
 from kms.graph import db, persister
 from kms.ingestion import (
     corrector,
@@ -101,12 +51,20 @@ from kms.ingestion import (
     splitter,
     variable_extractor,
 )
+from kms.output import assembler
 
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
 
 
-def build_graph() -> 'CompiledStateGraph':
+def build_graph(
+    text_language_model: dspy.LM,
+    corrector_language_model: dspy.LM,
+    *,
+    recorder: Recorder | None = None,
+    neo4j_session_factory: Callable | None = None,
+    neo4j_configured: bool = False,
+) -> 'CompiledStateGraph':
     """Assemble and compile the LangGraph pipeline over ``state.State``.
 
     A single straight path: the correction pass proofreads each
@@ -118,44 +76,84 @@ def build_graph() -> 'CompiledStateGraph':
     label and partition in one pass — before the equation/variable node pulls
     equations and bindings out and the persister writes every tier.
 
+    Args:
+        text_language_model: The language model for all text-reasoning
+            stages (extractor, formatter, hub builder, variable
+            extractor, etc.).
+        corrector_language_model: The vision-capable language model for
+            the correction pass.
+        recorder: Optional recorder for capturing DSPy training examples.
+        neo4j_session_factory: A callable that returns an async context
+            manager with a ``run(query, **params)`` method.
+        neo4j_configured: Whether a Neo4j target is wired.
+
     Returns:
         The compiled graph.
     """
     # --- DSPy modules ---
-    corrector_module = corrector.Corrector(language_model=llm.corrector_lm())
-    formatter_module = formatter.Formatter(language_model=llm.text_lm())
-    extractor_module = extractor.Extractor(language_model=llm.text_lm())
-    seam_module = seam_merger.SeamMerger(language_model=llm.text_lm())
-    seam_rewriter_module = seam_merger.SeamRewriter(
-        language_model=llm.text_lm()
+    corrector_module = corrector.Corrector(
+        language_model=corrector_language_model,
+        recorder=recorder,
     )
-    splitter_module = splitter.Splitter(language_model=llm.text_lm())
+    formatter_module = formatter.Formatter(
+        language_model=text_language_model,
+        recorder=recorder,
+    )
+    extractor_module = extractor.Extractor(
+        language_model=text_language_model,
+        recorder=recorder,
+    )
+    seam_module = seam_merger.SeamMerger(
+        language_model=text_language_model,
+        recorder=recorder,
+    )
+    seam_rewriter_module = seam_merger.SeamRewriter(
+        language_model=text_language_model,
+        recorder=recorder,
+    )
+    splitter_module = splitter.Splitter(
+        language_model=text_language_model,
+        recorder=recorder,
+    )
     instruction_finder_module = instruction_finder.InstructionFinder(
-        language_model=llm.text_lm()
+        language_model=text_language_model,
+        recorder=recorder,
     )
     instruction_distributor_module = (
         instruction_distributor.InstructionDistributor(
-            language_model=llm.text_lm()
+            language_model=text_language_model,
+            recorder=recorder,
         )
     )
     component_finder_module = (
         pedagogical_component_finder.PedagogicalComponentFinder(
-            language_model=llm.text_lm()
+            language_model=text_language_model,
+            recorder=recorder,
         )
     )
-    role_typer_module = hub_builder.RoleTyper(language_model=llm.text_lm())
+    role_typer_module = hub_builder.RoleTyper(
+        language_model=text_language_model,
+        recorder=recorder,
+    )
     statement_partitioner_module = hub_builder.StatementPartitioner(
-        language_model=llm.text_lm()
+        language_model=text_language_model,
+        recorder=recorder,
     )
     procedure_partitioner_module = hub_builder.ProcedurePartitioner(
-        language_model=llm.text_lm()
+        language_model=text_language_model,
+        recorder=recorder,
     )
-    router_module = variable_extractor.Router(language_model=llm.text_lm())
+    router_module = variable_extractor.Router(
+        language_model=text_language_model,
+        recorder=recorder,
+    )
     equation_module = variable_extractor.EquationExtractor(
-        language_model=llm.text_lm()
+        language_model=text_language_model,
+        recorder=recorder,
     )
     variable_module = variable_extractor.VariableExtractor(
-        language_model=llm.text_lm()
+        language_model=text_language_model,
+        recorder=recorder,
     )
 
     # --- LangGraph nodes ---
@@ -169,7 +167,10 @@ def build_graph() -> 'CompiledStateGraph':
     instruction_finder_node = instruction_finder.InstructionFinderNode(
         module=instruction_finder_module
     )
-    node_persister_node = persister.IngestionPersisterNode()
+    node_persister_node = persister.IngestionPersisterNode(
+        session_factory=neo4j_session_factory,
+        neo4j_configured=neo4j_configured,
+    )
     component_finder_node = (
         pedagogical_component_finder.PedagogicalComponentFinderNode(
             module=component_finder_module
@@ -283,7 +284,7 @@ async def run(
     source: str | None = None,
     title: str | None = None,
     author: str | None = None,
-) -> dict:
+) -> str:
     """Run the full pipeline on a PDF.
 
     The Mistral OCR API turns each page into reading-ordered markdown plus
@@ -292,18 +293,12 @@ async def run(
     bindings, and (when Neo4j is configured) persists the ``:Node`` provenance
     layer, the ``:Statement`` overlay, and the procedural, equation and
     variable layers on top of it. Graph persistence is skipped entirely
-    when Neo4j isn't configured — a DB-less run still returns its state but
-    persists no nodes or statements.
-
-    The graph is the product. There is no document: a markdown assembly pass
-    survived here from before the graph tier existed, running on every run to
-    build a string the only caller measured the length of and threw away.
+    when Neo4j isn't configured — a DB-less run still returns the assembled
+    markdown but persists no nodes or statements.
 
     Args:
         pdf_path: The source PDF.
-        output_dir: Directory the run's assets are written under — the OCR
-            front-end's per-page markdown and extracted figures, and the
-            recorded DSPy examples when ``KMS_RECORD`` is set.
+        output_dir: Directory the document's assets are written into.
         pages: 0-based pages to limit the OCR request to, or None for all.
         source: The book identity used as the graph's Neo4j key. Defaults to
             the PDF's filename.
@@ -311,17 +306,18 @@ async def run(
         author: Optional book author, stored on the ``:Source`` node.
 
     Returns:
-        The pipeline's final state — the node stream, the segment backbone,
-        and the statement, procedure, instruction, equation and variable
-        overlays.
+        The assembled markdown document as a string.
     """
     # Deferred so importing the pipeline does not require the OCR extra.
     from kms.ingestion import ocr
 
     output_dir = Path(output_dir)
     source = source or Path(pdf_path).name
+
+    # -- Wiring: construct every injectable dependency --------------------
+    example_recorder = None
     if os.environ.get('KMS_RECORD'):
-        recorder.set_run(
+        example_recorder = Recorder(
             source,
             output_dir=str(output_dir / 'examples'),
             pdf=str(pdf_path),
@@ -329,9 +325,26 @@ async def run(
             title=title,
             author=author,
         )
+
+    neo4j_configured = db.is_configured()
+    if neo4j_configured:
+
+        def neo4j_session_factory():
+            return db.driver().session(database=db.database())
+    else:
+        neo4j_session_factory = None
+
     metadata = {'title': title, 'author': author}
     segments = ocr.extract(pdf_path, output_dir=output_dir, pages=pages)
-    graph = build_graph()
+    text_language_model = llm.text_lm()
+    corrector_language_model = llm.corrector_lm()
+    graph = build_graph(
+        text_language_model=text_language_model,
+        corrector_language_model=corrector_language_model,
+        recorder=example_recorder,
+        neo4j_session_factory=neo4j_session_factory,
+        neo4j_configured=neo4j_configured,
+    )
     try:
         result = await graph.ainvoke(
             {
@@ -341,6 +354,9 @@ async def run(
             },
             {'recursion_limit': 1000},
         )
-        return result
+        nodes = result['nodes']
+        return assembler.assemble(
+            nodes, result['segments'], output_dir=output_dir
+        )
     finally:
         await db.close_driver()

@@ -73,7 +73,8 @@ from pathlib import Path
 import dspy
 from langgraph.types import Send
 
-from kms.core import llm, models, recorder, state
+from kms.core import models, state
+from kms.core.recorder import Recorder
 
 logger = logging.getLogger(__name__)
 
@@ -230,14 +231,16 @@ class Corrector(dspy.Module):
     """Proofreads a transcribed page against its source image.
 
     Args:
-        language_model: The vision LM to run on. Defaults to
-            ``llm.corrector_lm()``.
+        language_model: The vision LM to run on.
     """
 
-    def __init__(self, language_model: dspy.LM | None = None) -> None:
+    def __init__(
+        self, language_model: dspy.LM, recorder: Recorder | None = None
+    ) -> None:
         super().__init__()
         self.proofreader = dspy.Predict(Signature)
-        self.set_lm(language_model or llm.corrector_lm())
+        self.set_lm(language_model)
+        self._recorder = recorder
 
     async def aforward(self, page_image: dspy.Image, transcription: str) -> str:
         """Proofread one page.
@@ -252,11 +255,12 @@ class Corrector(dspy.Module):
         result = await self.proofreader.acall(
             page_image=page_image, transcription=transcription
         )
-        recorder.record_example(
-            'corrector',
-            {'page_image': page_image, 'transcription': transcription},
-            result,
-        )
+        if self._recorder:
+            self._recorder.record(
+                'corrector',
+                {'page_image': page_image, 'transcription': transcription},
+                result,
+            )
         corrected = result.corrected or ''
         logger.debug(
             'proofread: %d chars in, %d chars out',
@@ -277,11 +281,11 @@ class CorrectorNode:
     """Fans out per-page proofreaders and collects the corrected text.
 
     Args:
-        module: The proofreading module. Created fresh if None.
+        module: The proofreading module.
     """
 
-    def __init__(self, module: Corrector | None = None) -> None:
-        self.module = module or Corrector()
+    def __init__(self, module: Corrector) -> None:
+        self.module = module
 
     def dispatch(self, state: state.State) -> list[Send] | str:
         """Fan out one worker per transcribed segment.

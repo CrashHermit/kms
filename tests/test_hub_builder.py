@@ -8,7 +8,6 @@ import pytest
 from kms.core import models
 from kms.ingestion import hub_builder
 
-
 # --- Role typer tests ------------------------------------------------------
 
 
@@ -49,7 +48,8 @@ def test_a_both_block_creates_both_independent_hubs():
     proc_mod = _ScriptedPositions([[0, 1]])
     statements, procedures = asyncio.run(
         hub_builder.build_hubs(
-            [[0, 1]], by_id,
+            [[0, 1]],
+            by_id,
             role_module=role_mod,
             statement_partitioner=stmt_mod,
             procedure_partitioner=proc_mod,
@@ -102,7 +102,13 @@ def test_an_unusable_role_falls_back_to_statement():
 
 
 def test_no_spans_is_a_noop():
-    assert asyncio.run(hub_builder.build_hubs([], {})) == ([], [])
+    assert asyncio.run(
+        hub_builder.build_hubs(
+            [],
+            {},
+            role_module=_ScriptedRoles([]),
+        )
+    ) == ([], [])
 
 
 def test_node_run_writes_the_hub_channels():
@@ -123,9 +129,7 @@ def test_node_run_writes_the_hub_channels():
 
 
 def test_node_run_on_an_empty_spans_channel_is_a_noop():
-    node = hub_builder.HubBuilderNode(
-        role_module=_ScriptedRoles([])
-    )
+    node = hub_builder.HubBuilderNode(role_module=_ScriptedRoles([]))
     out = asyncio.run(
         node.run(
             {'nodes': [models.ParagraphNode(content='x', id=0)], 'spans': []}
@@ -166,7 +170,8 @@ def test_both_block_partitions_statement_members():
     role_mod, stmt_mod, proc_mod = _both_modules([[0]], [[]])
     statements, procedures = asyncio.run(
         hub_builder.build_hubs(
-            [[0, 1, 2]], _nodes(),
+            [[0, 1, 2]],
+            _nodes(),
             role_module=role_mod,
             statement_partitioner=stmt_mod,
             procedure_partitioner=proc_mod,
@@ -180,7 +185,8 @@ def test_both_block_partitions_procedure_members():
     role_mod, stmt_mod, proc_mod = _both_modules([[]], [[1, 2]])
     statements, procedures = asyncio.run(
         hub_builder.build_hubs(
-            [[0, 1, 2]], _nodes(),
+            [[0, 1, 2]],
+            _nodes(),
             role_module=role_mod,
             statement_partitioner=stmt_mod,
             procedure_partitioner=proc_mod,
@@ -196,7 +202,9 @@ def test_single_role_statement_skips_partitioning():
     role_mod = _ScriptedRoles([['statement']])
     statements, procedures = asyncio.run(
         hub_builder.build_hubs(
-            [[0, 1, 2]], nodes, role_module=role_mod,
+            [[0, 1, 2]],
+            nodes,
+            role_module=role_mod,
         )
     )
     assert statements[0].members == [0, 1, 2]
@@ -208,7 +216,9 @@ def test_single_role_procedure_skips_partitioning():
     role_mod = _ScriptedRoles([['procedure']])
     statements, procedures = asyncio.run(
         hub_builder.build_hubs(
-            [[0, 1, 2]], nodes, role_module=role_mod,
+            [[0, 1, 2]],
+            nodes,
+            role_module=role_mod,
         )
     )
     assert statements == []
@@ -219,7 +229,8 @@ def test_an_empty_selection_keeps_the_full_block():
     role_mod, stmt_mod, proc_mod = _both_modules([[]], [[]])
     statements, procedures = asyncio.run(
         hub_builder.build_hubs(
-            [[0, 1, 2]], _nodes(),
+            [[0, 1, 2]],
+            _nodes(),
             role_module=role_mod,
             statement_partitioner=stmt_mod,
             procedure_partitioner=proc_mod,
@@ -233,7 +244,8 @@ def test_out_of_range_positions_are_dropped():
     role_mod, stmt_mod, proc_mod = _both_modules([[0, 99]], [[]])
     statements, _ = asyncio.run(
         hub_builder.build_hubs(
-            [[0, 1, 2]], _nodes(),
+            [[0, 1, 2]],
+            _nodes(),
             role_module=role_mod,
             statement_partitioner=stmt_mod,
             procedure_partitioner=proc_mod,

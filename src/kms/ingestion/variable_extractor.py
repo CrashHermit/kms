@@ -32,7 +32,8 @@ import logging
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import llm, logs, models, recorder, state, walker
+from kms.core import logs, models, state, walker
+from kms.core.recorder import Recorder
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,11 @@ class DSPyEquation(BaseModel):
     """One equation emitted by the equation extractor."""
 
     latex: str = Field(
-        description='The equation in LaTeX notation, WITH its surrounding delimiters: \$\$...\$\$ or \$...\$ or \\(...\\) or \\[...\\] — exactly as it appears in the source'
+        description=(
+            r'The equation in LaTeX notation, WITH its surrounding '
+            r'delimiters: \$\$...\$\$ or \$...\$ or \(...\) or '
+            r'\[...\] — exactly as it appears in the source'
+        )
     )
     name: str | None = Field(
         default=None,
@@ -73,10 +78,6 @@ class DSPyVariable(BaseModel):
     )
     kind: str = Field(
         description='What sort of thing: variable, constant, parameter, element, unit, abbreviation, function, operator, etc.'
-    )
-    value: str | None = Field(
-        default=None,
-        description='The value this symbol is bound to here, if the text assigns one (e.g. "6" for "when x = 6", "-3" for "m = -3", "2\\pi" for "let t = 2\\pi"). Verbatim as written, without the symbol or the equals sign. Null when the binding names a meaning rather than assigning a value.',
     )
 
 
@@ -106,24 +107,9 @@ class RouterSignature(dspy.Signature):
          * a bare inequality that qualifies rather than states: $\epsilon > 0$
 
     2. Does this block contain a VARIABLE BINDING — a place where a compact
-       notation is explicitly bound, either to a MEANING or to a VALUE?
-
-       Bound to a MEANING: "Let $\alpha$ be the learning rate", "the thermal
-       diffusivity $\alpha$", "H₂ (hydrogen gas)",
-       "def train(model, lr=0.01)", "hereinafter 'Acme'".
-
-       Bound to a VALUE — the symbol is given something to stand for in this
-       passage, which is what an exercise does when it says to substitute:
-         * "evaluate $x^2 + 5x - 8$ when $x = 6$" — $x$ is bound to 6
-         * "$-m$ when ⓐ $m = 3$ ⓑ $m = -3$" — TWO bindings of $m$
-         * "$2x + 4y - 5$ when $x = 7, y = 8$" — two symbols, two values
-         * "for $n = 1, 2, 3, \ldots$" — $n$ ranges over those values
-
-       Say yes for BOTH kinds. A value binding counts even when the block
-       never says what the symbol *means* — "when $x = 6$" is a binding, and
-       the meaning being obvious from context does not make it absent. This
-       is the commonest binding in exercise material, so do not skip it for
-       looking too plain.
+       notation is explicitly bound to a meaning? This includes "Let $\alpha$
+       be the learning rate", "the thermal diffusivity $\alpha$", "H₂
+       (hydrogen gas)", "def train(model, lr=0.01)", "hereinafter 'Acme'".
 
     Answer with two booleans. Answer honestly — if there is nothing to
     extract, say so.
@@ -147,12 +133,19 @@ class RouterSignature(dspy.Signature):
 
 
 class Router(dspy.Module):
-    """Classifies a content node for equation / variable presence."""
+    """Classifies a content node for equation / variable presence.
 
-    def __init__(self, language_model: dspy.LM | None = None) -> None:
+    Args:
+        language_model: The LM to run on.
+    """
+
+    def __init__(
+        self, language_model: dspy.LM, recorder: Recorder | None = None
+    ) -> None:
         super().__init__()
         self.router = dspy.ChainOfThought(RouterSignature)
-        self.set_lm(language_model or llm.text_lm())
+        self.set_lm(language_model)
+        self._recorder = recorder
 
     async def aforward(
         self,
@@ -165,15 +158,16 @@ class Router(dspy.Module):
             content_before=content_before,
             content_after=content_after,
         )
-        recorder.record_example(
-            'router',
-            {
-                'content': content,
-                'content_before': content_before,
-                'content_after': content_after,
-            },
-            result,
-        )
+        if self._recorder:
+            self._recorder.record(
+                'router',
+                {
+                    'content': content,
+                    'content_before': content_before,
+                    'content_after': content_after,
+                },
+                result,
+            )
         return bool(result.has_equation), bool(result.has_variable)
 
     def forward(
@@ -244,12 +238,19 @@ class EquationExtractorSignature(dspy.Signature):
 
 
 class EquationExtractor(dspy.Module):
-    """Extracts equations from a content node."""
+    """Extracts equations from a content node.
 
-    def __init__(self, language_model: dspy.LM | None = None) -> None:
+    Args:
+        language_model: The LM to run on.
+    """
+
+    def __init__(
+        self, language_model: dspy.LM, recorder: Recorder | None = None
+    ) -> None:
         super().__init__()
         self.extractor = dspy.ChainOfThought(EquationExtractorSignature)
-        self.set_lm(language_model or llm.text_lm())
+        self.set_lm(language_model)
+        self._recorder = recorder
 
     async def aforward(
         self,
@@ -262,15 +263,16 @@ class EquationExtractor(dspy.Module):
             content_before=content_before,
             content_after=content_after,
         )
-        recorder.record_example(
-            'equation_extractor',
-            {
-                'content': content,
-                'content_before': content_before,
-                'content_after': content_after,
-            },
-            result,
-        )
+        if self._recorder:
+            self._recorder.record(
+                'equation_extractor',
+                {
+                    'content': content,
+                    'content_before': content_before,
+                    'content_after': content_after,
+                },
+                result,
+            )
         equations = [
             models.Equation(
                 latex=eq.latex,
@@ -329,8 +331,6 @@ class VariableSignature(dspy.Signature):
 
     - Mathematical variables and constants: "Let $\alpha$ be the learning
       rate" — $\alpha$ stands for the learning rate.
-    - Symbols given a VALUE for the passage: "evaluate $x^2 + 5x - 8$ when
-      $x = 6$" — $x$ is bound to 6 here.
     - Chemical symbols and formulas: "2H₂ + O₂ → 2H₂O" — H stands for
       hydrogen, O for oxygen.
     - Circuit and schematic labels: "$R_1 = 10k\Omega$" — $R_1$ stands for
@@ -349,33 +349,6 @@ class VariableSignature(dspy.Signature):
     - meaning: What the symbol stands for, in plain language.
     - kind: What sort of thing — variable, constant, parameter, element, unit,
       abbreviation, function, operator, etc.
-    - value: The value bound to the symbol HERE, if the text assigns one.
-      Null otherwise.
-
-    MEANING vs VALUE
-
-    A binding names a meaning, assigns a value, or does both. Fill the field
-    the text actually supports:
-
-    - "$b$, the cost of the blouse" -> meaning "the cost of the blouse",
-      value null.
-    - "evaluate $x^2 + 5x - 8$ when $x = 6$" -> symbol "x", value "6".
-      The text does not say what $x$ means, so give the plainest honest
-      meaning ("the variable being evaluated") and let ``value`` carry the
-      content. Do NOT write "the variable x" — restating the symbol says
-      nothing.
-    - "the learning rate $\alpha = 0.01$" -> meaning "the learning rate",
-      value "0.01". Both.
-
-    Write the value verbatim as the text gives it, without the symbol or the
-    equals sign: ``6``, ``-3``, ``2\pi``, ``n+1``.
-
-    ONE ENTRY PER BINDING, NOT PER SYMBOL
-
-    When a block binds the same symbol more than once, emit one entry per
-    binding — they are different facts about different parts:
-    "$-m$ when ⓐ $m = 3$ ⓑ $m = -3$" is TWO entries, both symbol "m", values
-    "3" and "-3". Never collapse them into one.
 
     WHAT DOES NOT COUNT
     - A symbol merely used, not defined or bound ("$f(x) = x^2$" with no
@@ -401,7 +374,7 @@ class VariableSignature(dspy.Signature):
         description='Equations already extracted from this block, with their LaTeX and name. Read-only context for resolving symbol meanings.',
     )
     variables: list[DSPyVariable] = dspy.OutputField(
-        description='Every stand-in notation found, with its symbol, meaning, kind, and bound value where the text assigns one. One entry per binding — a symbol bound twice in the block gets two entries. Empty if none.'
+        description='Every stand-in notation found, with its symbol, meaning, and kind. Empty if none.'
     )
 
 
@@ -409,13 +382,16 @@ class VariableExtractor(dspy.Module):
     """Extracts stand-in bindings from one content node.
 
     Args:
-        language_model: The LM to run on. Defaults to ``llm.text_lm()``.
+        language_model: The LM to run on.
     """
 
-    def __init__(self, language_model: dspy.LM | None = None) -> None:
+    def __init__(
+        self, language_model: dspy.LM, recorder: Recorder | None = None
+    ) -> None:
         super().__init__()
         self.extractor = dspy.ChainOfThought(VariableSignature)
-        self.set_lm(language_model or llm.text_lm())
+        self.set_lm(language_model)
+        self._recorder = recorder
 
     async def aforward(
         self,
@@ -449,24 +425,24 @@ class VariableExtractor(dspy.Module):
             content_after=content_after,
             equations=dspy_eqs,
         )
-        recorder.record_example(
-            'variable_extractor',
-            {
-                'content': content,
-                'content_before': content_before,
-                'content_after': content_after,
-                'equations': [eq.model_dump() for eq in dspy_eqs]
-                if dspy_eqs
-                else None,
-            },
-            result,
-        )
+        if self._recorder:
+            self._recorder.record(
+                'variable_extractor',
+                {
+                    'content': content,
+                    'content_before': content_before,
+                    'content_after': content_after,
+                    'equations': [eq.model_dump() for eq in dspy_eqs]
+                    if dspy_eqs
+                    else None,
+                },
+                result,
+            )
         variables = [
             models.Variable(
                 symbol=variable.symbol,
                 meaning=variable.meaning,
                 kind=variable.kind,
-                value=variable.value,
             )
             for variable in (result.variables or [])
         ]
@@ -501,46 +477,53 @@ class VariableExtractor(dspy.Module):
 # ============================================================================
 
 
-async def _extract_one(
+async def extract_equations_and_variables(
     nodes: list[models.ASTNode],
-    position: int,
-    node: models.ASTNode,
     router_module: Router,
     equation_module: EquationExtractor,
     variable_module: VariableExtractor,
-    gate: asyncio.Semaphore,
-) -> tuple[int, list[models.Equation], list[models.Variable]]:
-    """Route one node and run the extractors it asks for.
+) -> tuple[
+    list[tuple[int, list[models.Equation]]],
+    list[tuple[int, list[models.Variable]]],
+]:
+    """Extract equations and variable bindings from every provenance node.
 
-    The three calls are a dependency chain — the router decides which of the
-    other two run, and the equation output feeds the variable extractor's
-    context — so within a node they stay sequential. The whole chain sits
-    inside the semaphore, which therefore bounds nodes in flight rather than
-    raw requests; that is the useful unit, since a node issues at most one
-    call at a time.
+    Walks the raw node stream in document order. For each node with content:
+    the router decides what to extract, then the equation and/or variable
+    modules run as needed. Context windows are built from the surrounding
+    nodes via ``walker.content_before`` / ``walker.content_after``. The
+    equation output feeds into the variable extractor as additional context.
 
     Args:
-        nodes: The flat node stream, read-only — the context windows are cut
-            from it.
-        position: The focus node's index in *nodes*.
-        node: The focus node.
+        nodes: The flat node stream.
         router_module: The router.
         equation_module: The equation extractor.
         variable_module: The variable extractor.
-        gate: The stage's concurrency limiter.
 
     Returns:
-        ``(node_id, equations, variables)`` — either list may be empty.
+        The ``(equations, variables)`` pair — each a list of
+        ``(node_id, [result])`` entries.
     """
-    content = node.content
-    content_before = walker.content_before(
-        nodes, position, budget=DEFAULT_BACKWARD_BUDGET
-    )
-    content_after = walker.content_after(
-        nodes, position, budget=DEFAULT_FORWARD_BUDGET
-    )
+    router_module = router_module
+    equation_module = equation_module
+    variable_module = variable_module
 
-    async with gate:
+    equations_result: list[tuple[int, list[models.Equation]]] = []
+    variables_result: list[tuple[int, list[models.Variable]]] = []
+
+    for position, node in enumerate(nodes):
+        node_id = node.id
+        content = node.content
+        if node_id is None or not content or not content.strip():
+            continue
+
+        content_before = walker.content_before(
+            nodes, position, budget=DEFAULT_BACKWARD_BUDGET
+        )
+        content_after = walker.content_after(
+            nodes, position, budget=DEFAULT_FORWARD_BUDGET
+        )
+
         has_equation, has_variable = await router_module.aforward(
             content=content,
             content_before=content_before,
@@ -554,8 +537,9 @@ async def _extract_one(
                 content_before=content_before,
                 content_after=content_after,
             )
+            if node_equations:
+                equations_result.append((node_id, node_equations))
 
-        node_variables: list[models.Variable] = []
         if has_variable:
             node_variables = await variable_module.aforward(
                 content=content,
@@ -563,82 +547,8 @@ async def _extract_one(
                 content_after=content_after,
                 equations=node_equations or None,
             )
-
-    return node.id, node_equations, node_variables
-
-
-async def extract_equations_and_variables(
-    nodes: list[models.ASTNode],
-    router_module: Router | None = None,
-    equation_module: EquationExtractor | None = None,
-    variable_module: VariableExtractor | None = None,
-    max_concurrency: int | None = None,
-) -> tuple[
-    list[tuple[int, list[models.Equation]]],
-    list[tuple[int, list[models.Variable]]],
-]:
-    """Extract equations and variable bindings from every provenance node.
-
-    Every node with content is dispatched concurrently: the router decides
-    what to extract, then the equation and/or variable modules run as needed.
-    Context windows are built from the surrounding nodes via
-    ``walker.content_before`` / ``walker.content_after``. The equation output
-    feeds into the variable extractor as additional context.
-
-    Concurrency is safe here because the stage is a pure reader of *nodes*:
-    the windows are cut from the stream but nothing writes back to it, so
-    every unit sees the same context it would have seen running serially.
-    (Contrast the seam merger, which rewrites its own backbone and therefore
-    has to shard by parity.) Results are collected in document order —
-    ``asyncio.gather`` preserves argument order — so the output is identical
-    to a serial walk, not merely equivalent.
-
-    Args:
-        nodes: The flat node stream.
-        router_module: The router. Created fresh if None.
-        equation_module: The equation extractor. Created fresh if None.
-        variable_module: The variable extractor. Created fresh if None.
-        max_concurrency: Nodes in flight at once. None uses
-            ``llm.MAX_CONCURRENT_CALLS``.
-
-    Returns:
-        The ``(equations, variables)`` pair — each a list of
-        ``(node_id, [result])`` entries, in document order.
-    """
-    router_module = router_module or Router()
-    equation_module = equation_module or EquationExtractor()
-    variable_module = variable_module or VariableExtractor()
-
-    equations_result: list[tuple[int, list[models.Equation]]] = []
-    variables_result: list[tuple[int, list[models.Variable]]] = []
-
-    eligible = [
-        (position, node)
-        for position, node in enumerate(nodes)
-        if node.id is not None and node.content and node.content.strip()
-    ]
-
-    gate = llm.gate(max_concurrency)
-    extracted = await asyncio.gather(
-        *(
-            _extract_one(
-                nodes,
-                position,
-                node,
-                router_module,
-                equation_module,
-                variable_module,
-                gate,
-            )
-            for position, node in eligible
-        )
-    )
-
-    for node_id, node_equations, node_variables in extracted:
-        if node_equations:
-            equations_result.append((node_id, node_equations))
-        if node_variables:
-            variables_result.append((node_id, node_variables))
+            if node_variables:
+                variables_result.append((node_id, node_variables))
 
     logger.info(
         'equations & variables: %d node(s) -> %d equation(s), %d variable binding(s) total',
@@ -661,16 +571,16 @@ class EquationAndVariableNode:
     any fact extraction pass (which consumes both as context).
 
     Args:
-        router_module: The router. Created fresh if None.
-        equation_module: The equation extractor. Created fresh if None.
-        variable_module: The variable extractor. Created fresh if None.
+        router_module: The router.
+        equation_module: The equation extractor.
+        variable_module: The variable extractor.
     """
 
     def __init__(
         self,
-        router_module: Router | None = None,
-        equation_module: EquationExtractor | None = None,
-        variable_module: VariableExtractor | None = None,
+        router_module: Router,
+        equation_module: EquationExtractor,
+        variable_module: VariableExtractor,
     ) -> None:
         self.router_module = router_module
         self.equation_module = equation_module

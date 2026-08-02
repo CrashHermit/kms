@@ -54,7 +54,8 @@ import logging
 import dspy
 from pydantic import BaseModel
 
-from kms.core import llm, logs, models, recorder, state, walker
+from kms.core import logs, models, state, walker
+from kms.core.recorder import Recorder
 
 logger = logging.getLogger(__name__)
 
@@ -115,13 +116,16 @@ class InstructionDistributor(dspy.Module):
     """Determines which following exercises a lead-in governs.
 
     Args:
-        language_model: The LM to run on. Defaults to ``llm.text_lm()``.
+        language_model: The LM to run on.
     """
 
-    def __init__(self, language_model: dspy.LM | None = None) -> None:
+    def __init__(
+        self, language_model: dspy.LM, recorder: Recorder | None = None
+    ) -> None:
         super().__init__()
         self.judge = dspy.ChainOfThought(GovernExtent)
-        self.set_lm(language_model or llm.text_lm())
+        self.set_lm(language_model)
+        self._recorder = recorder
 
     async def aforward(
         self, lead_in: str, following: list[WindowProblem]
@@ -138,11 +142,12 @@ class InstructionDistributor(dspy.Module):
         result = await self.judge.acall(
             lead_in=lead_in, following_problems=following
         )
-        recorder.record_example(
-            'instruction_distributor',
-            {'lead_in': lead_in, 'following_problems': following},
-            result,
-        )
+        if self._recorder:
+            self._recorder.record(
+                'instruction_distributor',
+                {'lead_in': lead_in, 'following_problems': following},
+                result,
+            )
         instruction, positions = (
             (result.instruction or '').strip(),
             list(result.governed_positions or []),
@@ -260,13 +265,13 @@ async def _govern_one(
 
 async def distribute_instructions(
     nodes: list[models.ASTNode],
-    module: InstructionDistributor | None = None,
+    module: InstructionDistributor,
 ) -> tuple[list[models.ASTNode], list[models.Instruction]]:
     """Resolve every lead-in's governance over the exercises that follow it.
 
     Args:
         nodes: The flat node stream, with INSTRUCTION nodes already tagged.
-        module: The governance module. Created fresh if None.
+        module: The governance module.
 
     Returns:
         The cleaned node stream — instruction nodes removed, every other node
@@ -283,7 +288,7 @@ async def distribute_instructions(
         )
         return nodes, []
 
-    module = module or InstructionDistributor()
+    module = module
 
     # Index the stream so we know what follows each lead-in.
     position_of = {
@@ -346,11 +351,11 @@ class InstructionDistributorNode:
     ``nodes`` channel.
 
     Args:
-        module: The governance module. Created fresh if None.
+        module: The governance module.
     """
 
-    def __init__(self, module: InstructionDistributor | None = None) -> None:
-        self.module = module or InstructionDistributor()
+    def __init__(self, module: InstructionDistributor) -> None:
+        self.module = module
 
     async def run(self, state: state.State) -> dict:
         """Distribute each lead-in's instruction onto its exercises.

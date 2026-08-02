@@ -78,7 +78,8 @@ import logging
 import dspy
 from langgraph.types import Send
 
-from kms.core import llm, models, recorder, state
+from kms.core import models, state
+from kms.core.recorder import Recorder
 
 logger = logging.getLogger(__name__)
 
@@ -282,13 +283,16 @@ class Formatter(dspy.Module):
     """Standardises one page's markdown formatting.
 
     Args:
-        language_model: The LM to run on. Defaults to ``llm.text_lm()``.
+        language_model: The LM to run on.
     """
 
-    def __init__(self, language_model: dspy.LM | None = None) -> None:
+    def __init__(
+        self, language_model: dspy.LM, recorder: Recorder | None = None
+    ) -> None:
         super().__init__()
         self.formatter = dspy.Predict(Signature)
-        self.set_lm(language_model or llm.text_lm())
+        self.set_lm(language_model)
+        self._recorder = recorder
 
     async def aforward(self, markdown: str) -> str:
         """Format one page.
@@ -300,7 +304,8 @@ class Formatter(dspy.Module):
             The page's markdown with standardised formatting.
         """
         result = await self.formatter.acall(markdown=markdown)
-        recorder.record_example('formatter', {'markdown': markdown}, result)
+        if self._recorder:
+            self._recorder.record('formatter', {'markdown': markdown}, result)
         formatted = result.formatted or ''
         logger.debug(
             'format: %d chars in, %d chars out', len(markdown), len(formatted)
@@ -319,11 +324,11 @@ class FormatterNode:
     """Fans out per-page formatters and collects the standardised text.
 
     Args:
-        module: The formatting module. Created fresh if None.
+        module: The formatting module.
     """
 
-    def __init__(self, module: Formatter | None = None) -> None:
-        self.module = module or Formatter()
+    def __init__(self, module: Formatter) -> None:
+        self.module = module
 
     def dispatch(self, state: state.State) -> list[Send] | str:
         """Fan out one worker per page with content.

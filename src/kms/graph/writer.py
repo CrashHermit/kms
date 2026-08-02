@@ -30,10 +30,10 @@ carry a single fixed label, so each is one batched MERGE.
 """
 
 from collections import defaultdict
+from collections.abc import Callable
 from typing import Any
 
 from kms.core import models
-from kms.graph.db import database, driver
 from kms.graph.equations import (
     EQUATION_LABEL,
     equation_pairs,
@@ -88,19 +88,28 @@ def node_batches(
 async def persist_nodes(
     nodes: list[models.ASTNode],
     source: str,
+    *,
+    session_factory: Callable,
     metadata: dict[str, Any] | None = None,
 ) -> None:
     """Upsert the book's ``:Source`` root and its ``:Node`` vertices.
 
     Vertices only — no ``:NEXT`` or ``:HEAD`` edges (those are written
     by ``persist_chain`` in document order).
+
+    Args:
+        nodes: The flat node stream, in document order.
+        source: The stable book identity.
+        session_factory: A callable that returns an async context manager
+            with a ``run(query, **params)`` method.
+        metadata: Optional ``{title, author}`` for the ``:Source`` node.
     """
     if not nodes:
         return
     source_props = source_properties(source, metadata)
     batches = node_batches(nodes, source)
 
-    async with driver().session(database=database()) as session:
+    async with session_factory() as session:
         await session.run(
             f'MERGE (s:{SOURCE_LABEL} {{uuid: $uuid}}) SET s += $props',
             uuid=source_props['uuid'],
@@ -151,6 +160,8 @@ def _chain_pairs(chain: list[str]) -> list[dict]:
 async def persist_chain(
     nodes: list[models.ASTNode],
     source: str,
+    *,
+    session_factory: Callable,
 ) -> None:
     """Write the pure provenance ``:NEXT`` chain and ``:HEAD`` edge.
 
@@ -159,6 +170,12 @@ async def persist_chain(
     is slotted in: the chain is the verbatim stream, and the statement
     overlay hangs off it via ``(:Node)-[:MEMBER_OF]->(:Statement)``
     (see ``persist_statements``).
+
+    Args:
+        nodes: The flat node stream, in document order.
+        source: The stable book identity.
+        session_factory: A callable that returns an async context manager
+            with a ``run(query, **params)`` method.
     """
     if not nodes:
         return
@@ -168,7 +185,7 @@ async def persist_chain(
     pairs = _chain_pairs(chain)
     head = chain[0]
 
-    async with driver().session(database=database()) as session:
+    async with session_factory() as session:
         await session.run(
             f'MATCH (s:{SOURCE_LABEL} {{uuid: $source}}), '
             f'(n:{NODE_LABEL} {{uuid: $head}}) '
@@ -194,7 +211,10 @@ def statement_rows(
 
 
 async def persist_statements(
-    statements: list[models.Statement], source: str
+    statements: list[models.Statement],
+    source: str,
+    *,
+    session_factory: Callable,
 ) -> None:
     """Upsert the book's ``:Statement`` overlay as bare vertices, plus the
     ``:MEMBER_OF`` edges from each member node.
@@ -204,13 +224,19 @@ async def persist_statements(
     blocks that are its members: one ``(:Node)-[:MEMBER_OF]->(:Statement)``
     edge per member of the group. Book-scoped lookup goes through the
     ``statement_source`` index rather than a traversal.
+
+    Args:
+        statements: The statement hubs.
+        source: The stable book identity.
+        session_factory: A callable that returns an async context manager
+            with a ``run(query, **params)`` method.
     """
     if not statements:
         return
     rows = statement_rows(statements, source)
     pairs = statement_member_pairs(statements, source)
 
-    async with driver().session(database=database()) as session:
+    async with session_factory() as session:
         await session.run(
             f'UNWIND $rows AS row '
             f'MERGE (s:{STATEMENT_LABEL} {{uuid: row.uuid}}) '
@@ -262,9 +288,18 @@ async def persist_instructions(
 async def persist_procedures(
     procedures: list[models.Procedure],
     source: str,
+    *,
+    session_factory: Callable,
 ) -> None:
     """Upsert the procedural layer: one ``:Procedure`` hub per derivation,
-    pointing at its member nodes via ``:MEMBER_OF``."""
+    pointing at its member nodes via ``:MEMBER_OF``.
+
+    Args:
+        procedures: The procedure hubs.
+        source: The stable book identity.
+        session_factory: A callable that returns an async context manager
+            with a ``run(query, **params)`` method.
+    """
     procedure_batch = procedure_rows(procedures, source)
     if not procedure_batch:
         return
@@ -273,7 +308,7 @@ async def persist_procedures(
     firsts = first_pairs(procedures, source)
     thens = then_pairs(procedures, source)
 
-    async with driver().session(database=database()) as session:
+    async with session_factory() as session:
         await session.run(
             f'UNWIND $rows AS row '
             f'MERGE (p:{PROCEDURE_LABEL} {{uuid: row.uuid}}) '
@@ -316,6 +351,8 @@ async def persist_procedures(
 async def persist_variables(
     variables: list[tuple[int, list[models.Variable]]],
     source: str,
+    *,
+    session_factory: Callable,
 ) -> None:
     """Upsert the ``:Variable`` nodes and ``:HAS_VARIABLE`` edges.
 
@@ -323,6 +360,12 @@ async def persist_variables(
     when ``equation_index`` is set, otherwise off the ``:Node`` it was
     extracted from. Cypher cannot parameterise a label, so the pairs are
     split by ``container_label`` — only two: ``equation`` and ``node``.
+
+    Args:
+        variables: The ``(node_id, [Variable])`` extraction results.
+        source: The stable book identity.
+        session_factory: A callable that returns an async context manager
+            with a ``run(query, **params)`` method.
     """
     variable_batch = variable_rows(variables, source)
     if not variable_batch:
@@ -331,7 +374,7 @@ async def persist_variables(
     equation_pairs = [p for p in pairs if p['container_label'] == 'equation']
     node_pairs = [p for p in pairs if p['container_label'] == 'node']
 
-    async with driver().session(database=database()) as session:
+    async with session_factory() as session:
         await session.run(
             f'UNWIND $rows AS row '
             f'MERGE (v:{VARIABLE_LABEL} {{uuid: row.uuid}}) '
@@ -359,19 +402,27 @@ async def persist_variables(
 async def persist_equations(
     equations: list[tuple[int, list[models.Equation]]],
     source: str,
+    *,
+    session_factory: Callable,
 ) -> None:
     """Upsert the ``:Equation`` nodes and ``:HAS_EQUATION`` edges.
 
     One ``:Equation`` per extracted equation. An equation hangs off the
     ``:Node`` it was extracted from via ``:HAS_EQUATION`` — a single
     label, no bucketing needed.
+
+    Args:
+        equations: The ``(node_id, [Equation])`` extraction results.
+        source: The stable book identity.
+        session_factory: A callable that returns an async context manager
+            with a ``run(query, **params)`` method.
     """
     equation_batch = equation_rows(equations, source)
     if not equation_batch:
         return
     pairs = equation_pairs(equations, source)
 
-    async with driver().session(database=database()) as session:
+    async with session_factory() as session:
         await session.run(
             f'UNWIND $rows AS row '
             f'MERGE (e:{EQUATION_LABEL} {{uuid: row.uuid}}) '

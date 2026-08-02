@@ -25,47 +25,89 @@ logger = logging.getLogger(__name__)
 
 _NAMESPACE_KMS = uuid5(NAMESPACE_URL, 'kms')
 
-_run_id: str | None = None
-_run_meta: dict = {}
-_output_dir: str = 'output/examples'
 
+class Recorder:
+    """Records DSPy module calls as JSONL examples for training.
 
-def set_run(source: str, output_dir: str = 'output/examples', **meta) -> None:
-    """Set the current run identity, derived from the source name.
+    Each pipeline run creates ``<output_dir>/<module>/<run_id>/`` containing
+    examples and metadata. Run IDs are deterministic ``uuid5`` hashes of the
+    source name, so re-running the same book appends to the same corpus.
 
     Args:
         source: The book identity (PDF filename or Neo4j key).
         output_dir: Root directory for recorded examples.
-        **meta: Extra metadata written to ``meta.json``.
+        **meta: Extra metadata written to ``meta.json`` (pdf, pages, title,
+            author, etc.).
     """
-    global _run_id, _output_dir, _run_meta  # noqa PLW0603
-    _run_id = str(uuid5(_NAMESPACE_KMS, source))
-    _output_dir = output_dir
-    _run_meta = dict(meta, source=source)
 
+    def __init__(
+        self,
+        source: str,
+        output_dir: str = 'output/examples',
+        **meta: object,
+    ) -> None:
+        self._run_id = str(uuid5(_NAMESPACE_KMS, source))
+        self._output_dir = output_dir
+        self._run_meta = dict(meta, source=source)
 
-def _ensure_run_dir(module_name: str) -> Path:
-    """Return the run directory for *module_name*, creating it lazily."""
-    global _run_id, _output_dir, _run_meta  # noqa: PLW0603
-    if _run_id is None:
-        _run_id = str(uuid5(_NAMESPACE_KMS, 'default'))
-    run_dir = Path(_output_dir) / module_name / _run_id
-    if not run_dir.exists():
-        run_dir.mkdir(parents=True, exist_ok=True)
-        meta_path = run_dir / 'meta.json'
-        if not meta_path.exists() and _run_meta:
-            meta_path.write_text(
-                json.dumps(
-                    {
-                        'run_id': _run_id,
-                        'created': datetime.now(UTC).isoformat(),
-                        **_run_meta,
-                    },
-                    indent=2,
-                    ensure_ascii=False,
-                )
+    # -- public API ---------------------------------------------------------
+
+    def record(
+        self,
+        module_name: str,
+        inputs: dict,
+        prediction: dspy.Prediction,
+    ) -> None:
+        """Append one prediction to the module's JSONL corpus.
+
+        Failures are logged and swallowed: recording is a side channel for
+        training data, so a bad value or an unwritable corpus must cost that
+        one example, never the document being ingested.
+
+        Args:
+            module_name: Stable key for the module (e.g. ``'corrector'``).
+            inputs: The keyword arguments the module was called with.
+            prediction: The ``dspy.Prediction`` returned by ``acall``.
+        """
+        try:
+            run_dir = self._ensure_run_dir(module_name)
+            images_dir = run_dir / 'images'
+            jsonl = run_dir / 'examples.jsonl'
+
+            record = {
+                'inputs': _serialize_images(inputs, images_dir),
+                'outputs': _jsonable(dict(prediction)),
+            }
+            with jsonl.open('a') as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + '\n')
+        except (TypeError, ValueError, OSError):
+            logger.warning(
+                'recorder: failed to record a %s example',
+                module_name,
+                exc_info=True,
             )
-    return run_dir
+
+    # -- internals ----------------------------------------------------------
+
+    def _ensure_run_dir(self, module_name: str) -> Path:
+        """Return the run directory for *module_name*, creating it lazily."""
+        run_dir = Path(self._output_dir) / module_name / self._run_id
+        if not run_dir.exists():
+            run_dir.mkdir(parents=True, exist_ok=True)
+            meta_path = run_dir / 'meta.json'
+            if not meta_path.exists() and self._run_meta:
+                meta_path.write_text(
+                    json.dumps(
+                        {
+                            'run_id': self._run_id,
+                            'created': datetime.now(UTC).isoformat(),
+                            **self._run_meta,
+                        },
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+                )
+        return run_dir
 
 
 def _is_data_url(value: str) -> bool:
@@ -146,49 +188,6 @@ def _deserialize_images(
         else:
             deserialized[name] = value
     return deserialized
-
-
-def record_example(
-    module_name: str,
-    inputs: dict,
-    prediction: dspy.Prediction,
-) -> None:
-    """Append one prediction to the module's JSONL corpus.
-
-    Called inside each module's ``aforward`` — a recording side effect
-    that does not change the return type. No-op when ``set_run`` has not
-    been called (recording is opt-in).
-
-    Failures are logged and swallowed: recording is a side channel for
-    training data, so a bad value or an unwritable corpus must cost that one
-    example, never the document being ingested. Raising here aborts the whole
-    LangGraph run from inside a worker.
-
-    Args:
-        module_name: Stable key for the module (e.g. ``'corrector'``).
-        inputs: The keyword arguments the module was called with.
-        prediction: The ``dspy.Prediction`` returned by ``acall``.
-    """
-    global _run_id  # noqa PLW0603
-    if _run_id is None:
-        return
-    try:
-        run_dir = _ensure_run_dir(module_name)
-        images_dir = run_dir / 'images'
-        jsonl = run_dir / 'examples.jsonl'
-
-        record = {
-            'inputs': _serialize_images(inputs, images_dir),
-            'outputs': _jsonable(dict(prediction)),
-        }
-        with jsonl.open('a') as handle:
-            handle.write(json.dumps(record, ensure_ascii=False) + '\n')
-    except (TypeError, ValueError, OSError):
-        logger.warning(
-            'recorder: failed to record a %s example',
-            module_name,
-            exc_info=True,
-        )
 
 
 def load_examples(
