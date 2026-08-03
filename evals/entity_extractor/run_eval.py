@@ -168,11 +168,14 @@ def _score(results: list[dict]) -> dict:
                         }
                     )
 
-        mentions_per_fact.extend(
-            per_fact.get(i, 0) for i in range(len(facts))
-        )
+        mentions_per_fact.extend(per_fact.get(i, 0) for i in range(len(facts)))
 
     covered = [count for count in mentions_per_fact if count]
+    # A triple needs two endpoints drawn from the same fact, so a fact with
+    # fewer than two mentions cannot produce one however good the relation
+    # pass is. This is the ceiling the mention pass sets on triple recall.
+    triple_capable = [count for count in mentions_per_fact if count >= 2]
+    histogram = Counter(min(count, 6) for count in mentions_per_fact)
     return {
         'totals': {
             'records': len(results),
@@ -195,6 +198,16 @@ def _score(results: list[dict]) -> dict:
             if mentions_per_fact
             else 0.0,
             'mentions_per_fact_max': max(mentions_per_fact, default=0),
+            'triple_capable_facts': len(triple_capable),
+            'triple_capable_pct': round(
+                100 * len(triple_capable) / total_facts, 1
+            )
+            if total_facts
+            else 0.0,
+            'mentions_per_fact_histogram': {
+                ('6+' if count == 6 else str(count)): facts
+                for count, facts in sorted(histogram.items())
+            },
             'repeat_name_rate_pct': round(
                 100 * (total_mentions - len(names)) / total_mentions, 1
             )
@@ -245,6 +258,18 @@ def _print_report(report: dict, baseline: dict | None) -> None:
     print(
         f'  facts with no mention  {coverage["facts_without_mentions"]} '
         f'({coverage["facts_without_mentions_pct"]}%)'
+    )
+    print(
+        f'  triple-capable facts   {coverage["triple_capable_facts"]} '
+        f'({coverage["triple_capable_pct"]}%) — 2+ mentions, the ceiling on '
+        f'triple recall'
+    )
+    print(
+        '  mentions per fact      '
+        + ', '.join(
+            f'{count}: {facts}'
+            for count, facts in coverage['mentions_per_fact_histogram'].items()
+        )
     )
     print(
         f'  distinct names         {totals["distinct_names"]} '
@@ -364,6 +389,9 @@ async def main() -> int:
     elapsed = time.time() - started
 
     report = _score(results)
+    # The raw run, so a new metric can be computed over an old report instead
+    # of paying for the model again.
+    report['results'] = results
     report['model'] = language_model.model
     report['seconds'] = round(elapsed, 1)
     report['corpus'] = str(CORPUS.relative_to(REPO))

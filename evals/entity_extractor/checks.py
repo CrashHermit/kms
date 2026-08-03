@@ -59,6 +59,9 @@ _RELATION = re.compile(r'(?<![<>=!])=(?!=)|[<>]|\\leq|\\geq|\\neq|\\le|\\ge')
 # The alternative delimiters the formatter is supposed to have converted.
 _ALT_DELIMITERS = re.compile(r'\\\(|\\\)|\\\[|\\\]')
 
+# An escaped dollar — a literal $, not a math delimiter.
+_ESCAPED_DOLLAR = re.compile(r'\\\$')
+
 # A name that is entirely a quoted phrase — the prompt's "gloss" case.
 _QUOTED = re.compile(r'^\s*[\'"‘“].*[\'"’”]\s*$')
 
@@ -117,7 +120,11 @@ def _normalise(text: str) -> str:
     Returns:
         The normalised string.
     """
-    return re.sub(r'\s+', ' ', unicodedata.normalize('NFKC', text)).strip().casefold()
+    return (
+        re.sub(r'\s+', ' ', unicodedata.normalize('NFKC', text))
+        .strip()
+        .casefold()
+    )
 
 
 def _tokens(text: str) -> set[str]:
@@ -130,6 +137,34 @@ def _tokens(text: str) -> set[str]:
         The token set.
     """
     return {token for token in re.findall(r'[\w\\]+', text.casefold()) if token}
+
+
+# Length of the prefix two tokens must share to count as the same word. Crude
+# on purpose: the alternative is a real stemmer, and the only thing this has
+# to survive is morphology — "vertex" against a fact that says "vertices",
+# "converges" against "convergent". Four characters separates those from
+# genuine invention without pulling in a dependency.
+_STEM = 4
+
+
+def _grounded_tokens(name_tokens: set[str], fact_tokens: set[str]) -> int:
+    """How many of a name's tokens appear in the fact, morphology allowed.
+
+    Args:
+        name_tokens: The name's tokens.
+        fact_tokens: The fact's tokens.
+
+    Returns:
+        The number of name tokens with a match in the fact.
+    """
+    stems = {token[:_STEM] for token in fact_tokens}
+    return len(
+        [
+            token
+            for token in name_tokens
+            if token in fact_tokens or token[:_STEM] in stems
+        ]
+    )
 
 
 def word_count(name: str) -> int:
@@ -227,7 +262,10 @@ def check_mention(
     seen_in_fact.add(key)
 
     # --- Format -------------------------------------------------------
-    if stripped.count('$') % 2:
+    # `\$` is an escaped literal dollar — currency, not a delimiter. A page
+    # that says "a budget surplus of \$540 million" yields a name carrying one
+    # escaped dollar, which is correct and must not read as unbalanced.
+    if _ESCAPED_DOLLAR.sub('', stripped).count('$') % 2:
         findings.append(
             ('unbalanced_latex', VIOLATION, 'odd number of $ delimiters')
         )
@@ -251,7 +289,9 @@ def check_mention(
 
     # --- Vocabulary ---------------------------------------------------
     if key in _PRONOUNS:
-        findings.append(('pronoun_name', VIOLATION, f'"{stripped}" is a pronoun'))
+        findings.append(
+            ('pronoun_name', VIOLATION, f'"{stripped}" is a pronoun')
+        )
     if _QUOTED.match(stripped):
         findings.append(
             ('gloss_quoted', REVIEW, 'name is a quoted phrase — likely a gloss')
@@ -290,7 +330,8 @@ def check_mention(
         if _normalise(stripped) not in _normalise(fact_text):
             name_tokens = _tokens(stripped)
             overlap = (
-                len(name_tokens & _tokens(fact_text)) / len(name_tokens)
+                _grounded_tokens(name_tokens, _tokens(fact_text))
+                / len(name_tokens)
                 if name_tokens
                 else 0.0
             )
@@ -299,7 +340,7 @@ def check_mention(
                     (
                         'ungrounded',
                         VIOLATION,
-                        f'{overlap:.0%} of the name\'s tokens appear in the fact',
+                        f"{overlap:.0%} of the name's tokens appear in the fact",
                     )
                 )
             else:
@@ -308,7 +349,7 @@ def check_mention(
                         'not_verbatim',
                         REVIEW,
                         'name is not a substring of the fact — the prompt says '
-                        'keep the fact\'s wording',
+                        "keep the fact's wording",
                     )
                 )
 

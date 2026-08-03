@@ -53,7 +53,11 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / 'src'))
 
 from kms.core import llm, models  # noqa: E402
-from kms.ingestion import atomic_fact_extractor, extractor, formatter  # noqa: E402
+from kms.ingestion import (  # noqa: E402
+    atomic_fact_extractor,
+    extractor,
+    formatter,
+)
 
 GOLD = REPO / 'data' / 'gold' / 'corrector'
 OUT = REPO / 'data' / 'eval' / 'entity_extractor' / 'facts.json'
@@ -185,13 +189,17 @@ async def main() -> int:
     )
 
     if OUT.exists() and not args.force:
-        print(f'{OUT.relative_to(REPO)} already exists — pass --force to rebuild.')
+        print(
+            f'{OUT.relative_to(REPO)} already exists — pass --force to rebuild.'
+        )
         return 0
 
     index = json.loads((GOLD / 'index.json').read_text())
     # Real pages only: a perturbed record's gold is a verbatim copy of the
     # page it derives from, so including both would weight that page double.
-    records = [record for record in index['records'] if record['kind'] == 'real']
+    records = [
+        record for record in index['records'] if record['kind'] == 'real'
+    ]
     if args.split:
         records = [
             record for record in records if record['split'] == args.split
