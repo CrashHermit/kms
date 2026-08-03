@@ -2,8 +2,12 @@
 
 - **Status:** Proposed
 - **Date:** 2026-08-03
-- **Supersedes:** HANDOFF "Key design decisions" #3 (equations/variables as sibling
-  tiers on `:Node`)
+- **Supersedes:** the prior decision, quoted here in full because the document it
+  came from has since been removed — *"Equations/variables stay sibling tiers on
+  `:Node` (not attributes on facts, not parent/child of facts). The enrichment pass
+  stays node-anchored and runs before facts. Facts receive artifact names as context
+  to write richer text. Dedup across fact-text and artifact-latex is the concept
+  pass's job."*
 - **Affects:** `ingestion.variable_extractor`, `ingestion.atomic_fact_extractor`,
   `ingestion.entity_extractor`, `graph.equations`, `graph.variables`, `pipeline`
 
@@ -20,11 +24,10 @@ Both read the same source text and both mint vertices. Anything that is simultan
 notation *and* something a fact is about therefore gets extracted twice, under two
 identity schemes that can never merge.
 
-This contradicts the project's own stated first principle. HANDOFF decision #1 says
-"Facts are the primitive. Everything — claims, equations, variable bindings — is
-decomposable into atomic facts." Decision #3 then carves equations and variables out as
-sibling tiers. The overlap measured below is precisely the seam between those two
-decisions.
+This contradicts the project's own stated first principle: "Facts are the primitive.
+Everything — claims, equations, variable bindings — is decomposable into atomic facts."
+The superseded decision above then carves equations and variables out as sibling tiers.
+The overlap measured below is precisely the seam between those two commitments.
 
 ### Measurements
 
@@ -187,8 +190,8 @@ becomes a migration rather than a design change. Nothing is corrupt today: the
 
 ## Open questions
 
-- Items 4 and 5 are designed against the concept pass as described in HANDOFF, not
-  against code. If clustering changes how concept identity works, the
+- Items 4 and 5 are designed against the concept pass as planned (see CLAUDE.md,
+  "Open work"), not against code. If clustering changes how concept identity works, the
   equation-as-concept shape may need adjusting.
 - The derivation-granularity change (§3) is a hypothesis from two observed pages and has
   not been A/B tested. It should be, before it is trusted.
