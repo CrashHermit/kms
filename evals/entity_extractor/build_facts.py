@@ -10,12 +10,26 @@ entity prompt.
 
 The chain picks up exactly where the corrector leaves off:
 
-    corrected.md -> formatter -> extractor -> flatten -> atomic facts
+    corrected.md -> formatter -> extractor -> flatten -> splitter
+                 -> instruction_finder -> instruction_distributor
+                 -> atomic facts
 
 ``pipeline.build_graph`` runs corrector -> formatter -> extractor, and a
 corrector record's ``corrected.md`` IS that first stage's output, hand-checked
 against the page image. Starting there is therefore production-exact rather
 than an approximation, and it needs no page images and no vision model.
+
+Every stage that rewrites the ``nodes`` channel before the fact pass reads it
+is here. That is the splitter, the instruction finder and the instruction
+distributor — the first version of this script omitted all three, and the
+facts it produced were wrong in a way that looked like a fact-extractor
+fault: an exercise arrived as the bare givens of problem 277, with no
+directive, because nothing had split the packed list or prepended the
+lead-in. The stages that do NOT touch ``nodes`` are deliberately absent: the
+pedagogical component finder writes ``spans``, the hub builder writes
+``statements``/``procedures``, and the variable extractor writes
+``variables``, none of which the fact pass reads. The seam merger is absent
+too — it heals nodes split ACROSS pages, and each record here is one page.
 
 The corrector set is used in preference to ``data/gold/extractor`` because of
 what each contains. The extractor set is weighted toward front matter — title
@@ -57,6 +71,9 @@ from kms.ingestion import (  # noqa: E402
     atomic_fact_extractor,
     extractor,
     formatter,
+    instruction_distributor,
+    instruction_finder,
+    splitter,
 )
 
 GOLD = REPO / 'data' / 'gold' / 'corrector'
@@ -75,6 +92,9 @@ async def _build_one(
     record: dict,
     format_module: formatter.Formatter,
     extract_node: extractor.ExtractorNode,
+    split_node: splitter.SplitterNode,
+    finder_node: instruction_finder.InstructionFinderNode,
+    distributor_node: instruction_distributor.InstructionDistributorNode,
     fact_module: atomic_fact_extractor.AtomicFactExtractor,
     gate: asyncio.Semaphore,
     windows_in_flight: int,
@@ -93,6 +113,9 @@ async def _build_one(
         format_module: The formatting pass.
         extract_node: The extractor's LangGraph node (used for its worker, so
             furniture is dropped exactly as production drops it).
+        split_node: The exercise splitter.
+        finder_node: The instruction finder.
+        distributor_node: The instruction distributor.
         fact_module: The atomic fact pass.
         gate: Bounds how many pages are in flight at once.
         windows_in_flight: Fact windows this page may run concurrently.
@@ -109,6 +132,15 @@ async def _build_one(
         result = await extract_node.worker({'segment': segment})
         segment.nodes = result['extract_results'][0][1]
         nodes = models.flatten_segments([segment])
+
+        # The three stages that rewrite `nodes` before the fact pass reads
+        # it. Skipping them is what made the first corpus wrong: an exercise
+        # reached the fact pass as the bare givens of problem 277, because
+        # nothing had split the packed list or prepended the lead-in's
+        # directive onto it.
+        nodes = (await split_node.run({'nodes': nodes}))['nodes']
+        nodes = (await finder_node.run({'nodes': nodes}))['nodes']
+        nodes = (await distributor_node.run({'nodes': nodes}))['nodes']
 
         facts = await atomic_fact_extractor.extract_atomic_facts(
             nodes, module=fact_module, max_concurrency=windows_in_flight
@@ -212,6 +244,19 @@ async def main() -> int:
     extract_node = extractor.ExtractorNode(
         module=extractor.Extractor(language_model=language_model)
     )
+    split_node = splitter.SplitterNode(
+        module=splitter.Splitter(language_model=language_model)
+    )
+    finder_node = instruction_finder.InstructionFinderNode(
+        module=instruction_finder.InstructionFinder(
+            language_model=language_model
+        )
+    )
+    distributor_node = instruction_distributor.InstructionDistributorNode(
+        module=instruction_distributor.InstructionDistributor(
+            language_model=language_model
+        )
+    )
     fact_module = atomic_fact_extractor.AtomicFactExtractor(
         language_model=language_model
     )
@@ -224,6 +269,9 @@ async def main() -> int:
                 record,
                 format_module,
                 extract_node,
+                split_node,
+                finder_node,
+                distributor_node,
                 fact_module,
                 gate,
                 args.windows_in_flight,
