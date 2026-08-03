@@ -51,15 +51,12 @@ def fact_properties(fact: models.AtomicFact, source: str, index: int) -> dict:
         index: The fact's position in the flat document-order list.
 
     Returns:
-        The property map, with None values omitted — a fact without an
-        embedding (no embedding target configured) simply lacks the
-        property.
+        The property map, with None values omitted.
     """
     props = {
         'uuid': fact_uuid(source, fact.node_ids, index),
         'source': nodes.source_uuid(source),
         'text': fact.text,
-        'embedding': fact.embedding,
         'index': index,
     }
     return {key: value for key, value in props.items() if value is not None}

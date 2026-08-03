@@ -93,15 +93,10 @@ class AtomicFact:
     information, drawn from one or more provenance nodes. Minimal by design:
     no kind, no source — classification is a downstream pass's job, and
     provenance is recoverable by resolving ``node_ids`` into the stream.
-
-    ``embedding`` is filled by the fact embedding stage — a batched vector
-    over the fact text — for the concept pass to cluster over and the
-    ``:Fact`` graph node to carry.
     """
 
     text: str
     node_ids: list[int] = field(default_factory=list)
-    embedding: list[float] | None = None
 
 
 # --- Semantic overlay -------------------------------------------------------

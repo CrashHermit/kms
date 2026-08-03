@@ -78,6 +78,9 @@ class State(TypedDict, total=False):
     atomic_facts: list[
         models.AtomicFact
     ]  # atomic facts from the final node stream, document order
+    entity_mentions: list[
+        tuple[int, str]
+    ]  # (fact_index, entity_name) from the entity extractor
     correction_results: Annotated[
         list[tuple[int, str]], operator.add
     ]  # (segment index, corrected markdown)
