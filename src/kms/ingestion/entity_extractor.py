@@ -27,6 +27,16 @@ Design commitments:
 * LATEX FORMAT. Entity names keep delimited LaTeX (``$...$``, ``$$...$$``)
   exactly as in the source fact. A fact that mentions ``$x = -b \\pm
   \\sqrt{b^2-4ac} / 2a$`` as an entity keeps that string verbatim.
+
+* SYMBOLS BELONG TO THE VARIABLE TIER. A bound symbol (``$X$``, ``$S$``,
+  ``$p$``) is not an entity: it stands for something only within its own
+  document, so it has no cross-document identity to canonicalise, and
+  ``ingestion.variable_extractor`` already extracts it WITH its meaning.
+  Measured on a proof-style page, symbols were 44% of this pass's mentions
+  before the prompt excluded them — all of them entities that would mean
+  nothing once merged across books. Named mathematical objects ("the
+  discrete metric") stay, and so do the transient steps' subject matter,
+  but not the steps themselves.
 """
 
 import asyncio
@@ -84,14 +94,38 @@ class Signature(dspy.Signature):
     as it appears in the fact. Do not strip delimiters and do not convert
     to Unicode.
 
+    NOT AN ENTITY. Three things look like entities and are not:
+
+    - BOUND SYMBOLS. A symbol standing in for something within this
+      document — ``$X$``, ``$S$``, ``$p$``, ``$B$``, ``$d(p, x)$`` — is a
+      variable binding, not an entity. A separate pass extracts those with
+      their meanings, and duplicating them here mints entities that mean
+      nothing outside this page. When a fact is about what the symbol
+      stands for, name that instead ("metric space", "subset"); otherwise
+      emit nothing for the symbol. A NAMED mathematical object is still an
+      entity: "the discrete metric", "the diameter of a set", or a formula
+      the fact names, such as "$$e^{i\pi} + 1 = 0$$".
+
+    - DERIVATION STEPS. The successive lines of a worked manipulation —
+      ``$8a - 3a > 5a + 18$``, then ``$5a > 5a + 18$``, then ``$0 > 18$`` —
+      are transient scratch work, not durable entities. Name what the
+      worked example is ABOUT: the problem being solved, the method used,
+      the conclusion reached.
+
+    - GLOSSES. A quoted phrase giving a symbol's reading ("'is greater
+      than'") is that symbol's meaning, not an entity of its own.
+
     RULES:
     - Every entity worth naming gets one mention. If a fact is about the
       quadratic formula AND roots AND quadratic equations, emit all three.
+    - Emit each distinct entity AT MOST ONCE per fact. A fact that mentions
+      the same thing twice still yields one mention.
     - Do not invent entities the fact does not mention. Do not skip
       entities the fact does mention.
     - Pronouns ("it", "this", "they") are not entities — use the referent
       noun phrase instead.
-    - A fact may mention zero entities — return no mention for it.
+    - A fact may mention zero entities — return no mention for it. A fact
+      that is nothing but symbol manipulation often mentions none.
     - Keep the name close to the fact's own wording. Do not normalise
       "the quadratic formula" to "quadratic formula" — the canonicalisation
       pass merges surface variants later.

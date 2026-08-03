@@ -71,7 +71,14 @@ class DSPyVariable(BaseModel):
     """A single stand-in binding emitted by the variable extractor."""
 
     symbol: str = Field(
-        description='The compact notation — a single symbol, an expression, or a short label'
+        description=(
+            r'The compact notation — a single symbol, an expression, or a '
+            r'short label. Mathematical notation KEEPS its LaTeX '
+            r'delimiters exactly as in the source: "$X$" not "X", '
+            r'"$d|_{Y \times Y}$" not "d|_{Y \times Y}". A label that is '
+            r'not mathematical notation (an abbreviation, a code '
+            r'identifier, a table heading) stays as written, undelimited.'
+        )
     )
     meaning: str = Field(
         description='What the symbol stands for, in plain language'
@@ -349,6 +356,14 @@ class VariableSignature(dspy.Signature):
     - meaning: What the symbol stands for, in plain language.
     - kind: What sort of thing — variable, constant, parameter, element, unit,
       abbreviation, function, operator, etc.
+
+    SYMBOL FORMAT. Mathematical notation keeps its LaTeX delimiters, exactly
+    as in the source: emit "$X$", never bare "X"; "$d'$", never "d'". The
+    symbol string is part of this binding's stored identity, so an
+    undelimited symbol and a delimited one become two different vertices for
+    the same thing. Labels that are not mathematical notation — an
+    abbreviation like "Acme", a code identifier like ``lr`` — stay
+    undelimited.
 
     WHAT DOES NOT COUNT
     - A symbol merely used, not defined or bound ("$f(x) = x^2$" with no
