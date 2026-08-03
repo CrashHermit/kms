@@ -183,6 +183,12 @@ This pass is one step beyond the concept pass and hasn't been designed yet.
    run.
 4. **Pipeline ordering for concepts relative to embedding:** facts are already
    embedded; concept embedding happens in the concept pass itself.
+5. **Equations/variables vs the concept layer:** measured double extraction
+   between the node-anchored `:Equation`/`:Variable` tiers and the fact →
+   entity → concept path. See
+   [ADR 0001](adr/0001-facts-as-the-only-semantic-primitive.md), which proposes
+   superseding decision #3 above. Note the timing constraint: the equation
+   change must land before the concept pass persists anything.
 
 ## Code state (committed and pushed)
 
