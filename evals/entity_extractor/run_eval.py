@@ -28,6 +28,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import statistics
 import sys
 import time
@@ -46,6 +47,13 @@ from kms.ingestion import entity_extractor  # noqa: E402
 
 CORPUS = REPO / 'data' / 'eval' / 'entity_extractor' / 'facts.json'
 REPORTS = REPO / 'output' / 'evals' / 'entity_extractor'
+
+# Shorthands for --model. The full ids are what `llm.text_lm` reads from
+# TEXT_MODEL; these just save typing at the prompt.
+_MODEL_ALIASES = {
+    'flash': 'deepseek/deepseek-v4-flash',
+    'pro': 'deepseek/deepseek-v4-pro',
+}
 
 logger = logging.getLogger('run_eval')
 
@@ -317,7 +325,17 @@ async def main() -> int:
     parser.add_argument(
         '--baseline', type=Path, help='an earlier report JSON to diff against'
     )
+    parser.add_argument(
+        '--model',
+        help=(
+            "the text LM to run the pass on: 'flash', 'pro', or a full "
+            'litellm id. Sets TEXT_MODEL, which llm.text_lm() reads.'
+        ),
+    )
     args = parser.parse_args()
+
+    if args.model:
+        os.environ['TEXT_MODEL'] = _MODEL_ALIASES.get(args.model, args.model)
 
     logging.basicConfig(
         level=logging.INFO, format='%(asctime)s %(name)s %(message)s'

@@ -44,6 +44,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -57,6 +58,12 @@ from kms.ingestion import atomic_fact_extractor, extractor, formatter  # noqa: E
 GOLD = REPO / 'data' / 'gold' / 'corrector'
 OUT = REPO / 'data' / 'eval' / 'entity_extractor' / 'facts.json'
 
+# Shorthands for --model, expanded into TEXT_MODEL for `llm.text_lm`.
+_MODEL_ALIASES = {
+    'flash': 'deepseek/deepseek-v4-flash',
+    'pro': 'deepseek/deepseek-v4-pro',
+}
+
 logger = logging.getLogger('build_facts')
 
 
@@ -66,8 +73,16 @@ async def _build_one(
     extract_node: extractor.ExtractorNode,
     fact_module: atomic_fact_extractor.AtomicFactExtractor,
     gate: asyncio.Semaphore,
+    windows_in_flight: int,
 ) -> dict:
     """Run one gold page through to atomic facts.
+
+    The page holds one gate slot for its whole run, and its fact windows fan
+    out inside that slot. ``extract_atomic_facts`` builds a semaphore of its
+    own on every call, so without an outer bound N pages in flight would
+    each open ``MAX_CONCURRENT_CALLS`` of their own — 38 pages became a
+    request for ~600 concurrent calls, which the API answers by throttling
+    until the run looks hung.
 
     Args:
         record: The gold corrector record.
@@ -75,7 +90,8 @@ async def _build_one(
         extract_node: The extractor's LangGraph node (used for its worker, so
             furniture is dropped exactly as production drops it).
         fact_module: The atomic fact pass.
-        gate: Bounds the page-level LM calls in flight.
+        gate: Bounds how many pages are in flight at once.
+        windows_in_flight: Fact windows this page may run concurrently.
 
     Returns:
         The corpus entry: the record's identity, its nodes, and its facts.
@@ -85,15 +101,14 @@ async def _build_one(
     async with gate:
         formatted = await format_module.aforward(markdown=markdown)
 
-    segment = models.Segment(index=0, image_path='', content=formatted)
-    async with gate:
+        segment = models.Segment(index=0, image_path='', content=formatted)
         result = await extract_node.worker({'segment': segment})
-    segment.nodes = result['extract_results'][0][1]
-    nodes = models.flatten_segments([segment])
+        segment.nodes = result['extract_results'][0][1]
+        nodes = models.flatten_segments([segment])
 
-    facts = await atomic_fact_extractor.extract_atomic_facts(
-        nodes, module=fact_module
-    )
+        facts = await atomic_fact_extractor.extract_atomic_facts(
+            nodes, module=fact_module, max_concurrency=windows_in_flight
+        )
 
     logger.info(
         '%s: %d chars -> %d node(s) -> %d fact(s)',
@@ -137,7 +152,33 @@ async def main() -> int:
         action='store_true',
         help='rebuild even though the corpus already exists',
     )
+    parser.add_argument(
+        '--model',
+        help=(
+            "the text LM to build the corpus on: 'flash', 'pro', or a full "
+            'litellm id. Sets TEXT_MODEL, which llm.text_lm() reads.'
+        ),
+    )
+    parser.add_argument(
+        '--pages-in-flight',
+        type=int,
+        default=4,
+        help=(
+            'pages processed concurrently. Each one fans its fact windows out '
+            'inside its slot, so total concurrency is this times '
+            '--windows-in-flight.'
+        ),
+    )
+    parser.add_argument(
+        '--windows-in-flight',
+        type=int,
+        default=4,
+        help='fact windows one page may run concurrently',
+    )
     args = parser.parse_args()
+
+    if args.model:
+        os.environ['TEXT_MODEL'] = _MODEL_ALIASES.get(args.model, args.model)
 
     logging.basicConfig(
         level=logging.INFO, format='%(asctime)s %(name)s %(message)s'
@@ -166,12 +207,19 @@ async def main() -> int:
     fact_module = atomic_fact_extractor.AtomicFactExtractor(
         language_model=language_model
     )
-    gate = llm.gate()
+    gate = asyncio.Semaphore(args.pages_in_flight)
 
     started = time.time()
     entries = await asyncio.gather(
         *(
-            _build_one(record, format_module, extract_node, fact_module, gate)
+            _build_one(
+                record,
+                format_module,
+                extract_node,
+                fact_module,
+                gate,
+                args.windows_in_flight,
+            )
             for record in records
         )
     )
