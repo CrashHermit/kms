@@ -19,7 +19,7 @@ label scan with no property index. The kind is also kept as a ``type``
 property, mirroring ``models.ASTNode.type`` for readback.
 
 Identity: a node's in-document int id collides across books, so the stable
-vertex key is a uuid (the HANDOFF's deferred decision), and the int is
+vertex key is a uuid, and the int is
 demoted to an ``index`` provenance property. The uuid is DETERMINISTIC —
 uuid5 over ``(source, index)`` — so re-persisting the same book MERGEs onto
 the same vertices instead of duplicating them, and ``source`` disambiguates

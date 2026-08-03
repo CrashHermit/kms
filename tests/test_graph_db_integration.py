@@ -29,11 +29,11 @@ def test_connectivity_round_trip_and_idempotent_schema():
 
     async def scenario():
         def _session_factory():
-            return db.driver().session(database=db.database())
+            return db.session()
 
         try:
             await db.verify_connectivity()
-            async with db.driver().session(database=db.database()) as session:
+            async with db.session() as session:
                 result = await session.run('RETURN 1 AS n')
                 record = await result.single()
                 assert record['n'] == 1
@@ -63,7 +63,7 @@ def test_persist_nodes_upserts_labels_and_next_chain():
 
     async def scenario():
         def _session_factory():
-            return db.driver().session(database=db.database())
+            return db.session()
 
         try:
             meta = {'title': 'Test Book', 'author': 'A. Mathematician'}
@@ -80,7 +80,15 @@ def test_persist_nodes_upserts_labels_and_next_chain():
                 session_factory=_session_factory,
                 metadata=meta,
             )  # idempotent re-run
-            async with db.driver().session(database=db.database()) as session:
+            # Vertices only came from persist_nodes; the :HEAD/:NEXT spine is
+            # persist_chain's job, and the assertions below cover both.
+            await writer.persist_chain(
+                stream, source, session_factory=_session_factory
+            )
+            await writer.persist_chain(
+                stream, source, session_factory=_session_factory
+            )  # idempotent re-run
+            async with db.session() as session:
                 # multi-label: the math node is reachable as :Math and carries
                 # base :Node too
                 math = await one(
@@ -108,7 +116,7 @@ def test_persist_nodes_upserts_labels_and_next_chain():
                     head['c'] == '§1'
                 )  # title+author on the source, hangs off the first node
         finally:
-            async with db.driver().session(database=db.database()) as session:
+            async with db.session() as session:
                 await session.run(
                     'MATCH (n) DETACH DELETE n'
                 )  # test DB: clear the graph

@@ -351,7 +351,7 @@ async def run(
     if neo4j_configured:
 
         def neo4j_session_factory():
-            return db.driver().session(database=db.database())
+            return db.session()
     else:
         neo4j_session_factory = None
 

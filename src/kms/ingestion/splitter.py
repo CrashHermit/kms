@@ -166,9 +166,8 @@ class Splitter(dspy.Module):
                 'splitter', {'current_nodes': current_nodes}, result
             )
         splits = list(result.splits or [])
-        # Whether a given packed node splits is the stage's known run-to-run
-        # variance (docs/HANDOFF.md, known issues), so log the per-window
-        # verdict.
+        # Whether a given packed node splits is this stage's known run-to-run
+        # variance, so log the per-window verdict.
         logger.debug(
             'split: %d nodes in, %d split(s) out%s',
             len(current_nodes),
