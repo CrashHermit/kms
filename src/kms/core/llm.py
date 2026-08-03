@@ -50,7 +50,7 @@ DEEPSEEK_ENV_KEY = 'DEEPSEEK_API_KEY'
 OPENROUTER_ENV_KEY = 'OPENROUTER_API_KEY'
 
 # How many LM calls a fanned-out stage may have in flight at once. The
-# sub-node stages (equation/variable, hub building) fan out one unit of work
+# sub-node stages (variable extraction, hub building) fan out one unit of work
 # per node or per span, which on a full book is tens of thousands — unbounded
 # that is a rate-limit failure, not parallelism. The page-level stages fan out
 # via LangGraph `Send` and are bounded by the page count instead.

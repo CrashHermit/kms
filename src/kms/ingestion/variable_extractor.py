@@ -1,29 +1,30 @@
 r"""
-Equation and variable extraction — one LangGraph node, three DSPy modules.
+Variable binding extraction — one LangGraph node, one DSPy module.
 
-The node runs over every content node in the stream. For each:
+The node cuts the node stream into fixed adjacent windows of whole nodes
+(the same cutter the atomic fact pass uses) and runs one windowed pass over
+each: the variable extractor finds stand-in bindings — compact symbols,
+expressions, or labels that stand for something fuller — and gives each
+one's symbol, meaning, and kind.
 
-1. **Router** — classifies the node: does it contain equations, variable
-   bindings, both, or neither? Two independent booleans, one cheap call.
+Windowed exactly as the atomic fact and entity passes are: one DSPy call
+per fixed window, no per-node round-trip. Node attribution travels as a
+``node_id`` on every binding — exactly as ``fact_index`` does in the entity
+pass — so the channel keeps its ``(node_id, [result])`` shape and the
+persister needs no changes.
 
-2. **Equation extractor** — runs when ``has_equation`` is true. Extracts
-   equations from the node's content, giving each a LaTeX form, an optional
-   identity (resolved against the existing graph), and an optional domain.
-
-3. **Variable extractor** — runs when ``has_variable`` is true. Extracts
-   stand-in bindings from the node's content, with the equation list as
-   additional context when available — the same symbol resolution task, just
-   richer input.
-
-All three modules share the same context window (content + before + after).
-The equation extractor feeds its output into the variable extractor so a
-variable inside ``$$\frac{\partial u}{\partial t} = \alpha \nabla^2 u$$``
-inherits the equation's identity as evidence for its meaning.
+The equation extractor is gone (ADR 0001, step 4): equations are folded
+into facts. The fact pass already states them (its text carries the
+delimited LaTeX), so equation identity now belongs to the concept pass —
+clustering facts about the same equation across books — instead of a
+parallel ``(source, node_id, index)`` vertex space that could never merge.
+The ``:Equation`` tier, its writer, and the variable→equation attachment
+are deleted with it; every binding hangs off its ``:Node``.
 
 Artifacts hang directly off the ``:Node`` they were extracted from via
-``:HAS_EQUATION`` / ``:HAS_VARIABLE``. Statement and procedure hubs inherit
-them through ``:MEMBER_OF`` — every equation and variable is reachable from
-every hub that covers its provenance node.
+``:HAS_VARIABLE``. Statement and procedure hubs inherit them through
+``:MEMBER_OF`` — every variable is reachable from every hub that covers its
+provenance node.
 """
 
 import asyncio
@@ -37,9 +38,10 @@ from kms.core.recorder import Recorder
 
 logger = logging.getLogger(__name__)
 
-# Token budgets for the context window on either side of the focus node.
-DEFAULT_BACKWARD_BUDGET = 500
-DEFAULT_FORWARD_BUDGET = 200
+# Fixed context window over whole nodes (~4 chars/token), the same budget
+# as the atomic fact pass. A single node larger than the budget still forms
+# a window of its own.
+WINDOW_BUDGET = 2000
 
 
 # ============================================================================
@@ -47,29 +49,15 @@ DEFAULT_FORWARD_BUDGET = 200
 # ============================================================================
 
 
-class DSPyEquation(BaseModel):
-    """One equation emitted by the equation extractor."""
-
-    latex: str = Field(
-        description=(
-            r'The equation in LaTeX notation, WITH its surrounding '
-            r'delimiters: \$\$...\$\$ or \$...\$ or \(...\) or '
-            r'\[...\] — exactly as it appears in the source'
-        )
-    )
-    name: str | None = Field(
-        default=None,
-        description='The canonical name of this equation if known (e.g. "heat equation", "Schrödinger equation", "Ohm\'s law"). Null if unknown.',
-    )
-    domain: str | None = Field(
-        default=None,
-        description='The domain of the equation (e.g. "physics", "chemistry", "circuit analysis"). Null if uncertain.',
-    )
-
-
 class DSPyVariable(BaseModel):
     """A single stand-in binding emitted by the variable extractor."""
 
+    node_id: int = Field(
+        description=(
+            'The id of the node this binding was extracted from — one of '
+            'the given nodes.'
+        )
+    )
     symbol: str = Field(
         description=(
             r'The compact notation — a single symbol, an expression, or a '
@@ -89,247 +77,17 @@ class DSPyVariable(BaseModel):
 
 
 # ============================================================================
-# 1. Router
-# ============================================================================
-
-
-class RouterSignature(dspy.Signature):
-    r"""
-    You are given the text of one block from a document. Two optional context
-    sections surround it. Answer two yes/no questions about this block.
-
-    1. Does this block contain an EQUATION — a relationship between two
-       or more quantities expressed in notation? This is always a
-       COMPLETE statement with a relational operator (=, ≤, →, ⇌, etc.)
-       connecting two sides:
-         * display math: $$y = mx + b$$, $$\nabla \cdot \mathbf{E} = \rho/\varepsilon_0$$
-         * inline math that states a relationship: $E = mc^2$
-         * chemical reactions: 2H₂ + O₂ → 2H₂O
-         * schematic formulas: $V = IR$
-
-       NOT an equation — do NOT flag these:
-         * a decorated variable: $L$-smooth, $k$-means, $\alpha$-mixing
-         * a single expression: $x^2 + 3x$, $\frac{1}{k}$
-         * a bound or rate used attributively: $O(1/k)$, $\|x\|_2$
-         * a bare inequality that qualifies rather than states: $\epsilon > 0$
-
-    2. Does this block contain a VARIABLE BINDING — a place where a compact
-       notation is explicitly bound to a meaning? This includes "Let $\alpha$
-       be the learning rate", "the thermal diffusivity $\alpha$", "H₂
-       (hydrogen gas)", "def train(model, lr=0.01)", "hereinafter 'Acme'".
-
-    Answer with two booleans. Answer honestly — if there is nothing to
-    extract, say so.
-    """
-
-    content: str = dspy.InputField(
-        description='The text of one document block.'
-    )
-    content_before: str | None = dspy.InputField(
-        description='Preceding context, read-only.'
-    )
-    content_after: str | None = dspy.InputField(
-        description='Following context, read-only.'
-    )
-    has_equation: bool = dspy.OutputField(
-        description='True if this block contains an equation worth extracting.'
-    )
-    has_variable: bool = dspy.OutputField(
-        description='True if this block contains variable bindings worth extracting.'
-    )
-
-
-class Router(dspy.Module):
-    """Classifies a content node for equation / variable presence.
-
-    Args:
-        language_model: The LM to run on.
-    """
-
-    def __init__(
-        self, language_model: dspy.LM, recorder: Recorder | None = None
-    ) -> None:
-        super().__init__()
-        self.router = dspy.ChainOfThought(RouterSignature)
-        self.set_lm(language_model)
-        self._recorder = recorder
-
-    async def aforward(
-        self,
-        content: str,
-        content_before: str | None = None,
-        content_after: str | None = None,
-    ) -> tuple[bool, bool]:
-        result = await self.router.acall(
-            content=content,
-            content_before=content_before,
-            content_after=content_after,
-        )
-        if self._recorder:
-            self._recorder.record(
-                'router',
-                {
-                    'content': content,
-                    'content_before': content_before,
-                    'content_after': content_after,
-                },
-                result,
-            )
-        return result.has_equation, result.has_variable
-
-    def forward(
-        self,
-        content: str,
-        content_before: str | None = None,
-        content_after: str | None = None,
-    ) -> tuple[bool, bool]:
-        return asyncio.run(
-            self.aforward(
-                content=content,
-                content_before=content_before,
-                content_after=content_after,
-            )
-        )
-
-
-# ============================================================================
-# 2. Equation extractor
-# ============================================================================
-
-
-class EquationExtractorSignature(dspy.Signature):
-    r"""
-    You are given the text of one block from a document. Extract every
-    equation — a standalone relationship expressed in notation — and give
-    each one's LaTeX form, canonical name (if known), and domain.
-
-    An equation is a COMPLETE RELATIONSHIP: two expressions connected by
-    equality, inequality, reaction, or another relational operator. This
-    includes:
-
-    - Display math ($$...$$) and inline math ($...$) that expresses a
-      complete relationship.
-    - Chemical equations: "2H₂ + O₂ → 2H₂O".
-    - Circuit laws: "$V = IR$", "$R_{in} = 10k\Omega$".
-    - A code fragment that is a named formula: "f(x) = x² + 3x".
-    - A table row that pairs a variable with its definition.
-
-    What is NOT an equation:
-    - A bare variable reference: "the value $x$", "the constant $c$".
-    - A notation fragment: "$x \in \mathbb{R}$".
-    - An expression without a relation: "$x^2 + 3x$".
-
-    For each equation, give:
-    - latex: The equation, always using \$\$...\$\$ for display math
-      and \$...\$ for inline math. If the source uses \\(, \\),
-      \\[, or \\], convert them to the dollar convention. Keep the
-      LaTeX content between the delimiters exactly as written.
-    - name: The canonical name if you recognise it. Null if unknown.
-    - domain: The subject area. Null if uncertain.
-
-    Return an empty list if there are no equations.
-    """
-
-    content: str = dspy.InputField(
-        description='The text of one document block.'
-    )
-    content_before: str | None = dspy.InputField(
-        description='Preceding context, read-only.'
-    )
-    content_after: str | None = dspy.InputField(
-        description='Following context, read-only.'
-    )
-    equations: list[DSPyEquation] = dspy.OutputField(
-        description='Every equation found, with its latex, name, and domain. Empty if none.'
-    )
-
-
-class EquationExtractor(dspy.Module):
-    """Extracts equations from a content node.
-
-    Args:
-        language_model: The LM to run on.
-    """
-
-    def __init__(
-        self, language_model: dspy.LM, recorder: Recorder | None = None
-    ) -> None:
-        super().__init__()
-        self.extractor = dspy.ChainOfThought(EquationExtractorSignature)
-        self.set_lm(language_model)
-        self._recorder = recorder
-
-    async def aforward(
-        self,
-        content: str,
-        content_before: str | None = None,
-        content_after: str | None = None,
-    ) -> list[models.Equation]:
-        result = await self.extractor.acall(
-            content=content,
-            content_before=content_before,
-            content_after=content_after,
-        )
-        if self._recorder:
-            self._recorder.record(
-                'equation_extractor',
-                {
-                    'content': content,
-                    'content_before': content_before,
-                    'content_after': content_after,
-                },
-                result,
-            )
-        equations = [
-            models.Equation(
-                latex=eq.latex,
-                name=eq.name,
-                domain=eq.domain,
-            )
-            for eq in (result.equations or [])
-        ]
-        logger.debug(
-            'equation extractor: %d char(s) -> %d equation(s)',
-            len(content or ''),
-            len(equations),
-        )
-        return equations
-
-    def forward(
-        self,
-        content: str,
-        content_before: str | None = None,
-        content_after: str | None = None,
-    ) -> list[models.Equation]:
-        return asyncio.run(
-            self.aforward(
-                content=content,
-                content_before=content_before,
-                content_after=content_after,
-            )
-        )
-
-
-# ============================================================================
-# 3. Variable extractor (accepts equations as context)
+# Variable extractor
 # ============================================================================
 
 
 class VariableSignature(dspy.Signature):
     r"""
-    You are given the text of one block from a document. Find every stand-in
-    notation — compact symbols, expressions, or labels that stand for
-    something fuller — and give each one's symbol, meaning, and kind.
-
-    Two optional context sections surround the block: PRECEDING CONTEXT and
-    FOLLOWING CONTEXT. Read these to understand what the symbols mean — they
-    often define or use the symbols found in the main content — but extract
-    bindings ONLY from the main content, never from the context alone.
-
-    An optional EQUATIONS list gives equations already extracted from this
-    block, with their LaTeX form and canonical name (if known). When an
-    equation is present, its identity is strong evidence for what its symbols
-    mean. Use it.
+    You are given a run of nodes from a document, in document order. Each
+    node carries its id, its structural type, and its content. Find every
+    stand-in notation — compact symbols, expressions, or labels that stand
+    for something fuller — and give each one's node_id, symbol, meaning,
+    and kind.
 
     WHAT COUNTS AS A STAND-IN
 
@@ -353,6 +111,7 @@ class VariableSignature(dspy.Signature):
       distance.
 
     Every stand-in must carry:
+    - node_id: which of the given nodes it came from.
     - meaning: What the symbol stands for, in plain language.
     - kind: What sort of thing — variable, constant, parameter, element, unit,
       abbreviation, function, operator, etc.
@@ -372,29 +131,26 @@ class VariableSignature(dspy.Signature):
     - A heading or section number.
     - A footnote superscript or citation bracket.
 
+    CONTEXT-ONLY NODES. header (a title), bibliographic (a reference
+    entry), and caption nodes are context to help you place the bindings
+    — do NOT extract bindings from them.
+
     WHEN IN DOUBT, INCLUDE IT. A downstream stage can filter.
     """
 
-    content: str = dspy.InputField(
-        description='The text of one document block.'
-    )
-    content_before: str | None = dspy.InputField(
-        description='Preceding context, read-only.'
-    )
-    content_after: str | None = dspy.InputField(
-        description='Following context, read-only.'
-    )
-    equations: list[DSPyEquation] | None = dspy.InputField(
-        default=None,
-        description='Equations already extracted from this block, with their LaTeX and name. Read-only context for resolving symbol meanings.',
+    current_nodes: list[walker.WindowNode] = dspy.InputField(
+        description=(
+            "The window's nodes, in document order, each with its id, type, "
+            'and content.'
+        )
     )
     variables: list[DSPyVariable] = dspy.OutputField(
-        description='Every stand-in notation found, with its symbol, meaning, and kind. Empty if none.'
+        description='Every stand-in notation found, with its node_id, symbol, meaning, and kind. Empty if none.'
     )
 
 
 class VariableExtractor(dspy.Module):
-    """Extracts stand-in bindings from one content node.
+    """Extracts stand-in bindings from one fixed window of nodes.
 
     Args:
         language_model: The LM to run on.
@@ -409,230 +165,163 @@ class VariableExtractor(dspy.Module):
         self._recorder = recorder
 
     async def aforward(
-        self,
-        content: str,
-        content_before: str | None = None,
-        content_after: str | None = None,
-        equations: list[models.Equation] | None = None,
-    ) -> list[models.Variable]:
-        """Extract every stand-in binding from one block of text.
+        self, current_nodes: list[walker.WindowNode]
+    ) -> list[tuple[int, models.Variable]]:
+        """Extract every stand-in binding from one window.
 
         Args:
-            content: The block's text.
-            content_before: Optional preceding context, read-only.
-            content_after: Optional following context, read-only.
-            equations: Optional equations already extracted from this block.
+            current_nodes: The window's nodes, in document order.
 
         Returns:
-            The bound variables found, or an empty list.
+            ``(node_id, variable)`` pairs, in the order the model emitted
+            them.
         """
-        dspy_eqs = (
-            [
-                DSPyEquation(latex=eq.latex, name=eq.name, domain=eq.domain)
-                for eq in equations
-            ]
-            if equations
-            else None
-        )
-        result = await self.extractor.acall(
-            content=content,
-            content_before=content_before,
-            content_after=content_after,
-            equations=dspy_eqs,
-        )
+        result = await self.extractor.acall(current_nodes=current_nodes)
         if self._recorder:
             self._recorder.record(
                 'variable_extractor',
                 {
-                    'content': content,
-                    'content_before': content_before,
-                    'content_after': content_after,
-                    'equations': [eq.model_dump() for eq in dspy_eqs]
-                    if dspy_eqs
-                    else None,
+                    'current_nodes': [
+                        node.model_dump() for node in current_nodes
+                    ],
                 },
                 result,
             )
         variables = [
-            models.Variable(
-                symbol=variable.symbol,
-                meaning=variable.meaning,
-                kind=variable.kind,
+            (
+                variable.node_id,
+                models.Variable(
+                    symbol=variable.symbol,
+                    meaning=variable.meaning,
+                    kind=variable.kind,
+                ),
             )
             for variable in (result.variables or [])
         ]
         logger.debug(
-            'variable extractor: %d char(s) -> %d variable(s) | %s',
-            len(content or ''),
+            'variable extractor: %d node(s) -> %d variable(s) | %s',
+            len(current_nodes),
             len(variables),
-            logs.counts([variable.symbol for variable in variables]),
+            logs.counts([variable.symbol for _, variable in variables]),
         )
         return variables
 
     def forward(
-        self,
-        content: str,
-        content_before: str | None = None,
-        content_after: str | None = None,
-        equations: list[models.Equation] | None = None,
-    ) -> list[models.Variable]:
+        self, current_nodes: list[walker.WindowNode]
+    ) -> list[tuple[int, models.Variable]]:
         """Sync forward for DSPy optimisers."""
-        return asyncio.run(
-            self.aforward(
-                content=content,
-                content_before=content_before,
-                content_after=content_after,
-                equations=equations,
-            )
-        )
+        return asyncio.run(self.aforward(current_nodes=current_nodes))
 
 
 # ============================================================================
-# Entry point — orchestrates the three modules over every provenance node
+# Entry point — orchestrates the module over fixed windows
 # ============================================================================
 
 
-async def _extract_one(
-    nodes: list[models.ASTNode],
-    position: int,
-    node: models.ASTNode,
-    router_module: Router,
-    equation_module: EquationExtractor,
-    variable_module: VariableExtractor,
-    gate: asyncio.Semaphore,
-) -> tuple[int, list[models.Equation], list[models.Variable]]:
-    """Route one node and run the extractors it asks for.
+def _group_by_node[T](
+    pairs: list[tuple[int, T]], node_order: list[int]
+) -> list[tuple[int, list[T]]]:
+    """Group ``(node_id, item)`` pairs back into the channel shape.
 
-    The three calls are a dependency chain — the router decides which of the
-    other two run, and the equation output feeds the variable extractor's
-    context — so within a node they stay sequential. The whole chain sits
-    inside the semaphore, which therefore bounds nodes in flight rather than
-    raw requests; that is the useful unit, since a node issues at most one
-    call at a time.
+    Channel entries follow the window's node order; items within a node keep
+    the model's emission order. ``node_id`` values that name no node in the
+    window are dropped — the model must not mint vertices for nodes it was
+    not shown.
 
     Args:
-        nodes: The flat node stream, read-only — the context windows are cut
-            from it.
-        position: The focus node's index in *nodes*.
-        node: The focus node.
-        router_module: The router.
-        equation_module: The equation extractor.
+        pairs: The ``(node_id, item)`` pairs from one window.
+        node_order: The window's node ids, in document order.
+
+    Returns:
+        The channel entries, ``(node_id, [item])``, in *node_order*.
+    """
+    by_node: dict[int, list[T]] = {}
+    for node_id, item in pairs:
+        by_node.setdefault(node_id, []).append(item)
+    return [
+        (node_id, by_node[node_id])
+        for node_id in node_order
+        if node_id in by_node
+    ]
+
+
+async def _extract_window(
+    window: list[models.ASTNode],
+    variable_module: VariableExtractor,
+    gate: asyncio.Semaphore,
+) -> list[tuple[int, models.Variable]]:
+    """Run the extractor over one fixed window.
+
+    The call sits inside the semaphore, which therefore bounds windows in
+    flight rather than raw requests.
+
+    Args:
+        window: The window's nodes, in document order.
         variable_module: The variable extractor.
         gate: The stage's concurrency limiter.
 
     Returns:
-        ``(node_id, equations, variables)`` — either list may be empty.
+        The ``(node_id, variable)`` pairs for the window, in the model's
+        emission order.
     """
-    content = node.content
-    content_before = walker.content_before(
-        nodes, position, budget=DEFAULT_BACKWARD_BUDGET
-    )
-    content_after = walker.content_after(
-        nodes, position, budget=DEFAULT_FORWARD_BUDGET
-    )
-
+    window_nodes = [
+        walker.WindowNode(node_id=node.id, type=node.type, content=node.content)
+        for node in window
+    ]
     async with gate:
-        has_equation, has_variable = await router_module.aforward(
-            content=content,
-            content_before=content_before,
-            content_after=content_after,
-        )
-
-        node_equations: list[models.Equation] = []
-        if has_equation:
-            node_equations = await equation_module.aforward(
-                content=content,
-                content_before=content_before,
-                content_after=content_after,
-            )
-
-        node_variables: list[models.Variable] = []
-        if has_variable:
-            node_variables = await variable_module.aforward(
-                content=content,
-                content_before=content_before,
-                content_after=content_after,
-                equations=node_equations or None,
-            )
-
-    return node.id, node_equations, node_variables
+        return await variable_module.aforward(window_nodes)
 
 
-async def extract_equations_and_variables(
+async def extract_variables(
     nodes: list[models.ASTNode],
-    router_module: Router,
-    equation_module: EquationExtractor,
     variable_module: VariableExtractor,
     max_concurrency: int | None = None,
-) -> tuple[
-    list[tuple[int, list[models.Equation]]],
-    list[tuple[int, list[models.Variable]]],
-]:
-    """Extract equations and variable bindings from every provenance node.
+) -> list[tuple[int, list[models.Variable]]]:
+    """Extract variable bindings from the whole node stream.
 
-    Every node with content is dispatched concurrently: the router decides
-    what to extract, then the equation and/or variable modules run as needed.
-    Context windows are built from the surrounding nodes via
-    ``walker.content_before`` / ``walker.content_after``. The equation output
-    feeds into the variable extractor as additional context.
+    The stream is cut into adjacent fixed windows of whole nodes
+    (``walker.fixed_windows``, the same cutter the atomic fact pass uses);
+    every window is processed concurrently, and the channel is collected in
+    document order. Each binding carries the ``node_id`` of the node it was
+    extracted from, so the channel keeps its ``(node_id, [result])`` shape.
 
-    Concurrency is safe here because the stage is a pure reader of *nodes*:
-    the windows are cut from the stream but nothing writes back to it, so
-    every unit sees the same context it would have seen running serially.
-    Results are collected in document order — ``asyncio.gather`` preserves
-    argument order — so the output is identical to a serial walk.
+    The pass is a pure reader of ``nodes`` — nothing writes back to the
+    stream, so every window sees the same stream it would have seen running
+    serially.
 
     Args:
         nodes: The flat node stream.
-        router_module: The router.
-        equation_module: The equation extractor.
         variable_module: The variable extractor.
-        max_concurrency: Nodes in flight at once. None uses
+        max_concurrency: Windows in flight at once. None uses
             ``llm.MAX_CONCURRENT_CALLS``.
 
     Returns:
-        The ``(equations, variables)`` pair — each a list of
-        ``(node_id, [result])`` entries, in document order.
+        The ``variables`` channel — ``(node_id, [Variable])`` entries, in
+        document order.
     """
-    equations_result: list[tuple[int, list[models.Equation]]] = []
-    variables_result: list[tuple[int, list[models.Variable]]] = []
-
-    eligible = [
-        (position, node)
-        for position, node in enumerate(nodes)
-        if node.id is not None and node.content and node.content.strip()
-    ]
+    windows = walker.fixed_windows(nodes, WINDOW_BUDGET)
+    if not windows:
+        logger.info('variable extractor: no windows')
+        return []
 
     gate = llm.gate(max_concurrency)
-    extracted = await asyncio.gather(
-        *(
-            _extract_one(
-                nodes,
-                position,
-                node,
-                router_module,
-                equation_module,
-                variable_module,
-                gate,
-            )
-            for position, node in eligible
-        )
+    per_window = await asyncio.gather(
+        *(_extract_window(window, variable_module, gate) for window in windows)
     )
 
-    for node_id, node_equations, node_variables in extracted:
-        if node_equations:
-            equations_result.append((node_id, node_equations))
-        if node_variables:
-            variables_result.append((node_id, node_variables))
+    variables_result: list[tuple[int, list[models.Variable]]] = []
+    for window, window_variables in zip(windows, per_window, strict=True):
+        node_order = [node.id for node in window if node.id is not None]
+        variables_result.extend(_group_by_node(window_variables, node_order))
 
     logger.info(
-        'equations & variables: %d node(s) -> %d equation(s), '
-        '%d variable binding(s) total',
+        'variable extractor: %d node(s) in %d window(s) -> '
+        '%d variable binding(s)',
         len(nodes),
-        sum(len(eqs) for _, eqs in equations_result),
+        len(windows),
         sum(len(bindings) for _, bindings in variables_result),
     )
-    return equations_result, variables_result
+    return variables_result
 
 
 # ============================================================================
@@ -640,42 +329,29 @@ async def extract_equations_and_variables(
 # ============================================================================
 
 
-class EquationAndVariableNode:
-    """Extracts equations and variable bindings from every provenance node.
+class VariableNode:
+    """Extracts variable bindings from the node stream.
 
     Runs after the partitioners (which narrow hub memberships) and before
-    any fact extraction pass (which consumes both as context).
+    the atomic fact pass. Reads only the final ``nodes`` stream; writes the
+    ``variables`` channel.
 
     Args:
-        router_module: The router.
-        equation_module: The equation extractor.
-        variable_module: The variable extractor.
+        module: The variable extractor.
     """
 
-    def __init__(
-        self,
-        router_module: Router,
-        equation_module: EquationExtractor,
-        variable_module: VariableExtractor,
-    ) -> None:
-        self.router_module = router_module
-        self.equation_module = equation_module
-        self.variable_module = variable_module
+    def __init__(self, module: VariableExtractor) -> None:
+        self.module = module
 
     async def run(self, state: state.State) -> dict:
-        """Extract equations and variable bindings from every eligible node.
+        """Extract variable bindings from every eligible node.
 
         Args:
             state: The pipeline state, holding the node stream.
 
         Returns:
-            The ``equations`` and ``variables`` channels.
+            The ``variables`` channel.
         """
         nodes = state.get('nodes', [])
-        equations, variables = await extract_equations_and_variables(
-            nodes,
-            router_module=self.router_module,
-            equation_module=self.equation_module,
-            variable_module=self.variable_module,
-        )
-        return {'equations': equations, 'variables': variables}
+        variables = await extract_variables(nodes, module=self.module)
+        return {'variables': variables}

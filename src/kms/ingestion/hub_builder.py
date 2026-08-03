@@ -496,7 +496,7 @@ async def build_hubs(
 class HubBuilderNode:
     """Builds Statement and Procedure hubs from PCF spans.
 
-    Runs after the pedagogical component finder and before equation/variable
+    Runs after the pedagogical component finder and before variable
     extraction. Classifies each span, creates the hubs, and partitions
     both-block members in one pass.
 

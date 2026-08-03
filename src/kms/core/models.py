@@ -30,21 +30,7 @@ class ASTNode:
     segment_index: int | None = None
 
 
-# --- Equation & variable binding ---------------------------------------------
-
-
-@dataclass(slots=True)
-class Equation:
-    """One equation extracted from a content node.
-
-    Carries the LaTeX source, an optional identity (e.g. "heat equation")
-    resolved against the existing graph, and an optional domain label.
-    """
-
-    id: int | None = None
-    latex: str | None = None
-    name: str | None = None
-    domain: str | None = None
+# --- Variable binding --------------------------------------------------------
 
 
 @dataclass(slots=True)
@@ -70,15 +56,13 @@ class Variable:
     review card from the node. It is a string, not a number — a binding is as
     often ``-3``, ``2\\pi``, or ``n+1`` as it is an integer.
 
-    When ``equation_index`` is set, the variable belongs to an equation
-    extracted from the same node — the ``:HAS_VARIABLE`` edge will point
-    from that ``:Equation`` instead of from the ``:Node``.
+    The binding always hangs off its ``:Node`` — the ``:Equation`` tier was
+    folded into facts (ADR 0001) and no longer exists.
     """
 
     symbol: str
     meaning: str
     kind: str
-    equation_index: int | None = None
     value: str | None = None
 
 

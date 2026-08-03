@@ -72,9 +72,6 @@ class State(TypedDict, total=False):
     variables: Annotated[
         list[tuple[int, list[models.Variable]]], operator.add
     ]  # (node_id, variable bindings) from the variable extractor
-    equations: Annotated[
-        list[tuple[int, list[models.Equation]]], operator.add
-    ]  # (node_id, equations) extracted per node
     atomic_facts: list[
         models.AtomicFact
     ]  # atomic facts from the final node stream, document order

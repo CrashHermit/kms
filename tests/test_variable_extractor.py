@@ -1,4 +1,4 @@
-"""Variable extractor — per-node iteration and context assembly.
+"""Variable extractor — fixed-window iteration, node attribution.
 No network/LLM."""
 
 import asyncio
@@ -15,67 +15,35 @@ def _math(content, node_id=0):
     return models.ASTNode(type='math', content=content, id=node_id)
 
 
-# --- extract_equations_and_variables (using scripted modules) --------------
-
-
-class _ScriptedRouter:
-    """Returns a fixed (has_equation, has_variable) for every node."""
-
-    def __init__(self, *flags):
-        self._flags = list(flags)
-
-    async def aforward(self, content, content_before=None, content_after=None):
-        return self._flags.pop(0)
-
-
-class _ScriptedEquation:
-    """Returns a fixed list of equations per call."""
-
-    def __init__(self, *eq_lists):
-        self._eq_lists = list(eq_lists)
-
-    async def aforward(self, content, content_before=None, content_after=None):
-        return list(self._eq_lists.pop(0))
+# --- extract_variables (using scripted modules) -----------------------------
 
 
 class _ScriptedVariable:
-    """Returns a fixed list of variables per call."""
+    """Returns a fixed list of (node_id, Variable) pairs per window call."""
 
-    def __init__(self, *var_lists):
-        self._var_lists = list(var_lists)
+    def __init__(self, *var_pairs_lists):
+        self._var_pairs_lists = list(var_pairs_lists)
 
-    async def aforward(
-        self,
-        content,
-        content_before=None,
-        content_after=None,
-        equations=None,
-    ):
-        return list(self._var_lists.pop(0))
+    async def aforward(self, current_nodes):
+        return list(self._var_pairs_lists.pop(0))
 
 
-def test_iterates_every_node_with_content():
+def test_extracts_from_every_windowed_node():
     nodes = [
         _paragraph('First.', node_id=0),
         _paragraph('Second.', node_id=1),
     ]
-    router = _ScriptedRouter((True, False), (False, True))
-    eq_mod = _ScriptedEquation(
-        [models.Equation(latex='$$x=1$$')],
-        [],  # second node: no equations
-    )
     var_mod = _ScriptedVariable(
-        [models.Variable(symbol='y', meaning='why', kind='variable')],
+        [
+            (
+                1,
+                models.Variable(symbol='y', meaning='why', kind='variable'),
+            )
+        ],
     )
-    eqs, vars_ = asyncio.run(
-        variable_extractor.extract_equations_and_variables(
-            nodes,
-            router_module=router,
-            equation_module=eq_mod,
-            variable_module=var_mod,
-        )
+    vars_ = asyncio.run(
+        variable_extractor.extract_variables(nodes, variable_module=var_mod)
     )
-    assert eqs == [(0, [models.Equation(latex='$$x=1$$')])]
     assert vars_ == [
         (1, [models.Variable(symbol='y', meaning='why', kind='variable')])
     ]
@@ -86,21 +54,12 @@ def test_skips_nodes_without_content():
         _paragraph('', node_id=0),
         _paragraph('Has content.', node_id=1),
     ]
-    router = _ScriptedRouter((True, False))
-    eq_mod = _ScriptedEquation(
-        [models.Equation(latex='$$z=3$$')],
-    )
     var_mod = _ScriptedVariable([])
-    eqs, vars_ = asyncio.run(
-        variable_extractor.extract_equations_and_variables(
-            nodes,
-            router_module=router,
-            equation_module=eq_mod,
-            variable_module=var_mod,
-        )
+    vars_ = asyncio.run(
+        variable_extractor.extract_variables(nodes, variable_module=var_mod)
     )
-    # Node 0 skipped (empty content), only node 1 processed.
-    assert eqs == [(1, [models.Equation(latex='$$z=3$$')])]
+    # Node 0 is cut out of every window (empty content); only node 1 reaches
+    # the extractor.
     assert vars_ == []
 
 
@@ -108,92 +67,109 @@ def test_skips_nodes_without_ids():
     nodes = [
         models.ASTNode(type='paragraph', content='no id'),
     ]
-    eqs, vars_ = asyncio.run(
-        variable_extractor.extract_equations_and_variables(
+    vars_ = asyncio.run(
+        variable_extractor.extract_variables(
             nodes,
-            router_module=_ScriptedRouter(),
-            equation_module=_ScriptedEquation(),
             variable_module=_ScriptedVariable(),
         )
     )
-    assert eqs == []
     assert vars_ == []
 
 
-def test_router_gates_both_extractors():
-    # has_equation=True, has_variable=True → both extractors run.
-    nodes = [_paragraph('Both.', node_id=0)]
-    router = _ScriptedRouter((True, True))
-    eq_mod = _ScriptedEquation(
-        [models.Equation(latex='$$e=mc^2$$')],
+def test_large_stream_cuts_into_multiple_windows():
+    # 2000-char budget: three fat nodes form three windows, one each, and
+    # every window is one call.
+    nodes = [_paragraph('a' * 1500, node_id=i) for i in range(3)]
+
+    calls = []
+
+    class _RecordingVariable:
+        async def aforward(self, current_nodes):
+            calls.append([node.node_id for node in current_nodes])
+            return []
+
+    asyncio.run(
+        variable_extractor.extract_variables(
+            nodes,
+            variable_module=_RecordingVariable(),
+        )
     )
+    assert calls == [[0], [1], [2]]
+
+
+def test_window_nodes_carry_type_and_content():
+    nodes = [
+        _math('$$x=1$$', node_id=0),
+        _paragraph('Text.', node_id=1),
+    ]
+
+    seen = []
+
+    class _RecordingVariable:
+        async def aforward(self, current_nodes):
+            seen.append([(n.node_id, n.type, n.content) for n in current_nodes])
+            return []
+
+    asyncio.run(
+        variable_extractor.extract_variables(
+            nodes,
+            variable_module=_RecordingVariable(),
+        )
+    )
+    assert seen == [[(0, 'math', '$$x=1$$'), (1, 'paragraph', 'Text.')]]
+
+
+def test_drops_bindings_for_unlisted_node_ids():
+    # A binding tagged with a node_id the model was not shown must not mint
+    # a channel entry for a phantom node.
+    nodes = [_paragraph('Real.', node_id=0)]
     var_mod = _ScriptedVariable(
-        [models.Variable(symbol='m', meaning='mass', kind='variable')],
+        [
+            (0, models.Variable(symbol='x', meaning='ok', kind='variable')),
+            (
+                99,
+                models.Variable(
+                    symbol='ghost', meaning='hallucinated', kind='variable'
+                ),
+            ),
+        ],
     )
-    eqs, vars_ = asyncio.run(
-        variable_extractor.extract_equations_and_variables(
-            nodes,
-            router_module=router,
-            equation_module=eq_mod,
-            variable_module=var_mod,
-        )
+    vars_ = asyncio.run(
+        variable_extractor.extract_variables(nodes, variable_module=var_mod)
     )
-    assert len(eqs) == 1
-    assert len(vars_) == 1
-
-
-def test_router_gates_neither_with_both_false():
-    nodes = [_paragraph('Nothing.', node_id=0)]
-    router = _ScriptedRouter((False, False))
-    # These would be called but the router says no for both.
-    eqs, vars_ = asyncio.run(
-        variable_extractor.extract_equations_and_variables(
-            nodes,
-            router_module=router,
-            equation_module=_ScriptedEquation(),
-            variable_module=_ScriptedVariable(),
-        )
-    )
-    assert eqs == []
-    assert vars_ == []
+    assert vars_ == [
+        (0, [models.Variable(symbol='x', meaning='ok', kind='variable')])
+    ]
 
 
 # --- concurrency ------------------------------------------------------------
 
 
-def test_results_stay_in_document_order_when_nodes_run_concurrently():
-    # Nodes finish out of order (the first sleeps longest), but the channels
-    # must still read in document order — the persister and the overlay key
-    # off node ids, and a reordered channel makes runs non-reproducible.
-    nodes = [_paragraph(f'Node {i}.', node_id=i) for i in range(5)]
+def test_results_stay_in_document_order_when_windows_run_concurrently():
+    # Windows finish out of order (the first sleeps longest), but the
+    # channel must still read in document order — the persister and the
+    # overlay key off node ids, and a reordered channel makes runs
+    # non-reproducible.
+    nodes = [
+        _paragraph(f'Node {i}. ' + 'a' * 1400, node_id=i) for i in range(5)
+    ]
 
     class _SlowestFirstVariable:
-        async def aforward(
-            self,
-            content,
-            content_before=None,
-            content_after=None,
-            equations=None,
-        ):
-            index = int(content.split()[1].rstrip('.'))
+        async def aforward(self, current_nodes):
+            index = int(current_nodes[0].content.split()[1].rstrip('.'))
             await asyncio.sleep((5 - index) * 0.01)
             return [
-                models.Variable(
-                    symbol=f's{index}', meaning='m', kind='variable'
+                (
+                    index,
+                    models.Variable(
+                        symbol=f's{index}', meaning='m', kind='variable'
+                    ),
                 )
             ]
 
-    class _AlwaysVariable:
-        async def aforward(
-            self, content, content_before=None, content_after=None
-        ):
-            return (False, True)
-
-    _, vars_ = asyncio.run(
-        variable_extractor.extract_equations_and_variables(
+    vars_ = asyncio.run(
+        variable_extractor.extract_variables(
             nodes,
-            router_module=_AlwaysVariable(),
-            equation_module=_ScriptedEquation(),
             variable_module=_SlowestFirstVariable(),
         )
     )
@@ -201,28 +177,24 @@ def test_results_stay_in_document_order_when_nodes_run_concurrently():
     assert [b[0].symbol for _, b in vars_] == ['s0', 's1', 's2', 's3', 's4']
 
 
-def test_max_concurrency_bounds_nodes_in_flight():
-    nodes = [_paragraph(f'Node {i}.', node_id=i) for i in range(12)]
+def test_max_concurrency_bounds_windows_in_flight():
+    nodes = [_paragraph('a' * 1500, node_id=i) for i in range(12)]
     live = 0
     peak = 0
 
-    class _TrackingRouter:
-        async def aforward(
-            self, content, content_before=None, content_after=None
-        ):
+    class _TrackingVariable:
+        async def aforward(self, current_nodes):
             nonlocal live, peak
             live += 1
             peak = max(peak, live)
             await asyncio.sleep(0.01)
             live -= 1
-            return (False, False)
+            return []
 
     asyncio.run(
-        variable_extractor.extract_equations_and_variables(
+        variable_extractor.extract_variables(
             nodes,
-            router_module=_TrackingRouter(),
-            equation_module=_ScriptedEquation(),
-            variable_module=_ScriptedVariable(),
+            variable_module=_TrackingVariable(),
             max_concurrency=3,
         )
     )
@@ -231,78 +203,29 @@ def test_max_concurrency_bounds_nodes_in_flight():
     assert peak > 1
 
 
-def test_equations_feed_into_variable_extractor():
-    # The equation output from a node is passed as context to the variable
-    # extractor on the same node.
-    nodes = [_paragraph('Eq + var.', node_id=0)]
-    router = _ScriptedRouter((True, True))
-    eq_mod = _ScriptedEquation(
-        [models.Equation(latex='$$F=ma$$', name="Newton's second law")],
-    )
-
-    seen_equations = []
-
-    class _RecordingVariable:
-        async def aforward(
-            self,
-            content,
-            content_before=None,
-            content_after=None,
-            equations=None,
-        ):
-            seen_equations.append(equations)
-            return []
-
-    asyncio.run(
-        variable_extractor.extract_equations_and_variables(
-            nodes,
-            router_module=router,
-            equation_module=eq_mod,
-            variable_module=_RecordingVariable(),
-        )
-    )
-    assert len(seen_equations) == 1
-    assert seen_equations[0] is not None
-    assert seen_equations[0][0].name == "Newton's second law"
+# --- walker helpers (unchanged) --------------------------------------------
 
 
-def test_context_walking_is_per_node():
-    # Each node gets its own before/after context from the node stream.
+def test_fixed_windows_drops_images_and_empty_nodes():
     nodes = [
-        _paragraph('First.', node_id=0),
-        _paragraph('Focus.', node_id=1),
-        _paragraph('After.', node_id=2),
+        models.ASTNode(type='image', content='![1]()', id=0),
+        _paragraph('Real.', node_id=1),
+        _paragraph('', node_id=2),
     ]
-
-    seen_contexts = []
-
-    class _CapturingRouter:
-        async def aforward(
-            self, content, content_before=None, content_after=None
-        ):
-            seen_contexts.append((content_before, content_after))
-            return True, False
-
-    asyncio.run(
-        variable_extractor.extract_equations_and_variables(
-            nodes,
-            router_module=_CapturingRouter(),
-            equation_module=_ScriptedEquation(
-                [],
-                [],
-                [],
-            ),
-            variable_module=_ScriptedVariable(),
-        )
-    )
-    # All three nodes have content, so three calls.
-    assert len(seen_contexts) == 3
-    # Node 1 (focus) should see node 0 before and node 2 after.
-    assert seen_contexts[1][0] == 'First.'
-    assert seen_contexts[1][1] == 'After.'
+    windows = walker.fixed_windows(nodes, budget=2000)
+    assert windows == [[_paragraph('Real.', node_id=1)]]
 
 
-# --- context_around with renderable list (walker tests, unchanged) ---------
+def test_fixed_windows_cuts_on_budget():
+    nodes = [
+        _paragraph('a' * 1200, node_id=0),
+        _paragraph('b' * 1200, node_id=1),
+        _paragraph('c' * 10, node_id=2),
+    ]
+    windows = walker.fixed_windows(nodes, budget=2000)
+    assert [node.id for window in windows for node in window] == [0, 1, 2]
+    assert len(windows[0]) == 1
+    assert len(windows) == 2
 
 
 def test_context_around_gives_before_and_after():

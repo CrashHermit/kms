@@ -31,13 +31,6 @@ Design commitments:
   text) are dropped from the window. ``header``, ``bibliographic``, and
   ``caption`` nodes ride along as context so the model can place the facts,
   but the prompt instructs the model not to extract facts from them.
-
-* EXTRACTED-ARTIFACT CONTEXT. The equations and variable bindings already
-  extracted from the window's nodes ride along as read-only context. The
-  model may use the artifact names (canonical equation names, variable
-  meanings) when writing facts. Restatement is harmless — the concept
-  pass deduplicates later — but using the structured names produces
-  richer fact text.
 """
 
 import asyncio
@@ -46,7 +39,7 @@ import logging
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import llm, models, state
+from kms.core import llm, models, state, walker
 from kms.core.recorder import Recorder
 
 logger = logging.getLogger(__name__)
@@ -54,14 +47,6 @@ logger = logging.getLogger(__name__)
 # Fixed context window over whole nodes (~4 chars/token). A single node
 # larger than the budget still forms a window of its own.
 WINDOW_BUDGET = 2000
-
-
-class WindowNode(BaseModel):
-    """One node of the fixed window as the extractor sees it."""
-
-    node_id: int
-    type: str
-    content: str | None = None
 
 
 class DSPyAtomicFact(BaseModel):
@@ -78,22 +63,6 @@ class DSPyAtomicFact(BaseModel):
             'The ids of every node in the window the fact is drawn from.'
         )
     )
-
-
-class ContextEquation(BaseModel):
-    """An equation already extracted from the window, read-only context."""
-
-    latex: str
-    name: str | None = None
-
-
-class ContextVariable(BaseModel):
-    """A variable binding already extracted from the window, read-only
-    context."""
-
-    symbol: str
-    meaning: str
-    kind: str
 
 
 class Signature(dspy.Signature):
@@ -136,34 +105,13 @@ class Signature(dspy.Signature):
     - FIND EVERYTHING. A missed fact is a lost fact. When unsure whether
       something is a fact, include it.
     - Return an empty list if the window contains no facts.
-
-    EXTRACTED ARTIFACTS. An optional EQUATIONS list and an optional
-    VARIABLES list give equations and variable bindings already extracted
-    from these nodes. They are names the fact pass may use when writing
-    facts — e.g. referencing an equation by its canonical name rather
-    than restating it — but they supplement the node content, never
-    replace it.
     """
 
-    current_nodes: list[WindowNode] = dspy.InputField(
+    current_nodes: list[walker.WindowNode] = dspy.InputField(
         description=(
             "The window's nodes, in document order, each with its id, type, "
             'and content.'
         )
-    )
-    equations: list[ContextEquation] | None = dspy.InputField(
-        default=None,
-        description=(
-            'Equations already extracted from these nodes. Read-only context '
-            '— do not restate them as facts.'
-        ),
-    )
-    variables: list[ContextVariable] | None = dspy.InputField(
-        default=None,
-        description=(
-            'Variable bindings already extracted from these nodes. Read-only '
-            'context — do not restate them as facts.'
-        ),
     )
     facts: list[DSPyAtomicFact] = dspy.OutputField(
         description='Every atomic fact found in the window; empty if none.'
@@ -187,44 +135,17 @@ class AtomicFactExtractor(dspy.Module):
 
     async def aforward(
         self,
-        current_nodes: list[WindowNode],
-        equations: list[models.Equation] | None = None,
-        variables: list[models.Variable] | None = None,
+        current_nodes: list[walker.WindowNode],
     ) -> list[models.AtomicFact]:
         """Extract the atomic facts from one window.
 
         Args:
             current_nodes: The window's nodes, in document order.
-            equations: Equations already extracted from these nodes,
-                read-only context.
-            variables: Variable bindings already extracted from these nodes,
-                read-only context.
 
         Returns:
             The atomic facts found, or an empty list.
         """
-        dspy_equations = (
-            [ContextEquation(latex=eq.latex, name=eq.name) for eq in equations]
-            if equations
-            else None
-        )
-        dspy_variables = (
-            [
-                ContextVariable(
-                    symbol=variable.symbol,
-                    meaning=variable.meaning,
-                    kind=variable.kind,
-                )
-                for variable in variables
-            ]
-            if variables
-            else None
-        )
-        result = await self.extractor.acall(
-            current_nodes=current_nodes,
-            equations=dspy_equations,
-            variables=dspy_variables,
-        )
+        result = await self.extractor.acall(current_nodes=current_nodes)
         if self._recorder:
             self._recorder.record(
                 'atomic_fact_extractor',
@@ -232,14 +153,6 @@ class AtomicFactExtractor(dspy.Module):
                     'current_nodes': [
                         node.model_dump() for node in current_nodes
                     ],
-                    'equations': [eq.model_dump() for eq in dspy_equations]
-                    if dspy_equations
-                    else None,
-                    'variables': [
-                        variable.model_dump() for variable in dspy_variables
-                    ]
-                    if dspy_variables
-                    else None,
                 },
                 result,
             )
@@ -259,65 +172,10 @@ class AtomicFactExtractor(dspy.Module):
 
     def forward(
         self,
-        current_nodes: list[WindowNode],
-        equations: list[models.Equation] | None = None,
-        variables: list[models.Variable] | None = None,
+        current_nodes: list[walker.WindowNode],
     ) -> list[models.AtomicFact]:
         """Sync forward for DSPy optimisers."""
-        return asyncio.run(
-            self.aforward(
-                current_nodes=current_nodes,
-                equations=equations,
-                variables=variables,
-            )
-        )
-
-
-# ============================================================================
-# Window cutting
-# ============================================================================
-
-
-def _window_nodes(
-    nodes: list[models.ASTNode], budget: int = WINDOW_BUDGET
-) -> list[list[models.ASTNode]]:
-    """Cut the node stream into adjacent fixed windows of whole nodes.
-
-    ``image`` nodes (placeholder references, no text) are dropped; every
-    other node with content is eligible. Windows are adjacent and
-    non-overlapping, in document order. A window always contains at least one
-    node — a single node larger than the budget forms a window of its own.
-
-    Args:
-        nodes: The flat node stream.
-        budget: The fixed content budget in characters.
-
-    Returns:
-        The windows, each a list of nodes in document order.
-    """
-    eligible = [
-        node
-        for node in nodes
-        if node.id is not None
-        and node.content
-        and node.content.strip()
-        and node.type != 'image'
-    ]
-
-    windows: list[list[models.ASTNode]] = []
-    current: list[models.ASTNode] = []
-    current_size = 0
-    for node in eligible:
-        size = len(node.content or '')
-        if current and current_size + size > budget:
-            windows.append(current)
-            current = []
-            current_size = 0
-        current.append(node)
-        current_size += size
-    if current:
-        windows.append(current)
-    return windows
+        return asyncio.run(self.aforward(current_nodes=current_nodes))
 
 
 # ============================================================================
@@ -328,8 +186,6 @@ def _window_nodes(
 async def extract_atomic_facts(
     nodes: list[models.ASTNode],
     module: AtomicFactExtractor,
-    equations: list[tuple[int, list[models.Equation]]] | None = None,
-    variables: list[tuple[int, list[models.Variable]]] | None = None,
     max_concurrency: int | None = None,
 ) -> list[models.AtomicFact]:
     """Extract atomic facts from the whole node stream.
@@ -339,58 +195,35 @@ async def extract_atomic_facts(
     document order. The pass is a pure reader of ``nodes`` — nothing writes
     back to the stream.
 
-    The equations and variables already extracted from each window's nodes
-    ride along as read-only context (the model may reference them but must
-    not restate them as facts).
-
     Args:
         nodes: The flat node stream.
         module: The atomic fact extractor.
-        equations: The ``(node_id, equations)`` channel from the
-            equation/variable node, read-only context.
-        variables: The ``(node_id, variables)`` channel from the
-            equation/variable node, read-only context.
         max_concurrency: Windows in flight at once. None uses
             ``llm.MAX_CONCURRENT_CALLS``.
 
     Returns:
         The atomic facts, in document order.
     """
-    windows = _window_nodes(nodes)
+    windows = walker.fixed_windows(nodes, WINDOW_BUDGET)
     if not windows:
         logger.info('atomic fact extractor: no windows')
         return []
 
-    equations_by_node = dict(equations or [])
-    variables_by_node = dict(variables or [])
     gate = llm.gate(max_concurrency)
 
     async def _extract_one(
         window: list[models.ASTNode],
     ) -> list[models.AtomicFact]:
-        node_ids = [node.id for node in window if node.id is not None]
-        window_equations = [
-            eq
-            for node_id in node_ids
-            for eq in equations_by_node.get(node_id, [])
-        ]
-        window_variables = [
-            variable
-            for node_id in node_ids
-            for variable in variables_by_node.get(node_id, [])
-        ]
         async with gate:
             return await module.aforward(
                 [
-                    WindowNode(
+                    walker.WindowNode(
                         node_id=node.id,
                         type=node.type,
                         content=node.content,
                     )
                     for node in window
-                ],
-                equations=window_equations or None,
-                variables=window_variables or None,
+                ]
             )
 
     per_window = await asyncio.gather(
@@ -415,11 +248,9 @@ async def extract_atomic_facts(
 class AtomicFactNode:
     """Extracts atomic facts from the node stream.
 
-    Runs after the equation/variable node — whose equations and variable
-    bindings ride along as read-only context the model may reference by
-    name — and before the ingestion persister. Reads only the final
-    ``nodes`` stream and the artifact channels; writes the ``atomic_facts``
-    channel.
+    Runs after the equation/variable node and before the ingestion
+    persister. Reads only the final ``nodes`` stream; writes the
+    ``atomic_facts`` channel.
 
     Args:
         module: The atomic fact extractor.
@@ -432,17 +263,11 @@ class AtomicFactNode:
         """Extract atomic facts from the final node stream.
 
         Args:
-            state: The pipeline state, holding the node stream and the
-                equation/variable artifact channels.
+            state: The pipeline state, holding the node stream.
 
         Returns:
             The ``atomic_facts`` channel.
         """
         nodes = state.get('nodes', [])
-        facts = await extract_atomic_facts(
-            nodes,
-            module=self.module,
-            equations=state.get('equations'),
-            variables=state.get('variables'),
-        )
+        facts = await extract_atomic_facts(nodes, module=self.module)
         return {'atomic_facts': facts}

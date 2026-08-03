@@ -2,8 +2,13 @@
 
 The window stages (instruction finder, PCF, splitter) all walk the stream in
 token-budgeted chunks rather than node counts, so a window holds roughly the
-same amount of text whatever the node sizes are. Both helpers are pure.
+same amount of text whatever the node sizes are. The fixed-window passes
+(atomic facts, variables) cut the same stream into adjacent
+fixed windows of whole nodes and share one view model for what a windowed
+pass sees. All helpers are pure.
 """
+
+from pydantic import BaseModel
 
 from kms.core import models
 
@@ -43,6 +48,66 @@ def window_from(nodes: list[models.ASTNode], cursor: int, budget: int) -> int:
         accumulated += token_count
         end += 1
     return end
+
+
+class WindowNode(BaseModel):
+    """One node of a fixed window as a windowed pass sees it.
+
+    ``node_id`` is the stream's node id — fixed-window passes attribute
+    their output back to the node it came from, so attribution travels as
+    the id rather than a window-local position. (The look-ahead passes
+    define their own position-based view: they select WITHIN a window,
+    they do not attribute output to a node.)
+    """
+
+    node_id: int
+    type: str
+    content: str | None = None
+
+
+def fixed_windows(
+    nodes: list[models.ASTNode], budget: int
+) -> list[list[models.ASTNode]]:
+    """Cut the node stream into adjacent fixed windows of whole nodes.
+
+    ``image`` nodes (placeholder references, no text) are dropped; every
+    other node with content is eligible. Windows are adjacent and
+    non-overlapping, in document order. A window always contains at least
+    one node — a single node larger than the budget forms a window of its
+    own. This is deliberately NOT the grow-and-bank look-ahead: fixed
+    windows are for per-window output passes (atomic facts, variables), where a fact whose content straddles a cut is a known
+    limitation accepted in exchange for never paying the grow/rewind cost.
+
+    Args:
+        nodes: The flat node stream.
+        budget: The fixed content budget in characters.
+
+    Returns:
+        The windows, each a list of nodes in document order.
+    """
+    eligible = [
+        node
+        for node in nodes
+        if node.id is not None
+        and node.content
+        and node.content.strip()
+        and node.type != 'image'
+    ]
+
+    windows: list[list[models.ASTNode]] = []
+    current: list[models.ASTNode] = []
+    current_size = 0
+    for node in eligible:
+        size = len(node.content or '')
+        if current and current_size + size > budget:
+            windows.append(current)
+            current = []
+            current_size = 0
+        current.append(node)
+        current_size += size
+    if current:
+        windows.append(current)
+    return windows
 
 
 def content_before(

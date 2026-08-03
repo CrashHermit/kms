@@ -5,7 +5,7 @@ Stage order:
     corrector -> formatter -> extractor -> seam_merger (even, odd) -> splitter
               -> instruction_finder -> instruction_distributor
               -> pedagogical_component_finder -> hub_builder
-              -> equation_variable -> atomic_facts
+              -> variable_extraction -> atomic_facts
               -> ingestion_persister
 
 Two phases. Ingestion is per-page map-reduce: the corrector proofreads each
@@ -17,16 +17,18 @@ lead-ins, and the distributor prepends directives onto governed exercises.
 
 One semantic chain follows. The pedagogical component finder cuts the stream
 into untyped spans; the hub builder classifies each span's roles and partitions
-both-blocks in one pass (router + gated partitioners). The equation/variable
-node extracts equations and variable bindings per provenance node, feeding
-equations as context into the variable extractor. The atomic fact pass then
+both-blocks in one pass (router + gated partitioners). The variable node cuts
+the stream into fixed windows and extracts variable bindings per window —
+equations are folded into facts (ADR 0001): the fact pass carries equation
+statements, and the concept pass will own equation identity. The atomic fact
+pass then
 decomposes the final node stream into atomic facts for the downstream triplet
 extraction and canonicalization passes.
 
 The ingestion persister writes everything: a ``:Source`` root, its ``:Node``
 provenance chain, ``:Statement`` and ``:Procedure`` hubs hung off member nodes
-via ``:MEMBER_OF``, and ``:Equation`` / ``:Variable`` hung off their provenance
-``:Node`` via ``:HAS_EQUATION`` / ``:HAS_VARIABLE``. A no-op when Neo4j isn't
+via ``:MEMBER_OF``, and ``:Variable`` bindings hung off their provenance
+``:Node`` via ``:HAS_VARIABLE``. A no-op when Neo4j isn't
 configured. After the graph returns, ``run()`` assembles the markdown string
 and returns it without writing to disk.
 """
@@ -78,8 +80,8 @@ def build_graph(
     seam merger heals page-split
     nodes and flattens to the global stream, and the pedagogical component
     finder then cuts that stream into untyped spans for the hub builder to
-    label and partition in one pass — before the equation/variable node pulls
-    equations and bindings out and the persister writes every tier.
+    label and partition in one pass — before the variable node pulls
+    bindings out and the persister writes every tier.
 
     Args:
         text_language_model: The language model for all text-reasoning
@@ -148,14 +150,6 @@ def build_graph(
         language_model=text_language_model,
         recorder=recorder,
     )
-    router_module = variable_extractor.Router(
-        language_model=text_language_model,
-        recorder=recorder,
-    )
-    equation_module = variable_extractor.EquationExtractor(
-        language_model=text_language_model,
-        recorder=recorder,
-    )
     variable_module = variable_extractor.VariableExtractor(
         language_model=text_language_model,
         recorder=recorder,
@@ -194,11 +188,7 @@ def build_graph(
         statement_partitioner=statement_partitioner_module,
         procedure_partitioner=procedure_partitioner_module,
     )
-    equation_variable_node = variable_extractor.EquationAndVariableNode(
-        router_module=router_module,
-        equation_module=equation_module,
-        variable_module=variable_module,
-    )
+    variable_node = variable_extractor.VariableNode(module=variable_module)
     atomic_fact_node = atomic_fact_extractor.AtomicFactNode(
         module=atomic_fact_module
     )
@@ -231,7 +221,7 @@ def build_graph(
     graph.add_node('ingestion_persister', node_persister_node.run)
     graph.add_node('pedagogical_component_finder', component_finder_node.run)
     graph.add_node('hub_builder', hub_builder_node.run)
-    graph.add_node('equation_variable', equation_variable_node.run)
+    graph.add_node('variables', variable_node.run)
     graph.add_node('atomic_facts', atomic_fact_node.run)
     graph.add_node('entity_extraction', entity_node.run)
 
@@ -289,8 +279,8 @@ def build_graph(
     # node ids match the overlay's members and instruction nodes are excluded.
     graph.add_edge('instruction_distributor', 'pedagogical_component_finder')
     graph.add_edge('pedagogical_component_finder', 'hub_builder')
-    graph.add_edge('hub_builder', 'equation_variable')
-    graph.add_edge('equation_variable', 'atomic_facts')
+    graph.add_edge('hub_builder', 'variables')
+    graph.add_edge('variables', 'atomic_facts')
     graph.add_edge('atomic_facts', 'entity_extraction')
     graph.add_edge('entity_extraction', 'ingestion_persister')
     graph.add_edge('ingestion_persister', END)
@@ -310,10 +300,11 @@ async def run(
 
     The Mistral OCR API turns each page into reading-ordered markdown plus
     extracted figures (no GPU, no docling); the graph then corrects, parses,
-    heals, builds the statement overlay, extracts equations and variable
-    bindings and atomic facts, and (when Neo4j is configured) persists the
+    heals, builds the statement overlay, extracts variable bindings and
+    atomic facts, and (when Neo4j is configured) persists the
     ``:Node`` provenance layer, the ``:Statement`` overlay, and the
-    procedural, equation and variable layers on top of it. Graph persistence is skipped entirely
+    procedural and variable layers on top of it. Graph persistence is skipped
+    entirely
     when Neo4j isn't configured — a DB-less run still returns the assembled
     markdown but persists no nodes or statements.
 

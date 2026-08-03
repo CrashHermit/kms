@@ -15,7 +15,6 @@ run on every startup.
 from collections.abc import Callable
 
 from kms.graph import (
-    equations,
     facts,
     instructions,
     nodes,
@@ -40,8 +39,6 @@ def schema_statements() -> list[str]:
         f'FOR (a:{procedures.ACT_LABEL}) REQUIRE a.uuid IS UNIQUE',
         f'CREATE CONSTRAINT variable_uuid IF NOT EXISTS '
         f'FOR (v:{variables.VARIABLE_LABEL}) REQUIRE v.uuid IS UNIQUE',
-        f'CREATE CONSTRAINT equation_uuid IF NOT EXISTS '
-        f'FOR (e:{equations.EQUATION_LABEL}) REQUIRE e.uuid IS UNIQUE',
         f'CREATE CONSTRAINT instruction_uuid IF NOT EXISTS '
         f'FOR (i:{instructions.INSTRUCTION_LABEL}) REQUIRE i.uuid IS UNIQUE',
         f'CREATE CONSTRAINT fact_uuid IF NOT EXISTS '

@@ -20,9 +20,9 @@ whole book off one supernode.
 ``:MEMBER_OF`` edges from their member nodes. ``:Act`` step chains are
 declared but not yet written.
 
-``persist_equations`` writes ``:Equation`` vertices hung off their
-provenance ``:Node`` via ``:HAS_EQUATION`` — statement and procedure hubs
-inherit equations through ``:MEMBER_OF``.
+``persist_variables`` writes ``:Variable`` vertices hung off their
+provenance ``:Node`` via ``:HAS_VARIABLE`` — statement and procedure hubs
+inherit variables through ``:MEMBER_OF``.
 
 Writes are batched: structural node labels are grouped by their per-type
 label and each batch is one MERGE. Statements, procedures and acts each
@@ -34,11 +34,6 @@ from collections.abc import Callable
 from typing import Any
 
 from kms.core import models
-from kms.graph.equations import (
-    EQUATION_LABEL,
-    equation_pairs,
-    equation_rows,
-)
 from kms.graph.facts import (
     FACT_LABEL,
     evidence_pairs,
@@ -370,10 +365,9 @@ async def persist_variables(
 ) -> None:
     """Upsert the ``:Variable`` nodes and ``:HAS_VARIABLE`` edges.
 
-    One ``:Variable`` per binding. A variable hangs off the ``:Equation``
-    when ``equation_index`` is set, otherwise off the ``:Node`` it was
-    extracted from. Cypher cannot parameterise a label, so the pairs are
-    split by ``container_label`` — only two: ``equation`` and ``node``.
+    One ``:Variable`` per binding, each hanging off the ``:Node`` it was
+    extracted from via ``:HAS_VARIABLE`` — a single label, no bucketing
+    needed.
 
     Args:
         variables: The ``(node_id, [Variable])`` extraction results.
@@ -385,8 +379,6 @@ async def persist_variables(
     if not variable_batch:
         return
     pairs = has_variable_pairs(variables, source)
-    equation_pairs = [p for p in pairs if p['container_label'] == 'equation']
-    node_pairs = [p for p in pairs if p['container_label'] == 'node']
 
     async with session_factory() as session:
         await session.run(
@@ -395,60 +387,12 @@ async def persist_variables(
             f'SET v += row',
             rows=variable_batch,
         )
-        if equation_pairs:
-            await session.run(
-                f'UNWIND $pairs AS pair '
-                f'MATCH (e:{EQUATION_LABEL} {{uuid: pair.container}}), '
-                f'(v:{VARIABLE_LABEL} {{uuid: pair.variable}}) '
-                f'MERGE (e)-[:HAS_VARIABLE]->(v)',
-                pairs=equation_pairs,
-            )
-        if node_pairs:
+        if pairs:
             await session.run(
                 f'UNWIND $pairs AS pair '
                 f'MATCH (n:{NODE_LABEL} {{uuid: pair.container}}), '
                 f'(v:{VARIABLE_LABEL} {{uuid: pair.variable}}) '
                 f'MERGE (n)-[:HAS_VARIABLE]->(v)',
-                pairs=node_pairs,
-            )
-
-
-async def persist_equations(
-    equations: list[tuple[int, list[models.Equation]]],
-    source: str,
-    *,
-    session_factory: Callable,
-) -> None:
-    """Upsert the ``:Equation`` nodes and ``:HAS_EQUATION`` edges.
-
-    One ``:Equation`` per extracted equation. An equation hangs off the
-    ``:Node`` it was extracted from via ``:HAS_EQUATION`` — a single
-    label, no bucketing needed.
-
-    Args:
-        equations: The ``(node_id, [Equation])`` extraction results.
-        source: The stable book identity.
-        session_factory: A callable that returns an async context manager
-            with a ``run(query, **params)`` method.
-    """
-    equation_batch = equation_rows(equations, source)
-    if not equation_batch:
-        return
-    pairs = equation_pairs(equations, source)
-
-    async with session_factory() as session:
-        await session.run(
-            f'UNWIND $rows AS row '
-            f'MERGE (e:{EQUATION_LABEL} {{uuid: row.uuid}}) '
-            f'SET e += row',
-            rows=equation_batch,
-        )
-        if pairs:
-            await session.run(
-                f'UNWIND $pairs AS pair '
-                f'MATCH (n:{NODE_LABEL} {{uuid: pair.node}}), '
-                f'(e:{EQUATION_LABEL} {{uuid: pair.equation}}) '
-                f'MERGE (n)-[:HAS_EQUATION]->(e)',
                 pairs=pairs,
             )
 

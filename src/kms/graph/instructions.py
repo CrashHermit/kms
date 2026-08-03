@@ -32,7 +32,7 @@ verbatim page.
 Identity: deterministic uuid5 over ``(source, node_id)`` — the lead-in's own
 id in the flattened stream, frozen before the node is removed. One lead-in is
 one hub, so the id is already unique, and the ``instruction#`` segment keeps
-these uuids disjoint from node/statement/procedure/equation/variable uuids.
+these uuids disjoint from node/statement/procedure/variable uuids.
 """
 
 from uuid import NAMESPACE_URL, uuid5

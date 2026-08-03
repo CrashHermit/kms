@@ -190,8 +190,8 @@ becomes a migration rather than a design change. Nothing is corrupt today: the
 
 ## Open questions
 
-- Items 4 and 5 are designed against the concept pass as planned (see CLAUDE.md,
-  "Open work"), not against code. If clustering changes how concept identity works, the
+- Items 4 and 5 are designed against the concept pass as planned, not
+  against code. If clustering changes how concept identity works, the
   equation-as-concept shape may need adjusting.
 - The derivation-granularity change (§3) is a hypothesis from two observed pages and has
   not been A/B tested. It should be, before it is trusted.

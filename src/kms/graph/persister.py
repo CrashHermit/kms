@@ -1,7 +1,7 @@
 """
 Pipeline stage that persists the full graph to Neo4j at the end of the run.
 
-``IngestionPersisterNode`` runs after the equation/variable node, once the
+``IngestionPersisterNode`` runs after the variable node, once the
 ``:Source``/``:Node`` provenance tier and the ``:Statement``/``:Procedure``
 overlay are complete in memory. It writes everything in one pass.
 
@@ -71,11 +71,6 @@ class IngestionPersisterNode:
         # exist, since :GOVERNS matches them by uuid.
         await writer.persist_instructions(
             state.get('instructions', []),
-            source,
-            session_factory=self._session_factory,
-        )
-        await writer.persist_equations(
-            state.get('equations', []),
             source,
             session_factory=self._session_factory,
         )
