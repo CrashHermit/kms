@@ -65,14 +65,14 @@ logger = logging.getLogger(__name__)
 # empirical sweet spot is <400 tokens per chunk: smaller chunks hold
 # exhaustivity and stability as the context grows. A single node larger
 # than the budget still forms a window of its own.
-WINDOW_BUDGET = 400
+WINDOW_BUDGET = 600
 
 # Surrounding context budgets (tokens), tunable independently of the
 # central window and of each other. The context is placement-only: the
 # model sees it to place facts and resolve referents, but must not
 # extract facts from it.
-BACKWARD_CONTEXT_BUDGET = 200
-FORWARD_CONTEXT_BUDGET = 200
+BACKWARD_CONTEXT_BUDGET = 400
+FORWARD_CONTEXT_BUDGET = 400
 
 
 class DSPyAtomicFact(BaseModel):

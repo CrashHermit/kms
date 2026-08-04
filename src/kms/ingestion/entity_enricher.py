@@ -41,8 +41,8 @@ from kms.core.recorder import Recorder
 
 logger = logging.getLogger(__name__)
 
-BACKWARD_CONTEXT_BUDGET = 200
-FORWARD_CONTEXT_BUDGET = 200
+BACKWARD_CONTEXT_BUDGET = 400
+FORWARD_CONTEXT_BUDGET = 400
 
 
 class DSPyEntityDesc(BaseModel):

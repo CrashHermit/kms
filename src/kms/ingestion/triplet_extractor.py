@@ -165,6 +165,28 @@ class Signature(dspy.Signature):
     extract relations that appear only inside a conditional premise
     when the main question is a value request.)
 
+    Fact: "The graph is not connected because there is no path from
+    $a$ to $b$."
+    Triplets:
+        1. subject="The graph"
+           predicate="is not"
+           object="connected"
+    (The second clause — "there is no path from $a$ to $b$" — is the
+    REASON, not an independent relation. Do NOT extract "there" as a
+    subject. The existential "there is no X" is a way of saying
+    something does not exist, not a subject-predicate-object triple.)
+
+    FACT: "The Bridges of Königsberg graph had double edges because
+    there really are two bridges connecting a particular island to the
+    near shore."
+    Triplets:
+        1. subject="The Bridges of Königsberg graph"
+           predicate="had"
+           object="double edges"
+    (The "because" clause explains why — it is not an independent
+    relation. Do not extract triplets from reason clauses that merely
+    narrate background.)
+
     RULES:
     - VERBATIM ONLY. Subject and object must be exact substrings of the
       fact text. Never rephrase, never normalize, never invent a term
@@ -190,6 +212,28 @@ class Signature(dspy.Signature):
     - STANDALONE SUBJECT/OBJECT. The subject and object should each be a
       complete noun phrase that names what it is — not a dangling
       modifier, not a bare symbol with no referent.
+    - EXISTENTIAL "THERE" IS A DUMMY SUBJECT. "There is no X", "there
+      are Y", "there exists Z" are existential constructions — the
+      real content is that X does not exist, Y are present, or Z
+      exists. Do NOT extract "there" as a subject. Such clauses
+      typically yield zero triplets (they don't assert a subject-
+      predicate-object relation between entities).
+    - REASON CLAUSES ARE NOT RELATIONS. A "because" clause explains
+      why something is true — it is not an independent relation to
+      extract as a separate triplet. Extract the main assertion;
+      leave the reason clause alone unless it contains a distinct
+      relation between named entities.
+    - ABSTRACT / GENERIC SUBJECTS. "Such graphs", "the resulting
+      graph", "this function" — when the subject is a placeholder
+      whose identity depends on the preceding sentence, it is better
+      to leave the triplet out than to create an entity that will
+      never be reused. If the subject cannot be stated as a concrete,
+      independent noun phrase, skip the triplet.
+    - PASSIVE NAMING CONSTRUCTIONS. "X are called Y", "X is known as
+      Y", "we call X Y" — the subject is the named thing (X), the
+      predicate is "is called" or "are called", and the object is the
+      name (Y). Do not extract the naming verb as a separate relation
+      or the name as a dangling entity.
     - LATEX FORMAT. Preserve LaTeX delimiters exactly as in the fact:
       `$...$` for inline, `$$...$$` for display. Never convert to
       Unicode, never strip delimiters.
