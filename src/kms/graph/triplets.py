@@ -19,7 +19,8 @@ within that fact — disjoint from every other uuid.
 from uuid import NAMESPACE_URL, uuid5
 
 from kms.core import models
-from kms.graph import facts, nodes
+from kms.graph import nodes
+from kms.graph.facts import fact_uuid
 
 TRIPLET_LABEL = 'Triplet'
 
@@ -115,10 +116,10 @@ def yields_pairs(
     for triplet in triplets:
         fi = triplet.fact_index
         sub = sub_by_fact.get(fi, 0)
-        fact_uuid = facts.fact_uuid(source, facts[fi].node_ids, fi)
+        fact_uuid_val = fact_uuid(source, facts[fi].node_ids, fi)
         pairs.append(
             {
-                'fact': fact_uuid,
+                'fact': fact_uuid_val,
                 'triplet': triplet_uuid(source, fi, sub),
             }
         )
