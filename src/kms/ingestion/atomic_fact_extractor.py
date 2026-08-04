@@ -8,13 +8,17 @@ and relation passes to consume.
 
 Design commitments:
 
-* FIXED CONTEXT WINDOW. The stream is cut into adjacent windows of whole
-  nodes up to a fixed token budget. This is deliberately NOT the PCF
-  grow-and-bank look-ahead: PCF must keep boundary spans whole across window
-  cuts, but atomic fact decomposition is per-window output (ATOM-style fixed
-  chunking), so no growing or rewinding is needed. A fact whose content
-  straddles a cut is a known limitation of fixed windows — the tradeoff for
-  not paying the grow/rewind cost.
+* THREE-PART WINDOW. Each window has three independently-tunable parts:
+  backward context (BACKWARD_CONTEXT_BUDGET), the central extraction
+  window (WINDOW_BUDGET, ~400 tokens — ATOM's empirically optimal chunk
+  for decomposition), and forward context (FORWARD_CONTEXT_BUDGET). The
+  central window is what facts are extracted from and attributed to; the
+  context around it exists so the model can place the window and resolve
+  referents — it is placement-only and never extracted from. This is
+  deliberately NOT the PCF grow-and-bank look-ahead: the budgets are
+  fixed, so no growing or rewinding is needed. A fact whose content
+  straddles a cut is a known limitation of fixed windows — the tradeoff
+  for not paying the grow/rewind cost.
 
 * DOMAIN-AGNOSTIC, NO FACT TAXONOMY. The pass targets facts generally: any
   document, any subject. The prompt does not enumerate fact kinds
@@ -28,9 +32,13 @@ Design commitments:
   conjunction or comma into two pieces still true of (or still posed by)
   the source? — is the judgment call, and compound-to-split examples
   demonstrate atomicity rather than assert it. Referent-less fragments
-  ("since $a \neq 0$") are rejected: a fact must read standalone. Posed
-  exercises are facts: the document's problems are durable subject matter,
-  and a single exercise is one unit, not one per clause.
+  ("since $a \neq 0$") are rejected: a fact must read standalone.
+
+* NO CONTENT SPECIAL CASES. Nothing in the stream is a special case: no
+  exercise/lead-in/statement/procedure taxonomy, no genre vocabulary. The
+  same atomicity and durability criteria apply to every node; whether a
+  passage turns out to be practice material or not is a decision for later
+  passes, not for this one.
 
 * MINIMAL OUTPUT. ``models.AtomicFact`` carries only ``text`` + ``node_ids``
   — no kind, no source. Classification is a downstream pass's job;
@@ -53,9 +61,18 @@ from kms.core.recorder import Recorder
 
 logger = logging.getLogger(__name__)
 
-# Fixed context window over whole nodes (~4 chars/token). A single node
-# larger than the budget still forms a window of its own.
-WINDOW_BUDGET = 2000
+# Central extraction window over whole nodes, in TOKENS. ATOM's
+# empirical sweet spot is <400 tokens per chunk: smaller chunks hold
+# exhaustivity and stability as the context grows. A single node larger
+# than the budget still forms a window of its own.
+WINDOW_BUDGET = 400
+
+# Surrounding context budgets (tokens), tunable independently of the
+# central window and of each other. The context is placement-only: the
+# model sees it to place facts and resolve referents, but must not
+# extract facts from it.
+BACKWARD_CONTEXT_BUDGET = 200
+FORWARD_CONTEXT_BUDGET = 200
 
 
 class DSPyAtomicFact(BaseModel):
@@ -112,23 +129,12 @@ class Signature(dspy.Signature):
       then "$5a > 5a + 18$" — are scratch work, not facts. The durable
       content is the conclusion: "From $8a - 3a > 5a + 18$ it follows that
       $0 > 18$, a contradiction."
-    - AN EXERCISE IS ONE FACT. The document's posed problems are durable
-      subject matter, not transitional prose: "2.1.5 Is the sequence
-      $\left\{\frac{n}{n+1}\right\}_{n=1}^{\infty}$ convergent? If so,
-      what is the limit?" is ONE fact (one task, question plus its
-      conditional follow-up): "Is the sequence
-      $\left\{\frac{n}{n+1}\right\}_{n=1}^{\infty}$ convergent, and if
-      so, what is its limit?" Likewise "Prove that the sequence
-      $\{2^{-n}\}_{n=1}^{\infty}$ is convergent" is one fact — an
-      instruction is a unit of information, not an empty list.
 
     RULES:
     - ONE UNIT PER FACT. One assertion, one instruction, or one question
       per fact. A sentence that makes two independent claims yields two
       facts; a passage that asserts several things yields one fact per
-      assertion. A single posed exercise — its task, with any "Prove",
-      "Show", or "If so..." follow-up — is ONE fact, not one fact per
-      clause.
+      assertion.
     - STANDALONE, NOT FRAGMENTED. State every fact as a complete sentence
       that names its own subject and carries its own conditions and
       qualifiers — whether it asserts, instructs, or asks. Resolve every
@@ -155,6 +161,10 @@ class Signature(dspy.Signature):
     - CONTEXT-ONLY NODES. header (a title), bibliographic (a reference
       entry), and caption nodes are context to help you place the facts —
       do NOT extract facts from them.
+    - CONTEXT-ONLY SURROUNDING TEXT. context_before and context_after are
+      the text immediately around the window, included so you can place
+      the facts and resolve referents. They are context only — never
+      extract facts from them, and never attribute a fact to them.
     - FIND EVERYTHING. A missed fact is a lost fact. When unsure whether
       something is a fact, include it.
     - Return an empty list if the window contains no facts.
@@ -165,6 +175,22 @@ class Signature(dspy.Signature):
             "The window's nodes, in document order, each with its id, type, "
             'and content.'
         )
+    )
+    context_before: str | None = dspy.InputField(
+        default=None,
+        description=(
+            'Optional text immediately before the window, in document '
+            'order. CONTEXT ONLY — use it to place the facts; never '
+            'extract facts from it.'
+        ),
+    )
+    context_after: str | None = dspy.InputField(
+        default=None,
+        description=(
+            'Optional text immediately after the window, in document '
+            'order. CONTEXT ONLY — use it to place the facts; never '
+            'extract facts from it.'
+        ),
     )
     facts: list[DSPyAtomicFact] = dspy.OutputField(
         description='Every atomic fact found in the window; empty if none.'
@@ -189,16 +215,26 @@ class AtomicFactExtractor(dspy.Module):
     async def aforward(
         self,
         current_nodes: list[walker.WindowNode],
+        context_before: str | None = None,
+        context_after: str | None = None,
     ) -> list[models.AtomicFact]:
         """Extract the atomic facts from one window.
 
         Args:
             current_nodes: The window's nodes, in document order.
+            context_before: Optional text immediately before the window,
+                placement-only, never extracted from.
+            context_after: Optional text immediately after the window,
+                placement-only, never extracted from.
 
         Returns:
             The atomic facts found, or an empty list.
         """
-        result = await self.extractor.acall(current_nodes=current_nodes)
+        result = await self.extractor.acall(
+            current_nodes=current_nodes,
+            context_before=context_before or '',
+            context_after=context_after or '',
+        )
         if self._recorder:
             self._recorder.record(
                 'atomic_fact_extractor',
@@ -206,6 +242,8 @@ class AtomicFactExtractor(dspy.Module):
                     'current_nodes': [
                         node.model_dump() for node in current_nodes
                     ],
+                    'context_before': context_before,
+                    'context_after': context_after,
                 },
                 result,
             )
@@ -226,9 +264,17 @@ class AtomicFactExtractor(dspy.Module):
     def forward(
         self,
         current_nodes: list[walker.WindowNode],
+        context_before: str | None = None,
+        context_after: str | None = None,
     ) -> list[models.AtomicFact]:
         """Sync forward for DSPy optimisers."""
-        return asyncio.run(self.aforward(current_nodes=current_nodes))
+        return asyncio.run(
+            self.aforward(
+                current_nodes=current_nodes,
+                context_before=context_before,
+                context_after=context_after,
+            )
+        )
 
 
 # ============================================================================
@@ -243,10 +289,11 @@ async def extract_atomic_facts(
 ) -> list[models.AtomicFact]:
     """Extract atomic facts from the whole node stream.
 
-    The stream is cut into adjacent fixed windows of whole nodes; every
-    window is decomposed concurrently, and the facts are collected in
-    document order. The pass is a pure reader of ``nodes`` — nothing writes
-    back to the stream.
+    The stream is cut into adjacent three-part windows — a central
+    extraction window of whole nodes plus placement-only backward/forward
+    context; every window is decomposed concurrently, and the facts are
+    collected in document order. The pass is a pure reader of ``nodes`` —
+    nothing writes back to the stream.
 
     Args:
         nodes: The flat node stream.
@@ -257,7 +304,12 @@ async def extract_atomic_facts(
     Returns:
         The atomic facts, in document order.
     """
-    windows = walker.fixed_windows(nodes, WINDOW_BUDGET)
+    windows = walker.fixed_windows_with_context(
+        nodes,
+        WINDOW_BUDGET,
+        BACKWARD_CONTEXT_BUDGET,
+        FORWARD_CONTEXT_BUDGET,
+    )
     if not windows:
         logger.info('atomic fact extractor: no windows')
         return []
@@ -265,8 +317,9 @@ async def extract_atomic_facts(
     gate = llm.gate(max_concurrency)
 
     async def _extract_one(
-        window: list[models.ASTNode],
+        window: tuple[list[models.ASTNode], str | None, str | None],
     ) -> list[models.AtomicFact]:
+        window_nodes, before, after = window
         async with gate:
             return await module.aforward(
                 [
@@ -275,8 +328,10 @@ async def extract_atomic_facts(
                         type=node.type,
                         content=node.content,
                     )
-                    for node in window
-                ]
+                    for node in window_nodes
+                ],
+                context_before=before,
+                context_after=after,
             )
 
     per_window = await asyncio.gather(

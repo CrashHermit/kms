@@ -26,6 +26,9 @@ scratch_*
 # pytest
 .pytest_cache/
 
+# Code intelligence
+.pi-code-intelligence.json
+
 # Old trace stores
 mlruns/
 traces/

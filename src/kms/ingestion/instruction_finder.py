@@ -41,6 +41,11 @@ logger = logging.getLogger(__name__)
 # tell a lead-in from an exercise.
 LOOKAHEAD_BUDGET = 2000
 
+# Backward context budget (tokens): the text immediately before the window,
+# shown so the model can see the section/prose the current window continues.
+# Placement-only — never tag a node from the context.
+BACKWARD_CONTEXT_BUDGET = 200
+
 
 class WindowNode(BaseModel):
     """One look-ahead node as the LLM sees it: position, type, content."""
@@ -81,6 +86,14 @@ class Signature(dspy.Signature):
     current_nodes: list[WindowNode] = dspy.InputField(
         description="The look-ahead window's nodes, in order, each with a local position."
     )
+    context_before: str | None = dspy.InputField(
+        default=None,
+        description=(
+            'Optional text immediately before the window, in document '
+            'order. CONTEXT ONLY — use it to place the lead-ins; never '
+            'tag or copy nodes from it.'
+        ),
+    )
     instruction_positions: list[int] = dspy.OutputField(
         description='Positions of exercise lead-in nodes (shared-instruction directives).'
     )
@@ -101,16 +114,25 @@ class InstructionFinder(dspy.Module):
         self.set_lm(language_model)
         self._recorder = recorder
 
-    async def aforward(self, current_nodes: list[WindowNode]) -> list[int]:
+    async def aforward(
+        self,
+        current_nodes: list[WindowNode],
+        context_before: str | None = None,
+    ) -> list[int]:
         """Judge one window.
 
         Args:
             current_nodes: The window's nodes, each with a local position.
+            context_before: Optional text immediately before the window,
+                placement-only, never tagged from.
 
         Returns:
             The window-local positions of the lead-in nodes.
         """
-        result = await self.finder.acall(current_nodes=current_nodes)
+        result = await self.finder.acall(
+            current_nodes=current_nodes,
+            context_before=context_before or '',
+        )
         if self._recorder:
             self._recorder.record(
                 'instruction_finder',
@@ -125,9 +147,15 @@ class InstructionFinder(dspy.Module):
         )
         return positions
 
-    def forward(self, current_nodes: list[WindowNode]) -> list[int]:
+    def forward(
+        self,
+        current_nodes: list[WindowNode],
+        context_before: str | None = None,
+    ) -> list[int]:
         """Sync forward for DSPy optimisers."""
-        return asyncio.run(self.aforward(current_nodes))
+        return asyncio.run(
+            self.aforward(current_nodes, context_before=context_before)
+        )
 
 
 async def tag_instructions(
@@ -161,7 +189,10 @@ async def tag_instructions(
                     content=node.content,
                 )
                 for position, node in enumerate(window)
-            ]
+            ],
+            context_before=walker.content_before(
+                nodes, cursor, BACKWARD_CONTEXT_BUDGET
+            ),
         )
         for position in positions:
             clamped = min(max(position, 0), last_local)

@@ -13,8 +13,20 @@ from pydantic import BaseModel
 from kms.core import models
 
 
+def estimate_text_tokens(text: str | None) -> int:
+    """A rough token estimate for a text string: length ÷ 4, clamped.
+
+    Args:
+        text: The text to size.
+
+    Returns:
+        The estimated token count, at least 1.
+    """
+    return len(text or '') // 4 + 1
+
+
 def estimate_tokens(node: models.ASTNode) -> int:
-    """A rough token estimate for a node: character count ÷ 4, clamped.
+    """A rough token estimate for a node: its content's token count.
 
     Args:
         node: The node to size.
@@ -22,7 +34,7 @@ def estimate_tokens(node: models.ASTNode) -> int:
     Returns:
         The estimated token count, at least 1.
     """
-    return len(node.content or '') // 4 + 1
+    return estimate_text_tokens(node.content)
 
 
 def window_from(nodes: list[models.ASTNode], cursor: int, budget: int) -> int:
@@ -65,49 +77,91 @@ class WindowNode(BaseModel):
     content: str | None = None
 
 
-def fixed_windows(
-    nodes: list[models.ASTNode], budget: int
-) -> list[list[models.ASTNode]]:
-    """Cut the node stream into adjacent fixed windows of whole nodes.
+def fixed_windows_with_context(
+    nodes: list[models.ASTNode],
+    budget: int,
+    backward_budget: int,
+    forward_budget: int,
+) -> list[tuple[list[models.ASTNode], str | None, str | None]]:
+    """Cut the node stream into adjacent fixed windows, each with the
+    text immediately before and after it.
 
-    ``image`` nodes (placeholder references, no text) are dropped; every
-    other node with content is eligible. Windows are adjacent and
-    non-overlapping, in document order. A window always contains at least
-    one node — a single node larger than the budget forms a window of its
-    own. This is deliberately NOT the grow-and-bank look-ahead: fixed
-    windows are for per-window output passes (atomic facts), where a fact whose content straddles a cut is a known
-    limitation accepted in exchange for never paying the grow/rewind cost.
+    ``image`` nodes are dropped, every other node with content is
+    eligible, windows are adjacent and non-overlapping, and a window
+    always contains at least one node. Around each central window the
+    stream is walked backward from its first node (within
+    ``backward_budget`` tokens) and forward from its last node (within
+    ``forward_budget`` tokens) to collect surrounding context. The three
+    budgets are independent so the parts of a window can be tuned
+    separately. Context is placement-only — a windowed pass must not
+    extract output from it.
 
     Args:
         nodes: The flat node stream.
-        budget: The fixed content budget in characters.
+        budget: The central window's soft token budget.
+        backward_budget: Token budget for the context before the window.
+        forward_budget: Token budget for the context after the window.
 
     Returns:
-        The windows, each a list of nodes in document order.
+        One ``(window, before, after)`` per window, in document order.
+        ``before``/``after`` are the joined context text, or None when
+        nothing qualifies.
     """
     eligible = [
-        node
-        for node in nodes
+        (index, node)
+        for index, node in enumerate(nodes)
         if node.id is not None
         and node.content
         and node.content.strip()
         and node.type != 'image'
     ]
 
-    windows: list[list[models.ASTNode]] = []
-    current: list[models.ASTNode] = []
+    windows: list[
+        tuple[list[models.ASTNode], str | None, str | None]
+    ] = []
+    current: list[tuple[int, models.ASTNode]] = []
     current_size = 0
-    for node in eligible:
-        size = len(node.content or '')
+    for entry in eligible:
+        index, node = entry
+        size = estimate_tokens(node)
         if current and current_size + size > budget:
-            windows.append(current)
+            windows.append(
+                _finish_window(nodes, current, backward_budget, forward_budget)
+            )
             current = []
             current_size = 0
-        current.append(node)
+        current.append(entry)
         current_size += size
     if current:
-        windows.append(current)
+        windows.append(
+            _finish_window(nodes, current, backward_budget, forward_budget)
+        )
     return windows
+
+
+def _finish_window(
+    nodes: list[models.ASTNode],
+    entries: list[tuple[int, models.ASTNode]],
+    backward_budget: int,
+    forward_budget: int,
+) -> tuple[list[models.ASTNode], str | None, str | None]:
+    """Build one window's output: its nodes plus before/after context.
+
+    Args:
+        nodes: The flat node stream (for the context walks).
+        entries: ``(original_index, node)`` pairs in the window.
+        backward_budget: Token budget for the context before the window.
+        forward_budget: Token budget for the context after the window.
+
+    Returns:
+        The ``(window, before, after)`` triple.
+    """
+    window = [node for _, node in entries]
+    first_index = entries[0][0]
+    last_index = entries[-1][0]
+    before = content_before(nodes, first_index, backward_budget)
+    after = content_after(nodes, last_index, forward_budget)
+    return window, before, after
 
 
 def content_before(

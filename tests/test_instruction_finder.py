@@ -10,7 +10,7 @@ class _ScriptedFinder:
     def __init__(self, scripted):
         self._scripted = list(scripted)
 
-    async def aforward(self, current_nodes):
+    async def aforward(self, current_nodes, context_before=None):
         return self._scripted.pop(0) if self._scripted else []
 
 

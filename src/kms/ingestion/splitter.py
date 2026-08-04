@@ -47,6 +47,11 @@ logger = logging.getLogger(__name__)
 # split call needs to see.
 LOOKAHEAD_BUDGET = 2000
 
+# Backward context budget (tokens): the text immediately before the window,
+# shown so the model can see the lead-in or exercise the current window
+# continues. Placement-only — never split text that belongs to the context.
+BACKWARD_CONTEXT_BUDGET = 200
+
 
 class WindowNode(BaseModel):
     """One look-ahead node as the LLM sees it: position, type, content."""
@@ -119,6 +124,14 @@ class Signature(dspy.Signature):
     current_nodes: list[WindowNode] = dspy.InputField(
         description="The look-ahead window's nodes, in order, each with a local position."
     )
+    context_before: str | None = dspy.InputField(
+        default=None,
+        description=(
+            'Optional text immediately before the window, in document '
+            'order. CONTEXT ONLY — use it to place the exercises; never '
+            'split or copy text from it.'
+        ),
+    )
     splits: list[NodeSplit] = dspy.OutputField(
         description='Nodes that pack two or more exercises, each split into its individual exercises.'
     )
@@ -150,17 +163,22 @@ class Splitter(dspy.Module):
         self._recorder = recorder
 
     async def aforward(
-        self, current_nodes: list[WindowNode]
+        self, current_nodes: list[WindowNode], context_before: str | None = None
     ) -> list[NodeSplit]:
         """Judge one window.
 
         Args:
             current_nodes: The window's nodes, each with a local position.
+            context_before: Optional text immediately before the window,
+                placement-only, never split from.
 
         Returns:
             The window's split decisions.
         """
-        result = await self.splitter.acall(current_nodes=current_nodes)
+        result = await self.splitter.acall(
+            current_nodes=current_nodes,
+            context_before=context_before or '',
+        )
         if self._recorder:
             self._recorder.record(
                 'splitter', {'current_nodes': current_nodes}, result
@@ -179,9 +197,13 @@ class Splitter(dspy.Module):
         )
         return splits
 
-    def forward(self, current_nodes: list[WindowNode]) -> list[NodeSplit]:
+    def forward(
+        self, current_nodes: list[WindowNode], context_before: str | None = None
+    ) -> list[NodeSplit]:
         """Sync forward for DSPy optimisers."""
-        return asyncio.run(self.aforward(current_nodes))
+        return asyncio.run(
+            self.aforward(current_nodes, context_before=context_before)
+        )
 
 
 async def _gather_decisions(
@@ -214,7 +236,10 @@ async def _gather_decisions(
                     content=node.content,
                 )
                 for position, node in enumerate(window)
-            ]
+            ],
+            context_before=walker.content_before(
+                nodes, cursor, BACKWARD_CONTEXT_BUDGET
+            ),
         )
         for split_result in splits:
             clamped = min(max(split_result.position, 0), last_local)
