@@ -79,6 +79,12 @@ class IngestionPersisterNode:
             source,
             session_factory=self._session_factory,
         )
+        await writer.persist_triplets(
+            state.get('triplets', []),
+            state.get('atomic_facts', []),
+            source,
+            session_factory=self._session_factory,
+        )
         await writer.persist_chain(
             nodes,
             source,

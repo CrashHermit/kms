@@ -5,7 +5,7 @@ Stage order:
     corrector -> formatter -> extractor -> seam_merger (even, odd) -> splitter
               -> instruction_finder -> instruction_distributor
               -> pedagogical_component_finder -> hub_builder
-              -> atomic_facts
+              -> atomic_facts -> triplet_extraction -> entity_enrichment
               -> ingestion_persister
 
 Two phases. Ingestion is per-page map-reduce: the corrector proofreads each
@@ -42,7 +42,7 @@ from kms.graph import db, persister
 from kms.ingestion import (
     atomic_fact_extractor,
     corrector,
-    entity_extractor,
+    entity_enricher,
     extractor,
     formatter,
     hub_builder,
@@ -51,6 +51,7 @@ from kms.ingestion import (
     pedagogical_component_finder,
     seam_merger,
     splitter,
+    triplet_extractor,
 )
 
 if TYPE_CHECKING:
@@ -147,7 +148,11 @@ def build_graph(
         language_model=text_language_model,
         recorder=recorder,
     )
-    entity_module = entity_extractor.EntityExtractor(
+    triplet_extractor_module = triplet_extractor.TripletExtractor(
+        language_model=text_language_model,
+        recorder=recorder,
+    )
+    entity_enricher_module = entity_enricher.EntityEnricher(
         language_model=text_language_model,
         recorder=recorder,
     )
@@ -180,7 +185,12 @@ def build_graph(
     atomic_fact_node = atomic_fact_extractor.AtomicFactNode(
         module=atomic_fact_module
     )
-    entity_node = entity_extractor.EntityExtractorNode(module=entity_module)
+    triplet_extractor_node = triplet_extractor.TripletNode(
+        module=triplet_extractor_module
+    )
+    entity_enricher_node = entity_enricher.EntityEnricherNode(
+        module=entity_enricher_module
+    )
     instruction_distributor_node = (
         instruction_distributor.InstructionDistributorNode(
             module=instruction_distributor_module
@@ -210,7 +220,8 @@ def build_graph(
     graph.add_node('pedagogical_component_finder', component_finder_node.run)
     graph.add_node('hub_builder', hub_builder_node.run)
     graph.add_node('atomic_facts', atomic_fact_node.run)
-    graph.add_node('entity_extraction', entity_node.run)
+    graph.add_node('triplet_extraction', triplet_extractor_node.run)
+    graph.add_node('entity_enrichment', entity_enricher_node.run)
 
     # A stage's dispatch is a conditional edge off the previous collect: it
     # either fans out Sends to the worker or short-circuits straight to its own
@@ -267,8 +278,9 @@ def build_graph(
     graph.add_edge('instruction_distributor', 'pedagogical_component_finder')
     graph.add_edge('pedagogical_component_finder', 'hub_builder')
     graph.add_edge('hub_builder', 'atomic_facts')
-    graph.add_edge('atomic_facts', 'entity_extraction')
-    graph.add_edge('entity_extraction', 'ingestion_persister')
+    graph.add_edge('atomic_facts', 'triplet_extraction')
+    graph.add_edge('triplet_extraction', 'entity_enrichment')
+    graph.add_edge('entity_enrichment', 'ingestion_persister')
     graph.add_edge('ingestion_persister', END)
 
     return graph.compile()
@@ -286,8 +298,8 @@ async def run(
 
     The Mistral OCR API turns each page into reading-ordered markdown plus
     extracted figures (no GPU, no docling); the graph then corrects, parses,
-    heals, builds the statement overlay, extracts atomic facts and
-    entity mentions, and (when Neo4j is configured) persists the
+    heals, builds the statement overlay, extracts atomic facts, and (when
+    Neo4j is configured) persists the
     ``:Node`` provenance layer, the ``:Statement`` overlay, and the
     procedural layer on top of it. Graph persistence is skipped
     entirely

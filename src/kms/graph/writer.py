@@ -41,6 +41,11 @@ from kms.graph.facts import (
     evidence_pairs,
     fact_rows,
 )
+from kms.graph.triplets import (
+    TRIPLET_LABEL,
+    triplet_rows,
+    yields_pairs,
+)
 from kms.graph.instructions import (
     INSTRUCTION_LABEL,
     governs_pairs,
@@ -442,6 +447,54 @@ async def persist_facts(
                 f'MATCH (n:{NODE_LABEL} {{uuid: pair.node}}), '
                 f'(f:{FACT_LABEL} {{uuid: pair.fact}}) '
                 f'MERGE (n)-[r:EVIDENCE_FOR]->(f) '
+                f'ON CREATE SET r.created_at = $now '
+                f'SET r.modified_at = $now',
+                pairs=pairs,
+                now=now,
+            )
+
+
+async def persist_triplets(
+    triplets: list[models.Triplet],
+    facts: list[models.AtomicFact],
+    source: str,
+    *,
+    session_factory: Callable,
+) -> None:
+    """Upsert the ``:Triplet`` nodes and their ``:YIELDS`` edges.
+
+    One ``:Triplet`` per (subject, predicate, object) triplet, each
+    pointing back at the ``:Fact`` it was extracted from via
+    ``(:Fact)-[:YIELDS]->(:Triplet)``.
+
+    Args:
+        triplets: The triplets, in document order.
+        facts: The atomic facts, in document order.
+        source: The stable book identity.
+        session_factory: A callable that returns an async context manager
+            with a ``run(query, **params)`` method.
+    """
+    triplet_batch = triplet_rows(triplets, source)
+    if not triplet_batch:
+        return
+    pairs = yields_pairs(triplets, facts, source)
+    now = utcnow_iso()
+
+    async with session_factory() as session:
+        await session.run(
+            f'UNWIND $rows AS row '
+            f'MERGE (t:{TRIPLET_LABEL} {{uuid: row.uuid}}) '
+            f'ON CREATE SET t.created_at = $now '
+            f'SET t += row, t.modified_at = $now',
+            rows=triplet_batch,
+            now=now,
+        )
+        if pairs:
+            await session.run(
+                f'UNWIND $pairs AS pair '
+                f'MATCH (f:{FACT_LABEL} {{uuid: pair.fact}}), '
+                f'(t:{TRIPLET_LABEL} {{uuid: pair.triplet}}) '
+                f'MERGE (f)-[r:YIELDS]->(t) '
                 f'ON CREATE SET r.created_at = $now '
                 f'SET r.modified_at = $now',
                 pairs=pairs,

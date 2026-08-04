@@ -161,6 +161,27 @@ class Segment:
     )  # filled by the extractor stage
 
 
+# --- Triplets -------------------------------------------------------------
+
+
+@dataclass(slots=True)
+class Triplet:
+    """One (subject, predicate, object) relation extracted from an atomic fact.
+
+    Subject and object are verbatim substrings of the source fact text — no
+    normalization, no abstraction.  Canonicalization into entities and
+    concepts is a downstream pass's job.
+
+    ``fact_index`` is the source fact's position in the document-order fact
+    list, set by the entry point as it iterates.
+    """
+
+    subject: str
+    predicate: str
+    object: str
+    fact_index: int = -1
+
+
 # --- Helpers (pure functions over the models above) --------------------------
 
 
