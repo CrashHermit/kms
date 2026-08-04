@@ -61,20 +61,43 @@ class DSPyEntityDesc(BaseModel):
     )
 
 
+class DSPyRelationDesc(BaseModel):
+    """One relation description written by the enricher."""
+
+    predicate: str = Field(
+        description='The predicate exactly as given in the input.'
+    )
+    description: str = Field(
+        description=(
+            'A concise 1-2 sentence description of what this relation '
+            'means. Grounded in how the predicate is used in the '
+            'triplets — not invented. Used for deduplication: two '
+            'predicates with the same meaning should have similar '
+            'descriptions.'
+        )
+    )
+
+
 class Signature(dspy.Signature):
     r"""
     You are given one node from a document — a block of text — plus the
-    text immediately before and after it for context. You are also given a
-    list of ENTITIES that appear in this region. Each entity has a NAME
-    (the exact subject or object string from a local triplet) and a list
-    of TRIPLETS where it appears.
+    text immediately before and after it for context. You are also given:
 
-    Your job: for each entity, write a concise 1-2 sentence description of
-    what the entity IS. Ground the description in what the node and its
-    context say about the entity. The triplets tell you what relations the
-    entity participates in (e.g. "X is bounded", "Y has limit 0") — use
-    them to inform the description, but the node text is the primary
-    source.
+    - ENTITIES that appear in this region, each with its name and the
+      triplets where it appears as subject or object.
+    - RELATIONS (predicates) that appear in this region, each with the
+      triplets where it appears.
+
+    Your job:
+    1. For each entity, write a concise 1-2 sentence description of what
+       the entity IS.
+    2. For each relation, write a concise 1-2 sentence description of what
+       the relation MEANS. These descriptions are used for deduplication —
+       two predicates with the same meaning should have similar
+       descriptions (e.g. "is a subset of" and "is contained in" should
+       both describe the subset relation).
+
+    Ground both in the node content, context, and triplets.
 
     RULES:
     - GROUNDED, NOT INVENTED. Every description must be supported by the
@@ -117,8 +140,19 @@ class Signature(dspy.Signature):
             'appears as subject or object).'
         )
     )
+    relations: list[dict] = dspy.InputField(
+        description=(
+            'Relations (predicates) found in this region. Each entry has: '
+            'predicate (the exact predicate string), triplets (a list of '
+            '"subject | predicate | object" strings where this predicate '
+            'appears).'
+        )
+    )
     descriptions: list[DSPyEntityDesc] = dspy.OutputField(
         description='One description per entity in the input list.'
+    )
+    relation_descriptions: list[DSPyRelationDesc] = dspy.OutputField(
+        description='One description per relation in the input list.'
     )
 
 
@@ -143,23 +177,26 @@ class EntityEnricher(dspy.Module):
         context_before: str | None,
         context_after: str | None,
         entities: list[dict],
-    ) -> list[DSPyEntityDesc]:
-        """Write descriptions for the given entities.
+        relations: list[dict],
+    ) -> tuple[list[DSPyEntityDesc], list[DSPyRelationDesc]]:
+        """Write descriptions for entities and relations at a node.
 
         Args:
             node_content: The anchor node's text.
             context_before: Text before the node, or None.
             context_after: Text after the node, or None.
             entities: The entities with their names and local triplets.
+            relations: The relations with their predicates and triplets.
 
         Returns:
-            One description per entity.
+            A tuple of (entity_descriptions, relation_descriptions).
         """
         result = await self.enricher.acall(
             node_content=node_content,
             context_before=context_before or '',
             context_after=context_after or '',
             entities=entities,
+            relations=relations,
         )
         if self._recorder:
             self._recorder.record(
@@ -169,15 +206,18 @@ class EntityEnricher(dspy.Module):
                     'context_before': context_before,
                     'context_after': context_after,
                     'entities': entities,
+                    'relations': relations,
                 },
                 result,
             )
-        descriptions = list(result.descriptions or [])
+        entity_descs = list(result.descriptions or [])
+        relation_descs = list(result.relation_descriptions or [])
         logger.debug(
-            'entity enricher: %d entity descriptions',
-            len(descriptions),
+            'entity enricher: %d entity + %d relation descriptions',
+            len(entity_descs),
+            len(relation_descs),
         )
-        return descriptions
+        return entity_descs, relation_descs
 
     def forward(
         self,
@@ -185,7 +225,8 @@ class EntityEnricher(dspy.Module):
         context_before: str | None,
         context_after: str | None,
         entities: list[dict],
-    ) -> list[DSPyEntityDesc]:
+        relations: list[dict],
+    ) -> tuple[list[DSPyEntityDesc], list[DSPyRelationDesc]]:
         """Sync forward for DSPy optimisers."""
         return asyncio.run(
             self.aforward(
@@ -193,6 +234,7 @@ class EntityEnricher(dspy.Module):
                 context_before=context_before,
                 context_after=context_after,
                 entities=entities,
+                relations=relations,
             )
         )
 
@@ -213,13 +255,13 @@ async def enrich_entities(
     nodes: list[models.ASTNode],
     module: EntityEnricher,
     max_concurrency: int | None = None,
-) -> dict[int, list[dict]]:
-    """Walk the node stream and produce per-node entity descriptions.
+) -> tuple[dict[int, list[dict]], dict[int, list[dict]]]:
+    """Walk the node stream and produce per-node entity and relation
+    descriptions.
 
-    For each node that anchors at least one fact (and therefore at least
-    one triplet), extracts the distinct subject/object strings from those
-    local triplets, builds a token-bounded context window, and asks the
-    LLM to describe every entity found at that node.
+    For each node that anchors at least one fact, extracts the distinct
+    subject/object strings and predicates from local triplets, builds a
+    context window, and asks the LLM to describe both.
 
     Args:
         triplets: The triplets, in document order.
@@ -230,8 +272,9 @@ async def enrich_entities(
             ``llm.MAX_CONCURRENT_CALLS``.
 
     Returns:
-        A ``dict`` mapping ``node_id -> [{name, description}, ...]``.
-        Nodes with no triplets or no entities are absent from the dict.
+        A tuple of ``(node_entity_descriptions,
+        node_relation_descriptions)``, each a dict mapping node id to a
+        list of ``{name/predicate, description}`` dicts.
     """
     # Build node_id → set of fact_indices
     node_fact_indices: dict[int, set[int]] = {}
@@ -241,9 +284,10 @@ async def enrich_entities(
 
     if not node_fact_indices:
         logger.info('entity enricher: no node→fact mappings')
-        return {}
+        return {}, {}
 
-    result: dict[int, list[dict]] = {}
+    entity_result: dict[int, list[dict]] = {}
+    relation_result: dict[int, list[dict]] = {}
 
     for node in nodes:
         nid = node.id
@@ -257,16 +301,18 @@ async def enrich_entities(
         if not node_triplets:
             continue
 
-        # Distinct subject/object strings from local triplets
+        # Distinct subject/object strings and predicates
         entity_names: set[str] = set()
+        predicates: set[str] = set()
         for t in node_triplets:
             entity_names.add(t.subject)
             entity_names.add(t.object)
+            predicates.add(t.predicate)
 
-        if not entity_names:
+        if not entity_names and not predicates:
             continue
 
-        # Build entity list for the LLM
+        # Build entity list
         entity_list: list[dict] = []
         for name in entity_names:
             ent_triplets = [
@@ -277,6 +323,19 @@ async def enrich_entities(
             entity_list.append({
                 'name': name,
                 'triplets': ent_triplets,
+            })
+
+        # Build relation list
+        relation_list: list[dict] = []
+        for pred in predicates:
+            rel_triplets = [
+                _triplet_str(t)
+                for t in node_triplets
+                if t.predicate == pred
+            ]
+            relation_list.append({
+                'predicate': pred,
+                'triplets': rel_triplets,
             })
 
         # Context window
@@ -290,25 +349,35 @@ async def enrich_entities(
         if not node.content or not node.content.strip():
             continue
 
-        descriptions = await module.aforward(
+        entity_descs, relation_descs = await module.aforward(
             node_content=node.content,
             context_before=before,
             context_after=after,
             entities=entity_list,
+            relations=relation_list,
         )
 
-        result[nid] = [
-            {'name': desc.name, 'description': desc.description}
-            for desc in descriptions
-        ]
+        if entity_descs:
+            entity_result[nid] = [
+                {'name': d.name, 'description': d.description}
+                for d in entity_descs
+            ]
+        if relation_descs:
+            relation_result[nid] = [
+                {'predicate': d.predicate, 'description': d.description}
+                for d in relation_descs
+            ]
 
-    total = sum(len(v) for v in result.values())
+    total_ent = sum(len(v) for v in entity_result.values())
+    total_rel = sum(len(v) for v in relation_result.values())
     logger.info(
-        'entity enricher: %d descriptions across %d nodes',
-        total,
-        len(result),
+        'entity enricher: %d entity + %d relation descriptions '
+        'across %d nodes',
+        total_ent,
+        total_rel,
+        len(entity_result),
     )
-    return result
+    return entity_result, relation_result
 
 
 # ============================================================================
@@ -332,21 +401,25 @@ class EntityEnricherNode:
         self.module = module
 
     async def run(self, state: state.State) -> dict:
-        """Enrich entity descriptions.
+        """Enrich entity and relation descriptions.
 
         Args:
             state: The pipeline state.
 
         Returns:
-            The ``node_entity_descriptions`` channel.
+            The ``node_entity_descriptions`` and
+            ``node_relation_descriptions`` channels.
         """
         triplets = state.get('triplets', [])
         facts = state.get('atomic_facts', [])
         nodes = state.get('nodes', [])
-        descriptions = await enrich_entities(
+        entity_descs, relation_descs = await enrich_entities(
             triplets=triplets,
             facts=facts,
             nodes=nodes,
             module=self.module,
         )
-        return {'node_entity_descriptions': descriptions}
+        return {
+            'node_entity_descriptions': entity_descs,
+            'node_relation_descriptions': relation_descs,
+        }
