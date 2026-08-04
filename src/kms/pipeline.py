@@ -5,7 +5,7 @@ Stage order:
     corrector -> formatter -> extractor -> seam_merger (even, odd) -> splitter
               -> instruction_finder -> instruction_distributor
               -> pedagogical_component_finder -> hub_builder
-              -> variable_extraction -> atomic_facts
+              -> atomic_facts
               -> ingestion_persister
 
 Two phases. Ingestion is per-page map-reduce: the corrector proofreads each
@@ -17,20 +17,15 @@ lead-ins, and the distributor prepends directives onto governed exercises.
 
 One semantic chain follows. The pedagogical component finder cuts the stream
 into untyped spans; the hub builder classifies each span's roles and partitions
-both-blocks in one pass (router + gated partitioners). The variable node cuts
-the stream into fixed windows and extracts variable bindings per window —
-equations are folded into facts (ADR 0001): the fact pass carries equation
-statements, and the concept pass will own equation identity. The atomic fact
-pass then
+both-blocks in one pass (router + gated partitioners). The atomic fact pass then
 decomposes the final node stream into atomic facts for the downstream triplet
 extraction and canonicalization passes.
 
 The ingestion persister writes everything: a ``:Source`` root, its ``:Node``
-provenance chain, ``:Statement`` and ``:Procedure`` hubs hung off member nodes
-via ``:MEMBER_OF``, and ``:Variable`` bindings hung off their provenance
-``:Node`` via ``:HAS_VARIABLE``. A no-op when Neo4j isn't
-configured. After the graph returns, ``run()`` assembles the markdown string
-and returns it without writing to disk.
+provenance chain, and the ``:Statement``/``:Procedure`` hubs hung off member
+nodes via ``:MEMBER_OF``. A no-op when Neo4j isn't
+configured. After the graph returns, ``run()`` returns the pipeline state
+without writing to disk.
 """
 
 import os
@@ -56,9 +51,7 @@ from kms.ingestion import (
     pedagogical_component_finder,
     seam_merger,
     splitter,
-    variable_extractor,
 )
-from kms.output import assembler
 
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
@@ -80,12 +73,12 @@ def build_graph(
     seam merger heals page-split
     nodes and flattens to the global stream, and the pedagogical component
     finder then cuts that stream into untyped spans for the hub builder to
-    label and partition in one pass — before the variable node pulls
-    bindings out and the persister writes every tier.
+    label and partition in one pass — before the atomic fact pass
+    decomposes the stream and the persister writes every tier.
 
     Args:
         text_language_model: The language model for all text-reasoning
-            stages (extractor, formatter, hub builder, variable
+            stages (extractor, formatter, hub builder, atomic fact
             extractor, etc.).
         corrector_language_model: The vision-capable language model for
             the correction pass.
@@ -150,10 +143,6 @@ def build_graph(
         language_model=text_language_model,
         recorder=recorder,
     )
-    variable_module = variable_extractor.VariableExtractor(
-        language_model=text_language_model,
-        recorder=recorder,
-    )
     atomic_fact_module = atomic_fact_extractor.AtomicFactExtractor(
         language_model=text_language_model,
         recorder=recorder,
@@ -188,7 +177,6 @@ def build_graph(
         statement_partitioner=statement_partitioner_module,
         procedure_partitioner=procedure_partitioner_module,
     )
-    variable_node = variable_extractor.VariableNode(module=variable_module)
     atomic_fact_node = atomic_fact_extractor.AtomicFactNode(
         module=atomic_fact_module
     )
@@ -221,7 +209,6 @@ def build_graph(
     graph.add_node('ingestion_persister', node_persister_node.run)
     graph.add_node('pedagogical_component_finder', component_finder_node.run)
     graph.add_node('hub_builder', hub_builder_node.run)
-    graph.add_node('variables', variable_node.run)
     graph.add_node('atomic_facts', atomic_fact_node.run)
     graph.add_node('entity_extraction', entity_node.run)
 
@@ -279,8 +266,7 @@ def build_graph(
     # node ids match the overlay's members and instruction nodes are excluded.
     graph.add_edge('instruction_distributor', 'pedagogical_component_finder')
     graph.add_edge('pedagogical_component_finder', 'hub_builder')
-    graph.add_edge('hub_builder', 'variables')
-    graph.add_edge('variables', 'atomic_facts')
+    graph.add_edge('hub_builder', 'atomic_facts')
     graph.add_edge('atomic_facts', 'entity_extraction')
     graph.add_edge('entity_extraction', 'ingestion_persister')
     graph.add_edge('ingestion_persister', END)
@@ -295,18 +281,18 @@ async def run(
     source: str | None = None,
     title: str | None = None,
     author: str | None = None,
-) -> str:
+) -> dict:
     """Run the full pipeline on a PDF.
 
     The Mistral OCR API turns each page into reading-ordered markdown plus
     extracted figures (no GPU, no docling); the graph then corrects, parses,
-    heals, builds the statement overlay, extracts variable bindings and
-    atomic facts, and (when Neo4j is configured) persists the
+    heals, builds the statement overlay, extracts atomic facts and
+    entity mentions, and (when Neo4j is configured) persists the
     ``:Node`` provenance layer, the ``:Statement`` overlay, and the
-    procedural and variable layers on top of it. Graph persistence is skipped
+    procedural layer on top of it. Graph persistence is skipped
     entirely
-    when Neo4j isn't configured — a DB-less run still returns the assembled
-    markdown but persists no nodes or statements.
+    when Neo4j isn't configured — a DB-less run still returns the pipeline
+    state but persists no nodes or statements.
 
     Args:
         pdf_path: The source PDF.
@@ -318,7 +304,8 @@ async def run(
         author: Optional book author, stored on the ``:Source`` node.
 
     Returns:
-        The assembled markdown document as a string.
+        The pipeline state: the ``nodes`` stream, the ``:Statement`` /
+        ``:Procedure`` hubs, and the atomic facts.
     """
     # Deferred so importing the pipeline does not require the OCR extra.
     from kms.ingestion import ocr
@@ -366,9 +353,6 @@ async def run(
             },
             {'recursion_limit': 1000},
         )
-        nodes = result['nodes']
-        return assembler.assemble(
-            nodes, result['segments'], output_dir=output_dir
-        )
+        return result
     finally:
         await db.close_driver()

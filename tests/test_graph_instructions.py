@@ -118,7 +118,7 @@ def test_persist_instructions_writes_hubs_then_governs_edges():
 
     edge_query, edge_params = fake.queries[1]
     # The edge runs from the hub outward, not from the node.
-    assert 'MERGE (i)-[:GOVERNS]->(n)' in edge_query
+    assert 'MERGE (i)-[r:GOVERNS]->(n)' in edge_query
     assert len(edge_params['pairs']) == 2
 
 

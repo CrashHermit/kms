@@ -30,42 +30,6 @@ class ASTNode:
     segment_index: int | None = None
 
 
-# --- Variable binding --------------------------------------------------------
-
-
-@dataclass(slots=True)
-class Variable:
-    """One stand-in bound to a meaning at a specific position in the text.
-
-    Domain-agnostic: a symbol in a mathematical expression, an element in a
-    chemical equation, a labelled component in a circuit diagram, a parameter
-    in a function signature, a defined term in a legal document — anything
-    where a compact notation stands for a fuller meaning.
-
-    Two kinds of binding, both carried here:
-
-    * **Definitional** — the symbol is bound to a MEANING: "let $\\alpha$ be
-      the learning rate", "$b$, the cost of the blouse". ``meaning`` holds it
-      and ``value`` is None.
-    * **Substitutional** — the symbol is bound to a VALUE, for this passage
-      only: "evaluate $x^2 + 5x - 8$ when $x = 6$". ``value`` holds the ``6``.
-
-    ``value`` exists because the substitution IS the exercise: without it two
-    exercises over the same expression are indistinguishable in the graph, and
-    nothing downstream can pose the question, check an answer, or build a
-    review card from the node. It is a string, not a number — a binding is as
-    often ``-3``, ``2\\pi``, or ``n+1`` as it is an integer.
-
-    The binding always hangs off its ``:Node`` — the ``:Equation`` tier was
-    folded into facts (ADR 0001) and no longer exists.
-    """
-
-    symbol: str
-    meaning: str
-    kind: str
-    value: str | None = None
-
-
 # --- Atomic facts ------------------------------------------------------------
 
 

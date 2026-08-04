@@ -11,9 +11,6 @@ which is quarantined in ``db``.
   Statements carry no text; their members' raw nodes carry it.
 - ``procedures`` — ``models.Procedure`` → ``:Procedure`` and its ``:Act`` step
   chain (declared but not yet written — the step decomposer is a future pass).
-- ``variables`` — ``models.Variable`` → ``:Variable`` hung off its ``:Node``
-  via ``:HAS_VARIABLE``; hubs inherit through ``:MEMBER_OF``. (The
-  ``:Equation`` tier was folded into facts — ADR 0001.)
 - ``schema`` — idempotent constraint/index bootstrap for every label.
 - ``queries`` — the read side of the I/O layer: named, parameterised
   lookbacks (existing concepts for dedup, distinct relation types for the

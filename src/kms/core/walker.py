@@ -3,7 +3,7 @@
 The window stages (instruction finder, PCF, splitter) all walk the stream in
 token-budgeted chunks rather than node counts, so a window holds roughly the
 same amount of text whatever the node sizes are. The fixed-window passes
-(atomic facts, variables) cut the same stream into adjacent
+(atomic facts) cut the same stream into adjacent
 fixed windows of whole nodes and share one view model for what a windowed
 pass sees. All helpers are pure.
 """
@@ -75,7 +75,7 @@ def fixed_windows(
     non-overlapping, in document order. A window always contains at least
     one node — a single node larger than the budget forms a window of its
     own. This is deliberately NOT the grow-and-bank look-ahead: fixed
-    windows are for per-window output passes (atomic facts, variables), where a fact whose content straddles a cut is a known
+    windows are for per-window output passes (atomic facts), where a fact whose content straddles a cut is a known
     limitation accepted in exchange for never paying the grow/rewind cost.
 
     Args:

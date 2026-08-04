@@ -1,11 +1,10 @@
 """
 Graph representation of the fact layer — ``:Fact`` nodes with evidence edges.
 
-The atomic fact pass decomposes the node stream into atomic facts; the fact
-embedding stage enriches each with its embedding vector. This module maps one
-``models.AtomicFact`` onto its Neo4j form, mirroring ``graph.variables``:
-pure mapping, free of the neo4j driver (the driver lives in ``graph.db``,
-the writes in ``graph.writer``).
+The atomic fact pass decomposes the node stream into atomic facts. This
+module maps one
+``models.AtomicFact`` onto its Neo4j form: pure mapping, free of the neo4j
+driver (the driver lives in ``graph.db``, the writes in ``graph.writer``).
 
 Representation: every fact carries the ``:Fact`` label with its text and —
 when computed — its embedding vector. Provenance: each provenance node a

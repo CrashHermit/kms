@@ -9,7 +9,7 @@ __pycache__/
 test.pdf
 
 # Ad-hoc validation run artifacts (scratch). Anchored to the repo root so the
-# patterns can't also swallow the `src/kms/output/` package.
+# patterns can't accidentally match anything under `src/`.
 /out/
 scratch_*
 /output/

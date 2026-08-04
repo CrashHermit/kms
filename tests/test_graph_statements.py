@@ -149,13 +149,13 @@ def test_persist_chain_writes_head_and_next_over_pure_nodes():
     assert any(
         '(s:Source {uuid: $source})' in query
         and '(n:Node {uuid: $head})' in query
-        and '(s)-[:HEAD]->(n)' in query
+        and '(s)-[r:HEAD]->(n)' in query
         for query in queries
     )
     assert any(
         '(a:Node {uuid: pair.from})' in query
         and '(b:Node {uuid: pair.to})' in query
-        and '(a)-[:NEXT]->(b)' in query
+        and '(a)-[r:NEXT]->(b)' in query
         for query in queries
     )
     # The chain never mentions the statement tier: statements hang off their
@@ -182,7 +182,7 @@ def test_persist_statements_writes_member_edges_from_every_member():
     assert any(
         '(n:Node {uuid: pair.node})' in query
         and '(s:Statement {uuid: pair.statement})' in query
-        and '(n)-[:MEMBER_OF]->(s)' in query
+        and '(n)-[r:MEMBER_OF]->(s)' in query
         for query in queries
     )
     # The membership link is real graph structure: one edge per member node,

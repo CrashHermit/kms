@@ -28,10 +28,9 @@ Design commitments:
   exactly as in the source fact. A fact that mentions ``$x = -b \\pm
   \\sqrt{b^2-4ac} / 2a$`` as an entity keeps that string verbatim.
 
-* SYMBOLS BELONG TO THE VARIABLE TIER. A bound symbol (``$X$``, ``$S$``,
+* SYMBOLS ARE NOT ENTITIES. A bound symbol (``$X$``, ``$S$``,
   ``$p$``) is not an entity: it stands for something only within its own
-  document, so it has no cross-document identity to canonicalise, and
-  ``ingestion.variable_extractor`` already extracts it WITH its meaning.
+  document, so it has no cross-document identity to canonicalise.
   Measured on a proof-style page, symbols were 44% of this pass's mentions
   before the prompt excluded them — all of them entities that would mean
   nothing once merged across books. Named mathematical objects ("the
@@ -97,10 +96,10 @@ class Signature(dspy.Signature):
     NOT AN ENTITY. Three things look like entities and are not:
 
     - BOUND SYMBOLS. A symbol standing in for something within this
-      document — ``$X$``, ``$S$``, ``$p$``, ``$B$``, ``$d(p, x)$`` — is a
-      variable binding, not an entity. A separate pass extracts those with
-      their meanings, and duplicating them here mints entities that mean
-      nothing outside this page. When a fact is about what the symbol
+      document — ``$X$``, ``$S$``, ``$p$``, ``$B$``, ``$d(p, x)$`` — is
+      not an entity: it has no identity outside this page, and duplicating
+      it here mints entities that mean nothing once merged across books.
+      When a fact is about what the symbol
       stands for, name that instead ("metric space", "subset"); otherwise
       emit nothing for the symbol. A NAMED mathematical object is still an
       entity: "the discrete metric", "the diameter of a set", or a formula

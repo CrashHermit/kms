@@ -69,9 +69,6 @@ class State(TypedDict, total=False):
         models.Statement
     ]  # the statement overlay, group order, from the role typer
     procedures: list[models.Procedure]  # the procedure overlay, group order
-    variables: Annotated[
-        list[tuple[int, list[models.Variable]]], operator.add
-    ]  # (node_id, variable bindings) from the variable extractor
     atomic_facts: list[
         models.AtomicFact
     ]  # atomic facts from the final node stream, document order

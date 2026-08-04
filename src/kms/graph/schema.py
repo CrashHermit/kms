@@ -20,7 +20,6 @@ from kms.graph import (
     nodes,
     procedures,
     statements,
-    variables,
 )
 
 
@@ -37,8 +36,6 @@ def schema_statements() -> list[str]:
         f'FOR (p:{procedures.PROCEDURE_LABEL}) REQUIRE p.uuid IS UNIQUE',
         f'CREATE CONSTRAINT act_uuid IF NOT EXISTS '
         f'FOR (a:{procedures.ACT_LABEL}) REQUIRE a.uuid IS UNIQUE',
-        f'CREATE CONSTRAINT variable_uuid IF NOT EXISTS '
-        f'FOR (v:{variables.VARIABLE_LABEL}) REQUIRE v.uuid IS UNIQUE',
         f'CREATE CONSTRAINT instruction_uuid IF NOT EXISTS '
         f'FOR (i:{instructions.INSTRUCTION_LABEL}) REQUIRE i.uuid IS UNIQUE',
         f'CREATE CONSTRAINT fact_uuid IF NOT EXISTS '

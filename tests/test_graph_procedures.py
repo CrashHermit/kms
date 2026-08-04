@@ -104,7 +104,7 @@ def test_persist_procedures_points_each_member_at_the_procedure():
     assert any(
         '(n:Node {uuid: pair.node})' in query
         and '(p:Procedure {uuid: pair.procedure})' in query
-        and '(n)-[:MEMBER_OF]->(p)' in query
+        and '(n)-[r:MEMBER_OF]->(p)' in query
         for query in queries
     )
     # A procedure hub is independent: no statement↔procedure edge is written

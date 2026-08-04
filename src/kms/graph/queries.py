@@ -2,7 +2,7 @@
 Read-side queries over the graph — the counterpart to ``writer``.
 
 ``writer`` is the write half of the I/O layer (persist nodes, statements,
-procedures, variables). This module is the read half: named,
+procedures, facts). This module is the read half: named,
 parameterised queries that return plain data, used by construction passes
 that must look back at the graph — the concept pass's search-before-create
 dedup, the relation pass's living-schema canonicalisation, and anything

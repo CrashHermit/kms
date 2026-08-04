@@ -20,9 +20,10 @@ whole book off one supernode.
 ``:MEMBER_OF`` edges from their member nodes. ``:Act`` step chains are
 declared but not yet written.
 
-``persist_variables`` writes ``:Variable`` vertices hung off their
-provenance ``:Node`` via ``:HAS_VARIABLE`` — statement and procedure hubs
-inherit variables through ``:MEMBER_OF``.
+Every vertex and edge carries ``created_at`` and ``modified_at`` — ISO-8601
+UTC stamps, set once when the element is first written and bumped on every
+re-write. These are transaction-time bookkeeping (when we wrote the graph),
+deliberately separate from any semantic time in the content.
 
 Writes are batched: structural node labels are grouped by their per-type
 label and each batch is one MERGE. Statements, procedures and acts each
@@ -31,6 +32,7 @@ carry a single fixed label, so each is one batched MERGE.
 
 from collections import defaultdict
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from kms.core import models
@@ -67,11 +69,15 @@ from kms.graph.statements import (
     statement_member_pairs,
     statement_properties,
 )
-from kms.graph.variables import (
-    VARIABLE_LABEL,
-    has_variable_pairs,
-    variable_rows,
-)
+
+
+def utcnow_iso() -> str:
+    """Current UTC time as an ISO-8601 string, for ``created_at`` stamps.
+
+    Returns:
+        The current time, e.g. ``2026-08-04T03:00:00+00:00``.
+    """
+    return datetime.now(UTC).isoformat(timespec='seconds')
 
 
 def node_batches(
@@ -108,21 +114,27 @@ async def persist_nodes(
         return
     source_props = source_properties(source, metadata)
     batches = node_batches(nodes, source)
+    now = utcnow_iso()
 
     async with session_factory() as session:
         await session.run(
-            f'MERGE (s:{SOURCE_LABEL} {{uuid: $uuid}}) SET s += $props',
+            f'MERGE (s:{SOURCE_LABEL} {{uuid: $uuid}}) '
+            f'ON CREATE SET s.created_at = $now '
+            f'SET s += $props, s.modified_at = $now',
             uuid=source_props['uuid'],
             props=source_props,
+            now=now,
         )
         for label, rows in batches.items():
             query = (
                 f'UNWIND $rows AS row '
-                f'MERGE (n:{NODE_LABEL} {{uuid: row.uuid}}) SET n += row'
+                f'MERGE (n:{NODE_LABEL} {{uuid: row.uuid}}) '
+                f'ON CREATE SET n.created_at = $now '
+                f'SET n += row, n.modified_at = $now'
             )
             if label:
                 query += f' SET n:{label}'
-            await session.run(query, rows=rows)
+            await session.run(query, rows=rows, now=now)
 
 
 def _chain_nodes(nodes: list[models.ASTNode], source: str) -> list[str]:
@@ -184,22 +196,29 @@ async def persist_chain(
         return
     pairs = _chain_pairs(chain)
     head = chain[0]
+    now = utcnow_iso()
 
     async with session_factory() as session:
         await session.run(
             f'MATCH (s:{SOURCE_LABEL} {{uuid: $source}}), '
             f'(n:{NODE_LABEL} {{uuid: $head}}) '
-            f'MERGE (s)-[:HEAD]->(n)',
+            f'MERGE (s)-[r:HEAD]->(n) '
+            f'ON CREATE SET r.created_at = $now '
+            f'SET r.modified_at = $now',
             source=source_uuid(source),
             head=head,
+            now=now,
         )
         if pairs:
             await session.run(
                 f'UNWIND $pairs AS pair '
                 f'MATCH (a:{NODE_LABEL} {{uuid: pair.from}}), '
                 f'(b:{NODE_LABEL} {{uuid: pair.to}}) '
-                f'MERGE (a)-[:NEXT]->(b)',
+                f'MERGE (a)-[r:NEXT]->(b) '
+                f'ON CREATE SET r.created_at = $now '
+                f'SET r.modified_at = $now',
                 pairs=pairs,
+                now=now,
             )
 
 
@@ -235,21 +254,27 @@ async def persist_statements(
         return
     rows = statement_rows(statements, source)
     pairs = statement_member_pairs(statements, source)
+    now = utcnow_iso()
 
     async with session_factory() as session:
         await session.run(
             f'UNWIND $rows AS row '
             f'MERGE (s:{STATEMENT_LABEL} {{uuid: row.uuid}}) '
-            f'SET s += row',
+            f'ON CREATE SET s.created_at = $now '
+            f'SET s += row, s.modified_at = $now',
             rows=rows,
+            now=now,
         )
         if pairs:
             await session.run(
                 f'UNWIND $pairs AS pair '
                 f'MATCH (n:{NODE_LABEL} {{uuid: pair.node}}), '
                 f'(s:{STATEMENT_LABEL} {{uuid: pair.statement}}) '
-                f'MERGE (n)-[:MEMBER_OF]->(s)',
+                f'MERGE (n)-[r:MEMBER_OF]->(s) '
+                f'ON CREATE SET r.created_at = $now '
+                f'SET r.modified_at = $now',
                 pairs=pairs,
+                now=now,
             )
 
 
@@ -276,21 +301,27 @@ async def persist_instructions(
         return
     rows = instruction_rows(instructions, source)
     pairs = governs_pairs(instructions, source)
+    now = utcnow_iso()
 
     async with session_factory() as session:
         await session.run(
             f'UNWIND $rows AS row '
             f'MERGE (i:{INSTRUCTION_LABEL} {{uuid: row.uuid}}) '
-            f'SET i += row',
+            f'ON CREATE SET i.created_at = $now '
+            f'SET i += row, i.modified_at = $now',
             rows=rows,
+            now=now,
         )
         if pairs:
             await session.run(
                 f'UNWIND $pairs AS pair '
                 f'MATCH (i:{INSTRUCTION_LABEL} {{uuid: pair.instruction}}), '
                 f'(n:{NODE_LABEL} {{uuid: pair.node}}) '
-                f'MERGE (i)-[:GOVERNS]->(n)',
+                f'MERGE (i)-[r:GOVERNS]->(n) '
+                f'ON CREATE SET r.created_at = $now '
+                f'SET r.modified_at = $now',
                 pairs=pairs,
+                now=now,
             )
 
 
@@ -316,84 +347,58 @@ async def persist_procedures(
     members = procedure_member_pairs(procedures, source)
     firsts = first_pairs(procedures, source)
     thens = then_pairs(procedures, source)
+    now = utcnow_iso()
 
     async with session_factory() as session:
         await session.run(
             f'UNWIND $rows AS row '
             f'MERGE (p:{PROCEDURE_LABEL} {{uuid: row.uuid}}) '
-            f'SET p += row',
+            f'ON CREATE SET p.created_at = $now '
+            f'SET p += row, p.modified_at = $now',
             rows=procedure_batch,
+            now=now,
         )
         if acts:
             await session.run(
                 f'UNWIND $rows AS row '
                 f'MERGE (a:{ACT_LABEL} {{uuid: row.uuid}}) '
-                f'SET a += row',
+                f'ON CREATE SET a.created_at = $now '
+                f'SET a += row, a.modified_at = $now',
                 rows=acts,
+                now=now,
             )
         if members:
             await session.run(
                 f'UNWIND $pairs AS pair '
                 f'MATCH (n:{NODE_LABEL} {{uuid: pair.node}}), '
                 f'(p:{PROCEDURE_LABEL} {{uuid: pair.procedure}}) '
-                f'MERGE (n)-[:MEMBER_OF]->(p)',
+                f'MERGE (n)-[r:MEMBER_OF]->(p) '
+                f'ON CREATE SET r.created_at = $now '
+                f'SET r.modified_at = $now',
                 pairs=members,
+                now=now,
             )
         if firsts:
             await session.run(
                 f'UNWIND $pairs AS pair '
                 f'MATCH (p:{PROCEDURE_LABEL} {{uuid: pair.procedure}}), '
                 f'(a:{ACT_LABEL} {{uuid: pair.act}}) '
-                f'MERGE (p)-[:FIRST]->(a)',
+                f'MERGE (p)-[r:FIRST]->(a) '
+                f'ON CREATE SET r.created_at = $now '
+                f'SET r.modified_at = $now',
                 pairs=firsts,
+                now=now,
             )
         if thens:
             await session.run(
                 f'UNWIND $pairs AS pair '
                 f'MATCH (a:{ACT_LABEL} {{uuid: pair.from}}), '
                 f'(b:{ACT_LABEL} {{uuid: pair.to}}) '
-                f'MERGE (a)-[:THEN]->(b)',
+                f'MERGE (a)-[r:THEN]->(b) '
+                f'ON CREATE SET r.created_at = $now '
+                f'SET r.modified_at = $now',
                 pairs=thens,
-            )
-
-
-async def persist_variables(
-    variables: list[tuple[int, list[models.Variable]]],
-    source: str,
-    *,
-    session_factory: Callable,
-) -> None:
-    """Upsert the ``:Variable`` nodes and ``:HAS_VARIABLE`` edges.
-
-    One ``:Variable`` per binding, each hanging off the ``:Node`` it was
-    extracted from via ``:HAS_VARIABLE`` — a single label, no bucketing
-    needed.
-
-    Args:
-        variables: The ``(node_id, [Variable])`` extraction results.
-        source: The stable book identity.
-        session_factory: A callable that returns an async context manager
-            with a ``run(query, **params)`` method.
-    """
-    variable_batch = variable_rows(variables, source)
-    if not variable_batch:
-        return
-    pairs = has_variable_pairs(variables, source)
-
-    async with session_factory() as session:
-        await session.run(
-            f'UNWIND $rows AS row '
-            f'MERGE (v:{VARIABLE_LABEL} {{uuid: row.uuid}}) '
-            f'SET v += row',
-            rows=variable_batch,
-        )
-        if pairs:
-            await session.run(
-                f'UNWIND $pairs AS pair '
-                f'MATCH (n:{NODE_LABEL} {{uuid: pair.container}}), '
-                f'(v:{VARIABLE_LABEL} {{uuid: pair.variable}}) '
-                f'MERGE (n)-[:HAS_VARIABLE]->(v)',
-                pairs=pairs,
+                now=now,
             )
 
 
@@ -420,19 +425,25 @@ async def persist_facts(
     if not fact_batch:
         return
     pairs = evidence_pairs(facts, source)
+    now = utcnow_iso()
 
     async with session_factory() as session:
         await session.run(
             f'UNWIND $rows AS row '
             f'MERGE (f:{FACT_LABEL} {{uuid: row.uuid}}) '
-            f'SET f += row',
+            f'ON CREATE SET f.created_at = $now '
+            f'SET f += row, f.modified_at = $now',
             rows=fact_batch,
+            now=now,
         )
         if pairs:
             await session.run(
                 f'UNWIND $pairs AS pair '
                 f'MATCH (n:{NODE_LABEL} {{uuid: pair.node}}), '
                 f'(f:{FACT_LABEL} {{uuid: pair.fact}}) '
-                f'MERGE (n)-[:EVIDENCE_FOR]->(f)',
+                f'MERGE (n)-[r:EVIDENCE_FOR]->(f) '
+                f'ON CREATE SET r.created_at = $now '
+                f'SET r.modified_at = $now',
                 pairs=pairs,
+                now=now,
             )

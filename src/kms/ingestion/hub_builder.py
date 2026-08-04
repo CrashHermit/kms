@@ -456,7 +456,7 @@ async def build_hubs(
     # second round of I/O. Collecting the both-blocks first lets every one of
     # them run together instead of one per loop iteration — on a proof-heavy
     # book most blocks carry both roles, which made this the same serial
-    # bottleneck the equation/variable stage had.
+    # bottleneck the sub-node stages had.
     if both_blocks:
         await asyncio.gather(
             *(
@@ -496,8 +496,8 @@ async def build_hubs(
 class HubBuilderNode:
     """Builds Statement and Procedure hubs from PCF spans.
 
-    Runs after the pedagogical component finder and before variable
-    extraction. Classifies each span, creates the hubs, and partitions
+    Runs after the pedagogical component finder and before the atomic
+    fact pass. Classifies each span, creates the hubs, and partitions
     both-block members in one pass.
 
     Args:
