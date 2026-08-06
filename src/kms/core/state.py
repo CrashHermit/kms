@@ -78,9 +78,9 @@ class State(TypedDict, total=False):
     node_entity_descriptions: dict[
         int, list[dict]
     ]  # per-node entity descriptions: node_id -> [{name, description}, ...]
-    node_relation_descriptions: dict[
+    node_predicate_descriptions: dict[
         int, list[dict]
-    ]  # per-node relation descriptions: node_id -> [{predicate, description}, ...]
+    ]  # per-node predicate descriptions: node_id -> [{predicate, description}, ...]
     correction_results: Annotated[
         list[tuple[int, str]], operator.add
     ]  # (segment index, corrected markdown)

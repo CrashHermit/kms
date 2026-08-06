@@ -3,8 +3,8 @@ Atomic fact extraction — one LangGraph node, one DSPy module.
 
 The first SEMANTIC pass over the provenance stream: it reads the final node
 stream and decomposes it into atomic facts — short, self-contained snippets,
-each conveying exactly one piece of information — for the downstream concept
-and relation passes to consume.
+each conveying exactly one piece of information — for the downstream
+relation passes to consume.
 
 Design commitments:
 
@@ -56,8 +56,7 @@ import logging
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import llm, models, state, walker
-from kms.core.recorder import Recorder
+from kms.core import llm, models, recording, state, walker
 
 logger = logging.getLogger(__name__)
 
@@ -157,7 +156,15 @@ class Signature(dspy.Signature):
       manipulation.
     - NO DUPLICATES. State each distinct claim once per window. If the
       window restates the same claim — rephrased, repeated, re-derived —
-      emit it once.
+      emit it once. When a sentence asserts X and then gives a reason
+      ("X because Y"), emit X as one fact — do NOT emit a second
+      near-identical fact that restates the whole sentence including the
+      reason clause.
+    - META-TEXT IS NOT A FACT. Do not emit facts about the document itself:
+      "The text states that …", "The author writes …", "This passage
+      says …", "The book now turns to …". These are about the writing, not
+      the subject. Extract the subject-matter claim they describe, or
+      nothing if there is none.
     - CONTEXT-ONLY NODES. header (a title), bibliographic (a reference
       entry), and caption nodes are context to help you place the facts —
       do NOT extract facts from them.
@@ -205,7 +212,9 @@ class AtomicFactExtractor(dspy.Module):
     """
 
     def __init__(
-        self, language_model: dspy.LM, recorder: Recorder | None = None
+        self,
+        language_model: dspy.LM,
+        recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
         self.extractor = dspy.ChainOfThought(Signature)

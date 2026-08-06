@@ -36,8 +36,7 @@ import logging
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import models, state, walker
-from kms.core.recorder import Recorder
+from kms.core import models, recording, state, walker
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +154,9 @@ class Splitter(dspy.Module):
     """
 
     def __init__(
-        self, language_model: dspy.LM, recorder: Recorder | None = None
+        self,
+        language_model: dspy.LM,
+        recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
         self.splitter = dspy.ChainOfThought(Signature)

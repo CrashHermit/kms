@@ -70,11 +70,13 @@ def statement_properties(statement: models.Statement, source: str) -> dict:
     Returns:
         The property map, with None values omitted.
     """
-    props = {
+    properties = {
         'uuid': statement_uuid(source, statement.block),
         'source': nodes.source_uuid(source),
     }
-    return {key: value for key, value in props.items() if value is not None}
+    return {
+        key: value for key, value in properties.items() if value is not None
+    }
 
 
 def statement_member_pairs(

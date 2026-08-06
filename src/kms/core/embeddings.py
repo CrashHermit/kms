@@ -5,7 +5,7 @@ The counterpart to ``core.llm`` for vectors: the shared embedder and its
 credentials live in one place, read from the environment, and every stage
 that needs similarity injects the one shared instance. It lives in ``core``
 because — unlike the graph tier's Neo4j driver — embeddings are a
-cross-phase utility (concept discovery, fact dedup, relation matching) that
+cross-phase utility (fact dedup, relation matching) that
 several phases touch.
 
 One embedder: a thin async httpx client over an OpenAI-compatible
@@ -13,8 +13,7 @@ One embedder: a thin async httpx client over an OpenAI-compatible
 OpenRouter serves works — Voyage AI (e.g.
 ``voyage-ai/voyage-multimodal-3.5``), OpenAI, BAAI/bge, and the rest are
 just ``EMBEDDING_MODEL`` changes. Deliberately NOT ``dspy.Embedder``: the
-passes need provider freedom (and later multimodal input) that a direct
-endpoint call gives.
+passes need provider freedom that a direct endpoint call gives.
 
 Config, all env-driven:
 
@@ -92,9 +91,7 @@ def _api_key() -> str:
 def is_configured() -> bool:
     """Whether an embedding target is configured.
 
-    The base URL defaults to OpenRouter, so only the key matters. Lets the
-    pipeline skip embedding gracefully when no key is wired — the persister
-    then writes ``:Fact`` nodes without the embedding property.
+    The base URL defaults to OpenRouter, so only the key matters.
 
     Returns:
         True if an embedding API key is available.

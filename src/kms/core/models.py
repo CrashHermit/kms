@@ -169,8 +169,8 @@ class Triplet:
     """One (subject, predicate, object) relation extracted from an atomic fact.
 
     Subject and object are verbatim substrings of the source fact text — no
-    normalization, no abstraction.  Canonicalization into entities and
-    concepts is a downstream pass's job.
+    normalization, no abstraction.  Canonicalization into entities is a
+    downstream pass's job.
 
     ``fact_index`` is the source fact's position in the document-order fact
     list, set by the entry point as it iterates.

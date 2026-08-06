@@ -36,8 +36,7 @@ import logging
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import llm, models, state, walker
-from kms.core.recorder import Recorder
+from kms.core import models, recording, state, walker
 
 logger = logging.getLogger(__name__)
 
@@ -164,7 +163,9 @@ class EntityEnricher(dspy.Module):
     """
 
     def __init__(
-        self, language_model: dspy.LM, recorder: Recorder | None = None
+        self,
+        language_model: dspy.LM,
+        recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
         self.enricher = dspy.ChainOfThought(Signature)
@@ -273,14 +274,14 @@ async def enrich_entities(
 
     Returns:
         A tuple of ``(node_entity_descriptions,
-        node_relation_descriptions)``, each a dict mapping node id to a
+        node_predicate_descriptions)``, each a dict mapping node id to a
         list of ``{name/predicate, description}`` dicts.
     """
     # Build node_id → set of fact_indices
     node_fact_indices: dict[int, set[int]] = {}
     for i, fact in enumerate(facts):
-        for nid in fact.node_ids:
-            node_fact_indices.setdefault(nid, set()).add(i)
+        for node_id in fact.node_ids:
+            node_fact_indices.setdefault(node_id, set()).add(i)
 
     if not node_fact_indices:
         logger.info('entity enricher: no node→fact mappings')
@@ -290,13 +291,15 @@ async def enrich_entities(
     relation_result: dict[int, list[dict]] = {}
 
     for node in nodes:
-        nid = node.id
-        if nid is None or nid not in node_fact_indices:
+        node_id = node.id
+        if node_id is None or node_id not in node_fact_indices:
             continue
 
-        fact_indices = node_fact_indices[nid]
+        fact_indices = node_fact_indices[node_id]
         node_triplets = [
-            t for t in triplets if t.fact_index in fact_indices
+            triplet
+            for triplet in triplets
+            if triplet.fact_index in fact_indices
         ]
         if not node_triplets:
             continue
@@ -304,10 +307,10 @@ async def enrich_entities(
         # Distinct subject/object strings and predicates
         entity_names: set[str] = set()
         predicates: set[str] = set()
-        for t in node_triplets:
-            entity_names.add(t.subject)
-            entity_names.add(t.object)
-            predicates.add(t.predicate)
+        for triplet in node_triplets:
+            entity_names.add(triplet.subject)
+            entity_names.add(triplet.object)
+            predicates.add(triplet.predicate)
 
         if not entity_names and not predicates:
             continue
@@ -316,35 +319,35 @@ async def enrich_entities(
         entity_list: list[dict] = []
         for name in entity_names:
             ent_triplets = [
-                _triplet_str(t)
-                for t in node_triplets
-                if t.subject == name or t.object == name
+                _triplet_str(triplet)
+                for triplet in node_triplets
+                if triplet.subject == name or triplet.object == name
             ]
-            entity_list.append({
-                'name': name,
-                'triplets': ent_triplets,
-            })
+            entity_list.append(
+                {
+                    'name': name,
+                    'triplets': ent_triplets,
+                }
+            )
 
         # Build relation list
         relation_list: list[dict] = []
-        for pred in predicates:
+        for predicate in predicates:
             rel_triplets = [
-                _triplet_str(t)
-                for t in node_triplets
-                if t.predicate == pred
+                _triplet_str(triplet)
+                for triplet in node_triplets
+                if triplet.predicate == predicate
             ]
-            relation_list.append({
-                'predicate': pred,
-                'triplets': rel_triplets,
-            })
+            relation_list.append(
+                {
+                    'predicate': predicate,
+                    'triplets': rel_triplets,
+                }
+            )
 
         # Context window
-        before = walker.content_before(
-            nodes, nid, BACKWARD_CONTEXT_BUDGET
-        )
-        after = walker.content_after(
-            nodes, nid, FORWARD_CONTEXT_BUDGET
-        )
+        before = walker.content_before(nodes, node_id, BACKWARD_CONTEXT_BUDGET)
+        after = walker.content_after(nodes, node_id, FORWARD_CONTEXT_BUDGET)
 
         if not node.content or not node.content.strip():
             continue
@@ -358,12 +361,12 @@ async def enrich_entities(
         )
 
         if entity_descs:
-            entity_result[nid] = [
+            entity_result[node_id] = [
                 {'name': d.name, 'description': d.description}
                 for d in entity_descs
             ]
         if relation_descs:
-            relation_result[nid] = [
+            relation_result[node_id] = [
                 {'predicate': d.predicate, 'description': d.description}
                 for d in relation_descs
             ]
@@ -371,8 +374,7 @@ async def enrich_entities(
     total_ent = sum(len(v) for v in entity_result.values())
     total_rel = sum(len(v) for v in relation_result.values())
     logger.info(
-        'entity enricher: %d entity + %d relation descriptions '
-        'across %d nodes',
+        'entity enricher: %d entity + %d relation descriptions across %d nodes',
         total_ent,
         total_rel,
         len(entity_result),
@@ -408,7 +410,7 @@ class EntityEnricherNode:
 
         Returns:
             The ``node_entity_descriptions`` and
-            ``node_relation_descriptions`` channels.
+            ``node_predicate_descriptions`` channels.
         """
         triplets = state.get('triplets', [])
         facts = state.get('atomic_facts', [])
@@ -421,5 +423,5 @@ class EntityEnricherNode:
         )
         return {
             'node_entity_descriptions': entity_descs,
-            'node_relation_descriptions': relation_descs,
+            'node_predicate_descriptions': relation_descs,
         }

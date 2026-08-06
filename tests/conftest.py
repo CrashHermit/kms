@@ -27,7 +27,7 @@ def _install_if_missing(name: str, build) -> None:
 
 
 def _dspy():
-    m = types.ModuleType('dspy')
+    module = types.ModuleType('dspy')
 
     class Image:
         def __init__(self, *a, **k):
@@ -59,29 +59,29 @@ def _dspy():
         def __init__(self, *a, **k):
             pass
 
-    m.Image = Image
-    m.Signature = Signature
-    m.Module = Module
-    m.Prediction = Prediction
-    m.Example = Example
-    m.LM = LM
-    m.InputField = lambda *a, **k: None
-    m.OutputField = lambda *a, **k: None
-    m.ChainOfThought = lambda *a, **k: None
-    m.Predict = lambda *a, **k: None
-    return {'dspy': m}
+    module.Image = Image
+    module.Signature = Signature
+    module.Module = Module
+    module.Prediction = Prediction
+    module.Example = Example
+    module.LM = LM
+    module.InputField = lambda *a, **k: None
+    module.OutputField = lambda *a, **k: None
+    module.ChainOfThought = lambda *a, **k: None
+    module.Predict = lambda *a, **k: None
+    return {'dspy': module}
 
 
 def _pydantic():
-    m = types.ModuleType('pydantic')
+    module = types.ModuleType('pydantic')
 
     class BaseModel:
         def __init__(self, **k):
             self.__dict__.update(k)
 
-    m.BaseModel = BaseModel
-    m.Field = lambda default=None, **k: default
-    return {'pydantic': m}
+    module.BaseModel = BaseModel
+    module.Field = lambda default=None, **k: default
+    return {'pydantic': module}
 
 
 def _langgraph_types():
@@ -104,7 +104,7 @@ def _neo4j():
     # server. Anything that actually talks to a database is exercised only by
     # the opt-in integration test,
     # which skips unless NEO4J_URI is set.
-    m = types.ModuleType('neo4j')
+    module = types.ModuleType('neo4j')
 
     class AsyncDriver:
         async def close(self):
@@ -121,9 +121,9 @@ def _neo4j():
         def driver(*a, **k):
             return AsyncDriver()
 
-    m.AsyncDriver = AsyncDriver
-    m.AsyncGraphDatabase = AsyncGraphDatabase
-    return {'neo4j': m}
+    module.AsyncDriver = AsyncDriver
+    module.AsyncGraphDatabase = AsyncGraphDatabase
+    return {'neo4j': module}
 
 
 _install_if_missing('dspy', _dspy)

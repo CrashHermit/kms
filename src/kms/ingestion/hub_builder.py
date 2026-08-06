@@ -30,8 +30,7 @@ import logging
 import dspy
 from pydantic import BaseModel
 
-from kms.core import llm, logs, models, state
-from kms.core.recorder import Recorder
+from kms.core import llm, logs, models, recording, state
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +113,9 @@ class RoleTyper(dspy.Module):
     """
 
     def __init__(
-        self, language_model: dspy.LM, recorder: Recorder | None = None
+        self,
+        language_model: dspy.LM,
+        recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
         self.classify = dspy.ChainOfThought(Classify)
@@ -195,7 +196,9 @@ class StatementPartitioner(dspy.Module):
     """
 
     def __init__(
-        self, language_model: dspy.LM, recorder: Recorder | None = None
+        self,
+        language_model: dspy.LM,
+        recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
         self.partitioner = dspy.ChainOfThought(StatementPartitionSignature)
@@ -263,7 +266,9 @@ class ProcedurePartitioner(dspy.Module):
     """
 
     def __init__(
-        self, language_model: dspy.LM, recorder: Recorder | None = None
+        self,
+        language_model: dspy.LM,
+        recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
         self.partitioner = dspy.ChainOfThought(ProcedurePartitionSignature)

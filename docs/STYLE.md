@@ -73,7 +73,7 @@ the module. (The `UP` pyupgrade rule converts `typing.List` → `list` anyway.)
 ### 1.5 Exception: name collisions inside `graph/`
 
 `graph/`'s modules are named after the domain nouns they map — `nodes`, `entities`,
-`procedures`, `concepts` — and those are exactly the natural names for the *parameters* that
+`procedures` — and those are exactly the natural names for the *parameters* that
 carry them (`def act_rows(entities: list[models.Entity], ...)`). A module import therefore
 shadows, and the shadowing is not always caught at import time:
 

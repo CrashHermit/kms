@@ -36,12 +36,12 @@ from typing import TYPE_CHECKING
 import dspy
 from langgraph.graph import END, START, StateGraph
 
-from kms.core import llm, state
-from kms.core.recorder import Recorder
+from kms.core import llm, recording, state
 from kms.graph import db, persister
 from kms.ingestion import (
     atomic_fact_extractor,
     corrector,
+    entity_embedder,
     entity_enricher,
     extractor,
     formatter,
@@ -62,7 +62,7 @@ def build_graph(
     text_language_model: dspy.LM,
     corrector_language_model: dspy.LM,
     *,
-    recorder: Recorder | None = None,
+    recorder: recording.Recorder | None = None,
     neo4j_session_factory: Callable | None = None,
     neo4j_configured: bool = False,
 ) -> 'CompiledStateGraph':
@@ -191,6 +191,7 @@ def build_graph(
     entity_enricher_node = entity_enricher.EntityEnricherNode(
         module=entity_enricher_module
     )
+    entity_embedder_node = entity_embedder.EntityEmbedderNode()
     instruction_distributor_node = (
         instruction_distributor.InstructionDistributorNode(
             module=instruction_distributor_module
@@ -222,6 +223,7 @@ def build_graph(
     graph.add_node('atomic_facts', atomic_fact_node.run)
     graph.add_node('triplet_extraction', triplet_extractor_node.run)
     graph.add_node('entity_enrichment', entity_enricher_node.run)
+    graph.add_node('entity_embedding', entity_embedder_node.run)
 
     # A stage's dispatch is a conditional edge off the previous collect: it
     # either fans out Sends to the worker or short-circuits straight to its own
@@ -280,7 +282,8 @@ def build_graph(
     graph.add_edge('hub_builder', 'atomic_facts')
     graph.add_edge('atomic_facts', 'triplet_extraction')
     graph.add_edge('triplet_extraction', 'entity_enrichment')
-    graph.add_edge('entity_enrichment', 'ingestion_persister')
+    graph.add_edge('entity_enrichment', 'entity_embedding')
+    graph.add_edge('entity_embedding', 'ingestion_persister')
     graph.add_edge('ingestion_persister', END)
 
     return graph.compile()
@@ -328,7 +331,7 @@ async def run(
     # -- Wiring: construct every injectable dependency --------------------
     example_recorder = None
     if os.environ.get('KMS_RECORD'):
-        example_recorder = Recorder(
+        example_recorder = recording.Recorder(
             source,
             output_dir=str(output_dir / 'examples'),
             pdf=str(pdf_path),

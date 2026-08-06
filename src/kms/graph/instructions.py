@@ -68,14 +68,16 @@ def instruction_properties(
     Returns:
         The property map, with None values omitted.
     """
-    props = {
+    properties = {
         'uuid': instruction_uuid(source, instruction.node_id),
         'source': nodes.source_uuid(source),
         'text': instruction.text,
         'directive': instruction.directive,
         'index': instruction.node_id,
     }
-    return {key: value for key, value in props.items() if value is not None}
+    return {
+        key: value for key, value in properties.items() if value is not None
+    }
 
 
 def instruction_rows(

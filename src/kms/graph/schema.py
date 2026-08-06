@@ -15,9 +15,14 @@ run on every startup.
 from collections.abc import Callable
 
 from kms.graph import (
+    definitions,
+    entities,
+    entity_hubs,
     facts,
     instructions,
     nodes,
+    predicate_hubs,
+    predicates,
     procedures,
     statements,
     triplets,
@@ -41,6 +46,10 @@ def schema_statements() -> list[str]:
         f'FOR (i:{instructions.INSTRUCTION_LABEL}) REQUIRE i.uuid IS UNIQUE',
         f'CREATE CONSTRAINT fact_uuid IF NOT EXISTS '
         f'FOR (f:{facts.FACT_LABEL}) REQUIRE f.uuid IS UNIQUE',
+        f'CREATE CONSTRAINT entity_uuid IF NOT EXISTS '
+        f'FOR (e:{entities.ENTITY_LABEL}) REQUIRE e.uuid IS UNIQUE',
+        f'CREATE CONSTRAINT predicate_uuid IF NOT EXISTS '
+        f'FOR (p:{predicates.PREDICATE_LABEL}) REQUIRE p.uuid IS UNIQUE',
         f'CREATE CONSTRAINT triplet_uuid IF NOT EXISTS '
         f'FOR (t:{triplets.TRIPLET_LABEL}) REQUIRE t.uuid IS UNIQUE',
         f'CREATE INDEX node_source IF NOT EXISTS '
@@ -49,8 +58,39 @@ def schema_statements() -> list[str]:
         f'FOR (s:{statements.STATEMENT_LABEL}) ON (s.source)',
         f'CREATE INDEX fact_source IF NOT EXISTS '
         f'FOR (f:{facts.FACT_LABEL}) ON (f.source)',
+        f'CREATE INDEX entity_source IF NOT EXISTS '
+        f'FOR (e:{entities.ENTITY_LABEL}) ON (e.source)',
+        f'CREATE INDEX predicate_source IF NOT EXISTS '
+        f'FOR (p:{predicates.PREDICATE_LABEL}) ON (p.source)',
         f'CREATE INDEX triplet_source IF NOT EXISTS '
         f'FOR (t:{triplets.TRIPLET_LABEL}) ON (t.source)',
+        # Vector indexes for semantic search over entity names +
+        # descriptions and predicate text + descriptions. Dimensions
+        # are set to a typical model default (1024) — Neo4j ignores
+        # this for existing indexes and the embedder's actual output
+        # dimension is what matters at write time.
+        f'CREATE VECTOR INDEX entity_embedding IF NOT EXISTS '
+        f'FOR (e:{entities.ENTITY_LABEL}) ON (e.embedding) '
+        f'OPTIONS {{indexConfig: {{`vector.dimensions`: 1024, '
+        f'`vector.similarity_function`: "cosine"}}}}',
+        f'CREATE VECTOR INDEX predicate_embedding IF NOT EXISTS '
+        f'FOR (p:{predicates.PREDICATE_LABEL}) ON (p.embedding) '
+        f'OPTIONS {{indexConfig: {{`vector.dimensions`: 1024, '
+        f'`vector.similarity_function`: "cosine"}}}}',
+        f'CREATE CONSTRAINT entity_hub_uuid IF NOT EXISTS '
+        f'FOR (h:{entity_hubs.ENTITY_HUB_LABEL}) '
+        f'REQUIRE h.uuid IS UNIQUE',
+        f'CREATE CONSTRAINT predicate_hub_uuid IF NOT EXISTS '
+        f'FOR (h:{predicate_hubs.PREDICATE_HUB_LABEL}) '
+        f'REQUIRE h.uuid IS UNIQUE',
+        f'CREATE CONSTRAINT definition_uuid IF NOT EXISTS '
+        f'FOR (d:{definitions.DEFINITION_LABEL}) '
+        f'REQUIRE d.uuid IS UNIQUE',
+        f'CREATE VECTOR INDEX definition_embedding IF NOT EXISTS '
+        f'FOR (d:{definitions.DEFINITION_LABEL}) '
+        f'ON (d.embedding) '
+        f'OPTIONS {{indexConfig: {{`vector.dimensions`: 1024, '
+        f'`vector.similarity_function`: "cosine"}}}}',
     ]
 
 

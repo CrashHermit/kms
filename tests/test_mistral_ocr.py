@@ -52,11 +52,11 @@ def test_build_segments_rewrites_refs_and_saves_pictures(tmp_path):
         'img-0.jpeg' not in segment.content
         and 'img-1.jpeg' not in segment.content
     )
-    assert [p.index for p in segment.pictures] == [1, 2]
-    for p in segment.pictures:
+    assert [picture.index for picture in segment.pictures] == [1, 2]
+    for picture in segment.pictures:
         assert (
-            Path(p.image_path).exists()
-            and Path(p.image_path).stat().st_size > 0
+            Path(picture.image_path).exists()
+            and Path(picture.image_path).stat().st_size > 0
         )
 
 

@@ -54,8 +54,7 @@ import logging
 import dspy
 from pydantic import BaseModel
 
-from kms.core import logs, models, state, walker
-from kms.core.recorder import Recorder
+from kms.core import logs, models, recording, state, walker
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +119,9 @@ class InstructionDistributor(dspy.Module):
     """
 
     def __init__(
-        self, language_model: dspy.LM, recorder: Recorder | None = None
+        self,
+        language_model: dspy.LM,
+        recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
         self.judge = dspy.ChainOfThought(GovernExtent)

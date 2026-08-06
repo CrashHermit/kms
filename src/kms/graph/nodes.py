@@ -94,8 +94,14 @@ def source_properties(
     Returns:
         The property map, with None values omitted.
     """
-    props = {**(metadata or {}), 'uuid': source_uuid(source), 'key': source}
-    return {key: value for key, value in props.items() if value is not None}
+    properties = {
+        **(metadata or {}),
+        'uuid': source_uuid(source),
+        'key': source,
+    }
+    return {
+        key: value for key, value in properties.items() if value is not None
+    }
 
 
 def node_label(node: models.ASTNode) -> str | None:
@@ -127,7 +133,7 @@ def node_properties(node: models.ASTNode, source: str) -> dict:
         The property map, with None values omitted rather than written as
         nulls.
     """
-    props = {
+    properties = {
         'uuid': node_uuid(source, node.id),
         'source': source_uuid(source),  # links back to the :Source node
         'type': node.type,
@@ -135,7 +141,9 @@ def node_properties(node: models.ASTNode, source: str) -> dict:
         'index': node.id,
         'segment_index': node.segment_index,
     }
-    return {key: value for key, value in props.items() if value is not None}
+    return {
+        key: value for key, value in properties.items() if value is not None
+    }
 
 
 def block_key(block: list[int]) -> str:

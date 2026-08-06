@@ -116,9 +116,7 @@ def fixed_windows_with_context(
         and node.type != 'image'
     ]
 
-    windows: list[
-        tuple[list[models.ASTNode], str | None, str | None]
-    ] = []
+    windows: list[tuple[list[models.ASTNode], str | None, str | None]] = []
     current: list[tuple[int, models.ASTNode]] = []
     current_size = 0
     for entry in eligible:

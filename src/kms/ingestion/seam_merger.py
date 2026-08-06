@@ -51,8 +51,7 @@ import dspy
 from langgraph.types import Send
 from pydantic import BaseModel
 
-from kms.core import logs, models, state
-from kms.core.recorder import Recorder
+from kms.core import logs, models, recording, state
 
 logger = logging.getLogger(__name__)
 
@@ -206,7 +205,9 @@ class SeamMerger(dspy.Module):
     """
 
     def __init__(
-        self, language_model: dspy.LM, recorder: Recorder | None = None
+        self,
+        language_model: dspy.LM,
+        recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
         self.merger = dspy.ChainOfThought(Signature)
@@ -289,7 +290,9 @@ class SeamRewriter(dspy.Module):
     """
 
     def __init__(
-        self, language_model: dspy.LM, recorder: Recorder | None = None
+        self,
+        language_model: dspy.LM,
+        recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
         self.rewriter = dspy.ChainOfThought(MergeSignature)

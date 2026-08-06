@@ -111,7 +111,7 @@ for record in index['records']:
 ```
 
 The field names are the corrector `Signature`'s, so the examples drop straight
-into `Corrector` — and into `kms.core.recorder`'s shape, if it is ever
+into `Corrector` — and into `kms.core.recording`'s shape, if it is ever
 convenient to merge recorded pipeline runs with this set.
 
 ## What "corrected" means here

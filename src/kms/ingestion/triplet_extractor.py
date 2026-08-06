@@ -45,8 +45,7 @@ import logging
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import llm, models, state
-from kms.core.recorder import Recorder
+from kms.core import llm, models, recording, state
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +173,11 @@ class Signature(dspy.Signature):
     (The second clause — "there is no path from $a$ to $b$" — is the
     REASON, not an independent relation. Do NOT extract "there" as a
     subject. The existential "there is no X" is a way of saying
-    something does not exist, not a subject-predicate-object triple.)
+    something does not exist, not a subject-predicate-object triple.
+    Note: "is not" is the whole predicate here because "connected" is a
+    predicate adjective. Contrast with "$G_4$ is NOT a subgraph of
+    $G_1$" where the predicate is "is NOT a subgraph of" — the negation
+    stays attached to the full verb phrase.)
 
     FACT: "The Bridges of Königsberg graph had double edges because
     there really are two bridges connecting a particular island to the
@@ -223,6 +226,17 @@ class Signature(dspy.Signature):
       extract as a separate triplet. Extract the main assertion;
       leave the reason clause alone unless it contains a distinct
       relation between named entities.
+    - NEGATION TRAVELS WITH THE PREDICATE. "X is NOT a subgraph of Y"
+      yields one triplet with predicate="is NOT a subgraph of" — keep
+      the negation attached to the verb phrase. Do NOT split negation
+      into a bare "is not" predicate with the rest of the verb phrase
+      pushed into the object.
+    - PROPERTY-ASCRIPTION CHECK. When a fact's structure is "X has the
+      property that [long clause]" or "X have the property that [long
+      clause]" — where the object is a clause describing a property
+      rather than a named entity — the result is not a clean
+      subject-predicate-object relationship. Skip such triplets unless
+      the object can be stated as a concrete noun phrase.
     - ABSTRACT / GENERIC SUBJECTS. "Such graphs", "the resulting
       graph", "this function" — when the subject is a placeholder
       whose identity depends on the preceding sentence, it is better
@@ -260,7 +274,9 @@ class TripletExtractor(dspy.Module):
     """
 
     def __init__(
-        self, language_model: dspy.LM, recorder: Recorder | None = None
+        self,
+        language_model: dspy.LM,
+        recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
         self.extractor = dspy.ChainOfThought(Signature)

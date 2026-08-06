@@ -6,11 +6,11 @@ module maps one
 ``models.AtomicFact`` onto its Neo4j form: pure mapping, free of the neo4j
 driver (the driver lives in ``graph.db``, the writes in ``graph.writer``).
 
-Representation: every fact carries the ``:Fact`` label with its text and —
-when computed — its embedding vector. Provenance: each provenance node a
-fact draws on points at it via ``(:Node)-[:EVIDENCE_FOR]->(:Fact)``, the
-same raw-material → construct anchor the statement/procedure tiers use;
-a fact spanning several nodes carries one edge per node.
+Representation: every fact carries the ``:Fact`` label with its text.
+Provenance: each provenance node a fact draws on points at it via
+``(:Node)-[:EVIDENCE_FOR]->(:Fact)``, the same raw-material → construct
+anchor the statement/procedure tiers use; a fact spanning several nodes
+carries one edge per node.
 
 Identity: deterministic uuid5 over ``(source, node_ids, index)`` — the
 ordered node ids plus the fact's position in the flat document-order list —
@@ -52,13 +52,15 @@ def fact_properties(fact: models.AtomicFact, source: str, index: int) -> dict:
     Returns:
         The property map, with None values omitted.
     """
-    props = {
+    properties = {
         'uuid': fact_uuid(source, fact.node_ids, index),
         'source': nodes.source_uuid(source),
         'text': fact.text,
         'index': index,
     }
-    return {key: value for key, value in props.items() if value is not None}
+    return {
+        key: value for key, value in properties.items() if value is not None
+    }
 
 
 def fact_rows(facts: list[models.AtomicFact], source: str) -> list[dict]:

@@ -59,12 +59,14 @@ def act_uuid(
 
 def procedure_properties(source: str, procedure: models.Procedure) -> dict:
     """The Neo4j property map for one procedure."""
-    props = {
+    properties = {
         'uuid': procedure_uuid(source, procedure.block, procedure.index),
         'source': nodes.source_uuid(source),
         'index': procedure.index,
     }
-    return {key: value for key, value in props.items() if value is not None}
+    return {
+        key: value for key, value in properties.items() if value is not None
+    }
 
 
 def act_properties(

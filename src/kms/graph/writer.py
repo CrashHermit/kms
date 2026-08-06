@@ -28,6 +28,9 @@ deliberately separate from any semantic time in the content.
 Writes are batched: structural node labels are grouped by their per-type
 label and each batch is one MERGE. Statements, procedures and acts each
 carry a single fixed label, so each is one batched MERGE.
+
+The Cypher lives in ``queries`` — this module composes rows and edge pairs
+and hands them to the named queries; no query string is embedded here.
 """
 
 from collections import defaultdict
@@ -36,33 +39,42 @@ from datetime import UTC, datetime
 from typing import Any
 
 from kms.core import models
+from kms.graph import queries
+from kms.graph.definitions import (
+    definition_rows,
+    has_definition_pairs,
+)
+from kms.graph.entities import (
+    entity_rows,
+)
+from kms.graph.entity_hubs import (
+    canonical_entity_pairs,
+    entity_hub_rows,
+)
 from kms.graph.facts import (
-    FACT_LABEL,
     evidence_pairs,
     fact_rows,
 )
-from kms.graph.triplets import (
-    TRIPLET_LABEL,
-    triplet_rows,
-    yields_pairs,
-)
 from kms.graph.instructions import (
-    INSTRUCTION_LABEL,
     governs_pairs,
     instruction_rows,
 )
 from kms.graph.nodes import (
-    NODE_LABEL,
-    SOURCE_LABEL,
     node_label,
     node_properties,
     node_uuid,
     source_properties,
     source_uuid,
 )
+from kms.graph.predicate_hubs import (
+    canonical_predicate_pairs,
+    predicate_hub_rows,
+)
+from kms.graph.predicates import (
+    has_predicate_pairs,
+    predicate_rows,
+)
 from kms.graph.procedures import (
-    ACT_LABEL,
-    PROCEDURE_LABEL,
     act_rows,
     first_pairs,
     procedure_member_pairs,
@@ -70,9 +82,14 @@ from kms.graph.procedures import (
     then_pairs,
 )
 from kms.graph.statements import (
-    STATEMENT_LABEL,
     statement_member_pairs,
     statement_properties,
+)
+from kms.graph.triplets import (
+    has_object_pairs,
+    has_subject_pairs,
+    triplet_rows,
+    yields_pairs,
 )
 
 
@@ -123,23 +140,15 @@ async def persist_nodes(
 
     async with session_factory() as session:
         await session.run(
-            f'MERGE (s:{SOURCE_LABEL} {{uuid: $uuid}}) '
-            f'ON CREATE SET s.created_at = $now '
-            f'SET s += $props, s.modified_at = $now',
+            queries.MERGE_SOURCE,
             uuid=source_props['uuid'],
             props=source_props,
             now=now,
         )
         for label, rows in batches.items():
-            query = (
-                f'UNWIND $rows AS row '
-                f'MERGE (n:{NODE_LABEL} {{uuid: row.uuid}}) '
-                f'ON CREATE SET n.created_at = $now '
-                f'SET n += row, n.modified_at = $now'
+            await session.run(
+                queries.merge_nodes_query(label), rows=rows, now=now
             )
-            if label:
-                query += f' SET n:{label}'
-            await session.run(query, rows=rows, now=now)
 
 
 def _chain_nodes(nodes: list[models.ASTNode], source: str) -> list[str]:
@@ -205,26 +214,13 @@ async def persist_chain(
 
     async with session_factory() as session:
         await session.run(
-            f'MATCH (s:{SOURCE_LABEL} {{uuid: $source}}), '
-            f'(n:{NODE_LABEL} {{uuid: $head}}) '
-            f'MERGE (s)-[r:HEAD]->(n) '
-            f'ON CREATE SET r.created_at = $now '
-            f'SET r.modified_at = $now',
+            queries.MERGE_HEAD,
             source=source_uuid(source),
             head=head,
             now=now,
         )
         if pairs:
-            await session.run(
-                f'UNWIND $pairs AS pair '
-                f'MATCH (a:{NODE_LABEL} {{uuid: pair.from}}), '
-                f'(b:{NODE_LABEL} {{uuid: pair.to}}) '
-                f'MERGE (a)-[r:NEXT]->(b) '
-                f'ON CREATE SET r.created_at = $now '
-                f'SET r.modified_at = $now',
-                pairs=pairs,
-                now=now,
-            )
+            await session.run(queries.MERGE_NEXT, pairs=pairs, now=now)
 
 
 def statement_rows(
@@ -262,24 +258,10 @@ async def persist_statements(
     now = utcnow_iso()
 
     async with session_factory() as session:
-        await session.run(
-            f'UNWIND $rows AS row '
-            f'MERGE (s:{STATEMENT_LABEL} {{uuid: row.uuid}}) '
-            f'ON CREATE SET s.created_at = $now '
-            f'SET s += row, s.modified_at = $now',
-            rows=rows,
-            now=now,
-        )
+        await session.run(queries.MERGE_STATEMENTS, rows=rows, now=now)
         if pairs:
             await session.run(
-                f'UNWIND $pairs AS pair '
-                f'MATCH (n:{NODE_LABEL} {{uuid: pair.node}}), '
-                f'(s:{STATEMENT_LABEL} {{uuid: pair.statement}}) '
-                f'MERGE (n)-[r:MEMBER_OF]->(s) '
-                f'ON CREATE SET r.created_at = $now '
-                f'SET r.modified_at = $now',
-                pairs=pairs,
-                now=now,
+                queries.MERGE_STATEMENT_MEMBERS, pairs=pairs, now=now
             )
 
 
@@ -309,25 +291,9 @@ async def persist_instructions(
     now = utcnow_iso()
 
     async with session_factory() as session:
-        await session.run(
-            f'UNWIND $rows AS row '
-            f'MERGE (i:{INSTRUCTION_LABEL} {{uuid: row.uuid}}) '
-            f'ON CREATE SET i.created_at = $now '
-            f'SET i += row, i.modified_at = $now',
-            rows=rows,
-            now=now,
-        )
+        await session.run(queries.MERGE_INSTRUCTIONS, rows=rows, now=now)
         if pairs:
-            await session.run(
-                f'UNWIND $pairs AS pair '
-                f'MATCH (i:{INSTRUCTION_LABEL} {{uuid: pair.instruction}}), '
-                f'(n:{NODE_LABEL} {{uuid: pair.node}}) '
-                f'MERGE (i)-[r:GOVERNS]->(n) '
-                f'ON CREATE SET r.created_at = $now '
-                f'SET r.modified_at = $now',
-                pairs=pairs,
-                now=now,
-            )
+            await session.run(queries.MERGE_GOVERNS, pairs=pairs, now=now)
 
 
 async def persist_procedures(
@@ -356,55 +322,18 @@ async def persist_procedures(
 
     async with session_factory() as session:
         await session.run(
-            f'UNWIND $rows AS row '
-            f'MERGE (p:{PROCEDURE_LABEL} {{uuid: row.uuid}}) '
-            f'ON CREATE SET p.created_at = $now '
-            f'SET p += row, p.modified_at = $now',
-            rows=procedure_batch,
-            now=now,
+            queries.MERGE_PROCEDURES, rows=procedure_batch, now=now
         )
         if acts:
-            await session.run(
-                f'UNWIND $rows AS row '
-                f'MERGE (a:{ACT_LABEL} {{uuid: row.uuid}}) '
-                f'ON CREATE SET a.created_at = $now '
-                f'SET a += row, a.modified_at = $now',
-                rows=acts,
-                now=now,
-            )
+            await session.run(queries.MERGE_ACTS, rows=acts, now=now)
         if members:
             await session.run(
-                f'UNWIND $pairs AS pair '
-                f'MATCH (n:{NODE_LABEL} {{uuid: pair.node}}), '
-                f'(p:{PROCEDURE_LABEL} {{uuid: pair.procedure}}) '
-                f'MERGE (n)-[r:MEMBER_OF]->(p) '
-                f'ON CREATE SET r.created_at = $now '
-                f'SET r.modified_at = $now',
-                pairs=members,
-                now=now,
+                queries.MERGE_PROCEDURE_MEMBERS, pairs=members, now=now
             )
         if firsts:
-            await session.run(
-                f'UNWIND $pairs AS pair '
-                f'MATCH (p:{PROCEDURE_LABEL} {{uuid: pair.procedure}}), '
-                f'(a:{ACT_LABEL} {{uuid: pair.act}}) '
-                f'MERGE (p)-[r:FIRST]->(a) '
-                f'ON CREATE SET r.created_at = $now '
-                f'SET r.modified_at = $now',
-                pairs=firsts,
-                now=now,
-            )
+            await session.run(queries.MERGE_FIRST, pairs=firsts, now=now)
         if thens:
-            await session.run(
-                f'UNWIND $pairs AS pair '
-                f'MATCH (a:{ACT_LABEL} {{uuid: pair.from}}), '
-                f'(b:{ACT_LABEL} {{uuid: pair.to}}) '
-                f'MERGE (a)-[r:THEN]->(b) '
-                f'ON CREATE SET r.created_at = $now '
-                f'SET r.modified_at = $now',
-                pairs=thens,
-                now=now,
-            )
+            await session.run(queries.MERGE_THEN, pairs=thens, now=now)
 
 
 async def persist_facts(
@@ -415,13 +344,12 @@ async def persist_facts(
 ) -> None:
     """Upsert the ``:Fact`` nodes and their ``:EVIDENCE_FOR`` edges.
 
-    One ``:Fact`` per atomic fact, carrying its text and — when computed —
-    its embedding vector. Each provenance node the fact draws on points at
-    it via ``:EVIDENCE_FOR``, the same raw-material → construct anchor the
-    statement and procedure tiers use.
+    One ``:Fact`` per atomic fact, carrying its text. Each provenance node
+    the fact draws on points at it via ``:EVIDENCE_FOR``, the same
+    raw-material → construct anchor the statement and procedure tiers use.
 
     Args:
-        facts: The atomic facts, in document order, with embeddings filled.
+        facts: The atomic facts, in document order.
         source: The stable book identity.
         session_factory: A callable that returns an async context manager
             with a ``run(query, **params)`` method.
@@ -433,25 +361,45 @@ async def persist_facts(
     now = utcnow_iso()
 
     async with session_factory() as session:
-        await session.run(
-            f'UNWIND $rows AS row '
-            f'MERGE (f:{FACT_LABEL} {{uuid: row.uuid}}) '
-            f'ON CREATE SET f.created_at = $now '
-            f'SET f += row, f.modified_at = $now',
-            rows=fact_batch,
-            now=now,
-        )
+        await session.run(queries.MERGE_FACTS, rows=fact_batch, now=now)
         if pairs:
-            await session.run(
-                f'UNWIND $pairs AS pair '
-                f'MATCH (n:{NODE_LABEL} {{uuid: pair.node}}), '
-                f'(f:{FACT_LABEL} {{uuid: pair.fact}}) '
-                f'MERGE (n)-[r:EVIDENCE_FOR]->(f) '
-                f'ON CREATE SET r.created_at = $now '
-                f'SET r.modified_at = $now',
-                pairs=pairs,
-                now=now,
-            )
+            await session.run(queries.MERGE_EVIDENCE, pairs=pairs, now=now)
+
+
+async def persist_entities(
+    triplets: list[models.Triplet],
+    facts: list[models.AtomicFact],
+    node_entity_descriptions: dict[int, list[dict]],
+    source: str,
+    *,
+    session_factory: Callable,
+) -> None:
+    """Upsert the ``:Entity`` vertices.
+
+    One ``:Entity`` per (node, triplet, role) — each triplet's subject and
+    object reified as their own vertices, carrying the enricher's description
+    of that surface form at that node. Entities are reached through their
+    triplets (the triplet hub's ``:HAS_SUBJECT``/``:HAS_OBJECT`` edges point
+    at them); there is no direct ``(:Node)-[:HAS_ENTITY]->(:Entity)`` edge.
+
+    Args:
+        triplets: The triplets, in document order.
+        facts: The atomic facts, in document order.
+        node_entity_descriptions: The enricher's per-node mapping: node id to
+            a list of ``{name, description}`` dicts.
+        source: The stable book identity.
+        session_factory: A callable that returns an async context manager
+            with a ``run(query, **params)`` method.
+    """
+    entity_batch = entity_rows(
+        triplets, facts, source, node_entity_descriptions
+    )
+    if not entity_batch:
+        return
+    now = utcnow_iso()
+
+    async with session_factory() as session:
+        await session.run(queries.MERGE_ENTITIES, rows=entity_batch, now=now)
 
 
 async def persist_triplets(
@@ -461,11 +409,13 @@ async def persist_triplets(
     *,
     session_factory: Callable,
 ) -> None:
-    """Upsert the ``:Triplet`` nodes and their ``:YIELDS`` edges.
+    """Upsert the ``:Triplet`` hubs and their edges.
 
-    One ``:Triplet`` per (subject, predicate, object) triplet, each
-    pointing back at the ``:Fact`` it was extracted from via
-    ``(:Fact)-[:YIELDS]->(:Triplet)``.
+    One ``:Triplet`` hub per (node, triplet) — an empty connector. The
+    triplet's content lives on its edges: ``(:Triplet)-[:HAS_SUBJECT]->(:Entity)``,
+    ``(:Triplet)-[:HAS_PREDICATE]->(:Predicate)``, and
+    ``(:Triplet)-[:HAS_OBJECT]->(:Entity)``. Each also points back at its
+    source ``:Fact`` via ``(:Fact)-[:YIELDS]->(:Triplet)``.
 
     Args:
         triplets: The triplets, in document order.
@@ -474,29 +424,174 @@ async def persist_triplets(
         session_factory: A callable that returns an async context manager
             with a ``run(query, **params)`` method.
     """
-    triplet_batch = triplet_rows(triplets, source)
+    triplet_batch = triplet_rows(triplets, facts, source)
     if not triplet_batch:
         return
-    pairs = yields_pairs(triplets, facts, source)
+    yields = yields_pairs(triplets, facts, source)
+    subjects = has_subject_pairs(triplets, facts, source)
+    objects = has_object_pairs(triplets, facts, source)
+    now = utcnow_iso()
+
+    async with session_factory() as session:
+        await session.run(queries.MERGE_TRIPLETS, rows=triplet_batch, now=now)
+        if yields:
+            await session.run(queries.MERGE_YIELDS, pairs=yields, now=now)
+        if subjects:
+            await session.run(
+                queries.MERGE_HAS_SUBJECT, pairs=subjects, now=now
+            )
+        if objects:
+            await session.run(queries.MERGE_HAS_OBJECT, pairs=objects, now=now)
+
+
+async def persist_predicates(
+    triplets: list[models.Triplet],
+    facts: list[models.AtomicFact],
+    source: str,
+    *,
+    session_factory: Callable,
+    node_predicate_descriptions: dict[int, list[dict]] | None = None,
+) -> None:
+    """Upsert the ``:Predicate`` component vertices and their edges.
+
+    One ``:Predicate`` per (node, triplet) — the DESCRIBED predicate
+    component of the triplet hub — carrying the predicate text and, when
+    written, its description. Each triplet hub points at the component via
+    ``(:Triplet)-[:HAS_PREDICATE]->(:Predicate)``.
+
+    Args:
+        triplets: The triplets, in document order.
+        facts: The atomic facts, in document order.
+        source: The stable book identity.
+        session_factory: A callable that returns an async context manager
+            with a ``run(query, **params)`` method.
+        node_predicate_descriptions: The enricher's per-node predicate
+            descriptions.
+    """
+    node_predicate_descriptions = node_predicate_descriptions or {}
+    predicate_batch = predicate_rows(
+        triplets, facts, source, node_predicate_descriptions
+    )
+    if not predicate_batch:
+        return
+    pairs = has_predicate_pairs(triplets, facts, source)
     now = utcnow_iso()
 
     async with session_factory() as session:
         await session.run(
-            f'UNWIND $rows AS row '
-            f'MERGE (t:{TRIPLET_LABEL} {{uuid: row.uuid}}) '
-            f'ON CREATE SET t.created_at = $now '
-            f'SET t += row, t.modified_at = $now',
-            rows=triplet_batch,
-            now=now,
+            queries.MERGE_PREDICATES, rows=predicate_batch, now=now
         )
         if pairs:
+            await session.run(queries.MERGE_HAS_PREDICATE, pairs=pairs, now=now)
+
+
+async def persist_entity_hubs(
+    entity_clusters: list[list[dict]],
+    hub_definitions: list[dict],
+    source: str,
+    *,
+    session_factory: Callable,
+) -> None:
+    """Upsert ``:EntityHub`` vertices, ``:Definition`` vertices, and their
+    edges.
+
+    One ``:EntityHub`` per cluster (empty connector). Each hub points at a
+    ``:Definition`` carrying the synthesised canonical text and its
+    embedding. Every spoke in the cluster points at the hub via
+    ``(:Entity)-[:CANONICAL]->(:EntityHub)``.
+
+    Args:
+        entity_clusters: One list of spoke dicts per cluster. Each spoke
+            dict carries at least ``uuid``.
+        hub_definitions: One dict per hub:
+            ``{hub_uuid, definition_text, definition_embedding}``.
+        source: The stable book identity.
+        session_factory: A callable that returns an async context manager
+            with a ``run(query, **params)`` method.
+    """
+    hub_batch = entity_hub_rows(entity_clusters, source)
+    if not hub_batch:
+        return
+    definition_batch = definition_rows(hub_definitions)
+    canonical_pairs = canonical_entity_pairs(entity_clusters, source)
+    has_definition_pairs_list = has_definition_pairs(hub_definitions)
+    now = utcnow_iso()
+
+    async with session_factory() as session:
+        await session.run(
+            queries.MERGE_ENTITY_HUBS, rows=hub_batch, now=now
+        )
+        if definition_batch:
             await session.run(
-                f'UNWIND $pairs AS pair '
-                f'MATCH (f:{FACT_LABEL} {{uuid: pair.fact}}), '
-                f'(t:{TRIPLET_LABEL} {{uuid: pair.triplet}}) '
-                f'MERGE (f)-[r:YIELDS]->(t) '
-                f'ON CREATE SET r.created_at = $now '
-                f'SET r.modified_at = $now',
-                pairs=pairs,
+                queries.MERGE_DEFINITIONS,
+                rows=definition_batch,
+                now=now,
+            )
+        if canonical_pairs:
+            await session.run(
+                queries.MERGE_CANONICAL_ENTITY,
+                pairs=canonical_pairs,
+                now=now,
+            )
+        if has_definition_pairs_list:
+            await session.run(
+                queries.MERGE_HAS_DEFINITION,
+                pairs=has_definition_pairs_list,
+                now=now,
+            )
+
+
+async def persist_predicate_hubs(
+    predicate_clusters: list[list[dict]],
+    hub_definitions: list[dict],
+    source: str,
+    *,
+    session_factory: Callable,
+) -> None:
+    """Upsert ``:PredicateHub`` vertices, ``:Definition`` vertices, and
+    their edges.
+
+    One ``:PredicateHub`` per cluster (empty connector). Each hub points
+    at a ``:Definition`` carrying the synthesised canonical text and its
+    embedding. Every spoke in the cluster points at the hub via
+    ``(:Predicate)-[:CANONICAL]->(:PredicateHub)``.
+
+    Args:
+        predicate_clusters: One list of spoke dicts per cluster.
+        hub_definitions: One dict per hub (same shape as for entities).
+        source: The stable book identity.
+        session_factory: A callable that returns an async context manager
+            with a ``run(query, **params)`` method.
+    """
+    hub_batch = predicate_hub_rows(predicate_clusters, source)
+    if not hub_batch:
+        return
+    definition_batch = definition_rows(hub_definitions)
+    canonical_pairs = canonical_predicate_pairs(
+        predicate_clusters, source
+    )
+    has_definition_pairs_list = has_definition_pairs(hub_definitions)
+    now = utcnow_iso()
+
+    async with session_factory() as session:
+        await session.run(
+            queries.MERGE_PREDICATE_HUBS, rows=hub_batch, now=now
+        )
+        if definition_batch:
+            await session.run(
+                queries.MERGE_DEFINITIONS,
+                rows=definition_batch,
+                now=now,
+            )
+        if canonical_pairs:
+            await session.run(
+                queries.MERGE_CANONICAL_PREDICATE,
+                pairs=canonical_pairs,
+                now=now,
+            )
+        if has_definition_pairs_list:
+            await session.run(
+                queries.MERGE_HAS_DEFINITION,
+                pairs=has_definition_pairs_list,
                 now=now,
             )

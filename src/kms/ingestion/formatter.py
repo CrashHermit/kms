@@ -78,8 +78,7 @@ import logging
 import dspy
 from langgraph.types import Send
 
-from kms.core import models, state
-from kms.core.recorder import Recorder
+from kms.core import models, recording, state
 
 logger = logging.getLogger(__name__)
 
@@ -287,7 +286,9 @@ class Formatter(dspy.Module):
     """
 
     def __init__(
-        self, language_model: dspy.LM, recorder: Recorder | None = None
+        self,
+        language_model: dspy.LM,
+        recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
         self.formatter = dspy.Predict(Signature)
