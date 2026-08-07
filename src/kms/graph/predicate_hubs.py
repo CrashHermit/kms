@@ -38,28 +38,47 @@ def predicate_hub_uuid(source: str, spoke_uuids: list[str]) -> str:
 
 
 def predicate_hub_properties(
-    source: str, spoke_uuids: list[str]
+    source: str,
+    spoke_uuids: list[str],
+    display_name: str | None = None,
+    aliases: list[str] | None = None,
 ) -> dict:
     """The Neo4j property map for one predicate hub.
 
-    The hub is empty — content lives on ``:Definition``.
+    The hub is mostly empty — the canonical definition lives on
+    ``:Definition``.  It does carry a ``display_name`` (the most
+    frequent surface form in the cluster) and an ``aliases`` list
+    so the cross-batch alignment can resolve names without
+    traversing to the ``:Definition`` node.
 
     Args:
         source: The stable book identity.
         spoke_uuids: The cluster's spoke uuids, used (sorted) for
             identity.
+        display_name: The canonical surface form for this cluster.
+        aliases: Alternative surface forms that have been merged
+            into this hub.
 
     Returns:
-        The property map.
+        The property map, with None values omitted.
     """
-    return {
+    properties = {
         'uuid': predicate_hub_uuid(source, spoke_uuids),
         'source': nodes.source_uuid(source),
+        'display_name': display_name,
+        'aliases': aliases or [],
+    }
+    return {
+        key: value
+        for key, value in properties.items()
+        if value is not None and value != []
     }
 
 
 def predicate_hub_rows(
-    clusters: list[list[dict]], source: str
+    clusters: list[list[dict]],
+    source: str,
+    definitions: list[dict] | None = None,
 ) -> list[dict]:
     """Every predicate hub's property map, one flat list.
 
@@ -67,16 +86,26 @@ def predicate_hub_rows(
         clusters: One list of spoke dicts per cluster. Each spoke dict
             carries at least ``uuid``.
         source: The stable book identity.
+        definitions: Optional definition dicts (aligned with
+            ``clusters``) carrying ``display_name``.
 
     Returns:
         One property map per cluster.
     """
-    return [
-        predicate_hub_properties(
-            source, [spoke['uuid'] for spoke in cluster]
+    rows: list[dict] = []
+    for i, cluster in enumerate(clusters):
+        spoke_uuids = [spoke['uuid'] for spoke in cluster]
+        display_name = (
+            definitions[i].get('display_name')
+            if definitions and i < len(definitions)
+            else None
         )
-        for cluster in clusters
-    ]
+        rows.append(
+            predicate_hub_properties(
+                source, spoke_uuids, display_name=display_name
+            )
+        )
+    return rows
 
 
 def canonical_predicate_pairs(

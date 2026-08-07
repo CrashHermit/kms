@@ -491,6 +491,7 @@ async def persist_entity_hubs(
     source: str,
     *,
     session_factory: Callable,
+    definitions: list[dict] | None = None,
 ) -> None:
     """Upsert ``:EntityHub`` vertices, ``:Definition`` vertices, and their
     edges.
@@ -508,8 +509,12 @@ async def persist_entity_hubs(
         source: The stable book identity.
         session_factory: A callable that returns an async context manager
             with a ``run(query, **params)`` method.
+        definitions: Optional per-cluster dicts with ``display_name``
+            for the hub node.
     """
-    hub_batch = entity_hub_rows(entity_clusters, source)
+    hub_batch = entity_hub_rows(
+        entity_clusters, source, definitions=definitions
+    )
     if not hub_batch:
         return
     definition_batch = definition_rows(hub_definitions)
@@ -547,6 +552,7 @@ async def persist_predicate_hubs(
     source: str,
     *,
     session_factory: Callable,
+    definitions: list[dict] | None = None,
 ) -> None:
     """Upsert ``:PredicateHub`` vertices, ``:Definition`` vertices, and
     their edges.
@@ -562,8 +568,12 @@ async def persist_predicate_hubs(
         source: The stable book identity.
         session_factory: A callable that returns an async context manager
             with a ``run(query, **params)`` method.
+        definitions: Optional per-cluster dicts with ``display_name``
+            for the hub node.
     """
-    hub_batch = predicate_hub_rows(predicate_clusters, source)
+    hub_batch = predicate_hub_rows(
+        predicate_clusters, source, definitions=definitions
+    )
     if not hub_batch:
         return
     definition_batch = definition_rows(hub_definitions)
@@ -595,3 +605,85 @@ async def persist_predicate_hubs(
                 pairs=has_definition_pairs_list,
                 now=now,
             )
+
+
+async def persist_canonical_merge(
+    spoke_uuids: list[str],
+    hub_uuid: str,
+    hub_type: str,
+    definition_text: str,
+    definition_embedding: list[float] | None,
+    *,
+    session_factory: Callable,
+) -> None:
+    """Merge a cluster of new spokes into an EXISTING hub.
+
+    Writes ``:CANONICAL`` edges from each spoke to the existing hub,
+    updates the ``:Definition`` text and embedding, and refreshes the
+    ``:HAS_DEFINITION`` edge's ``modified_at``.
+
+    Args:
+        spoke_uuids: The uuids of the new spokes to attach.
+        hub_uuid: The existing hub's uuid.
+        hub_type: ``'entity'`` or ``'predicate'`` — picks which
+            ``:CANONICAL`` edge type to write.
+        definition_text: The regenerated canonical definition.
+        definition_embedding: Its embedding, or None.
+        session_factory: The injected session factory.
+    """
+    from kms.graph.definitions import (
+        definition_properties,
+        definition_uuid,
+    )
+    from kms.graph.entities import ENTITY_LABEL
+    from kms.graph.entity_hubs import ENTITY_HUB_LABEL
+    from kms.graph.predicate_hubs import PREDICATE_HUB_LABEL
+    from kms.graph.predicates import PREDICATE_LABEL
+
+    spoke_label = (
+        ENTITY_LABEL if hub_type == 'entity' else PREDICATE_LABEL
+    )
+    hub_label = (
+        ENTITY_HUB_LABEL
+        if hub_type == 'entity'
+        else PREDICATE_HUB_LABEL
+    )
+
+    now = utcnow_iso()
+    def_uuid = definition_uuid(hub_uuid)
+    def_props = definition_properties(
+        hub_uuid, definition_text, definition_embedding
+    )
+
+    async with session_factory() as session:
+        # 1. Add :CANONICAL edges from each new spoke to the existing hub
+        canonical_cypher = (
+            f'UNWIND $spoke_uuids AS spoke_uuid '
+            f'MATCH (s:{spoke_label} {{uuid: spoke_uuid}}), '
+            f'(h:{hub_label} {{uuid: $hub_uuid}}) '
+            f'MERGE (s)-[r:CANONICAL]->(h) '
+            f'ON CREATE SET r.created_at = $now '
+            f'SET r.modified_at = $now'
+        )
+        await session.run(
+            canonical_cypher,
+            spoke_uuids=spoke_uuids,
+            hub_uuid=hub_uuid,
+            now=now,
+        )
+
+        # 2. Update the :Definition node's text and embedding
+        await session.run(
+            queries.MERGE_DEFINITIONS,
+            rows=[def_props],
+            now=now,
+        )
+
+        # 3. Bump the :HAS_DEFINITION edge
+        await session.run(
+            queries.MERGE_HAS_DEFINITION,
+            pairs=[
+                {'hub': hub_uuid, 'definition': def_uuid}
+            ],
+            now=now,
+        )

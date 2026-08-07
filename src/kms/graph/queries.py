@@ -321,3 +321,218 @@ async def relation_types(
         result = await session.run(cypher, **params)
         records = await result.all()
     return [record['type'] for record in records]
+
+
+async def uncanonicalized_entity_spokes(
+    session_factory: Callable,
+    *,
+    source: str,
+) -> list[dict]:
+    """Every ``:Entity`` that has an embedding but no ``:CANONICAL``
+    edge yet — the new spokes awaiting canonicalization.
+
+    Args:
+        session_factory: The injected session factory.
+        source: The stable book identity to scope to.
+
+    Returns:
+        One dict per spoke: ``{uuid, name, description, embedding}``.
+    """
+    cypher = (
+        f'MATCH (e:{ENTITY_LABEL})\n'
+        f'WHERE e.source = $source\n'
+        f'  AND e.embedding IS NOT NULL\n'
+        f'  AND NOT EXISTS {{ (e)-[:CANONICAL]->(:{ENTITY_HUB_LABEL}) }}\n'
+        f'RETURN e.uuid AS uuid, e.name AS name, '
+        f'e.description AS description, e.embedding AS embedding'
+    )
+    async with session_factory() as session:
+        result = await session.run(
+            cypher, source=source_uuid(source)
+        )
+        return [
+            {
+                'uuid': record['uuid'],
+                'name': record['name'],
+                'description': record.get('description'),
+                'embedding': record['embedding'],
+            }
+            async for record in result
+        ]
+
+
+async def uncanonicalized_predicate_spokes(
+    session_factory: Callable,
+    *,
+    source: str,
+) -> list[dict]:
+    """Every ``:Predicate`` that has an embedding but no
+    ``:CANONICAL`` edge yet.
+
+    Args:
+        session_factory: The injected session factory.
+        source: The stable book identity to scope to.
+
+    Returns:
+        One dict per spoke:
+        ``{uuid, predicate, description, embedding}``.
+    """
+    cypher = (
+        f'MATCH (p:{PREDICATE_LABEL})\n'
+        f'WHERE p.source = $source\n'
+        f'  AND p.embedding IS NOT NULL\n'
+        f'  AND NOT EXISTS {{ (p)-[:CANONICAL]->(:{PREDICATE_HUB_LABEL}) }}\n'
+        f'RETURN p.uuid AS uuid, p.predicate AS predicate, '
+        f'p.description AS description, p.embedding AS embedding'
+    )
+    async with session_factory() as session:
+        result = await session.run(
+            cypher, source=source_uuid(source)
+        )
+        return [
+            {
+                'uuid': record['uuid'],
+                'predicate': record['predicate'],
+                'description': record.get('description'),
+                'embedding': record['embedding'],
+            }
+            async for record in result
+        ]
+
+
+async def candidate_entity_hubs(
+    session_factory: Callable,
+    *,
+    query_embedding: list[float],
+    source: str | None = None,
+    top_k: int = 5,
+    min_score: float = 0.7,
+) -> list[dict]:
+    """Vector-search existing ``:EntityHub`` definitions for
+    candidates similar to *query_embedding*.
+
+    Args:
+        session_factory: The injected session factory.
+        query_embedding: The centroid of the new cluster's spoke
+            embeddings.
+        source: Optional source scope (None = cross-source).
+        top_k: Maximum candidates to return.
+        min_score: Minimum similarity score.
+
+    Returns:
+        One dict per candidate:
+        ``{hub_uuid, display_name, aliases, definition_text,
+          definition_embedding, score}``.
+    """
+    cypher = (
+        f'CALL db.index.vector.queryNodes(\n'
+        f'  "definition_embedding", $k, $query_embedding\n'
+        f') YIELD node, score\n'
+        f'WHERE score >= $min_score\n'
+    )
+    if source is not None:
+        cypher += (
+            f'MATCH (h:{ENTITY_HUB_LABEL} {{source: $source}})\n'
+            f'  -[:HAS_DEFINITION]->(node)\n'
+        )
+    else:
+        cypher += (
+            f'MATCH (h:{ENTITY_HUB_LABEL})\n'
+            f'  -[:HAS_DEFINITION]->(node)\n'
+        )
+    cypher += (
+        f'RETURN h.uuid AS hub_uuid, '
+        f'h.display_name AS display_name, '
+        f'h.aliases AS aliases, '
+        f'node.text AS definition_text, '
+        f'node.embedding AS definition_embedding, '
+        f'score\n'
+        f'ORDER BY score DESC\n'
+        f'LIMIT $top_k'
+    )
+    params = {
+        'query_embedding': query_embedding,
+        'k': top_k,
+        'min_score': min_score,
+        'top_k': top_k,
+    }
+    if source is not None:
+        params['source'] = source_uuid(source)
+    async with session_factory() as session:
+        result = await session.run(cypher, **params)
+        return [
+            {
+                'hub_uuid': record['hub_uuid'],
+                'display_name': record['display_name'],
+                'aliases': record.get('aliases') or [],
+                'definition_text': record['definition_text'],
+                'definition_embedding': record.get(
+                    'definition_embedding'
+                ),
+                'score': record['score'],
+            }
+            async for record in result
+        ]
+
+
+async def candidate_predicate_hubs(
+    session_factory: Callable,
+    *,
+    query_embedding: list[float],
+    source: str | None = None,
+    top_k: int = 5,
+    min_score: float = 0.7,
+) -> list[dict]:
+    """Vector-search existing ``:PredicateHub`` definitions.
+
+    Same shape as ``candidate_entity_hubs``.
+    """
+    cypher = (
+        f'CALL db.index.vector.queryNodes(\n'
+        f'  "definition_embedding", $k, $query_embedding\n'
+        f') YIELD node, score\n'
+        f'WHERE score >= $min_score\n'
+    )
+    if source is not None:
+        cypher += (
+            f'MATCH (h:{PREDICATE_HUB_LABEL} {{source: $source}})\n'
+            f'  -[:HAS_DEFINITION]->(node)\n'
+        )
+    else:
+        cypher += (
+            f'MATCH (h:{PREDICATE_HUB_LABEL})\n'
+            f'  -[:HAS_DEFINITION]->(node)\n'
+        )
+    cypher += (
+        f'RETURN h.uuid AS hub_uuid, '
+        f'h.display_name AS display_name, '
+        f'h.aliases AS aliases, '
+        f'node.text AS definition_text, '
+        f'node.embedding AS definition_embedding, '
+        f'score\n'
+        f'ORDER BY score DESC\n'
+        f'LIMIT $top_k'
+    )
+    params = {
+        'query_embedding': query_embedding,
+        'k': top_k,
+        'min_score': min_score,
+        'top_k': top_k,
+    }
+    if source is not None:
+        params['source'] = source_uuid(source)
+    async with session_factory() as session:
+        result = await session.run(cypher, **params)
+        return [
+            {
+                'hub_uuid': record['hub_uuid'],
+                'display_name': record['display_name'],
+                'aliases': record.get('aliases') or [],
+                'definition_text': record['definition_text'],
+                'definition_embedding': record.get(
+                    'definition_embedding'
+                ),
+                'score': record['score'],
+            }
+            async for record in result
+        ]
