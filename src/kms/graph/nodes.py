@@ -118,16 +118,19 @@ def node_label(node: models.ASTNode) -> str | None:
     return ntype.title() if ntype else None
 
 
-def node_properties(node: models.ASTNode, source: str) -> dict:
+def node_properties(
+    node: models.ASTNode, source: str, embedding: list[float] | None = None
+) -> dict:
     """The Neo4j property map for one structural node.
 
-    Holds its stable uuid, the structural type, the markdown content, and
-    provenance (document-order ``index`` + originating ``segment_index``).
-    Precondition: ``node.id`` is set (true once the stream is flattened).
+    Holds its stable uuid, the structural type, the markdown content,
+    provenance (document-order ``index`` + originating ``segment_index``),
+    and optionally an embedding for vector search.
 
     Args:
         node: The structural node, with ``id`` assigned.
         source: The stable book identity.
+        embedding: Optional embedding vector of the node's content.
 
     Returns:
         The property map, with None values omitted rather than written as
@@ -135,11 +138,12 @@ def node_properties(node: models.ASTNode, source: str) -> dict:
     """
     properties = {
         'uuid': node_uuid(source, node.id),
-        'source': source_uuid(source),  # links back to the :Source node
+        'source': source_uuid(source),
         'type': node.type,
         'content': node.content,
         'index': node.id,
         'segment_index': node.segment_index,
+        'embedding': embedding,
     }
     return {
         key: value for key, value in properties.items() if value is not None

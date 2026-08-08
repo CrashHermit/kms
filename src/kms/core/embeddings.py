@@ -36,6 +36,7 @@ import math
 import os
 from collections.abc import Sequence
 from functools import lru_cache
+from typing import Any
 
 import httpx
 
@@ -144,7 +145,9 @@ class Embedder:
         """The key, or a clear error on use."""
         return self.api_key or _api_key()
 
-    async def _embed_batch(self, texts: Sequence[str]) -> list[list[float]]:
+    async def _embed_batch(
+        self, texts: Sequence[str | dict[str, Any]]
+    ) -> list[list[float]]:
         """One request's vectors, in input order."""
         client = await self._client_for()
         response = await client.post(
@@ -165,7 +168,9 @@ class Embedder:
             )
         return [item['embedding'] for item in data]
 
-    async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+    async def embed(
+        self, texts: Sequence[str | dict[str, Any]]
+    ) -> list[list[float]]:
         """Embed every text, in input order.
 
         Texts are split into ``batch_size`` chunks; the vectors are returned

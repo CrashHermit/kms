@@ -22,9 +22,11 @@ identity and maps it through ``nodes.source_uuid``, matching ``writer``.
 
 from collections.abc import Callable
 
+from kms.graph.community import COMMUNITY_LABEL
 from kms.graph.definitions import DEFINITION_LABEL
 from kms.graph.entities import ENTITY_LABEL
 from kms.graph.entity_hubs import ENTITY_HUB_LABEL
+from kms.graph.fact_hubs import FACT_HUB_LABEL
 from kms.graph.facts import FACT_LABEL
 from kms.graph.instructions import INSTRUCTION_LABEL
 from kms.graph.nodes import NODE_LABEL, SOURCE_LABEL, source_uuid
@@ -32,6 +34,7 @@ from kms.graph.predicate_hubs import PREDICATE_HUB_LABEL
 from kms.graph.predicates import PREDICATE_LABEL
 from kms.graph.procedures import ACT_LABEL, PROCEDURE_LABEL
 from kms.graph.statements import STATEMENT_LABEL
+from kms.graph.triplet_hubs import TRIPLET_HUB_LABEL
 from kms.graph.triplets import TRIPLET_LABEL
 
 # ============================================================================
@@ -275,6 +278,90 @@ MERGE_HAS_DEFINITION = (
     f'MATCH (h {{uuid: pair.hub}}), '
     f'(d:{DEFINITION_LABEL} {{uuid: pair.definition}}) '
     f'MERGE (h)-[r:HAS_DEFINITION]->(d) '
+    f'ON CREATE SET r.created_at = $now '
+    f'SET r.modified_at = $now'
+)
+
+MERGE_COMMUNITIES = (
+    f'UNWIND $rows AS row '
+    f'MERGE (c:{COMMUNITY_LABEL} {{uuid: row.uuid}}) '
+    f'ON CREATE SET c.created_at = $now '
+    f'SET c += row, c.modified_at = $now'
+)
+
+MERGE_COMMUNITY_MEMBERS = (
+    f'UNWIND $pairs AS pair '
+    f'MATCH (c:{COMMUNITY_LABEL} {{uuid: pair.community}}), '
+    f'(h {{uuid: pair.hub}}) '
+    f'MERGE (c)-[r:HAS_MEMBER]->(h) '
+    f'ON CREATE SET r.created_at = $now '
+    f'SET r.modified_at = $now'
+)
+
+MERGE_COMMUNITY_EVIDENCE = (
+    f'UNWIND $pairs AS pair '
+    f'MATCH (c:{COMMUNITY_LABEL} {{uuid: pair.community}}), '
+    f'(t:{TRIPLET_LABEL} {{uuid: pair.triplet}}) '
+    f'MERGE (c)-[r:COMMUNITY_EVIDENCE]->(t) '
+    f'ON CREATE SET r.created_at = $now '
+    f'SET r.modified_at = $now'
+)
+
+MERGE_TRIPLET_HUBS = (
+    f'UNWIND $rows AS row '
+    f'MERGE (th:{TRIPLET_HUB_LABEL} {{uuid: row.uuid}}) '
+    f'ON CREATE SET th.created_at = $now '
+    f'SET th += row, th.modified_at = $now'
+)
+
+MERGE_FACT_HUBS = (
+    f'UNWIND $rows AS row '
+    f'MERGE (fh:{FACT_HUB_LABEL} {{uuid: row.uuid}}) '
+    f'ON CREATE SET fh.created_at = $now '
+    f'SET fh += row, fh.modified_at = $now'
+)
+
+MERGE_HAS_FACT = (
+    f'UNWIND $pairs AS pair '
+    f'MATCH (th:{TRIPLET_HUB_LABEL} {{uuid: pair.triplet_hub}}), '
+    f'(fh:{FACT_HUB_LABEL} {{uuid: pair.fact_hub}}) '
+    f'MERGE (th)-[r:HAS_FACT]->(fh) '
+    f'ON CREATE SET r.created_at = $now '
+    f'SET r.modified_at = $now'
+)
+
+MERGE_CANONICAL_SUBJECT = (
+    f'UNWIND $pairs AS pair '
+    f'MATCH (eh:{ENTITY_HUB_LABEL} {{uuid: pair.hub}}), '
+    f'(th:{TRIPLET_HUB_LABEL} {{uuid: pair.triplet_hub}}) '
+    f'MERGE (eh)-[r:CANONICAL_SUBJECT]->(th) '
+    f'ON CREATE SET r.created_at = $now '
+    f'SET r.modified_at = $now'
+)
+
+MERGE_CANONICAL_PREDICATE = (
+    f'UNWIND $pairs AS pair '
+    f'MATCH (ph:{PREDICATE_HUB_LABEL} {{uuid: pair.hub}}), '
+    f'(th:{TRIPLET_HUB_LABEL} {{uuid: pair.triplet_hub}}) '
+    f'MERGE (ph)-[r:CANONICAL_PREDICATE]->(th) '
+    f'ON CREATE SET r.created_at = $now '
+    f'SET r.modified_at = $now'
+)
+
+MERGE_CANONICAL_OBJECT = (
+    f'UNWIND $pairs AS pair '
+    f'MATCH (eh:{ENTITY_HUB_LABEL} {{uuid: pair.hub}}), '
+    f'(th:{TRIPLET_HUB_LABEL} {{uuid: pair.triplet_hub}}) '
+    f'MERGE (eh)-[r:CANONICAL_OBJECT]->(th) '
+    f'ON CREATE SET r.created_at = $now '
+    f'SET r.modified_at = $now'
+)
+
+MERGE_SUPPORTED_BY = (
+    f'UNWIND $pairs AS pair '
+    f'MATCH (th:{TRIPLET_HUB_LABEL} {{uuid: pair.triplet_hub}}), '
+    f'(t:{TRIPLET_LABEL} {{uuid: pair.triplet}}) '
+    f'MERGE (th)-[r:SUPPORTED_BY]->(t) '
     f'ON CREATE SET r.created_at = $now '
     f'SET r.modified_at = $now'
 )
@@ -532,6 +619,232 @@ async def candidate_predicate_hubs(
                 'definition_embedding': record.get(
                     'definition_embedding'
                 ),
+                'score': record['score'],
+            }
+            async for record in result
+        ]
+
+
+async def canonical_hub_triplets(
+    session_factory: Callable,
+    *,
+    source: str,
+) -> list[dict]:
+    """Every canonical triplet at hub level — the EntityHub /
+    PredicateHub graph used for community detection.
+
+    Walks from each ``:Triplet`` through its ``:CANONICAL`` edges to
+    find the hub for each of subject, predicate, and object.
+
+    Args:
+        session_factory: The injected session factory.
+        source: The stable book identity to scope to.
+
+    Returns:
+        One dict per canonical triplet:
+        ``{triplet_uuid, subj_hub, subj_name, subj_def,
+           pred_hub, pred_name, pred_def,
+           obj_hub, obj_name, obj_def}``.
+    """
+    from kms.graph.entity_hubs import ENTITY_HUB_LABEL
+    from kms.graph.predicate_hubs import PREDICATE_HUB_LABEL
+    from kms.graph.triplets import TRIPLET_LABEL
+
+    cypher = (
+        f'MATCH (t:{TRIPLET_LABEL})\n'
+        f'WHERE t.source = $source\n'
+        f'MATCH (t)-[:HAS_SUBJECT]->(es:Entity)\n'
+        f'  -[:CANONICAL]->(sh:{ENTITY_HUB_LABEL})\n'
+        f'MATCH (t)-[:HAS_PREDICATE]->(pp:Predicate)\n'
+        f'  -[:CANONICAL]->(ph:{PREDICATE_HUB_LABEL})\n'
+        f'MATCH (t)-[:HAS_OBJECT]->(eo:Entity)\n'
+        f'  -[:CANONICAL]->(oh:{ENTITY_HUB_LABEL})\n'
+        f'OPTIONAL MATCH (sh)-[:HAS_DEFINITION]->(sd:Definition)\n'
+        f'OPTIONAL MATCH (ph)-[:HAS_DEFINITION]->(pd:Definition)\n'
+        f'OPTIONAL MATCH (oh)-[:HAS_DEFINITION]->(od:Definition)\n'
+        f'RETURN t.uuid AS triplet_uuid,\n'
+        f'  sh.uuid AS subj_hub, sh.display_name AS subj_name,\n'
+        f'  sd.text AS subj_def,\n'
+        f'  ph.uuid AS pred_hub, ph.display_name AS pred_name,\n'
+        f'  pd.text AS pred_def,\n'
+        f'  oh.uuid AS obj_hub, oh.display_name AS obj_name,\n'
+        f'  od.text AS obj_def'
+    )
+    async with session_factory() as session:
+        result = await session.run(
+            cypher, source=source_uuid(source)
+        )
+        return [
+            {
+                'triplet_uuid': record['triplet_uuid'],
+                'subj_hub': record['subj_hub'],
+                'subj_name': record['subj_name'],
+                'subj_def': record.get('subj_def'),
+                'pred_hub': record['pred_hub'],
+                'pred_name': record['pred_name'],
+                'pred_def': record.get('pred_def'),
+                'obj_hub': record['obj_hub'],
+                'obj_name': record['obj_name'],
+                'obj_def': record.get('obj_def'),
+            }
+            async for record in result
+        ]
+
+
+async def vector_search_communities(
+    session_factory: Callable,
+    *,
+    query_embedding: list[float],
+    source: str,
+    top_k: int = 20,
+) -> list[dict]:
+    """Vector search the ``community_summary`` index.
+
+    Args:
+        session_factory: The injected session factory.
+        query_embedding: The query vector.
+        source: The stable book identity to scope to.
+        top_k: Maximum results.
+
+    Returns:
+        One dict per result:
+        ``{uuid, summary_text, summary_embedding, score}``.
+    """
+    cypher = (
+        f'CALL db.index.vector.queryNodes(\n'
+        f'  "community_summary", $k, $query_embedding\n'
+        f') YIELD node, score\n'
+        f'WHERE node.source = $source\n'
+        f'RETURN node.uuid AS uuid, '
+        f'node.summary_text AS summary_text, '
+        f'node.summary_embedding AS summary_embedding, '
+        f'score\n'
+        f'ORDER BY score DESC\n'
+        f'LIMIT $top_k'
+    )
+    async with session_factory() as session:
+        result = await session.run(
+            cypher,
+            query_embedding=query_embedding,
+            k=top_k,
+            source=source_uuid(source),
+            top_k=top_k,
+        )
+        return [
+            {
+                'uuid': record['uuid'],
+                'summary_text': record['summary_text'],
+                'summary_embedding': record.get('summary_embedding'),
+                'score': record['score'],
+            }
+            async for record in result
+        ]
+
+
+async def vector_search_hub_definitions(
+    session_factory: Callable,
+    *,
+    query_embedding: list[float],
+    source: str,
+    kind: str,
+    top_k: int = 20,
+) -> list[dict]:
+    """Vector search the ``definition_embedding`` index for hubs.
+
+    Args:
+        session_factory: The injected session factory.
+        query_embedding: The query vector.
+        source: The stable book identity.
+        kind: ``'entity'`` or ``'predicate'``.
+        top_k: Maximum results.
+
+    Returns:
+        One dict per result:
+        ``{hub_uuid, display_name, definition_text, score}``.
+    """
+    hub_label = (
+        ENTITY_HUB_LABEL if kind == 'entity' else PREDICATE_HUB_LABEL
+    )
+    cypher = (
+        f'CALL db.index.vector.queryNodes(\n'
+        f'  "definition_embedding", $k, $query_embedding\n'
+        f') YIELD node, score\n'
+        f'MATCH (h:{hub_label} {{source: $source}})\n'
+        f'  -[:HAS_DEFINITION]->(node)\n'
+        f'RETURN h.uuid AS hub_uuid, '
+        f'h.display_name AS display_name, '
+        f'node.text AS definition_text, '
+        f'score\n'
+        f'ORDER BY score DESC\n'
+        f'LIMIT $top_k'
+    )
+    async with session_factory() as session:
+        result = await session.run(
+            cypher,
+            query_embedding=query_embedding,
+            k=top_k,
+            source=source_uuid(source),
+            top_k=top_k,
+        )
+        return [
+            {
+                'hub_uuid': record['hub_uuid'],
+                'display_name': record['display_name'],
+                'definition_text': record['definition_text'],
+                'score': record['score'],
+            }
+            async for record in result
+        ]
+
+
+async def vector_search_nodes(
+    session_factory: Callable,
+    *,
+    query_embedding: list[float],
+    source: str,
+    top_k: int = 20,
+) -> list[dict]:
+    """Vector search the ``node_content`` index on ``:Node``.
+
+    Args:
+        session_factory: The injected session factory.
+        query_embedding: The query vector.
+        source: The stable book identity.
+        top_k: Maximum results.
+
+    Returns:
+        One dict per result:
+        ``{uuid, content, type, index, segment_index, score}``.
+    """
+    cypher = (
+        f'CALL db.index.vector.queryNodes(\n'
+        f'  "node_content", $k, $query_embedding\n'
+        f') YIELD node, score\n'
+        f'WHERE node.source = $source\n'
+        f'RETURN node.uuid AS uuid, '
+        f'node.content AS content, '
+        f'node.type AS type, '
+        f'node.index AS index, '
+        f'node.segment_index AS segment_index, '
+        f'score\n'
+        f'ORDER BY score DESC\n'
+        f'LIMIT $top_k'
+    )
+    async with session_factory() as session:
+        result = await session.run(
+            cypher,
+            query_embedding=query_embedding,
+            k=top_k,
+            source=source_uuid(source),
+            top_k=top_k,
+        )
+        return [
+            {
+                'uuid': record['uuid'],
+                'content': record['content'],
+                'type': record['type'],
+                'index': record['index'],
+                'segment_index': record.get('segment_index'),
                 'score': record['score'],
             }
             async for record in result

@@ -91,6 +91,21 @@ from kms.graph.triplets import (
     triplet_rows,
     yields_pairs,
 )
+from kms.graph.community import (
+    community_rows,
+    evidence_pairs as community_evidence_pairs,
+    member_pairs as community_member_pairs,
+)
+from kms.graph.triplet_hubs import (
+    canonical_object_pairs,
+    canonical_predicate_pairs as th_canonical_predicate_pairs,
+    canonical_subject_pairs,
+    supported_by_pairs,
+)
+from kms.graph.fact_hubs import (
+    fact_hub_rows,
+    has_fact_pairs,
+)
 
 
 def utcnow_iso() -> str:
@@ -687,3 +702,124 @@ async def persist_canonical_merge(
             ],
             now=now,
         )
+
+
+async def persist_communities(
+    communities: list[dict],
+    source: str,
+    *,
+    session_factory: Callable,
+) -> None:
+    """Upsert ``:Community`` nodes and their edges.
+
+    One ``:Community`` per detected community, carrying a summary text
+    and its embedding.  Member hubs are linked via ``:HAS_MEMBER``;
+    evidence triplets via ``:COMMUNITY_EVIDENCE``.
+
+    Args:
+        communities: One dict per community:
+            ``{community_uuid, member_hub_uuids, triplet_uuids,
+              summary_text, summary_embedding}``.
+        source: The stable book identity.
+        session_factory: The injected session factory.
+    """
+    if not communities:
+        return
+    rows = community_rows(communities, source)
+    member_pairs_list = community_member_pairs(communities)
+    evidence_pairs_list = community_evidence_pairs(communities)
+    now = utcnow_iso()
+
+    async with session_factory() as session:
+        await session.run(
+            queries.MERGE_COMMUNITIES, rows=rows, now=now
+        )
+        if member_pairs_list:
+            await session.run(
+                queries.MERGE_COMMUNITY_MEMBERS,
+                pairs=member_pairs_list,
+                now=now,
+            )
+        if evidence_pairs_list:
+            await session.run(
+                queries.MERGE_COMMUNITY_EVIDENCE,
+                pairs=evidence_pairs_list,
+                now=now,
+            )
+
+
+async def persist_triplet_hubs(
+    groups: list[dict],
+    source: str,
+    *,
+    session_factory: Callable,
+) -> None:
+    """Upsert ``:TripletHub`` + ``:FactHub`` vertices and their edges.
+
+    Args:
+        groups: One dict per canonical assertion:
+            ``{triplet_hub_uuid, subj_hub, pred_hub, obj_hub,
+              triplet_uuids, fact_text, fact_embedding}``.
+        source: The stable book identity.
+        session_factory: The injected session factory.
+    """
+    if not groups:
+        return
+
+    # Hub rows (uuid, source only)
+    from kms.graph.triplet_hubs import triplet_hub_properties
+
+    hub_rows = [
+        triplet_hub_properties(
+            source, g['subj_hub'], g['pred_hub'], g['obj_hub']
+        )
+        for g in groups
+    ]
+    fact_rows_list = fact_hub_rows(groups)
+    subj_pairs = canonical_subject_pairs(groups)
+    pred_pairs = th_canonical_predicate_pairs(groups)
+    obj_pairs = canonical_object_pairs(groups)
+    fact_pairs = has_fact_pairs(groups)
+    support_pairs = supported_by_pairs(groups)
+    now = utcnow_iso()
+
+    async with session_factory() as session:
+        await session.run(
+            queries.MERGE_TRIPLET_HUBS, rows=hub_rows, now=now
+        )
+        if fact_rows_list:
+            await session.run(
+                queries.MERGE_FACT_HUBS,
+                rows=fact_rows_list,
+                now=now,
+            )
+        if subj_pairs:
+            await session.run(
+                queries.MERGE_CANONICAL_SUBJECT,
+                pairs=subj_pairs,
+                now=now,
+            )
+        if pred_pairs:
+            await session.run(
+                queries.MERGE_CANONICAL_PREDICATE,
+                pairs=pred_pairs,
+                now=now,
+            )
+        if obj_pairs:
+            await session.run(
+                queries.MERGE_CANONICAL_OBJECT,
+                pairs=obj_pairs,
+                now=now,
+            )
+        if fact_pairs:
+            await session.run(
+                queries.MERGE_HAS_FACT,
+                pairs=fact_pairs,
+                now=now,
+            )
+        if support_pairs:
+            await session.run(
+                queries.MERGE_SUPPORTED_BY,
+                pairs=support_pairs,
+                now=now,
+            )

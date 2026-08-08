@@ -15,9 +15,11 @@ run on every startup.
 from collections.abc import Callable
 
 from kms.graph import (
+    community,
     definitions,
     entities,
     entity_hubs,
+    fact_hubs,
     facts,
     instructions,
     nodes,
@@ -25,6 +27,7 @@ from kms.graph import (
     predicates,
     procedures,
     statements,
+    triplet_hubs,
     triplets,
 )
 
@@ -54,6 +57,10 @@ def schema_statements() -> list[str]:
         f'FOR (t:{triplets.TRIPLET_LABEL}) REQUIRE t.uuid IS UNIQUE',
         f'CREATE INDEX node_source IF NOT EXISTS '
         f'FOR (n:{nodes.NODE_LABEL}) ON (n.source)',
+        f'CREATE VECTOR INDEX node_content IF NOT EXISTS '
+        f'FOR (n:{nodes.NODE_LABEL}) ON (n.embedding) '
+        f'OPTIONS {{indexConfig: {{`vector.dimensions`: 1024, '
+        f'`vector.similarity_function`: "cosine"}}}}',
         f'CREATE INDEX statement_source IF NOT EXISTS '
         f'FOR (s:{statements.STATEMENT_LABEL}) ON (s.source)',
         f'CREATE INDEX fact_source IF NOT EXISTS '
@@ -89,6 +96,25 @@ def schema_statements() -> list[str]:
         f'CREATE VECTOR INDEX definition_embedding IF NOT EXISTS '
         f'FOR (d:{definitions.DEFINITION_LABEL}) '
         f'ON (d.embedding) '
+        f'OPTIONS {{indexConfig: {{`vector.dimensions`: 1024, '
+        f'`vector.similarity_function`: "cosine"}}}}',
+        f'CREATE CONSTRAINT community_uuid IF NOT EXISTS '
+        f'FOR (c:{community.COMMUNITY_LABEL}) '
+        f'REQUIRE c.uuid IS UNIQUE',
+        f'CREATE VECTOR INDEX community_summary IF NOT EXISTS '
+        f'FOR (c:{community.COMMUNITY_LABEL}) '
+        f'ON (c.summary_embedding) '
+        f'OPTIONS {{indexConfig: {{`vector.dimensions`: 1024, '
+        f'`vector.similarity_function`: "cosine"}}}}',
+        f'CREATE CONSTRAINT triplet_hub_uuid IF NOT EXISTS '
+        f'FOR (th:{triplet_hubs.TRIPLET_HUB_LABEL}) '
+        f'REQUIRE th.uuid IS UNIQUE',
+        f'CREATE CONSTRAINT fact_hub_uuid IF NOT EXISTS '
+        f'FOR (fh:{fact_hubs.FACT_HUB_LABEL}) '
+        f'REQUIRE fh.uuid IS UNIQUE',
+        f'CREATE VECTOR INDEX fact_hub_embedding IF NOT EXISTS '
+        f'FOR (fh:{fact_hubs.FACT_HUB_LABEL}) '
+        f'ON (fh.embedding) '
         f'OPTIONS {{indexConfig: {{`vector.dimensions`: 1024, '
         f'`vector.similarity_function`: "cosine"}}}}',
     ]
