@@ -40,6 +40,15 @@ from typing import Any
 
 from kms.core import models
 from kms.graph import queries
+from kms.graph.community import (
+    community_rows,
+)
+from kms.graph.community import (
+    evidence_pairs as community_evidence_pairs,
+)
+from kms.graph.community import (
+    member_pairs as community_member_pairs,
+)
 from kms.graph.definitions import (
     definition_rows,
     has_definition_pairs,
@@ -50,6 +59,10 @@ from kms.graph.entities import (
 from kms.graph.entity_hubs import (
     canonical_entity_pairs,
     entity_hub_rows,
+)
+from kms.graph.fact_hubs import (
+    fact_hub_rows,
+    has_fact_pairs,
 )
 from kms.graph.facts import (
     evidence_pairs,
@@ -85,26 +98,19 @@ from kms.graph.statements import (
     statement_member_pairs,
     statement_properties,
 )
+from kms.graph.triplet_hubs import (
+    canonical_object_pairs,
+    canonical_subject_pairs,
+    supported_by_pairs,
+)
+from kms.graph.triplet_hubs import (
+    canonical_predicate_pairs as th_canonical_predicate_pairs,
+)
 from kms.graph.triplets import (
     has_object_pairs,
     has_subject_pairs,
     triplet_rows,
     yields_pairs,
-)
-from kms.graph.community import (
-    community_rows,
-    evidence_pairs as community_evidence_pairs,
-    member_pairs as community_member_pairs,
-)
-from kms.graph.triplet_hubs import (
-    canonical_object_pairs,
-    canonical_predicate_pairs as th_canonical_predicate_pairs,
-    canonical_subject_pairs,
-    supported_by_pairs,
-)
-from kms.graph.fact_hubs import (
-    fact_hub_rows,
-    has_fact_pairs,
 )
 
 
@@ -620,88 +626,6 @@ async def persist_predicate_hubs(
                 pairs=has_definition_pairs_list,
                 now=now,
             )
-
-
-async def persist_canonical_merge(
-    spoke_uuids: list[str],
-    hub_uuid: str,
-    hub_type: str,
-    definition_text: str,
-    definition_embedding: list[float] | None,
-    *,
-    session_factory: Callable,
-) -> None:
-    """Merge a cluster of new spokes into an EXISTING hub.
-
-    Writes ``:CANONICAL`` edges from each spoke to the existing hub,
-    updates the ``:Definition`` text and embedding, and refreshes the
-    ``:HAS_DEFINITION`` edge's ``modified_at``.
-
-    Args:
-        spoke_uuids: The uuids of the new spokes to attach.
-        hub_uuid: The existing hub's uuid.
-        hub_type: ``'entity'`` or ``'predicate'`` — picks which
-            ``:CANONICAL`` edge type to write.
-        definition_text: The regenerated canonical definition.
-        definition_embedding: Its embedding, or None.
-        session_factory: The injected session factory.
-    """
-    from kms.graph.definitions import (
-        definition_properties,
-        definition_uuid,
-    )
-    from kms.graph.entities import ENTITY_LABEL
-    from kms.graph.entity_hubs import ENTITY_HUB_LABEL
-    from kms.graph.predicate_hubs import PREDICATE_HUB_LABEL
-    from kms.graph.predicates import PREDICATE_LABEL
-
-    spoke_label = (
-        ENTITY_LABEL if hub_type == 'entity' else PREDICATE_LABEL
-    )
-    hub_label = (
-        ENTITY_HUB_LABEL
-        if hub_type == 'entity'
-        else PREDICATE_HUB_LABEL
-    )
-
-    now = utcnow_iso()
-    def_uuid = definition_uuid(hub_uuid)
-    def_props = definition_properties(
-        hub_uuid, definition_text, definition_embedding
-    )
-
-    async with session_factory() as session:
-        # 1. Add :CANONICAL edges from each new spoke to the existing hub
-        canonical_cypher = (
-            f'UNWIND $spoke_uuids AS spoke_uuid '
-            f'MATCH (s:{spoke_label} {{uuid: spoke_uuid}}), '
-            f'(h:{hub_label} {{uuid: $hub_uuid}}) '
-            f'MERGE (s)-[r:CANONICAL]->(h) '
-            f'ON CREATE SET r.created_at = $now '
-            f'SET r.modified_at = $now'
-        )
-        await session.run(
-            canonical_cypher,
-            spoke_uuids=spoke_uuids,
-            hub_uuid=hub_uuid,
-            now=now,
-        )
-
-        # 2. Update the :Definition node's text and embedding
-        await session.run(
-            queries.MERGE_DEFINITIONS,
-            rows=[def_props],
-            now=now,
-        )
-
-        # 3. Bump the :HAS_DEFINITION edge
-        await session.run(
-            queries.MERGE_HAS_DEFINITION,
-            pairs=[
-                {'hub': hub_uuid, 'definition': def_uuid}
-            ],
-            now=now,
-        )
 
 
 async def persist_communities(

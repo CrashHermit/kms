@@ -54,33 +54,25 @@ async def embed_descriptions(
         embedding API key is configured, the inputs are returned unchanged.
     """
     if not embeddings.is_configured():
-        logger.info(
-            'entity embedder: no embedding key configured, skipping'
-        )
+        logger.info('entity embedder: no embedding key configured, skipping')
         return entity_descs, predicate_descs
 
     # Single batch: entities then predicates, so vectors split cleanly.
     texts: list[str] = []
-    entity_entries: list[tuple[int, int]] = []  # (node_id, idx)
+    entity_entries: list[tuple[int, int]] = []  # (node_id, index)
     predicate_entries: list[tuple[int, int]] = []
 
     for node_id, entries in entity_descs.items():
-        for idx, entry in enumerate(entries):
-            texts.append(
-                _embed_text(
-                    entry['name'], entry.get('description')
-                )
-            )
-            entity_entries.append((node_id, idx))
+        for index, entry in enumerate(entries):
+            texts.append(_embed_text(entry['name'], entry.get('description')))
+            entity_entries.append((node_id, index))
 
     for node_id, entries in predicate_descs.items():
-        for idx, entry in enumerate(entries):
+        for index, entry in enumerate(entries):
             texts.append(
-                _embed_text(
-                    entry['predicate'], entry.get('description')
-                )
+                _embed_text(entry['predicate'], entry.get('description'))
             )
-            predicate_entries.append((node_id, idx))
+            predicate_entries.append((node_id, index))
 
     if not texts:
         return entity_descs, predicate_descs
@@ -97,19 +89,19 @@ async def embed_descriptions(
         node_id: [dict(entry) for entry in entries]
         for node_id, entries in entity_descs.items()
     }
-    for (node_id, idx), vector in zip(
+    for (node_id, index), vector in zip(
         entity_entries, entity_vectors, strict=True
     ):
-        result_entities[node_id][idx]['embedding'] = vector
+        result_entities[node_id][index]['embedding'] = vector
 
     result_predicates: dict[int, list[dict]] = {
         node_id: [dict(entry) for entry in entries]
         for node_id, entries in predicate_descs.items()
     }
-    for (node_id, idx), vector in zip(
+    for (node_id, index), vector in zip(
         predicate_entries, predicate_vectors, strict=True
     ):
-        result_predicates[node_id][idx]['embedding'] = vector
+        result_predicates[node_id][index]['embedding'] = vector
 
     logger.info(
         'entity embedder: %d entity + %d predicate embedding(s)',
@@ -145,8 +137,8 @@ class EntityEmbedderNode:
         """
         entity_descs = state.get('node_entity_descriptions', {})
         predicate_descs = state.get('node_predicate_descriptions', {})
-        enriched_entities, enriched_predicates = (
-            await embed_descriptions(entity_descs, predicate_descs)
+        enriched_entities, enriched_predicates = await embed_descriptions(
+            entity_descs, predicate_descs
         )
         return {
             'node_entity_descriptions': enriched_entities,

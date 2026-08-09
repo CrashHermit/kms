@@ -23,7 +23,7 @@ Design commitments:
 import logging
 
 from kms.core import embeddings
-from kms.graph.triplet_hubs import triplet_hub_uuid
+from kms.graph import triplet_hubs
 
 logger = logging.getLogger(__name__)
 
@@ -58,15 +58,19 @@ async def build_triplet_hubs(
     # --- Group by (subj_hub, pred_hub, obj_hub) ------------------------
     from collections import defaultdict
 
-    groups: dict[
-        tuple[str, str, str], list[dict]
-    ] = defaultdict(list)
-    for ht in hub_triplets:
-        key = (ht['subj_hub'], ht['pred_hub'], ht['obj_hub'])
-        groups[key].append(ht)
+    groups: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
+    for hub_triplet in hub_triplets:
+        key = (
+            hub_triplet['subj_hub'],
+            hub_triplet['pred_hub'],
+            hub_triplet['obj_hub'],
+        )
+        groups[key].append(hub_triplet)
 
-    print(f'  {len(groups)} unique canonical assertion(s) '
-          f'({len(hub_triplets)} total triplet(s))')
+    print(
+        f'  {len(groups)} unique canonical assertion(s) '
+        f'({len(hub_triplets)} total triplet(s))'
+    )
 
     # --- Build group dicts ---------------------------------------------
     result: list[dict] = []
@@ -82,16 +86,18 @@ async def build_triplet_hubs(
         # Assemble canonical assertion text
         fact_text = f'{subj_name} {pred_name} {obj_name}'
 
-        result.append({
-            'triplet_hub_uuid': triplet_hub_uuid(
-                source, subj, pred, obj
-            ),
-            'subj_hub': subj,
-            'pred_hub': pred,
-            'obj_hub': obj,
-            'triplet_uuids': [t['triplet_uuid'] for t in triplets],
-            'fact_text': fact_text,
-        })
+        result.append(
+            {
+                'triplet_hub_uuid': triplet_hubs.triplet_hub_uuid(
+                    source, subj, pred, obj
+                ),
+                'subj_hub': subj,
+                'pred_hub': pred,
+                'obj_hub': obj,
+                'triplet_uuids': [t['triplet_uuid'] for t in triplets],
+                'fact_text': fact_text,
+            }
+        )
         texts_to_embed.append(fact_text)
         embed_indices.append(i)
 
@@ -99,8 +105,8 @@ async def build_triplet_hubs(
     if embeddings.is_configured():
         embedder = embeddings.embedder()
         vectors = await embedder.embed(texts_to_embed)
-        for idx, vector in zip(embed_indices, vectors, strict=True):
-            result[idx]['fact_embedding'] = vector
+        for index, vector in zip(embed_indices, vectors, strict=True):
+            result[index]['fact_embedding'] = vector
         print(f'  {len(vectors)} assertion text(s) embedded')
     else:
         print('  Embedding API not configured — skipping embeddings')

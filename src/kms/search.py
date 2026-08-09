@@ -20,8 +20,6 @@ Text-only queries are plain strings.  Multimodal queries pass
 embedder and reranker already accept.
 """
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import Callable
 from typing import Any
@@ -72,9 +70,7 @@ async def search(
     if not _emb.is_configured():
         raise RuntimeError('Embedding API key not configured.')
 
-    query_input: Any = (
-        query if isinstance(query, dict) else query
-    )
+    query_input: Any = query if isinstance(query, dict) else query
     embedder = _emb.embedder()
     query_vector = (await embedder.embed([query_input]))[0]
 
@@ -104,9 +100,7 @@ async def search(
     # --- 3. rerank ---------------------------------------------------------
     if _reranker.is_configured():
         r = _reranker.reranker()
-        query_str = (
-            query if isinstance(query, str) else query.get('text', '')
-        )
+        query_str = query if isinstance(query, str) else query.get('text', '')
         docs = [
             c.get('summary_text') or c.get('definition_text', '')
             for c in candidates
@@ -122,9 +116,7 @@ async def search(
 
     # --- 4. judge (optional) ----------------------------------------------
     if judge and results:
-        query_str = (
-            query if isinstance(query, str) else query.get('text', '')
-        )
+        query_str = query if isinstance(query, str) else query.get('text', '')
         cand_texts = [
             r.get('summary_text') or r.get('definition_text', '')
             for r in results
@@ -133,9 +125,9 @@ async def search(
         decisions = await judge_module.aforward(query_str, cand_texts)
         # Attach judge verdicts to each candidate
         for decision in decisions:
-            idx = decision.index
-            if idx < len(results):
-                results[idx]['judge_relevant'] = decision.relevant
+            index = decision.index
+            if index < len(results):
+                results[index]['judge_relevant'] = decision.relevant
 
     return results
 
@@ -210,14 +202,32 @@ class SearchJudge(dspy.Module):
     async def aforward(
         self, query: str, candidates: list[str]
     ) -> list[SearchJudgeDecision]:
-        result = await self.judge.acall(
-            query=query, candidates=candidates
-        )
+        """Judge candidate relevance asynchronously.
+
+        Args:
+            query: The search query.
+            candidates: Candidate texts to judge for relevance.
+
+        Returns:
+            A list of judge decisions, one per candidate.
+        """
+        result = await self.judge.acall(query=query, candidates=candidates)
         return list(result.decisions or [])
 
     def forward(
         self, query: str, candidates: list[str]
     ) -> list[SearchJudgeDecision]:
+        """Judge candidate relevance synchronously.
+
+        Wraps :meth:`aforward` in an asyncio event loop.
+
+        Args:
+            query: The search query.
+            candidates: Candidate texts to judge for relevance.
+
+        Returns:
+            A list of judge decisions, one per candidate.
+        """
         return asyncio.run(self.aforward(query, candidates))
 
 
@@ -266,7 +276,6 @@ async def search_communities(
         return results
 
     from kms.graph import queries
-    from kms.graph.nodes import source_uuid as _su
 
     # Expand each community: query member hubs + triplets per community
     for result in results:
@@ -283,10 +292,13 @@ async def search_communities(
         )
         member_uuids = {h['uuid'] for h in result['hubs']}
         result['triplets'] = [
-            ht for ht in hub_triplets
-            if (ht['subj_hub'] in member_uuids
-                and ht['pred_hub'] in member_uuids
-                and ht['obj_hub'] in member_uuids)
+            hub_triplet
+            for hub_triplet in hub_triplets
+            if (
+                hub_triplet['subj_hub'] in member_uuids
+                and hub_triplet['pred_hub'] in member_uuids
+                and hub_triplet['obj_hub'] in member_uuids
+            )
         ]
 
     return results
@@ -341,8 +353,12 @@ async def search_entity_hubs(
     for result in results:
         hub_uuid = result['hub_uuid']
         result['triplets'] = [
-            ht for ht in all_triplets
-            if ht['subj_hub'] == hub_uuid or ht['obj_hub'] == hub_uuid
+            hub_triplet
+            for hub_triplet in all_triplets
+            if (
+                hub_triplet['subj_hub'] == hub_uuid
+                or hub_triplet['obj_hub'] == hub_uuid
+            )
         ]
 
     return results
@@ -397,8 +413,9 @@ async def search_predicate_hubs(
     for result in results:
         hub_uuid = result['hub_uuid']
         result['triplets'] = [
-            ht for ht in all_triplets
-            if ht['pred_hub'] == hub_uuid
+            hub_triplet
+            for hub_triplet in all_triplets
+            if hub_triplet['pred_hub'] == hub_uuid
         ]
 
     return results
@@ -414,9 +431,6 @@ async def _hubs_in_community(
     session_factory: Callable,
 ) -> list[dict]:
     """Member hubs (EntityHub + PredicateHub) of one community."""
-    from kms.graph import queries as _q
-    from kms.graph.nodes import source_uuid as _su
-
     cypher = (
         'MATCH (c:Community {uuid: $uuid})'
         '-[:HAS_MEMBER]->(h) '

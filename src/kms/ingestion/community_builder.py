@@ -30,7 +30,6 @@ import logging
 from collections import defaultdict
 
 import dspy
-from pydantic import BaseModel, Field
 
 from kms.core import embeddings
 
@@ -71,8 +70,7 @@ class CommunitySummarySignature(dspy.Signature):
         'each formatted as "(subject) --[predicate]--> (object)".'
     )
     summary: str = dspy.OutputField(
-        description='A 3-5 sentence paragraph summarising this '
-        'community.'
+        description='A 3-5 sentence paragraph summarising this community.'
     )
 
 
@@ -93,6 +91,15 @@ class CommunitySummarizer(dspy.Module):
         member_definitions: list[str],
         triplets: list[str],
     ) -> str:
+        """Synthesize a summary for one community asynchronously.
+
+        Args:
+            member_definitions: Canonical definitions of member concepts.
+            triplets: Canonical triplets as formatted strings.
+
+        Returns:
+            The synthesized summary paragraph.
+        """
         result = await self.summarizer.acall(
             member_definitions=member_definitions,
             triplets=triplets,
@@ -102,9 +109,18 @@ class CommunitySummarizer(dspy.Module):
     def forward(
         self, member_definitions: list[str], triplets: list[str]
     ) -> str:
-        return asyncio.run(
-            self.aforward(member_definitions, triplets)
-        )
+        """Synthesize a summary for one community synchronously.
+
+        Wraps :meth:`aforward` in an asyncio event loop.
+
+        Args:
+            member_definitions: Canonical definitions of member concepts.
+            triplets: Canonical triplets as formatted strings.
+
+        Returns:
+            The synthesized summary paragraph.
+        """
+        return asyncio.run(self.aforward(member_definitions, triplets))
 
 
 # ============================================================================
@@ -127,30 +143,30 @@ def _build_hub_adjacency(
     Returns:
         Adjacency map: hub_uuid → set of adjacent hub_uuids.
     """
-    adj: dict[str, set[str]] = defaultdict(set)
-    for ht in hub_triplets:
-        s = ht['subj_hub']
-        o = ht['obj_hub']
-        adj[s].add(o)
-        adj[o].add(s)
+    adjacency: dict[str, set[str]] = defaultdict(set)
+    for hub_triplet in hub_triplets:
+        subject_hub = hub_triplet['subj_hub']
+        object_hub = hub_triplet['obj_hub']
+        adjacency[subject_hub].add(object_hub)
+        adjacency[object_hub].add(subject_hub)
         # Predicate hubs are connectors — they join communities but
         # are not themselves EntityHubs.  Include them in the adjacency
         # so predicate hubs can bridge entity hubs.
-        p = ht['pred_hub']
-        adj[s].add(p)
-        adj[p].add(s)
-        adj[o].add(p)
-        adj[p].add(o)
-    return dict(adj)
+        predicate_hub = hub_triplet['pred_hub']
+        adjacency[subject_hub].add(predicate_hub)
+        adjacency[predicate_hub].add(subject_hub)
+        adjacency[object_hub].add(predicate_hub)
+        adjacency[predicate_hub].add(object_hub)
+    return dict(adjacency)
 
 
 def _connected_components(
-    adj: dict[str, set[str]],
+    adjacency: dict[str, set[str]],
 ) -> list[set[str]]:
     """Find connected components in an undirected adjacency graph.
 
     Args:
-        adj: Adjacency map: node → set of neighbors.
+        adjacency: Adjacency map: node → set of neighbors.
 
     Returns:
         One set of node uuids per component.
@@ -158,16 +174,16 @@ def _connected_components(
     visited: set[str] = set()
     components: list[set[str]] = []
 
-    for node in adj:
+    for node in adjacency:
         if node not in visited:
             component: set[str] = set()
             stack = [node]
             while stack:
-                v = stack.pop()
-                if v not in visited:
-                    visited.add(v)
-                    component.add(v)
-                    for neighbor in adj.get(v, set()):
+                vertex = stack.pop()
+                if vertex not in visited:
+                    visited.add(vertex)
+                    component.add(vertex)
+                    for neighbor in adjacency.get(vertex, set()):
                         if neighbor not in visited:
                             stack.append(neighbor)
             components.append(component)
@@ -214,70 +230,71 @@ async def build_communities(
 
     # --- Phase 2: community detection -----------------------------------
     print('Phase 2 — Detecting communities...')
-    adj = _build_hub_adjacency(hub_triplets)
-    components = _connected_components(adj)
+    adjacency = _build_hub_adjacency(hub_triplets)
+    components = _connected_components(adjacency)
     print(f'  {len(components)} connected component(s)')
 
     # --- Phase 3: collect per-community data ----------------------------
     print('Phase 3 — Collecting per-community data...')
 
-    # Index: triplet_uuid → hub-level info
-    triplet_index: dict[str, dict] = {
-        ht['triplet_uuid']: ht for ht in hub_triplets
-    }
-
     communities: list[dict] = []
 
     for i, component in enumerate(components):
         # Which triplets have all their hubs in this component?
-        comp_triplets: list[dict] = []
-        for ht in hub_triplets:
+        component_triplets: list[dict] = []
+        for hub_triplet in hub_triplets:
             if (
-                ht['subj_hub'] in component
-                and ht['obj_hub'] in component
-                and ht['pred_hub'] in component
+                hub_triplet['subj_hub'] in component
+                and hub_triplet['obj_hub'] in component
+                and hub_triplet['pred_hub'] in component
             ):
-                comp_triplets.append(ht)
+                component_triplets.append(hub_triplet)
 
         # Collect member hub definitions
         member_uuids = sorted(component)
-        member_defs: list[str] = []
-        for ht in hub_triplets:
-            for hub_uuid, def_key in [
-                (ht['subj_hub'], 'subj_def'),
-                (ht['pred_hub'], 'pred_def'),
-                (ht['obj_hub'], 'obj_def'),
+        member_definitions: list[str] = []
+        for hub_triplet in hub_triplets:
+            for hub_uuid, definition_key in [
+                (hub_triplet['subj_hub'], 'subj_def'),
+                (hub_triplet['pred_hub'], 'pred_def'),
+                (hub_triplet['obj_hub'], 'obj_def'),
             ]:
                 if hub_uuid in component:
-                    d = ht.get(def_key)
-                    if d and d not in member_defs:
-                        member_defs.append(d)
+                    definition = hub_triplet.get(definition_key)
+                    if definition and definition not in member_definitions:
+                        member_definitions.append(definition)
 
         # Build canonical triplet strings
-        triplet_strs: list[str] = []
+        triplet_strings: list[str] = []
         seen_triplets: set[str] = set()
-        for ht in comp_triplets:
+        for hub_triplet in component_triplets:
             key = (
-                f"{ht['subj_name']}--{ht['pred_name']}--"
-                f"{ht['obj_name']}"
+                f'{hub_triplet["subj_name"]}--'
+                f'{hub_triplet["pred_name"]}--'
+                f'{hub_triplet["obj_name"]}'
             )
             if key not in seen_triplets:
                 seen_triplets.add(key)
-                triplet_strs.append(
-                    f"({ht['subj_name']}) "
-                    f"--[{ht['pred_name']}]--> "
-                    f"({ht['obj_name']})"
+                triplet_strings.append(
+                    f'({hub_triplet["subj_name"]}) '
+                    f'--[{hub_triplet["pred_name"]}]--> '
+                    f'({hub_triplet["obj_name"]})'
                 )
 
-        triplet_uuids = [ht['triplet_uuid'] for ht in comp_triplets]
+        triplet_uuids = [
+            hub_triplet['triplet_uuid'] for hub_triplet in component_triplets
+        ]
 
         # --- Phase 4: synthesize summary -------------------------------
-        print(f'  Community {i}: {len(component)} hub(s), '
-              f'{len(comp_triplets)} triplet(s) — synthesizing summary...')
+        print(
+            f'  Community {i}: {len(component)} hub(s), '
+            f'{len(component_triplets)} triplet(s) — '
+            f'synthesizing summary...'
+        )
 
         summary_text = await summarizer.aforward(
-            member_definitions=member_defs,
-            triplets=triplet_strs,
+            member_definitions=member_definitions,
+            triplets=triplet_strings,
         )
 
         # Embed the summary
@@ -286,17 +303,19 @@ async def build_communities(
             embedder = embeddings.embedder()
             summary_embedding = (await embedder.embed([summary_text]))[0]
 
-        from kms.graph.community import community_uuid
+        from kms.graph import community
 
-        comm_uuid = community_uuid(source, member_uuids)
+        community_uuid = community.community_uuid(source, member_uuids)
 
-        communities.append({
-            'community_uuid': comm_uuid,
-            'member_hub_uuids': member_uuids,
-            'triplet_uuids': triplet_uuids,
-            'summary_text': summary_text,
-            'summary_embedding': summary_embedding,
-        })
+        communities.append(
+            {
+                'community_uuid': community_uuid,
+                'member_hub_uuids': member_uuids,
+                'triplet_uuids': triplet_uuids,
+                'summary_text': summary_text,
+                'summary_embedding': summary_embedding,
+            }
+        )
 
         print(f'    Summary: {summary_text[:120]}...')
 

@@ -368,6 +368,39 @@ MERGE_SUPPORTED_BY = (
 
 
 # ============================================================================
+# Delete query — atomic wipe of the canonical layer before rebuild
+# ============================================================================
+
+DELETE_CANONICAL_LAYER = (
+    f'MATCH (:Entity)-[r:CANONICAL]->() DELETE r '
+    f'WITH 1 AS done '
+    f'MATCH (:Predicate)-[r:CANONICAL]->() DELETE r '
+    f'WITH 1 AS done '
+    f'MATCH (th:{TRIPLET_HUB_LABEL}) '
+    f'OPTIONAL MATCH (th)-[r1]->() DELETE r1 '
+    f'WITH th, 1 AS done '
+    f'DETACH DELETE th '
+    f'WITH 1 AS done '
+    f'MATCH (fh:{FACT_HUB_LABEL}) '
+    f'OPTIONAL MATCH (fh)-[r2]->() DELETE r2 '
+    f'WITH fh, 1 AS done '
+    f'DETACH DELETE fh '
+    f'WITH 1 AS done '
+    f'MATCH (eh:{ENTITY_HUB_LABEL}) '
+    f'OPTIONAL MATCH (eh)-[r3]->() DELETE r3 '
+    f'WITH eh, 1 AS done '
+    f'DETACH DELETE eh '
+    f'WITH 1 AS done '
+    f'MATCH (ph:{PREDICATE_HUB_LABEL}) '
+    f'OPTIONAL MATCH (ph)-[r4]->() DELETE r4 '
+    f'WITH ph, 1 AS done '
+    f'DETACH DELETE ph '
+    f'WITH 1 AS done '
+    f'MATCH (d:{DEFINITION_LABEL}) DETACH DELETE d'
+)
+
+
+# ============================================================================
 # Read queries — named lookbacks returning plain data
 # ============================================================================
 
@@ -410,216 +443,122 @@ async def relation_types(
     return [record['type'] for record in records]
 
 
-async def uncanonicalized_entity_spokes(
+async def all_entity_spokes(
     session_factory: Callable,
-    *,
-    source: str,
 ) -> list[dict]:
-    """Every ``:Entity`` that has an embedding but no ``:CANONICAL``
-    edge yet — the new spokes awaiting canonicalization.
-
-    Args:
-        session_factory: The injected session factory.
-        source: The stable book identity to scope to.
+    """Every ``:Entity`` with an embedding, across all sources.
 
     Returns:
         One dict per spoke: ``{uuid, name, description, embedding}``.
     """
     cypher = (
         f'MATCH (e:{ENTITY_LABEL})\n'
-        f'WHERE e.source = $source\n'
-        f'  AND e.embedding IS NOT NULL\n'
-        f'  AND NOT EXISTS {{ (e)-[:CANONICAL]->(:{ENTITY_HUB_LABEL}) }}\n'
+        f'WHERE e.embedding IS NOT NULL\n'
         f'RETURN e.uuid AS uuid, e.name AS name, '
-        f'e.description AS description, e.embedding AS embedding'
+        f'e.description AS description, e.embedding AS embedding, '
+        f'e.source AS source'
     )
     async with session_factory() as session:
-        result = await session.run(
-            cypher, source=source_uuid(source)
-        )
+        result = await session.run(cypher)
         return [
             {
                 'uuid': record['uuid'],
                 'name': record['name'],
                 'description': record.get('description'),
                 'embedding': record['embedding'],
+                'source': record.get('source'),
             }
             async for record in result
         ]
 
 
-async def uncanonicalized_predicate_spokes(
+async def all_predicate_spokes(
     session_factory: Callable,
-    *,
-    source: str,
 ) -> list[dict]:
-    """Every ``:Predicate`` that has an embedding but no
-    ``:CANONICAL`` edge yet.
-
-    Args:
-        session_factory: The injected session factory.
-        source: The stable book identity to scope to.
+    """Every ``:Predicate`` with an embedding, across all sources.
 
     Returns:
         One dict per spoke:
-        ``{uuid, predicate, description, embedding}``.
+        ``{uuid, predicate, description, embedding, source}``.
     """
     cypher = (
         f'MATCH (p:{PREDICATE_LABEL})\n'
-        f'WHERE p.source = $source\n'
-        f'  AND p.embedding IS NOT NULL\n'
-        f'  AND NOT EXISTS {{ (p)-[:CANONICAL]->(:{PREDICATE_HUB_LABEL}) }}\n'
+        f'WHERE p.embedding IS NOT NULL\n'
         f'RETURN p.uuid AS uuid, p.predicate AS predicate, '
-        f'p.description AS description, p.embedding AS embedding'
+        f'p.description AS description, p.embedding AS embedding, '
+        f'p.source AS source'
     )
     async with session_factory() as session:
-        result = await session.run(
-            cypher, source=source_uuid(source)
-        )
+        result = await session.run(cypher)
         return [
             {
                 'uuid': record['uuid'],
                 'predicate': record['predicate'],
                 'description': record.get('description'),
                 'embedding': record['embedding'],
+                'source': record.get('source'),
             }
             async for record in result
         ]
 
 
-async def candidate_entity_hubs(
-    session_factory: Callable,
-    *,
-    query_embedding: list[float],
-    source: str | None = None,
-    top_k: int = 5,
-    min_score: float = 0.7,
-) -> list[dict]:
-    """Vector-search existing ``:EntityHub`` definitions for
-    candidates similar to *query_embedding*.
+async def delete_canonical_layer(session_factory: Callable) -> None:
+    """Delete every node and edge in the canonical layer.
 
-    Args:
-        session_factory: The injected session factory.
-        query_embedding: The centroid of the new cluster's spoke
-            embeddings.
-        source: Optional source scope (None = cross-source).
-        top_k: Maximum candidates to return.
-        min_score: Minimum similarity score.
-
-    Returns:
-        One dict per candidate:
-        ``{hub_uuid, display_name, aliases, definition_text,
-          definition_embedding, score}``.
+    Spokes (``:Entity``, ``:Predicate``, ``:Triplet``) are
+    untouched.  Only hubs, definitions, and canonical edges are
+    removed.
     """
-    cypher = (
-        f'CALL db.index.vector.queryNodes(\n'
-        f'  "definition_embedding", $k, $query_embedding\n'
-        f') YIELD node, score\n'
-        f'WHERE score >= $min_score\n'
-    )
-    if source is not None:
-        cypher += (
-            f'MATCH (h:{ENTITY_HUB_LABEL} {{source: $source}})\n'
-            f'  -[:HAS_DEFINITION]->(node)\n'
-        )
-    else:
-        cypher += (
-            f'MATCH (h:{ENTITY_HUB_LABEL})\n'
-            f'  -[:HAS_DEFINITION]->(node)\n'
-        )
-    cypher += (
-        f'RETURN h.uuid AS hub_uuid, '
-        f'h.display_name AS display_name, '
-        f'h.aliases AS aliases, '
-        f'node.text AS definition_text, '
-        f'node.embedding AS definition_embedding, '
-        f'score\n'
-        f'ORDER BY score DESC\n'
-        f'LIMIT $top_k'
-    )
-    params = {
-        'query_embedding': query_embedding,
-        'k': top_k,
-        'min_score': min_score,
-        'top_k': top_k,
-    }
-    if source is not None:
-        params['source'] = source_uuid(source)
     async with session_factory() as session:
-        result = await session.run(cypher, **params)
+        await session.run(DELETE_CANONICAL_LAYER)
+
+
+async def all_canonical_triplets(
+    session_factory: Callable,
+) -> list[dict]:
+    """Every triplet resolved to its canonical hubs, across all sources.
+
+    Same shape as ``canonical_hub_triplets`` but unscoped.
+    """
+    from kms.graph.entity_hubs import ENTITY_HUB_LABEL as EH
+    from kms.graph.predicate_hubs import PREDICATE_HUB_LABEL as PH
+    from kms.graph.triplets import TRIPLET_LABEL as TL
+
+    cypher = (
+        f'MATCH (t:{TL})\n'
+        f'MATCH (t)-[:HAS_SUBJECT]->(es:Entity)\n'
+        f'  -[:CANONICAL]->(sh:{EH})\n'
+        f'MATCH (t)-[:HAS_PREDICATE]->(pp:Predicate)\n'
+        f'  -[:CANONICAL]->(ph:{PH})\n'
+        f'MATCH (t)-[:HAS_OBJECT]->(eo:Entity)\n'
+        f'  -[:CANONICAL]->(oh:{EH})\n'
+        f'OPTIONAL MATCH (sh)-[:HAS_DEFINITION]->(sd:Definition)\n'
+        f'OPTIONAL MATCH (ph)-[:HAS_DEFINITION]->(pd:Definition)\n'
+        f'OPTIONAL MATCH (oh)-[:HAS_DEFINITION]->(od:Definition)\n'
+        f'RETURN t.uuid AS triplet_uuid,\n'
+        f'  t.source AS source,\n'
+        f'  sh.uuid AS subj_hub, sh.display_name AS subj_name,\n'
+        f'  sd.text AS subj_def,\n'
+        f'  ph.uuid AS pred_hub, ph.display_name AS pred_name,\n'
+        f'  pd.text AS pred_def,\n'
+        f'  oh.uuid AS obj_hub, oh.display_name AS obj_name,\n'
+        f'  od.text AS obj_def'
+    )
+    async with session_factory() as session:
+        result = await session.run(cypher)
         return [
             {
-                'hub_uuid': record['hub_uuid'],
-                'display_name': record['display_name'],
-                'aliases': record.get('aliases') or [],
-                'definition_text': record['definition_text'],
-                'definition_embedding': record.get(
-                    'definition_embedding'
-                ),
-                'score': record['score'],
-            }
-            async for record in result
-        ]
-
-
-async def candidate_predicate_hubs(
-    session_factory: Callable,
-    *,
-    query_embedding: list[float],
-    source: str | None = None,
-    top_k: int = 5,
-    min_score: float = 0.7,
-) -> list[dict]:
-    """Vector-search existing ``:PredicateHub`` definitions.
-
-    Same shape as ``candidate_entity_hubs``.
-    """
-    cypher = (
-        f'CALL db.index.vector.queryNodes(\n'
-        f'  "definition_embedding", $k, $query_embedding\n'
-        f') YIELD node, score\n'
-        f'WHERE score >= $min_score\n'
-    )
-    if source is not None:
-        cypher += (
-            f'MATCH (h:{PREDICATE_HUB_LABEL} {{source: $source}})\n'
-            f'  -[:HAS_DEFINITION]->(node)\n'
-        )
-    else:
-        cypher += (
-            f'MATCH (h:{PREDICATE_HUB_LABEL})\n'
-            f'  -[:HAS_DEFINITION]->(node)\n'
-        )
-    cypher += (
-        f'RETURN h.uuid AS hub_uuid, '
-        f'h.display_name AS display_name, '
-        f'h.aliases AS aliases, '
-        f'node.text AS definition_text, '
-        f'node.embedding AS definition_embedding, '
-        f'score\n'
-        f'ORDER BY score DESC\n'
-        f'LIMIT $top_k'
-    )
-    params = {
-        'query_embedding': query_embedding,
-        'k': top_k,
-        'min_score': min_score,
-        'top_k': top_k,
-    }
-    if source is not None:
-        params['source'] = source_uuid(source)
-    async with session_factory() as session:
-        result = await session.run(cypher, **params)
-        return [
-            {
-                'hub_uuid': record['hub_uuid'],
-                'display_name': record['display_name'],
-                'aliases': record.get('aliases') or [],
-                'definition_text': record['definition_text'],
-                'definition_embedding': record.get(
-                    'definition_embedding'
-                ),
-                'score': record['score'],
+                'triplet_uuid': record['triplet_uuid'],
+                'source': record.get('source'),
+                'subj_hub': record['subj_hub'],
+                'subj_name': record['subj_name'],
+                'subj_def': record.get('subj_def'),
+                'pred_hub': record['pred_hub'],
+                'pred_name': record['pred_name'],
+                'pred_def': record.get('pred_def'),
+                'obj_hub': record['obj_hub'],
+                'obj_name': record['obj_name'],
+                'obj_def': record.get('obj_def'),
             }
             async for record in result
         ]
@@ -671,9 +610,7 @@ async def canonical_hub_triplets(
         f'  od.text AS obj_def'
     )
     async with session_factory() as session:
-        result = await session.run(
-            cypher, source=source_uuid(source)
-        )
+        result = await session.run(cypher, source=source_uuid(source))
         return [
             {
                 'triplet_uuid': record['triplet_uuid'],
@@ -711,16 +648,16 @@ async def vector_search_communities(
         ``{uuid, summary_text, summary_embedding, score}``.
     """
     cypher = (
-        f'CALL db.index.vector.queryNodes(\n'
-        f'  "community_summary", $k, $query_embedding\n'
-        f') YIELD node, score\n'
-        f'WHERE node.source = $source\n'
-        f'RETURN node.uuid AS uuid, '
-        f'node.summary_text AS summary_text, '
-        f'node.summary_embedding AS summary_embedding, '
-        f'score\n'
-        f'ORDER BY score DESC\n'
-        f'LIMIT $top_k'
+        'CALL db.index.vector.queryNodes(\n'
+        '  "community_summary", $k, $query_embedding\n'
+        ') YIELD node, score\n'
+        'WHERE node.source = $source\n'
+        'RETURN node.uuid AS uuid, '
+        'node.summary_text AS summary_text, '
+        'node.summary_embedding AS summary_embedding, '
+        'score\n'
+        'ORDER BY score DESC\n'
+        'LIMIT $top_k'
     )
     async with session_factory() as session:
         result = await session.run(
@@ -762,9 +699,7 @@ async def vector_search_hub_definitions(
         One dict per result:
         ``{hub_uuid, display_name, definition_text, score}``.
     """
-    hub_label = (
-        ENTITY_HUB_LABEL if kind == 'entity' else PREDICATE_HUB_LABEL
-    )
+    hub_label = ENTITY_HUB_LABEL if kind == 'entity' else PREDICATE_HUB_LABEL
     cypher = (
         f'CALL db.index.vector.queryNodes(\n'
         f'  "definition_embedding", $k, $query_embedding\n'
@@ -817,18 +752,18 @@ async def vector_search_nodes(
         ``{uuid, content, type, index, segment_index, score}``.
     """
     cypher = (
-        f'CALL db.index.vector.queryNodes(\n'
-        f'  "node_content", $k, $query_embedding\n'
-        f') YIELD node, score\n'
-        f'WHERE node.source = $source\n'
-        f'RETURN node.uuid AS uuid, '
-        f'node.content AS content, '
-        f'node.type AS type, '
-        f'node.index AS index, '
-        f'node.segment_index AS segment_index, '
-        f'score\n'
-        f'ORDER BY score DESC\n'
-        f'LIMIT $top_k'
+        'CALL db.index.vector.queryNodes(\n'
+        '  "node_content", $k, $query_embedding\n'
+        ') YIELD node, score\n'
+        'WHERE node.source = $source\n'
+        'RETURN node.uuid AS uuid, '
+        'node.content AS content, '
+        'node.type AS type, '
+        'node.index AS index, '
+        'node.segment_index AS segment_index, '
+        'score\n'
+        'ORDER BY score DESC\n'
+        'LIMIT $top_k'
     )
     async with session_factory() as session:
         result = await session.run(

@@ -1,14 +1,15 @@
-"""Live test: DIAL-KG–style four-phase canonicalization against Neo4j.
+"""Live test: full-rebuild canonicalization against Neo4j.
 
-Runs on the combinatorics graph-theory page embeddings already persisted
-by live_neo4j_pipeline_test.py.  Reads uncanonicalized :Entity and
-:Predicate spokes from Neo4j, clusters them, aligns against any existing
-hubs (first run = all new hubs), and writes :EntityHub/:PredicateHub +
-:Definition + :CANONICAL edges.
+Reads all :Entity and :Predicate spokes from Neo4j, clusters them,
+synthesises definitions, deletes the old canonical layer, and writes
+fresh :EntityHub/:PredicateHub + :Definition + :CANONICAL edges.
 
-Requires NEO4J_URI/USERNAME/PASSWORD and OPENROUTER_API_KEY (for
-definition embedding) and DEEPSEEK_API_KEY (for adjudication +
-definition synthesis LLM calls).
+No incremental merge, no cross-batch adjudication — full rebuild
+from spokes.
+
+Requires NEO4J_URI/USERNAME/PASSWORD and EMBEDDING_API_KEY (for
+definition embedding) and DEEPSEEK_API_KEY (for definition synthesis
+LLM calls).
 
 Run from the repo root with:
     .venv/bin/python tests/live_canonicalize_test.py
@@ -26,13 +27,12 @@ if str(SRC) not in sys.path:
 async def main() -> None:
     from kms.core import llm
     from kms.graph import db
-    from kms.ingestion.canonicalizer import run_canonicalization
+    from kms.ingestion.canonicalizer import rebuild
 
     if not db.is_configured():
         print('Neo4j not configured — stopping.')
         return
 
-    source = 'combinatorics_graph_theory_page'
     language_model = llm.text_lm()
 
     def _sf():
@@ -41,14 +41,13 @@ async def main() -> None:
     threshold = 0.85
 
     try:
-        result = await run_canonicalization(
-            source=source,
+        result = await rebuild(
             threshold=threshold,
             language_model=language_model,
             session_factory=_sf,
-            cross_source=False,
             entity_kind=True,
             predicate_kind=True,
+            rebuild_triplets=True,
         )
 
         print(f'\n{"=" * 60}')
@@ -58,10 +57,8 @@ async def main() -> None:
         for kind in ('entity', 'predicate'):
             info = result.get(kind, {})
             print(f'\n  {kind}:')
-            print(f'    Merged into existing hubs: {info["merged"]}')
-            print(f'    New hubs created:         {info["new_hubs"]}')
-            print(f'    Review-flagged:           {info["review_flagged"]}')
-            print(f'    Total spokes processed:   {info["total_spokes"]}')
+            print(f'    Clusters: {info.get("clusters", 0)}')
+            print(f'    Spokes:   {info.get("spokes", 0)}')
 
         # Quick verification query
         print(f'\n{"=" * 60}')
@@ -69,7 +66,10 @@ async def main() -> None:
         print('=' * 60)
 
         async with db.session() as s:
-            for label in ('EntityHub', 'PredicateHub', 'Definition'):
+            for label in (
+                'EntityHub', 'PredicateHub', 'Definition',
+                'TripletHub', 'FactHub',
+            ):
                 r = await s.run(
                     f'MATCH (n:`{label}`) RETURN count(n) AS cnt'
                 )

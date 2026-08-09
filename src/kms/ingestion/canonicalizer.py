@@ -1,38 +1,24 @@
 """
-Entity and predicate canonicalization — DIAL-KG–style incremental
-clustering with cross-batch alignment.
+Entity and predicate canonicalization — full rebuild from spokes.
 
-Four phases, run as a standalone pass after one or more pipeline runs
-have populated the graph with :Entity/:Predicate spokes:
+Every source ingestion triggers a complete rebuild of the canonical
+layer: read all spokes across all sources, cluster by embedding
+similarity, synthesise definitions, delete the old canonical layer,
+and write fresh hubs, definitions, and CANONICAL edges.
 
-  Phase 1 — READ.  Fetch every new spoke (has an embedding, no existing
-  :CANONICAL edge) from Neo4j.
-
-  Phase 2 — INTRA-BATCH CLUSTER.  All-pairs cosine similarity →
-  connected components, same algorithm as before.  Each cluster gets a
-  centroid embedding and a display name (most frequent surface form).
-
-  Phase 3 — CROSS-BATCH ALIGN.  For each cluster, vector-search
-  existing :EntityHub/:PredicateHub definitions.  An LLM adjudicates
-  each candidate pair: {Merge, New, Hierarchy, Review}.
-
-  Phase 4 — WRITE.  Merge → add :CANONICAL edges to an existing hub
-  and regenerate its :Definition.  New → create :EntityHub /
-  :PredicateHub + :Definition + :CANONICAL edges.  Review → flag, leave
-  uncanonicalized so a human can resolve.
-
-Hubs carry a display_name and (eventually) aliases, updated on merge.
-The hub uuid is deterministic-from-create (uuid5(source,
-sorted(spoke_uuids))) on first creation and is never recomputed; new
-spokes join existing hubs via :CANONICAL edges.
+The canonical layer is fully derived from immutable spokes — there is
+no incremental merge and no cross-batch adjudication.  The rebuild is
+deterministic for a given set of spokes and threshold.
 
 Design commitments:
 
 * CRASH ON MISSING EMBEDDINGS — every spoke must carry an embedding.
-* ONE LLM CALL PER CANDIDATE PAIR — adjudication is per (cluster,
-  candidate), not per spoke.
-* DEFINITION REGENERATION ON MERGE — when a hub gains spokes the
-  canonical definition is re-synthesised from the full description set.
+* PURE-MATH CLUSTERING — all-pairs cosine similarity, no LLM in the
+  cluster path.
+* ONE LLM CALL PER DEFINITION — definition synthesis is per cluster,
+  run concurrently.
+* ATOMIC REPLACEMENT — the old canonical layer is wiped before the
+  new one is written, so the graph is never in a mixed state.
 """
 
 import asyncio
@@ -40,15 +26,15 @@ import logging
 from collections import Counter
 
 import dspy
-from pydantic import BaseModel, Field
 
 from kms.core import embeddings
+from kms.core import llm as llm_config
 
 logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# DSPy modules — definition synthesis (unchanged) + adjudication (new)
+# DSPy module — definition synthesis
 # ============================================================================
 
 
@@ -96,6 +82,15 @@ class DefinitionSynthesizer(dspy.Module):
     async def aforward(
         self, concept_name: str, descriptions: list[str]
     ) -> str:
+        """Synthesize a canonical definition asynchronously.
+
+        Args:
+            concept_name: The name of the concept being defined.
+            descriptions: The source descriptions to synthesize from.
+
+        Returns:
+            The synthesized canonical definition.
+        """
         result = await self.synthesizer.acall(
             concept_name=concept_name, descriptions=descriptions
         )
@@ -106,144 +101,26 @@ class DefinitionSynthesizer(dspy.Module):
         return result.definition
 
     def forward(self, concept_name: str, descriptions: list[str]) -> str:
+        """Synthesize a canonical definition synchronously.
+
+        Wraps :meth:`aforward` in an asyncio event loop.
+
+        Args:
+            concept_name: The name of the concept being defined.
+            descriptions: The source descriptions to synthesize from.
+
+        Returns:
+            The synthesized canonical definition.
+        """
         return asyncio.run(self.aforward(concept_name, descriptions))
 
 
 # ============================================================================
-# Adjudication — the LLM decides Merge / New / Hierarchy / Review
+# Clustering
 # ============================================================================
 
 
-class AdjudicationSignature(dspy.Signature):
-    """
-    You are a curator of a knowledge graph. You are given one CLUSTER of
-    newly extracted entity (or predicate) mentions from a document, and
-    one CANDIDATE hub that already exists in the knowledge graph.  Decide
-    what action to take.
-
-    The cluster represents a concept — its display name is the most
-    common surface form, and the descriptions are what different readers
-    wrote about it.
-
-    The candidate hub already has a canonical definition (and possibly
-    aliases — other surface forms that have been merged into it).
-
-    Decide ONE of:
-
-    - Merge: the cluster is the SAME concept as the candidate.  The
-      cluster's spokes should be merged into this existing hub.
-    - New: the cluster is a DIFFERENT concept.  It should get its own
-      new hub.  (The system will try the next candidate, or create a
-      new hub if no candidate matches.)
-    - Hierarchy: the cluster is RELATED but not identical — the new
-      concept is a subtype, instance, or specialisation of the
-      candidate (e.g. "$G_1$" is a specific graph, matched against a
-      hub about "graph").  Treat as New for now — the hierarchical
-      relationship can be added later.
-    - Review: you cannot decide with confidence.  Flag for human
-      review rather than merging incorrectly.
-
-    Prefer Merge when the cluster and candidate clearly refer to the
-    same thing even if the surface forms differ.  Prefer New when they
-    refer to different things even if the surface forms happen to
-    match.  In ambiguous cases, New is safer than a wrong Merge.
-    """
-
-    cluster_name: str = dspy.InputField(
-        description='The most common surface form in the new cluster.'
-    )
-    cluster_descriptions: list[str] = dspy.InputField(
-        description='Descriptions from different occurrences of this '
-        'concept in the new document.'
-    )
-    hub_display_name: str = dspy.InputField(
-        description='The canonical surface form of the existing hub.'
-    )
-    hub_definition: str = dspy.InputField(
-        description='The canonical definition of the existing hub.'
-    )
-    hub_aliases: list[str] = dspy.InputField(
-        description='Other surface forms that have been merged into '
-        'this hub.'
-    )
-    similarity_score: float = dspy.InputField(
-        description='The cosine similarity between the cluster '
-        'centroid embedding and the hub definition embedding.'
-    )
-    decision: str = dspy.OutputField(
-        description='Merge | New | Hierarchy | Review'
-    )
-    reasoning: str = dspy.OutputField(
-        description='One sentence explaining your decision.'
-    )
-
-
-class Adjudicator(dspy.Module):
-    """Decides whether a cluster belongs to an existing hub.
-
-    Args:
-        language_model: The LM to run on.
-    """
-
-    def __init__(self, language_model: dspy.LM) -> None:
-        super().__init__()
-        self.judge = dspy.ChainOfThought(AdjudicationSignature)
-        self.set_lm(language_model)
-
-    async def aforward(
-        self,
-        cluster_name: str,
-        cluster_descriptions: list[str],
-        hub_display_name: str,
-        hub_definition: str,
-        hub_aliases: list[str],
-        similarity_score: float,
-    ) -> tuple[str, str]:
-        """Adjudicate one (cluster, candidate) pair.
-
-        Returns:
-            ``(decision, reasoning)`` where decision is one of
-            Merge / New / Hierarchy / Review.
-        """
-        result = await self.judge.acall(
-            cluster_name=cluster_name,
-            cluster_descriptions=cluster_descriptions,
-            hub_display_name=hub_display_name,
-            hub_definition=hub_definition,
-            hub_aliases=hub_aliases,
-            similarity_score=similarity_score,
-        )
-        return result.decision, result.reasoning
-
-    def forward(
-        self,
-        cluster_name: str,
-        cluster_descriptions: list[str],
-        hub_display_name: str,
-        hub_definition: str,
-        hub_aliases: list[str],
-        similarity_score: float,
-    ) -> tuple[str, str]:
-        return asyncio.run(
-            self.aforward(
-                cluster_name,
-                cluster_descriptions,
-                hub_display_name,
-                hub_definition,
-                hub_aliases,
-                similarity_score,
-            )
-        )
-
-
-# ============================================================================
-# Clustering (unchanged from original)
-# ============================================================================
-
-
-def _cluster(
-    spokes: list[dict], threshold: float
-) -> list[list[dict]]:
+def _cluster(spokes: list[dict], threshold: float) -> list[list[dict]]:
     """Cluster spokes by all-pairs cosine similarity → connected components.
 
     Args:
@@ -303,9 +180,7 @@ def _cluster(
 def _most_frequent(values: list[str]) -> str:
     counts = Counter(values)
     max_count = max(counts.values())
-    candidates = [
-        v for v, c in counts.items() if c == max_count
-    ]
+    candidates = [v for v, c in counts.items() if c == max_count]
     return min(candidates, key=len)
 
 
@@ -319,126 +194,18 @@ def _centroid_embedding(cluster: list[dict]) -> list[float]:
     for spoke in cluster:
         for i, v in enumerate(spoke['embedding']):
             centroid[i] += v
-    n = len(cluster)
-    return [v / n for v in centroid]
+    count = len(cluster)
+    return [v / count for v in centroid]
 
 
-def _collect_descriptions(
-    cluster: list[dict],
-) -> list[str]:
-    return list({
-        spoke['description']
-        for spoke in cluster
-        if spoke.get('description')
-    })
+def _collect_descriptions(cluster: list[dict]) -> list[str]:
+    return list(
+        {spoke['description'] for spoke in cluster if spoke.get('description')}
+    )
 
 
 # ============================================================================
-# Phase 3: cross-batch alignment — one cluster against existing hubs
-# ============================================================================
-
-
-async def _align_cluster(
-    cluster: list[dict],
-    name_key: str,
-    source: str,
-    adjudicator: Adjudicator,
-    session_factory,
-    *,
-    top_k: int = 5,
-    min_score: float = 0.7,
-    cross_source: bool = False,
-) -> str | None:
-    """Decide which existing hub (if any) a cluster belongs to.
-
-    Args:
-        cluster: One cluster's spoke dicts.
-        name_key: ``'name'`` for entities, ``'predicate'`` for predicates.
-        source: The stable book identity.
-        adjudicator: The LLM adjudication module.
-        session_factory: Neo4j session factory.
-        top_k: Max candidate hubs to retrieve.
-        min_score: Minimum vector similarity to consider.
-        cross_source: If True, search across all sources; if False,
-            scope to *source*.
-
-    Returns:
-        The existing hub uuid to merge into, or None if the cluster
-        should become a new hub.
-    """
-    from kms.graph import queries
-
-    centroid = _centroid_embedding(cluster)
-    display = _display_name(cluster, name_key)
-    descriptions = _collect_descriptions(cluster)
-
-    scope = None if cross_source else source
-
-    if name_key == 'name':
-        candidates = await queries.candidate_entity_hubs(
-            session_factory,
-            query_embedding=centroid,
-            source=scope,
-            top_k=top_k,
-            min_score=min_score,
-        )
-    else:
-        candidates = await queries.candidate_predicate_hubs(
-            session_factory,
-            query_embedding=centroid,
-            source=scope,
-            top_k=top_k,
-            min_score=min_score,
-        )
-
-    if not candidates:
-        return None  # No existing hubs — definitely new
-
-    for candidate in candidates:
-        decision, reasoning = await adjudicator.aforward(
-            cluster_name=display,
-            cluster_descriptions=descriptions,
-            hub_display_name=candidate['display_name'] or display,
-            hub_definition=candidate['definition_text'],
-            hub_aliases=candidate['aliases'],
-            similarity_score=candidate['score'],
-        )
-        logger.info(
-            'adjudication: cluster=%r candidate=%r score=%.3f '
-            '-> %s (%s)',
-            display,
-            candidate['display_name'],
-            candidate['score'],
-            decision,
-            reasoning,
-        )
-        if decision == 'Merge':
-            return candidate['hub_uuid']
-        elif decision == 'New':
-            continue  # Try next candidate
-        elif decision == 'Review':
-            # Flag for later — treat as New for now but log it
-            logger.warning(
-                'Review flagged: cluster=%r candidate=%r',
-                display,
-                candidate['display_name'],
-            )
-            continue
-        # Hierarchy: treat as New (separate hub), but log for later
-        elif decision == 'Hierarchy':
-            logger.info(
-                'Hierarchy: cluster=%r is a subtype of %r — '
-                'creating separate hub',
-                display,
-                candidate['display_name'],
-            )
-            continue
-
-    return None  # No candidate matched — new hub
-
-
-# ============================================================================
-# Phase 4: definition synthesis (old) + definition update (new)
+# Definition synthesis
 # ============================================================================
 
 
@@ -468,29 +235,6 @@ async def _synthesize_definition(
         return display
 
 
-async def _update_definition(
-    existing_definition: str,
-    new_descriptions: list[str],
-    display_name: str,
-    synthesizer: DefinitionSynthesizer,
-) -> str:
-    """Regenerate the canonical definition when a hub gains spokes.
-
-    Args:
-        existing_definition: The current canonical definition.
-        new_descriptions: The new spokes' descriptions.
-        display_name: The hub's canonical surface form.
-        synthesizer: The definition-writing LLM module.
-
-    Returns:
-        The updated definition text.
-    """
-    all_descriptions = [existing_definition] + list(new_descriptions)
-    if len(all_descriptions) <= 1:
-        return existing_definition
-    return await synthesizer.aforward(display_name, all_descriptions)
-
-
 async def _embed_text(text: str) -> list[float] | None:
     """Embed a single string, returning None when no embedder is
     configured."""
@@ -500,46 +244,309 @@ async def _embed_text(text: str) -> list[float] | None:
     return (await embedder.embed([text]))[0]
 
 
+async def _synthesize_all(
+    clusters: list[list[dict]],
+    name_key: str,
+    synthesizer: DefinitionSynthesizer,
+    *,
+    max_concurrency: int | None = None,
+) -> list[dict]:
+    """Synthesize a canonical definition for every cluster, concurrently.
+
+    Args:
+        clusters: One list of spoke dicts per cluster.
+        name_key: ``'name'`` for entities, ``'predicate'`` for predicates.
+        synthesizer: The definition-writing LLM module.
+        max_concurrency: Max LLM calls in flight. None uses
+            ``llm.MAX_CONCURRENT_CALLS``.
+
+    Returns:
+        One dict per cluster:
+        ``{display_name, definition_text, definition_embedding}``.
+    """
+    gate = llm_config.gate(max_concurrency)
+
+    async def _one(cluster: list[dict]) -> dict:
+        async with gate:
+            display = _display_name(cluster, name_key)
+            def_text = await _synthesize_definition(
+                cluster, name_key, synthesizer
+            )
+            def_embedding = await _embed_text(def_text)
+            return {
+                'display_name': display,
+                'definition_text': def_text,
+                'definition_embedding': def_embedding,
+            }
+
+    definitions = await asyncio.gather(
+        *(_one(cluster) for cluster in clusters)
+    )
+    logger.info(
+        'synthesized %d %s definition(s)',
+        len(definitions),
+        name_key,
+    )
+    return list(definitions)
+
+
 # ============================================================================
-# Public entry point — the full four-phase run
+# Write helpers
 # ============================================================================
 
 
-async def run_canonicalization(
-    source: str,
+async def _write_entity_hubs(
+    clusters: list[list[dict]],
+    definitions: list[dict],
+    session_factory,
+) -> None:
+    """Upsert :EntityHub, :Definition, CANONICAL, and HAS_DEFINITION.
+
+    Uses the deterministic-source-majority convention: each cluster's
+    source is the most common source among its spokes.
+    """
+    from kms.graph import queries, writer
+    from kms.graph.definitions import definition_rows, has_definition_pairs
+    from kms.graph.entity_hubs import entity_hub_uuid
+
+    hub_defs: list[dict] = []
+    hub_rows: list[dict] = []
+    canonical_pairs: list[dict] = []
+    now = writer.utcnow_iso()
+
+    for cluster, definition in zip(clusters, definitions, strict=True):
+        spoke_uuids = [s['uuid'] for s in cluster]
+        # Majority source
+        sources = [s.get('source', 'unknown') for s in cluster]
+        source = Counter(sources).most_common(1)[0][0]
+        hub_uuid = entity_hub_uuid(source, spoke_uuids)
+
+        hub_defs.append({
+            'hub_uuid': hub_uuid,
+            'definition_text': definition['definition_text'],
+            'definition_embedding': definition['definition_embedding'],
+        })
+
+        from kms.graph.entity_hubs import entity_hub_properties
+        hub_rows.append(entity_hub_properties(
+            source, spoke_uuids,
+            display_name=definition['display_name'],
+        ))
+
+        for spoke in cluster:
+            canonical_pairs.append({'entity': spoke['uuid'], 'hub': hub_uuid})
+
+    if not hub_rows:
+        return
+
+    async with session_factory() as session:
+        await session.run(queries.MERGE_ENTITY_HUBS, rows=hub_rows, now=now)
+
+        def_rows_list = definition_rows(hub_defs)
+        if def_rows_list:
+            await session.run(
+                queries.MERGE_DEFINITIONS, rows=def_rows_list, now=now
+            )
+
+        if canonical_pairs:
+            await session.run(
+                queries.MERGE_CANONICAL_ENTITY,
+                pairs=canonical_pairs,
+                now=now,
+            )
+
+        has_def_pairs_list = has_definition_pairs(hub_defs)
+        if has_def_pairs_list:
+            await session.run(
+                queries.MERGE_HAS_DEFINITION,
+                pairs=has_def_pairs_list,
+                now=now,
+            )
+
+
+async def _write_predicate_hubs(
+    clusters: list[list[dict]],
+    definitions: list[dict],
+    session_factory,
+) -> None:
+    """Upsert :PredicateHub, :Definition, CANONICAL, and HAS_DEFINITION."""
+    from kms.graph import queries
+    from kms.graph import writer as w
+    from kms.graph.definitions import definition_rows, has_definition_pairs
+    from kms.graph.predicate_hubs import predicate_hub_uuid
+
+    hub_defs: list[dict] = []
+    hub_rows: list[dict] = []
+    canonical_pairs: list[dict] = []
+    now = w.utcnow_iso()
+
+    for cluster, definition in zip(clusters, definitions, strict=True):
+        spoke_uuids = [s['uuid'] for s in cluster]
+        sources = [s.get('source', 'unknown') for s in cluster]
+        source = Counter(sources).most_common(1)[0][0]
+        hub_uuid = predicate_hub_uuid(source, spoke_uuids)
+
+        hub_defs.append({
+            'hub_uuid': hub_uuid,
+            'definition_text': definition['definition_text'],
+            'definition_embedding': definition['definition_embedding'],
+        })
+
+        from kms.graph.predicate_hubs import predicate_hub_properties
+        hub_rows.append(predicate_hub_properties(
+            source, spoke_uuids,
+            display_name=definition['display_name'],
+        ))
+
+        for spoke in cluster:
+            canonical_pairs.append(
+                {'predicate': spoke['uuid'], 'hub': hub_uuid}
+            )
+
+    if not hub_rows:
+        return
+
+    async with session_factory() as session:
+        await session.run(
+            queries.MERGE_PREDICATE_HUBS, rows=hub_rows, now=now
+        )
+
+        def_rows_list = definition_rows(hub_defs)
+        if def_rows_list:
+            await session.run(
+                queries.MERGE_DEFINITIONS, rows=def_rows_list, now=now
+            )
+
+        if canonical_pairs:
+            await session.run(
+                queries.MERGE_CANONICAL_PREDICATE,
+                pairs=canonical_pairs,
+                now=now,
+            )
+
+        has_def_pairs_list = has_definition_pairs(hub_defs)
+        if has_def_pairs_list:
+            await session.run(
+                queries.MERGE_HAS_DEFINITION,
+                pairs=has_def_pairs_list,
+                now=now,
+            )
+
+
+# ============================================================================
+# TripletHub + FactHub rebuild
+# ============================================================================
+
+
+async def _rebuild_triplet_hubs(session_factory) -> None:
+    """Rebuild :TripletHub and :FactHub from the fresh canonical layer.
+
+    Reads every :Triplet, resolves to its canonical hubs, groups by
+    (subj_hub, pred_hub, obj_hub), and writes :TripletHub + :FactHub.
+    """
+    from collections import defaultdict
+
+    from kms.core import embeddings as emb
+    from kms.graph import queries, triplet_hubs, writer
+
+    hub_triplets = await queries.all_canonical_triplets(session_factory)
+    print(f'  {len(hub_triplets)} canonical triplet(s) at hub level')
+
+    if not hub_triplets:
+        return
+
+    # Group by (subj_hub, pred_hub, obj_hub)
+    groups: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
+    for ht in hub_triplets:
+        key = (ht['subj_hub'], ht['pred_hub'], ht['obj_hub'])
+        groups[key].append(ht)
+
+    print(
+        f'  {len(groups)} unique canonical assertion(s) '
+        f'({len(hub_triplets)} total triplet(s))'
+    )
+
+    # Build group dicts
+    result: list[dict] = []
+    texts_to_embed: list[str] = []
+    embed_indices: list[int] = []
+
+    for i, ((subj, pred, obj), triplets) in enumerate(groups.items()):
+        first = triplets[0]
+        subj_name = first['subj_name']
+        pred_name = first['pred_name']
+        obj_name = first['obj_name']
+
+        # Majority source
+        sources = [
+            t.get('source', 'unknown') for t in triplets
+            if t.get('source')
+        ]
+        source = (
+            Counter(sources).most_common(1)[0][0]
+            if sources else 'global'
+        )
+        fact_text = f'{subj_name} {pred_name} {obj_name}'
+
+        result.append({
+            'triplet_hub_uuid': triplet_hubs.triplet_hub_uuid(
+                source, subj, pred, obj
+            ),
+            'subj_hub': subj,
+            'pred_hub': pred,
+            'obj_hub': obj,
+            'triplet_uuids': [t['triplet_uuid'] for t in triplets],
+            'fact_text': fact_text,
+        })
+        texts_to_embed.append(fact_text)
+        embed_indices.append(i)
+
+    # Embed assertion texts
+    if emb.is_configured():
+        embedder = emb.embedder()
+        vectors = await embedder.embed(texts_to_embed)
+        for idx, vector in zip(embed_indices, vectors, strict=True):
+            result[idx]['fact_embedding'] = vector
+        print(f'  {len(vectors)} assertion text(s) embedded')
+
+    # Write
+    await writer.persist_triplet_hubs(
+        result, session_factory=session_factory
+    )
+
+
+# ============================================================================
+# Public entry point
+# ============================================================================
+
+
+async def rebuild(
     threshold: float,
     language_model: dspy.LM,
     session_factory,
     *,
-    cross_source: bool = False,
-    top_k: int = 5,
-    min_score: float = 0.7,
     entity_kind: bool = True,
     predicate_kind: bool = True,
+    rebuild_triplets: bool = True,
 ) -> dict:
-    """Run the full four-phase canonicalization for *source*.
+    """Rebuild the entire canonical layer from all spokes.
 
     Args:
-        source: The stable book identity.
-        threshold: Minimum cosine similarity for intra-batch clustering.
-        language_model: The LM for adjudication and definition synthesis.
+        threshold: Minimum cosine similarity for clustering.
+        language_model: The LM for definition synthesis.
         session_factory: Neo4j session factory.
-        cross_source: If True, search existing hubs across all sources.
-        top_k: Max candidate hubs per cluster.
-        min_score: Minimum vector similarity for a candidate to be
-            considered.
         entity_kind: Whether to canonicalize entities.
         predicate_kind: Whether to canonicalize predicates.
+        rebuild_triplets: Whether to rebuild TripletHubs + FactHubs
+            after the entity/predicate canonical layer.
 
     Returns:
-        A dict with keys ``entity`` and ``predicate``, each a dict:
-        ``{merged, new_hubs, review_flagged, total_spokes}``.
+        A dict with keys ``entity`` and ``predicate``, each a dict
+        ``{clusters, spokes}``.
     """
-    from kms.graph import queries, writer
+    from kms.graph import queries
 
-    adjudicator = Adjudicator(language_model)
     synthesizer = DefinitionSynthesizer(language_model)
-
     result: dict = {}
 
     # ==================================================================
@@ -550,37 +557,35 @@ async def run_canonicalization(
         print('ENTITY CANONICALIZATION')
         print('=' * 60)
 
-        # Phase 1 — Read
-        spokes = await queries.uncanonicalized_entity_spokes(
-            session_factory, source=source
-        )
-        print(f'\nPhase 1 — Read: {len(spokes)} uncanonicalized entity '
-              f'spoke(s)')
+        spokes = await queries.all_entity_spokes(session_factory)
+        print(f'\nPhase 1 — Read: {len(spokes)} entity spoke(s)')
 
         if spokes:
-            # Phase 2 — Intra-batch cluster
             clusters = _cluster(spokes, threshold)
-            print(f'Phase 2 — Cluster: {len(clusters)} cluster(s) '
-                  f'from {len(spokes)} spoke(s) at threshold '
-                  f'{threshold}')
-
-            # Phase 3 — Cross-batch align + Phase 4 — Write
-            entity_result = await _canonicalize_entities(
-                clusters=clusters,
-                source=source,
-                adjudicator=adjudicator,
-                synthesizer=synthesizer,
-                session_factory=session_factory,
-                cross_source=cross_source,
-                top_k=top_k,
-                min_score=min_score,
+            print(
+                f'Phase 2 — Cluster: {len(clusters)} cluster(s) '
+                f'from {len(spokes)} spoke(s) at threshold {threshold}'
             )
-            result['entity'] = entity_result
-        else:
+
+            print('Phase 3 — Synthesize definitions...')
+            definitions = await _synthesize_all(
+                clusters, 'name', synthesizer
+            )
+
+            print('Phase 4 — Delete old canonical layer...')
+            await queries.delete_canonical_layer(session_factory)
+
+            print('Phase 5 — Write new entity hubs...')
+            await _write_entity_hubs(
+                clusters, definitions, session_factory
+            )
+
             result['entity'] = {
-                'merged': 0, 'new_hubs': 0, 'review_flagged': 0,
-                'total_spokes': 0,
+                'clusters': len(clusters),
+                'spokes': len(spokes),
             }
+        else:
+            result['entity'] = {'clusters': 0, 'spokes': 0}
 
     # ==================================================================
     # PREDICATES
@@ -590,264 +595,43 @@ async def run_canonicalization(
         print('PREDICATE CANONICALIZATION')
         print('=' * 60)
 
-        spokes = await queries.uncanonicalized_predicate_spokes(
-            session_factory, source=source
-        )
-        print(f'\nPhase 1 — Read: {len(spokes)} uncanonicalized '
-              f'predicate spoke(s)')
+        spokes = await queries.all_predicate_spokes(session_factory)
+        print(f'\nPhase 1 — Read: {len(spokes)} predicate spoke(s)')
 
         if spokes:
             clusters = _cluster(spokes, threshold)
-            print(f'Phase 2 — Cluster: {len(clusters)} cluster(s) '
-                  f'from {len(spokes)} spoke(s) at threshold '
-                  f'{threshold}')
-
-            pred_result = await _canonicalize_predicates(
-                clusters=clusters,
-                source=source,
-                adjudicator=adjudicator,
-                synthesizer=synthesizer,
-                session_factory=session_factory,
-                cross_source=cross_source,
-                top_k=top_k,
-                min_score=min_score,
+            print(
+                f'Phase 2 — Cluster: {len(clusters)} cluster(s) '
+                f'from {len(spokes)} spoke(s) at threshold {threshold}'
             )
-            result['predicate'] = pred_result
-        else:
+
+            print('Phase 3 — Synthesize definitions...')
+            definitions = await _synthesize_all(
+                clusters, 'predicate', synthesizer
+            )
+
+            print('Phase 4 — Delete old canonical layer...')
+            await queries.delete_canonical_layer(session_factory)
+
+            print('Phase 5 — Write new predicate hubs...')
+            await _write_predicate_hubs(
+                clusters, definitions, session_factory
+            )
+
             result['predicate'] = {
-                'merged': 0, 'new_hubs': 0, 'review_flagged': 0,
-                'total_spokes': 0,
+                'clusters': len(clusters),
+                'spokes': len(spokes),
             }
+        else:
+            result['predicate'] = {'clusters': 0, 'spokes': 0}
+
+    # ==================================================================
+    # TRIPLET HUBS + FACT HUBS
+    # ==================================================================
+    if rebuild_triplets:
+        print(f'\n{"=" * 60}')
+        print('TRIPLET HUB + FACT HUB REBUILD')
+        print('=' * 60)
+        await _rebuild_triplet_hubs(session_factory)
 
     return result
-
-
-# ============================================================================
-# Internal: entity canonicalization loop
-# ============================================================================
-
-
-async def _canonicalize_entities(
-    clusters: list[list[dict]],
-    source: str,
-    adjudicator: Adjudicator,
-    synthesizer: DefinitionSynthesizer,
-    session_factory,
-    *,
-    cross_source: bool = False,
-    top_k: int = 5,
-    min_score: float = 0.7,
-) -> dict:
-    """Run phases 3 + 4 for entity clusters."""
-    from kms.graph import writer
-    from kms.graph.entity_hubs import entity_hub_uuid
-
-    merged_count = 0
-    new_count = 0
-    review_count = 0
-    total_spokes = sum(len(c) for c in clusters)
-
-    new_clusters: list[list[dict]] = []
-    new_definitions: list[dict] = []
-
-    for i, cluster in enumerate(clusters):
-        display = _display_name(cluster, 'name')
-        print(f'\n  Cluster {i}: "{display}" '
-              f'({len(cluster)} spoke(s))')
-
-        # Phase 3 — align against existing hubs
-        existing_hub = await _align_cluster(
-            cluster=cluster,
-            name_key='name',
-            source=source,
-            adjudicator=adjudicator,
-            session_factory=session_factory,
-            top_k=top_k,
-            min_score=min_score,
-            cross_source=cross_source,
-        )
-
-        if existing_hub:
-            # Phase 4a — Merge into existing hub
-            print(f'    -> Merge into hub {existing_hub[:20]}...')
-            new_descriptions = _collect_descriptions(cluster)
-            # Fetch current definition text (we don't have it in
-            # memory — read it from Neo4j)
-            from kms.graph import queries
-            candidates = await queries.candidate_entity_hubs(
-                session_factory,
-                query_embedding=_centroid_embedding(cluster),
-                source=None if cross_source else source,
-                top_k=1,
-                min_score=0.0,
-            )
-            old_def = (
-                candidates[0]['definition_text']
-                if candidates else display
-            )
-            updated_text = await _update_definition(
-                existing_definition=old_def,
-                new_descriptions=new_descriptions,
-                display_name=display,
-                synthesizer=synthesizer,
-            )
-            updated_embedding = await _embed_text(updated_text)
-            spoke_uuids = [s['uuid'] for s in cluster]
-            await writer.persist_canonical_merge(
-                spoke_uuids=spoke_uuids,
-                hub_uuid=existing_hub,
-                hub_type='entity',
-                definition_text=updated_text,
-                definition_embedding=updated_embedding,
-                session_factory=session_factory,
-            )
-            merged_count += 1
-        else:
-            # Phase 4b — New hub
-            print(f'    -> New hub')
-            spoke_uuids = [s['uuid'] for s in cluster]
-            hub_uuid = entity_hub_uuid(source, spoke_uuids)
-            definition_text = await _synthesize_definition(
-                cluster, 'name', synthesizer
-            )
-            definition_embedding = await _embed_text(definition_text)
-            new_clusters.append(cluster)
-            new_definitions.append({
-                'hub_uuid': hub_uuid,
-                'display_name': display,
-                'definition_text': definition_text,
-                'definition_embedding': definition_embedding,
-            })
-            new_count += 1
-
-    # Write new hubs in one batch
-    if new_clusters:
-        await writer.persist_entity_hubs(
-            new_clusters,
-            new_definitions,
-            source,
-            session_factory=session_factory,
-            definitions=new_definitions,
-        )
-
-    print(f'\n  Entity result: {merged_count} merged, {new_count} new '
-          f'hub(s), {review_count} flagged, {total_spokes} total spoke(s)')
-    return {
-        'merged': merged_count,
-        'new_hubs': new_count,
-        'review_flagged': review_count,
-        'total_spokes': total_spokes,
-    }
-
-
-# ============================================================================
-# Internal: predicate canonicalization loop
-# ============================================================================
-
-
-async def _canonicalize_predicates(
-    clusters: list[list[dict]],
-    source: str,
-    adjudicator: Adjudicator,
-    synthesizer: DefinitionSynthesizer,
-    session_factory,
-    *,
-    cross_source: bool = False,
-    top_k: int = 5,
-    min_score: float = 0.7,
-) -> dict:
-    """Run phases 3 + 4 for predicate clusters."""
-    from kms.graph import writer
-    from kms.graph.predicate_hubs import predicate_hub_uuid
-
-    merged_count = 0
-    new_count = 0
-    review_count = 0
-    total_spokes = sum(len(c) for c in clusters)
-
-    new_clusters: list[list[dict]] = []
-    new_definitions: list[dict] = []
-
-    for i, cluster in enumerate(clusters):
-        display = _display_name(cluster, 'predicate')
-        print(f'\n  Cluster {i}: "{display}" '
-              f'({len(cluster)} spoke(s))')
-
-        existing_hub = await _align_cluster(
-            cluster=cluster,
-            name_key='predicate',
-            source=source,
-            adjudicator=adjudicator,
-            session_factory=session_factory,
-            top_k=top_k,
-            min_score=min_score,
-            cross_source=cross_source,
-        )
-
-        if existing_hub:
-            print(f'    -> Merge into hub {existing_hub[:20]}...')
-            new_descriptions = _collect_descriptions(cluster)
-            from kms.graph import queries
-            candidates = await queries.candidate_predicate_hubs(
-                session_factory,
-                query_embedding=_centroid_embedding(cluster),
-                source=None if cross_source else source,
-                top_k=1,
-                min_score=0.0,
-            )
-            old_def = (
-                candidates[0]['definition_text']
-                if candidates else display
-            )
-            updated_text = await _update_definition(
-                existing_definition=old_def,
-                new_descriptions=new_descriptions,
-                display_name=display,
-                synthesizer=synthesizer,
-            )
-            updated_embedding = await _embed_text(updated_text)
-            spoke_uuids = [s['uuid'] for s in cluster]
-            await writer.persist_canonical_merge(
-                spoke_uuids=spoke_uuids,
-                hub_uuid=existing_hub,
-                hub_type='predicate',
-                definition_text=updated_text,
-                definition_embedding=updated_embedding,
-                session_factory=session_factory,
-            )
-            merged_count += 1
-        else:
-            print(f'    -> New hub')
-            spoke_uuids = [s['uuid'] for s in cluster]
-            hub_uuid = predicate_hub_uuid(source, spoke_uuids)
-            definition_text = await _synthesize_definition(
-                cluster, 'predicate', synthesizer
-            )
-            definition_embedding = await _embed_text(definition_text)
-            new_clusters.append(cluster)
-            new_definitions.append({
-                'hub_uuid': hub_uuid,
-                'display_name': display,
-                'definition_text': definition_text,
-                'definition_embedding': definition_embedding,
-            })
-            new_count += 1
-
-    if new_clusters:
-        await writer.persist_predicate_hubs(
-            new_clusters,
-            new_definitions,
-            source,
-            session_factory=session_factory,
-            definitions=new_definitions,
-        )
-
-    print(f'\n  Predicate result: {merged_count} merged, {new_count} '
-          f'new hub(s), {review_count} flagged, {total_spokes} '
-          f'total spoke(s)')
-    return {
-        'merged': merged_count,
-        'new_hubs': new_count,
-        'review_flagged': review_count,
-        'total_spokes': total_spokes,
-    }

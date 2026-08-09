@@ -137,9 +137,7 @@ class Reranker:
         if top_n is not None:
             payload['top_n'] = top_n
 
-        response = await client.post(
-            f'{self.base_url}/rerank', json=payload
-        )
+        response = await client.post(f'{self.base_url}/rerank', json=payload)
         if response.status_code != 200:
             body = response.text[:500]
             raise RuntimeError(
@@ -149,6 +147,7 @@ class Reranker:
         return response.json().get('results', [])
 
     async def aclose(self) -> None:
+        """Close the underlying HTTP client."""
         if self._client is not None:
             await self._client.aclose()
             self._client = None
@@ -162,8 +161,6 @@ def reranker() -> Reranker:
     (``RERANK_API_KEY`` with an ``OPENROUTER_API_KEY`` fallback).
     """
     return Reranker(
-        base_url=os.environ.get(
-            RERANK_BASE_URL_ENV, DEFAULT_RERANK_BASE_URL
-        ),
+        base_url=os.environ.get(RERANK_BASE_URL_ENV, DEFAULT_RERANK_BASE_URL),
         model=os.environ.get(RERANK_MODEL_ENV, DEFAULT_RERANK_MODEL),
     )
