@@ -1,14 +1,3 @@
-"""Stage logging: the shared formatting helpers, and the per-stage INFO
-summaries.
-
-The pipeline previously emitted a single line for a whole run, which made a live
-validation sweep reconstruct stage behaviour from the LangGraph State and the
-DSPy cache (see ``robustness_test/ENTITY-REBUILD-VALIDATION.md``). These tests
-pin the summaries that replaced that, in particular the two counts that make a
-bad run diagnosable: the pedagogical component finder's procedure-span count and
-the statement extractor's induced-type histogram.
-"""
-
 import asyncio
 import logging
 
@@ -18,8 +7,6 @@ from kms.ingestion import (
     pedagogical_component_finder,
     seam_merger,
 )
-
-# --- logs.elide ---
 
 
 def test_elide_collapses_whitespace_and_newlines():
@@ -38,9 +25,6 @@ def test_elide_renders_none_as_empty():
     assert logs.elide(None) == ''
 
 
-# --- logs.counts ---
-
-
 def test_counts_orders_by_frequency_then_name():
     assert logs.counts(['b', 'a', 'b']) == 'b=2 a=1'
 
@@ -48,9 +32,6 @@ def test_counts_orders_by_frequency_then_name():
 def test_counts_renders_none_values_and_empty_input():
     assert logs.counts([None]) == '?=1'
     assert logs.counts([]) == 'none'
-
-
-# --- stage summaries ---
 
 
 def _nodes(*contents):
@@ -98,8 +79,6 @@ class _ScriptedRoles:
 
 
 def test_hub_builder_logs_composition(caplog):
-    # The counts must be reported — statement, procedure, and both-block
-    # counts — for observability.
     node = hub_builder.HubBuilderNode(
         role_module=_ScriptedRoles([(True, False), (False, True)])
     )
@@ -124,11 +103,11 @@ def test_hub_builder_logs_zero_derivations(caplog):
 def test_seam_merger_logs_the_flattened_stream_size(caplog):
     segment = models.Segment(index=0, image_path='p0.png')
     segment.nodes = _nodes('a', 'b')
-    # The collect methods don't use the modules, only workers do.
-    node = seam_merger.SeamMergerNode(module=None, rewriter=None)  # type: ignore[arg-type]
+    node = seam_merger.SeamMergerNode(module=None, rewriter=None)
     with caplog.at_level(logging.INFO, logger='kms.ingestion.seam_merger'):
         result = node.odd_collect(
             {'segments': [segment], 'seam_odd_results': []}
         )
     assert len(result['nodes']) == 2
     assert '1 page(s) -> flat stream of 2 node(s)' in caplog.text
+

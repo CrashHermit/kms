@@ -1,9 +1,3 @@
-"""Instruction-layer graph mapping and the :GOVERNS edges.
-
-Pure mapping plus the instruction write, which runs against a fake driver —
-the Cypher is asserted, nothing is sent anywhere.
-"""
-
 import asyncio
 
 from kms.core import models
@@ -43,8 +37,6 @@ def test_instruction_uuids_are_disjoint_from_other_tiers():
 
 def test_properties_keep_page_text_and_directive_apart():
     props = instructions.instruction_properties(_instruction(), 'ea2e.pdf')
-    # The page's sentence and the model's imperative are different fields:
-    # only one of them is something the document actually says.
     assert props['text'] == 'In the following exercises, simplify.'
     assert props['directive'] == 'simplify'
     assert props['index'] == 0
@@ -117,7 +109,6 @@ def test_persist_instructions_writes_hubs_then_governs_edges():
     assert len(hub_params['rows']) == 1
 
     edge_query, edge_params = fake.queries[1]
-    # The edge runs from the hub outward, not from the node.
     assert 'MERGE (i)-[r:GOVERNS]->(n)' in edge_query
     assert len(edge_params['pairs']) == 2
 
@@ -132,3 +123,4 @@ def test_persist_instructions_is_a_noop_when_empty():
         )
     )
     assert fake.queries == []
+

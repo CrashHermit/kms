@@ -1,17 +1,3 @@
-"""Live test: community detection + summary synthesis on the canonical
-hub graph.
-
-Runs after canonicalization.  Reads the EntityHub / PredicateHub graph
-from Neo4j, finds connected communities, synthesises summary paragraphs,
-and persists :Community nodes.
-
-Requires NEO4J_URI/USERNAME/PASSWORD, DEEPSEEK_API_KEY (LLM summaries),
-and OPENROUTER_API_KEY (summary embedding).
-
-Run from the repo root with:
-    .venv/bin/python tests/live_community_test.py
-"""
-
 import asyncio
 import sys
 from pathlib import Path
@@ -35,8 +21,6 @@ async def main() -> None:
 
     def _sf():
         return db.session()
-
-    # Ensure schema includes Community constraint + index
     await schema.ensure_schema(_sf)
 
     try:
@@ -55,8 +39,6 @@ async def main() -> None:
         print('RESULTS')
         print('=' * 60)
         print(f'{len(communities)} community(ies) built')
-
-        # Verify
         async with db.session() as s:
             r = await s.run(
                 'MATCH (c:Community) RETURN count(c) AS cnt'
@@ -75,8 +57,6 @@ async def main() -> None:
             )
             cnt = (await r.single())['cnt']
             print(f'  :COMMUNITY_EVIDENCE: {cnt}')
-
-            # Show summaries
             r = await s.run(
                 'MATCH (c:Community) '
                 'RETURN c.summary_text AS summary, '
@@ -99,3 +79,4 @@ async def main() -> None:
 
 if __name__ == '__main__':
     asyncio.run(main())
+

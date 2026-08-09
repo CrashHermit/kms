@@ -1,5 +1,3 @@
-"""Pedagogical component finder: cursor-walk banking and span cutting."""
-
 import asyncio
 
 from kms.core import models
@@ -99,3 +97,4 @@ def test_node_run_on_empty_stream_yields_an_empty_channel():
         module=_ScriptedFinder([])
     )
     assert asyncio.run(node.run({'nodes': []})) == {'spans': []}
+

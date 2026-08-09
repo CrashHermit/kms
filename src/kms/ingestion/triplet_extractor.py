@@ -1,44 +1,3 @@
-r"""
-Triplet extraction — one LangGraph node, one DSPy module.
-
-The second semantic pass: it reads each atomic fact and decomposes it into
-one or more (subject, predicate, object) triplets — the raw relation
-inventory for the downstream entity canonicalization and relation
-canonicalization passes.
-
-Design commitments:
-
-* ONE FACT AT A TIME. Each fact is already a self-contained standalone
-  sentence (by the atomic fact pass's contract), so no surrounding context
-  window is needed. Every fact is processed in isolation and concurrently
-  with every other fact.
-
-* VERBATIM SUBJECT/OBJECT. Subject and object are exact substrings lifted
-  from the fact text — no normalization, no pronoun resolution, no
-  abstraction. The fact already resolves referents (the atomic fact
-  pass's STANDALONE rule), so the subject and object are concrete noun
-  phrases already present in the text. Canonicalization into entities
-  happens in the next pass.
-
-* DOMAIN-AGNOSTIC, NO RELATION TAXONOMY. The pass targets relations
-  generally: any document, any subject. The prompt does not enumerate
-  relation kinds (is-a / has-property / causes / …) and carries no
-  ontology vocabulary. The only criteria are that subject and object are
-  verbatim substrings and the predicate is a short relation phrase.
-
-* 1..N TRIPLETS PER FACT. A fact may contain multiple relations —
-  compound assertions, conjoined properties, multi-entity claims. Each
-  independent (subject, predicate, object) relationship is one triplet.
-  A fact that asserts nothing decomposable into subject-predicate-object
-  form (e.g., a bare existential statement) legitimately yields zero
-  triplets.
-
-* MINIMAL OUTPUT. ``models.Triplet`` carries only ``subject``,
-  ``predicate``, ``object``, and ``fact_index`` — no relation kind, no
-  confidence. Classification is a downstream pass's job; provenance is
-  the fact index set by the entry point.
-"""
-
 import asyncio
 import logging
 
@@ -51,8 +10,6 @@ logger = logging.getLogger(__name__)
 
 
 class DSPyTriplet(BaseModel):
-    """One (subject, predicate, object) triplet emitted by the extractor."""
-
     subject: str = Field(
         description=(
             'The subject of the relation — an exact verbatim substring '
@@ -267,12 +224,6 @@ class Signature(dspy.Signature):
 
 
 class TripletExtractor(dspy.Module):
-    """Extracts (subject, predicate, object) triplets from one atomic fact.
-
-    Args:
-        language_model: The LM to run on.
-    """
-
     def __init__(
         self,
         language_model: dspy.LM,
@@ -284,14 +235,6 @@ class TripletExtractor(dspy.Module):
         self._recorder = recorder
 
     async def aforward(self, fact_text: str) -> list[models.Triplet]:
-        """Extract triplets from one atomic fact.
-
-        Args:
-            fact_text: The atomic fact text.
-
-        Returns:
-            The triplets found, or an empty list.
-        """
         result = await self.extractor.acall(fact_text=fact_text)
         if self._recorder:
             self._recorder.record(
@@ -314,13 +257,7 @@ class TripletExtractor(dspy.Module):
         return triplets
 
     def forward(self, fact_text: str) -> list[models.Triplet]:
-        """Sync forward for DSPy optimisers."""
         return asyncio.run(self.aforward(fact_text=fact_text))
-
-
-# ============================================================================
-# Entry point
-# ============================================================================
 
 
 async def extract_triplets(
@@ -328,21 +265,6 @@ async def extract_triplets(
     module: TripletExtractor,
     max_concurrency: int | None = None,
 ) -> list[models.Triplet]:
-    """Extract triplets from every atomic fact.
-
-    Each fact is processed independently and concurrently; the triplets
-    are collected in document order with their ``fact_index`` set to the
-    source fact's position.
-
-    Args:
-        facts: The atomic facts, in document order.
-        module: The triplet extractor.
-        max_concurrency: Facts in flight at once. None uses
-            ``llm.MAX_CONCURRENT_CALLS``.
-
-    Returns:
-        The triplets, in document order (grouped by source fact).
-    """
     if not facts:
         logger.info('triplet extractor: no facts')
         return []
@@ -373,34 +295,12 @@ async def extract_triplets(
     return triplets
 
 
-# ============================================================================
-# LangGraph node
-# ============================================================================
-
-
 class TripletNode:
-    """Extracts triplets from the atomic fact list.
-
-    Runs after the atomic fact pass and before the ingestion
-    persister. Reads only the ``atomic_facts`` channel; writes the
-    ``triplets`` channel.
-
-    Args:
-        module: The triplet extractor.
-    """
-
     def __init__(self, module: TripletExtractor) -> None:
         self.module = module
 
     async def run(self, state: state.State) -> dict:
-        """Extract triplets from the atomic facts.
-
-        Args:
-            state: The pipeline state, holding the atomic facts.
-
-        Returns:
-            The ``triplets`` channel.
-        """
         facts = state.get('atomic_facts', [])
         triplets = await extract_triplets(facts, module=self.module)
         return {'triplets': triplets}
+

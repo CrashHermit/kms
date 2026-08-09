@@ -1,25 +1,3 @@
-"""
-Every Cypher statement in the graph tier — the query module.
-
-``writer`` is the write half of the I/O layer: it composes rows and edge
-pairs from the mapping modules and hands them to the batched MERGE
-queries defined here. This module is the query half: every Cypher string
-lives in one place, named and parameterised, so the writer embeds no
-Cypher and the read side has a single home.
-
-Write queries are the batched, idempotent upserts (``MERGE ... ON CREATE
-SET created_at = $now SET ..., modified_at = $now``) that ``writer``
-runs. Read queries are named lookbacks that return plain data, used by
-construction passes that must see what is already in the graph.
-
-Every function takes the injected ``session_factory`` (the same callable
-the persister receives — an async context manager with
-``run(query, **params)``) and returns plain values, never driver objects,
-so the queries are unit-testable against a scripted session and the neo4j
-driver stays quarantined in ``db``. Scoping by book uses the raw source
-identity and maps it through ``nodes.source_uuid``, matching ``writer``.
-"""
-
 from collections.abc import Callable
 
 from kms.graph.community import COMMUNITY_LABEL
@@ -37,11 +15,6 @@ from kms.graph.statements import STATEMENT_LABEL
 from kms.graph.triplet_hubs import TRIPLET_HUB_LABEL
 from kms.graph.triplets import TRIPLET_LABEL
 
-# ============================================================================
-# Write queries — batched, idempotent upserts run by ``writer``
-# ============================================================================
-
-
 MERGE_SOURCE = (
     f'MERGE (s:{SOURCE_LABEL} {{uuid: $uuid}}) '
     f'ON CREATE SET s.created_at = $now '
@@ -50,15 +23,6 @@ MERGE_SOURCE = (
 
 
 def merge_nodes_query(label: str | None) -> str:
-    """The batched ``:Node`` upsert for one per-type label group.
-
-    Args:
-        label: The per-type label (e.g. ``'Paragraph'``), or None to keep
-            the plain ``:Node`` label.
-
-    Returns:
-        The Cypher for one batched MERGE of ``$rows``.
-    """
     query = (
         f'UNWIND $rows AS row '
         f'MERGE (n:{NODE_LABEL} {{uuid: row.uuid}}) '
@@ -366,11 +330,6 @@ MERGE_SUPPORTED_BY = (
     f'SET r.modified_at = $now'
 )
 
-
-# ============================================================================
-# Delete query — atomic wipe of the canonical layer before rebuild
-# ============================================================================
-
 DELETE_CANONICAL_LAYER = (
     f'MATCH (:Entity)-[r:CANONICAL]->() DELETE r '
     f'WITH 1 AS done '
@@ -400,31 +359,11 @@ DELETE_CANONICAL_LAYER = (
 )
 
 
-# ============================================================================
-# Read queries — named lookbacks returning plain data
-# ============================================================================
-
-
 async def relation_types(
     session_factory: Callable,
     *,
     source: str | None = None,
 ) -> list[str]:
-    """Every distinct relation type present in the graph.
-
-    The living schema's ground truth: relation types are whatever edges the
-    graph actually contains. The relation pass's write-time canonicalisation
-    compares a proposed type against this list and reuses the existing name
-    when one matches.
-
-    Args:
-        session_factory: A callable that returns an async context manager
-            with a ``run(query, **params)`` method.
-        source: The book identity to scope to, or None for the whole graph.
-
-    Returns:
-        The distinct relation type names, sorted.
-    """
     params: dict[str, str] = {}
     if source is not None:
         params['source'] = source_uuid(source)
@@ -446,11 +385,6 @@ async def relation_types(
 async def all_entity_spokes(
     session_factory: Callable,
 ) -> list[dict]:
-    """Every ``:Entity`` with an embedding, across all sources.
-
-    Returns:
-        One dict per spoke: ``{uuid, name, description, embedding}``.
-    """
     cypher = (
         f'MATCH (e:{ENTITY_LABEL})\n'
         f'WHERE e.embedding IS NOT NULL\n'
@@ -475,12 +409,6 @@ async def all_entity_spokes(
 async def all_predicate_spokes(
     session_factory: Callable,
 ) -> list[dict]:
-    """Every ``:Predicate`` with an embedding, across all sources.
-
-    Returns:
-        One dict per spoke:
-        ``{uuid, predicate, description, embedding, source}``.
-    """
     cypher = (
         f'MATCH (p:{PREDICATE_LABEL})\n'
         f'WHERE p.embedding IS NOT NULL\n'
@@ -503,12 +431,6 @@ async def all_predicate_spokes(
 
 
 async def delete_canonical_layer(session_factory: Callable) -> None:
-    """Delete every node and edge in the canonical layer.
-
-    Spokes (``:Entity``, ``:Predicate``, ``:Triplet``) are
-    untouched.  Only hubs, definitions, and canonical edges are
-    removed.
-    """
     async with session_factory() as session:
         await session.run(DELETE_CANONICAL_LAYER)
 
@@ -516,10 +438,6 @@ async def delete_canonical_layer(session_factory: Callable) -> None:
 async def all_canonical_triplets(
     session_factory: Callable,
 ) -> list[dict]:
-    """Every triplet resolved to its canonical hubs, across all sources.
-
-    Same shape as ``canonical_hub_triplets`` but unscoped.
-    """
     from kms.graph.entity_hubs import ENTITY_HUB_LABEL as EH
     from kms.graph.predicate_hubs import PREDICATE_HUB_LABEL as PH
     from kms.graph.triplets import TRIPLET_LABEL as TL
@@ -569,22 +487,6 @@ async def canonical_hub_triplets(
     *,
     source: str,
 ) -> list[dict]:
-    """Every canonical triplet at hub level — the EntityHub /
-    PredicateHub graph used for community detection.
-
-    Walks from each ``:Triplet`` through its ``:CANONICAL`` edges to
-    find the hub for each of subject, predicate, and object.
-
-    Args:
-        session_factory: The injected session factory.
-        source: The stable book identity to scope to.
-
-    Returns:
-        One dict per canonical triplet:
-        ``{triplet_uuid, subj_hub, subj_name, subj_def,
-           pred_hub, pred_name, pred_def,
-           obj_hub, obj_name, obj_def}``.
-    """
     from kms.graph.entity_hubs import ENTITY_HUB_LABEL
     from kms.graph.predicate_hubs import PREDICATE_HUB_LABEL
     from kms.graph.triplets import TRIPLET_LABEL
@@ -635,18 +537,6 @@ async def vector_search_communities(
     source: str,
     top_k: int = 20,
 ) -> list[dict]:
-    """Vector search the ``community_summary`` index.
-
-    Args:
-        session_factory: The injected session factory.
-        query_embedding: The query vector.
-        source: The stable book identity to scope to.
-        top_k: Maximum results.
-
-    Returns:
-        One dict per result:
-        ``{uuid, summary_text, summary_embedding, score}``.
-    """
     cypher = (
         'CALL db.index.vector.queryNodes(\n'
         '  "community_summary", $k, $query_embedding\n'
@@ -686,19 +576,6 @@ async def vector_search_hub_definitions(
     kind: str,
     top_k: int = 20,
 ) -> list[dict]:
-    """Vector search the ``definition_embedding`` index for hubs.
-
-    Args:
-        session_factory: The injected session factory.
-        query_embedding: The query vector.
-        source: The stable book identity.
-        kind: ``'entity'`` or ``'predicate'``.
-        top_k: Maximum results.
-
-    Returns:
-        One dict per result:
-        ``{hub_uuid, display_name, definition_text, score}``.
-    """
     hub_label = ENTITY_HUB_LABEL if kind == 'entity' else PREDICATE_HUB_LABEL
     cypher = (
         f'CALL db.index.vector.queryNodes(\n'
@@ -739,18 +616,6 @@ async def vector_search_nodes(
     source: str,
     top_k: int = 20,
 ) -> list[dict]:
-    """Vector search the ``node_content`` index on ``:Node``.
-
-    Args:
-        session_factory: The injected session factory.
-        query_embedding: The query vector.
-        source: The stable book identity.
-        top_k: Maximum results.
-
-    Returns:
-        One dict per result:
-        ``{uuid, content, type, index, segment_index, score}``.
-    """
     cypher = (
         'CALL db.index.vector.queryNodes(\n'
         '  "node_content", $k, $query_embedding\n'
@@ -784,3 +649,4 @@ async def vector_search_nodes(
             }
             async for record in result
         ]
+

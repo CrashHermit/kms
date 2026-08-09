@@ -1,27 +1,3 @@
-"""
-Central reranker configuration for post-retrieval relevance scoring.
-
-The counterpart to ``core.embeddings`` for ranking: a thin async httpx
-client over an OpenAI-compatible ``/rerank`` endpoint, defaulting to
-OpenRouter so any reranker OpenRouter serves works — Cohere
-(``cohere/rerank-v3.5``), NVIDIA multimodal (``nvidia/llama-nemotron-
-rerank-vl-1b-v2``), and the rest are just ``RERANK_MODEL`` changes.
-
-Two document shapes, chosen by the caller:
-
-* **Text-only:** pass a flat list of strings.
-* **Multimodal:** pass a list of dicts, each optionally carrying
-  ``"text"`` and/or ``"image"`` (URL or base64 data URI).  At least one
-  of the two is required per document.
-
-Config, all env-driven:
-
-* ``RERANK_MODEL`` — the model id, default ``cohere/rerank-v3.5``.
-* ``RERANK_BASE_URL`` — the endpoint root, default OpenRouter's
-  ``https://openrouter.ai/api/v1``.
-* ``RERANK_API_KEY`` — the key; falls back to ``OPENROUTER_API_KEY``.
-"""
-
 import os
 from collections.abc import Sequence
 from functools import lru_cache
@@ -47,7 +23,6 @@ TIMEOUT_SECONDS = 60.0
 
 
 def _api_key() -> str:
-    """The reranker API key, falling back to the OpenRouter key."""
     key = os.environ.get(RERANK_API_KEY_ENV) or os.environ.get(
         'OPENROUTER_API_KEY'
     )
@@ -61,10 +36,6 @@ def _api_key() -> str:
 
 
 def is_configured() -> bool:
-    """Whether a reranker target is configured.
-
-    The base URL defaults to OpenRouter, so only the key matters.
-    """
     return bool(
         os.environ.get(RERANK_API_KEY_ENV)
         or os.environ.get('OPENROUTER_API_KEY')
@@ -72,16 +43,6 @@ def is_configured() -> bool:
 
 
 class Reranker:
-    """A thin async client for an OpenAI-compatible rerank endpoint.
-
-    Args:
-        base_url: The endpoint root, e.g. OpenRouter's
-            ``https://openrouter.ai/api/v1``.
-        model: The reranker model id, e.g. ``cohere/rerank-v3.5``.
-        api_key: The bearer token.
-        timeout: Per-request timeout in seconds.
-    """
-
     def __init__(
         self,
         base_url: str = DEFAULT_RERANK_BASE_URL,
@@ -113,21 +74,6 @@ class Reranker:
         documents: Sequence[str | dict[str, Any]],
         top_n: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Score every document against *query*.
-
-        Args:
-            query: The search query — a string for text-only, or a
-                dict with ``text`` and/or ``image`` keys.
-            documents: The candidates to score.  Strings are treated as
-                text-only documents; dicts may carry ``text`` and/or
-                ``image`` (URL or base64 data URI).
-            top_n: If set, return only the top *n* results.
-
-        Returns:
-            One dict per result:
-            ``{index, relevance_score, document: {text, image?}}``,
-            sorted by relevance descending.
-        """
         client = await self._client_for()
         payload: dict[str, Any] = {
             'model': self.model,
@@ -147,7 +93,6 @@ class Reranker:
         return response.json().get('results', [])
 
     async def aclose(self) -> None:
-        """Close the underlying HTTP client."""
         if self._client is not None:
             await self._client.aclose()
             self._client = None
@@ -155,12 +100,8 @@ class Reranker:
 
 @lru_cache(maxsize=1)
 def reranker() -> Reranker:
-    """The shared reranker, created once and reused.
-
-    Built from ``RERANK_MODEL``, ``RERANK_BASE_URL``, and the API key
-    (``RERANK_API_KEY`` with an ``OPENROUTER_API_KEY`` fallback).
-    """
     return Reranker(
         base_url=os.environ.get(RERANK_BASE_URL_ENV, DEFAULT_RERANK_BASE_URL),
         model=os.environ.get(RERANK_MODEL_ENV, DEFAULT_RERANK_MODEL),
     )
+

@@ -1,5 +1,3 @@
-"""Instruction finder: tags exercise lead-in nodes."""
-
 import asyncio
 
 from kms.core import models
@@ -64,3 +62,4 @@ def test_instruction_finder_node_writes_the_nodes_channel():
     out = asyncio.run(node.run({'nodes': _nodes()}))
     assert set(out) == {'nodes'}
     assert out['nodes'][0].type == 'instruction'
+

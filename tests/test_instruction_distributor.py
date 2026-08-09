@@ -1,8 +1,3 @@
-"""Instruction distributor — governance hubs, and the verbatim guarantee.
-
-No network/LLM: the governance module is scripted.
-"""
-
 import asyncio
 
 from kms.core import models
@@ -18,8 +13,6 @@ def _exercise(content, node_id):
 
 
 class _ScriptedGovernance:
-    """Returns a fixed (instruction, governed_positions) per call."""
-
     def __init__(self, *answers):
         self._answers = list(answers)
         self.calls = []
@@ -36,8 +29,6 @@ def _run(nodes, module):
 
 
 def test_governed_node_content_is_left_verbatim():
-    # The whole point of the hub: a governed exercise is a verbatim page
-    # block, so the directive must NOT be written into its content.
     nodes = [
         _lead_in('In the following exercises, simplify.', 0),
         _exercise('979. 17a + 9a', 1),
@@ -63,7 +54,6 @@ def test_hub_carries_verbatim_text_directive_and_members():
     _, instructions = _run(nodes, module)
 
     hub = instructions[0]
-    # The page's own sentence, not the normalised imperative.
     assert hub.text == 'In the following exercises, simplify.'
     assert hub.directive == 'simplify'
     assert hub.members == [1, 2]
@@ -95,7 +85,6 @@ def test_a_lead_in_governing_nothing_makes_no_hub():
     cleaned, instructions = _run(nodes, module)
 
     assert instructions == []
-    # The lead-in still leaves the stream.
     assert [node.id for node in cleaned] == [1]
 
 
@@ -108,7 +97,6 @@ def test_no_lead_ins_is_a_noop_returning_the_stream_unchanged():
 
 
 def test_governance_stops_at_the_next_lead_in():
-    # The second lead-in's exercises are never candidates for the first.
     nodes = [
         _lead_in('First.', 0),
         _exercise('1. a', 1),
@@ -120,3 +108,4 @@ def test_governance_stops_at_the_next_lead_in():
 
     first_call_candidates = module.calls[0][1]
     assert first_call_candidates == ['1. a']
+

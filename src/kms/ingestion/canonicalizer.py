@@ -1,26 +1,3 @@
-"""
-Entity and predicate canonicalization — full rebuild from spokes.
-
-Every source ingestion triggers a complete rebuild of the canonical
-layer: read all spokes across all sources, cluster by embedding
-similarity, synthesise definitions, delete the old canonical layer,
-and write fresh hubs, definitions, and CANONICAL edges.
-
-The canonical layer is fully derived from immutable spokes — there is
-no incremental merge and no cross-batch adjudication.  The rebuild is
-deterministic for a given set of spokes and threshold.
-
-Design commitments:
-
-* CRASH ON MISSING EMBEDDINGS — every spoke must carry an embedding.
-* PURE-MATH CLUSTERING — all-pairs cosine similarity, no LLM in the
-  cluster path.
-* ONE LLM CALL PER DEFINITION — definition synthesis is per cluster,
-  run concurrently.
-* ATOMIC REPLACEMENT — the old canonical layer is wiped before the
-  new one is written, so the graph is never in a mixed state.
-"""
-
 import asyncio
 import logging
 from collections import Counter
@@ -31,11 +8,6 @@ from kms.core import embeddings
 from kms.core import llm as llm_config
 
 logger = logging.getLogger(__name__)
-
-
-# ============================================================================
-# DSPy module — definition synthesis
-# ============================================================================
 
 
 class DefinitionSignature(dspy.Signature):
@@ -68,12 +40,6 @@ class DefinitionSignature(dspy.Signature):
 
 
 class DefinitionSynthesizer(dspy.Module):
-    """Synthesises multiple descriptions into one canonical definition.
-
-    Args:
-        language_model: The LM to run on.
-    """
-
     def __init__(self, language_model: dspy.LM) -> None:
         super().__init__()
         self.synthesizer = dspy.ChainOfThought(DefinitionSignature)
@@ -82,15 +48,6 @@ class DefinitionSynthesizer(dspy.Module):
     async def aforward(
         self, concept_name: str, descriptions: list[str]
     ) -> str:
-        """Synthesize a canonical definition asynchronously.
-
-        Args:
-            concept_name: The name of the concept being defined.
-            descriptions: The source descriptions to synthesize from.
-
-        Returns:
-            The synthesized canonical definition.
-        """
         result = await self.synthesizer.acall(
             concept_name=concept_name, descriptions=descriptions
         )
@@ -101,39 +58,10 @@ class DefinitionSynthesizer(dspy.Module):
         return result.definition
 
     def forward(self, concept_name: str, descriptions: list[str]) -> str:
-        """Synthesize a canonical definition synchronously.
-
-        Wraps :meth:`aforward` in an asyncio event loop.
-
-        Args:
-            concept_name: The name of the concept being defined.
-            descriptions: The source descriptions to synthesize from.
-
-        Returns:
-            The synthesized canonical definition.
-        """
         return asyncio.run(self.aforward(concept_name, descriptions))
 
 
-# ============================================================================
-# Clustering
-# ============================================================================
-
-
 def _cluster(spokes: list[dict], threshold: float) -> list[list[dict]]:
-    """Cluster spokes by all-pairs cosine similarity → connected components.
-
-    Args:
-        spokes: One dict per spoke, each with ``uuid`` and ``embedding``.
-        threshold: Minimum cosine similarity for two spokes to be
-            considered the same concept.
-
-    Returns:
-        One list of spoke dicts per cluster.
-
-    Raises:
-        ValueError: If any spoke is missing its embedding.
-    """
     for spoke in spokes:
         if spoke.get('embedding') is None:
             display = spoke.get('name') or spoke.get('predicate')
@@ -172,11 +100,6 @@ def _cluster(spokes: list[dict], threshold: float) -> list[list[dict]]:
     return clusters
 
 
-# ============================================================================
-# Helpers — centroid, display name, description collection
-# ============================================================================
-
-
 def _most_frequent(values: list[str]) -> str:
     counts = Counter(values)
     max_count = max(counts.values())
@@ -204,26 +127,11 @@ def _collect_descriptions(cluster: list[dict]) -> list[str]:
     )
 
 
-# ============================================================================
-# Definition synthesis
-# ============================================================================
-
-
 async def _synthesize_definition(
     cluster: list[dict],
     name_key: str,
     synthesizer: DefinitionSynthesizer,
 ) -> str:
-    """Create a canonical definition for one cluster.
-
-    Args:
-        cluster: One cluster's spoke dicts.
-        name_key: ``'name'`` or ``'predicate'``.
-        synthesizer: The definition-writing LLM module.
-
-    Returns:
-        The definition text.
-    """
     display = _display_name(cluster, name_key)
     descriptions = _collect_descriptions(cluster)
 
@@ -236,8 +144,6 @@ async def _synthesize_definition(
 
 
 async def _embed_text(text: str) -> list[float] | None:
-    """Embed a single string, returning None when no embedder is
-    configured."""
     if not embeddings.is_configured():
         return None
     embedder = embeddings.embedder()
@@ -251,19 +157,6 @@ async def _synthesize_all(
     *,
     max_concurrency: int | None = None,
 ) -> list[dict]:
-    """Synthesize a canonical definition for every cluster, concurrently.
-
-    Args:
-        clusters: One list of spoke dicts per cluster.
-        name_key: ``'name'`` for entities, ``'predicate'`` for predicates.
-        synthesizer: The definition-writing LLM module.
-        max_concurrency: Max LLM calls in flight. None uses
-            ``llm.MAX_CONCURRENT_CALLS``.
-
-    Returns:
-        One dict per cluster:
-        ``{display_name, definition_text, definition_embedding}``.
-    """
     gate = llm_config.gate(max_concurrency)
 
     async def _one(cluster: list[dict]) -> dict:
@@ -288,11 +181,6 @@ async def _synthesize_all(
         name_key,
     )
     return list(definitions)
-
-
-# ============================================================================
-# Adjudication — LLM verifies cluster membership
-# ============================================================================
 
 
 class AdjudicationSignature(dspy.Signature):
@@ -329,12 +217,6 @@ class AdjudicationSignature(dspy.Signature):
 
 
 class Adjudicator(dspy.Module):
-    """Decides whether a spoke belongs to a concept cluster.
-
-    Args:
-        language_model: The LM to run on.
-    """
-
     def __init__(self, language_model: dspy.LM) -> None:
         super().__init__()
         self.judge = dspy.ChainOfThought(AdjudicationSignature)
@@ -346,11 +228,6 @@ class Adjudicator(dspy.Module):
         sample_descriptions: list[str],
         target_description: str,
     ) -> bool:
-        """Decide whether *target_description* belongs to *concept_name*.
-
-        Returns:
-            True if the spoke matches the concept.
-        """
         result = await self.judge.acall(
             concept_name=concept_name,
             sample_descriptions=sample_descriptions,
@@ -364,17 +241,11 @@ class Adjudicator(dspy.Module):
         sample_descriptions: list[str],
         target_description: str,
     ) -> bool:
-        """Sync forward for DSPy optimisers."""
         return asyncio.run(
             self.aforward(
                 concept_name, sample_descriptions, target_description
             )
         )
-
-
-# ============================================================================
-# Cluster verification: spoke-to-centroid LLM refinement
-# ============================================================================
 
 
 async def _verify_and_refine(
@@ -387,27 +258,6 @@ async def _verify_and_refine(
     auto_reject: float = 0.65,
     max_concurrency: int | None = None,
 ) -> list[list[dict]]:
-    """Refine clusters by LLM verification of ambiguous spoke assignments.
-
-    For each cluster, spokes close to the centroid are auto-accepted,
-    spokes far from the centroid are auto-rejected, and spokes in the
-    ambiguity band are judged by the LLM.  Rejected spokes are then
-    re-clustered among themselves.
-
-    Args:
-        clusters: Raw clusters from the coarse embedding pass.
-        name_key: ``'name'`` or ``'predicate'``.
-        adjudicator: The LLM verification module.
-        threshold: Cosine similarity threshold for re-clustering rejects.
-        auto_accept: Spokes above this similarity to the centroid are
-            accepted without an LLM call.
-        auto_reject: Spokes below this similarity are rejected without
-            an LLM call.
-        max_concurrency: Max LLM calls in flight.
-
-    Returns:
-        The refined clusters.
-    """
     gate = llm_config.gate(max_concurrency)
     refined: list[list[dict]] = []
     rejected_pool: list[dict] = []
@@ -437,7 +287,7 @@ async def _verify_and_refine(
                 to_check.append(spoke)
 
         if not to_check:
-            kept.extend(to_check)  # all auto-resolved
+            kept.extend(to_check)
             refined.append(kept)
             continue
 
@@ -449,7 +299,7 @@ async def _verify_and_refine(
             async with gate:
                 desc = spoke.get('description') or ''
                 if not desc:
-                    return spoke, True  # no description — keep it
+                    return spoke, True
                 match = await adjudicator.aforward(
                     concept_name=_display,
                     sample_descriptions=_samples,
@@ -468,8 +318,6 @@ async def _verify_and_refine(
 
         llm_calls += len(to_check)
         refined.append(kept)
-
-    # Re-cluster rejects
     if rejected_pool:
         reject_clusters = _cluster(rejected_pool, threshold)
         refined.extend(reject_clusters)
@@ -491,11 +339,6 @@ async def _verify_and_refine(
 def _pick_samples(
     cluster: list[dict], centroid: list[float], n: int
 ) -> list[str]:
-    """Pick *n* description strings closest to the centroid.
-
-    Falls back to whatever descriptions are available when the cluster
-    has fewer than *n* descriptions.
-    """
     described = [
         spoke
         for spoke in cluster
@@ -513,26 +356,12 @@ def _pick_samples(
     return [s['description'] for s in ranked[:n]]
 
 
-# ============================================================================
-# Write helpers
-# ============================================================================
-
-
 async def _write_hubs(
     clusters: list[list[dict]],
     definitions: list[dict],
     kind: str,
     session_factory,
 ) -> None:
-    """Upsert hubs, definitions, CANONICAL edges, and HAS_DEFINITION.
-
-    Args:
-        clusters: One list of spoke dicts per cluster.
-        definitions: One dict per cluster with ``display_name``,
-            ``definition_text``, and ``definition_embedding``.
-        kind: ``'entity'`` or ``'predicate'``.
-        session_factory: Neo4j session factory.
-    """
     from kms.graph import hubs, queries
     from kms.graph import writer as w
     from kms.graph.definitions import definition_rows, has_definition_pairs
@@ -594,17 +423,7 @@ async def _write_hubs(
             )
 
 
-# ============================================================================
-# TripletHub + FactHub rebuild
-# ============================================================================
-
-
 async def _rebuild_triplet_hubs(session_factory) -> None:
-    """Rebuild :TripletHub and :FactHub from the fresh canonical layer.
-
-    Reads every :Triplet, resolves to its canonical hubs, groups by
-    (subj_hub, pred_hub, obj_hub), and writes :TripletHub + :FactHub.
-    """
     from collections import defaultdict
 
     from kms.core import embeddings as emb
@@ -615,8 +434,6 @@ async def _rebuild_triplet_hubs(session_factory) -> None:
 
     if not hub_triplets:
         return
-
-    # Group by (subj_hub, pred_hub, obj_hub)
     groups: dict[tuple[str, str, str], list[dict]] = defaultdict(list)
     for ht in hub_triplets:
         key = (ht['subj_hub'], ht['pred_hub'], ht['obj_hub'])
@@ -626,8 +443,6 @@ async def _rebuild_triplet_hubs(session_factory) -> None:
         f'  {len(groups)} unique canonical assertion(s) '
         f'({len(hub_triplets)} total triplet(s))'
     )
-
-    # Build group dicts
     result: list[dict] = []
     texts_to_embed: list[str] = []
     embed_indices: list[int] = []
@@ -637,8 +452,6 @@ async def _rebuild_triplet_hubs(session_factory) -> None:
         subj_name = first['subj_name']
         pred_name = first['pred_name']
         obj_name = first['obj_name']
-
-        # Majority source
         sources = [
             t.get('source', 'unknown') for t in triplets
             if t.get('source')
@@ -661,24 +474,15 @@ async def _rebuild_triplet_hubs(session_factory) -> None:
         })
         texts_to_embed.append(fact_text)
         embed_indices.append(i)
-
-    # Embed assertion texts
     if emb.is_configured():
         embedder = emb.embedder()
         vectors = await embedder.embed(texts_to_embed)
         for idx, vector in zip(embed_indices, vectors, strict=True):
             result[idx]['fact_embedding'] = vector
         print(f'  {len(vectors)} assertion text(s) embedded')
-
-    # Write
     await writer.persist_triplet_hubs(
         result, session_factory=session_factory
     )
-
-
-# ============================================================================
-# Public entry point
-# ============================================================================
 
 
 async def rebuild(
@@ -692,26 +496,6 @@ async def rebuild(
     adjudicate: bool = True,
     coarse_threshold: float | None = None,
 ) -> dict:
-    """Rebuild the entire canonical layer from all spokes.
-
-    Args:
-        threshold: Minimum cosine similarity for clustering.
-        language_model: The LM for definition synthesis and
-            (optionally) adjudication.
-        session_factory: Neo4j session factory.
-        entity_kind: Whether to canonicalize entities.
-        predicate_kind: Whether to canonicalize predicates.
-        rebuild_triplets: Whether to rebuild TripletHubs + FactHubs
-            after the entity/predicate canonical layer.
-        adjudicate: Whether to run LLM verification on clusters.
-        coarse_threshold: Lower threshold for the initial coarse
-            clustering pass.  Defaults to *threshold* - 0.15 when
-            adjudicating, or *threshold* when not.
-
-    Returns:
-        A dict with keys ``entity`` and ``predicate``, each a dict
-        ``{clusters, spokes}``.
-    """
     from kms.graph import queries
 
     synthesizer = DefinitionSynthesizer(language_model)
@@ -722,10 +506,6 @@ async def rebuild(
         else threshold - 0.15 if adjudicate else threshold
     )
     result: dict = {}
-
-    # ==================================================================
-    # ENTITIES
-    # ==================================================================
     if entity_kind:
         print('=' * 60)
         print('ENTITY CANONICALIZATION')
@@ -772,10 +552,6 @@ async def rebuild(
             }
         else:
             result['entity'] = {'clusters': 0, 'spokes': 0}
-
-    # ==================================================================
-    # PREDICATES
-    # ==================================================================
     if predicate_kind:
         print(f'\n{"=" * 60}')
         print('PREDICATE CANONICALIZATION')
@@ -822,10 +598,6 @@ async def rebuild(
             }
         else:
             result['predicate'] = {'clusters': 0, 'spokes': 0}
-
-    # ==================================================================
-    # TRIPLET HUBS + FACT HUBS
-    # ==================================================================
     if rebuild_triplets:
         print(f'\n{"=" * 60}')
         print('TRIPLET HUB + FACT HUB REBUILD')
@@ -833,3 +605,4 @@ async def rebuild(
         await _rebuild_triplet_hubs(session_factory)
 
     return result
+

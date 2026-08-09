@@ -1,10 +1,3 @@
-"""Live smoke test for the triplet extraction + entity enrichment + embedding
-pipeline.
-
-Exercises the real LM and embedding API. Run from the repo root with:
-    .venv/bin/python tests/live_triplet_embed_test.py
-"""
-
 import asyncio
 
 from kms.core import llm
@@ -13,24 +6,16 @@ from kms.ingestion.entity_enricher import EntityEnricher, enrich_entities
 from kms.ingestion.triplet_extractor import TripletExtractor, extract_triplets
 
 SAMPLE_FACTS = [
-    # Single relation — should yield 1 triplet
     'The discriminant of $ax^2 + bx + c = 0$ is $b^2 - 4ac$.',
-    # Two relations conjoined — should yield 2 triplets
     'The set $\\mathbb{R}$ is uncountable and has cardinality '
     '$2^{\\aleph_0}$.',
-    # Definition with condition — may yield 1 or 2 triplets
     'A function $f$ is continuous at $c$ if '
     '$\\lim_{x\\to c} f(x) = f(c)$.',
-    # Simple property
     'The derivative of $\\sin x$ is $\\cos x$.',
-    # Instruction-wrapped assertion
     'Prove that every continuous function on $[0,1]$ is bounded.',
-    # Compound assertion
     'The graph $G_4$ is NOT a subgraph of $G_1$, even though it looks '
     'like all we did is remove vertex $e$.',
 ]
-
-# Single-node facts for testing — every fact anchors at node 0.
 from kms.core.models import ASTNode
 
 NODE_ID = 0
@@ -51,8 +36,6 @@ FAKE_NODES = [
 
 async def main():
     lm = llm.text_lm()
-
-    # --- Stage 1: triplet extraction ----------------------------------------
     print('=' * 60)
     print('STAGE 1 — Triplet extraction')
     print('=' * 60)
@@ -91,8 +74,6 @@ async def main():
     if not triplets:
         print('No triplets — stopping.')
         return
-
-    # --- Stage 2: entity enrichment -----------------------------------------
     print(f'\n{"=" * 60}')
     print('STAGE 2 — Entity + predicate enrichment')
     print('=' * 60)
@@ -114,8 +95,6 @@ async def main():
     for entry in predicate_descs.get(NODE_ID, []):
         print(f'  {entry["predicate"]}:')
         print(f'    {entry["description"]}')
-
-    # --- Stage 3: embedding -------------------------------------------------
     print(f'\n{"=" * 60}')
     print('STAGE 3 — Embedding')
     print('=' * 60)
@@ -148,3 +127,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+

@@ -1,12 +1,7 @@
-"""Mistral OCR response → models.Segment mapping. No network, no keys, no LLM —
-just the pure transform that turns an OCR JSON response into the pipeline's
-models.Segment backbone."""
-
 from pathlib import Path
 
 from kms.ingestion import ocr
 
-# A 1x1 PNG, base64 — stands in for a returned figure crop.
 _PNG_B64 = (
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4'
     '2mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
@@ -45,8 +40,6 @@ def test_build_segments_rewrites_refs_and_saves_pictures(tmp_path):
     assert len(segs) == 1
     segment = segs[0]
     assert segment.index == 0
-    # Mistral ids rewritten to the positional ![N]() convention, in reading
-    # order.
     assert '![1]()' in segment.content and '![2]()' in segment.content
     assert (
         'img-0.jpeg' not in segment.content
@@ -61,8 +54,6 @@ def test_build_segments_rewrites_refs_and_saves_pictures(tmp_path):
 
 
 def test_unreferenced_figure_is_still_saved(tmp_path):
-    # A figure that never appears inline in the markdown must not be silently
-    # dropped.
     resp = {
         'pages': [
             {
@@ -78,8 +69,6 @@ def test_unreferenced_figure_is_still_saved(tmp_path):
 
 
 def test_non_figure_link_left_untouched(tmp_path):
-    # A markdown link whose target is not an extracted figure id passes through
-    # as-is.
     md = 'see ![diagram](https://example.com/x.png) here'
     rewritten, pics = ocr._rewrite_page(
         md, [], tmp_path / 'Segments' / 'Segment_0000'
@@ -89,8 +78,6 @@ def test_non_figure_link_left_untouched(tmp_path):
 
 
 def test_footer_is_appended_to_the_page_markdown(tmp_path):
-    # The footer field is where a footnote citation lands, so it is put back at
-    # the foot of the page rather than dropped with the running head.
     resp = {
         'pages': [
             {
@@ -104,7 +91,6 @@ def test_footer_is_appended_to_the_page_markdown(tmp_path):
     }
     content = ocr.build_segments(resp, tmp_path)[0].content
     assert content == 'body text\n\n$^1$G. Polya, "Two Incidents," 1970.'
-    # The running head stays out: inline it can land mid-entity and split it.
     assert 'TOPOLOGICAL SPACES' not in content
 
 
@@ -119,8 +105,6 @@ def test_page_without_a_footer_is_unchanged(tmp_path):
 
 
 def test_pages_are_indexed_densely(tmp_path):
-    # Even if the source pages are non-contiguous, segments are dense 0..N so
-    # the seam merger sees a proper adjacency.
     resp = {
         'pages': [
             {
@@ -139,3 +123,4 @@ def test_pages_are_indexed_densely(tmp_path):
     assert [s.index for s in segs] == [0, 1]
     assert all(len(s.pictures) == 1 for s in segs)
     assert all('![1]()' in s.content for s in segs)
+

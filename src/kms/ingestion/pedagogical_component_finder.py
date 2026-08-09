@@ -1,63 +1,3 @@
-r"""
-Pedagogical component finder — a cursor-walk over the flat structural node
-stream that cuts it into the spans the pedagogical units occupy.
-
-The BOUNDARY stage of the entity layer, and only that: it says where each unit
-starts and stops, never what any of them is. The pass downstream answers that
-— ``role_typer`` (block or derivation?). Splitting the two keeps this walk on
-the job it is reliable at — structural boundary detection — instead of fusing
-it with a softer classification call.
-
-It is a forward walk:
-
-  * A cursor moves along the node stream. From the cursor it takes a *look-ahead
-    window* of whole nodes up to a soft token budget, and the LLM returns the
-    spans inside it, each an inclusive [start, end] range of local positions.
-  * How far the cursor advances is decided *structurally* — no self-report from
-    the LLM. A span is only "banked" once a node is seen to follow it, so it can
-    never be split by a window cut:
-      - bank every span whose end is BEFORE the window's edge (a node follows it
-        → bounded) and advance the cursor to just after the last such span;
-      - if the ONLY span reaches the window's edge, it may continue past the cut
-        — so instead of banking it, GROW the window (double the budget) and
-        re-read from the same cursor, repeating until a node follows it
-        (bounded) or the document ends. Growing, not rewinding, means "a block
-        bigger than the window" stops being a special case: the window just
-        expands until the block is whole, so nothing is ever truncated and no
-        size guard is needed. Termination is automatic — growth strictly
-        increases and eventually reaches the document end, which banks the final
-        span outright. A ``MAX_LOOKAHEAD_BUDGET`` cap bounds a pathologically
-        long span to the model's context (banked as-is at the cap); that is a
-        resource limit at the edge of the system, not part of the core rule.
-
-The banking machinery above is kept verbatim from the per-type finders it
-replaces — it is the reliable half and is deliberately not redesigned. What
-changed is *what* is detected.
-
-Design commitments:
-  * DOMAIN-NEUTRAL, GENRE-SPECIFIC. A labeled pedagogical block is a universal
-    of textbooks — math, physics, CS and biology all carry definitions,
-    statements of fact, worked examples and exercises — so the finder is
-    domain-free.
-  * BOUNDARIES ONLY, NO CLASSIFICATION. The walk emits untyped spans. Whether a
-    span is a block (definition, theorem, example, exercise, law, …) or a
-    derivation (proof, solution, calculation) is ``role_typer``'s question, and
-    which kind of block it is is a later pass's. The finder clusters WHOLE
-    units — including each unit's own working.
-  * A BLOCK OWNS ITS WORKING. A theorem and its proof, an example and its
-    solution, are ONE span: the cut between a statement and its derivation is
-    deliberately NOT made here. The role typer decides whether a block carries
-    a statement, a procedure, or both, and the member partitioners find the
-    line between the portions.
-  * SPANS ARE A SPARSE OVERLAY. Nodes keep their stable ids; a span just records
-    the node ids that are its members. Nothing about the node list is mutated or
-    renumbered. Spans may overlap — a long paragraph can straddle two units.
-
-``PedagogicalComponentFinderNode`` (bottom of this file) runs the walk and
-writes the untyped spans to the ``spans`` channel, which ``role_typer`` then
-classifies into the statement and procedure hubs.
-"""
-
 import asyncio
 import logging
 
@@ -67,32 +7,17 @@ from pydantic import BaseModel, Field
 from kms.core import logs, models, recording, state, walker
 
 logger = logging.getLogger(__name__)
-
-# Soft look-ahead budget (~4 chars/token). A single node larger than the budget
-# still forms a window (at least one node). When the only span in a window
-# reaches its edge, the window grows (doubling) until it is bounded or the
-# document ends — capped so a pathological block can't grow past the model's
-# context (banked as-is there).
 LOOKAHEAD_BUDGET = 2000
 MAX_LOOKAHEAD_BUDGET = 8000
 
 
 class WindowNode(BaseModel):
-    """One look-ahead node as the LLM sees it: position, type, content."""
-
     position: int
     type: str
     content: str | None = None
 
 
 class Span(BaseModel):
-    """One span the LLM found, as an inclusive range of local positions.
-
-    Untyped by design: WHAT the span is — a block or a derivation — is decided
-    by the passes downstream (``role_typer``). This stage only says where one
-    unit stops and the next begins.
-    """
-
     start: int = Field(
         description='First local position of the span (inclusive).'
     )
@@ -205,12 +130,6 @@ class Signature(dspy.Signature):
 
 
 class PedagogicalComponentFinder(dspy.Module):
-    """Finds the pedagogical units' span boundaries in the node stream.
-
-    Args:
-        language_model: The LM to run on.
-    """
-
     def __init__(
         self,
         language_model: dspy.LM,
@@ -222,14 +141,6 @@ class PedagogicalComponentFinder(dspy.Module):
         self._recorder = recorder
 
     async def aforward(self, current_nodes: list[WindowNode]) -> list[Span]:
-        """Judge one window.
-
-        Args:
-            current_nodes: The window's nodes, each with a local position.
-
-        Returns:
-            The spans found in the window, as local position ranges.
-        """
         result = await self.finder.acall(current_nodes=current_nodes)
         if self._recorder:
             self._recorder.record(
@@ -247,21 +158,10 @@ class PedagogicalComponentFinder(dspy.Module):
         return spans
 
     def forward(self, current_nodes: list[WindowNode]) -> list[Span]:
-        """Sync forward for DSPy optimisers."""
         return asyncio.run(self.aforward(current_nodes))
 
 
 def _normalize_spans(spans: list[Span], last_local: int) -> list[Span]:
-    """Clamp spans into the window and sort by start position.
-
-    Args:
-        spans: The spans the LLM returned.
-        last_local: The window's last local position.
-
-    Returns:
-        The clamped spans in start order. Overlaps are preserved — a node may
-        belong to more than one span.
-    """
     clamped: list[Span] = []
     for span in spans:
         start = min(max(span.start, 0), last_local)
@@ -277,28 +177,6 @@ async def find_spans(
     budget: int = LOOKAHEAD_BUDGET,
     max_budget: int = MAX_LOOKAHEAD_BUDGET,
 ) -> list[list[int]]:
-    """Cursor-walk the node stream and return the pedagogical units' spans.
-
-    From the cursor, read a look-ahead window and ask the LLM for the spans in
-    it. Bank every span a node is seen to follow (bounded) and advance past
-    them; if the only span reaches the window's edge it may continue, so grow
-    the window and re-read from the same cursor until a node follows it
-    (bounded) or the document ends. Growing — never rewinding — captures a
-    block larger than the window whole rather than truncating it, and needs no
-    size guard: growth terminates at the document end (or the ``max_budget``
-    context cap, the one place a rare truncation can remain).
-
-    Args:
-        nodes: The flat, document-ordered node stream.
-        module: The finder module.
-        budget: Soft token budget for the initial look-ahead window.
-        max_budget: Cap past which a growing window is banked as-is.
-
-    Returns:
-        The spans in document order, each a list of member node ids. UNTYPED —
-        whether a span is a block or the derivation that resolves one is
-        decided by ``role_typer``.
-    """
     module = module
     spans_out: list[list[int]] = []
     cursor, node_count = 0, len(nodes)
@@ -324,18 +202,11 @@ async def find_spans(
             clean = _normalize_spans(spans, last_local)
 
             if not clean:
-                # Only prose in this window — skip it.
                 cursor = end
                 break
-
-            # A span is bounded when a node is seen to follow it inside the
-            # window.
             bounded = [span for span in clean if span.end < last_local]
 
             if reached_doc_end or size >= max_budget:
-                # Nothing left to gather (document end), or the window hit the
-                # context cap: bank every span as-is and advance past the
-                # window.
                 if not reached_doc_end:
                     logger.warning(
                         'window hit the %d-token cap at cursor %d; banking %d '
@@ -346,13 +217,8 @@ async def find_spans(
                     )
                 to_bank, advance = clean, end
             elif bounded:
-                # Commit the bounded spans; the cursor lands just after the
-                # last one (any trailing prose / an unbanked edge span is
-                # re-read next).
                 to_bank, advance = bounded, cursor + bounded[-1].end + 1
             else:
-                # The sole span reaches the edge and may continue — grow and
-                # re-read.
                 logger.debug(
                     'grow: sole span reaches the window edge at cursor %d; budget %d -> %d',
                     cursor,
@@ -381,31 +247,11 @@ async def find_spans(
     return spans_out
 
 
-# --- LangGraph node: emit the found spans onto the `spans` channel ---
-
-
 class PedagogicalComponentFinderNode:
-    """Walks the flat node stream and writes the untyped unit spans.
-
-    The walk is one sequential unit (a growing look-ahead cursor cannot be
-    sharded), so this is a plain graph node rather than the map-reduce
-    dispatch/worker/collect shape the parallel stages use.
-
-    Args:
-        module: The finder module.
-    """
-
     def __init__(self, module: PedagogicalComponentFinder) -> None:
         self.module = module
 
     async def run(self, state: state.State) -> dict:
-        """Walk the node stream and write the untyped spans.
-
-        Args:
-            state: The pipeline state, holding the flat node stream.
-
-        Returns:
-            The `spans` channel.
-        """
         spans = await find_spans(state.get('nodes', []), module=self.module)
         return {'spans': spans}
+

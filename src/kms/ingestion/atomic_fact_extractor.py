@@ -1,55 +1,3 @@
-r"""
-Atomic fact extraction — one LangGraph node, one DSPy module.
-
-The first SEMANTIC pass over the provenance stream: it reads the final node
-stream and decomposes it into atomic facts — short, self-contained snippets,
-each conveying exactly one piece of information — for the downstream
-relation passes to consume.
-
-Design commitments:
-
-* THREE-PART WINDOW. Each window has three independently-tunable parts:
-  backward context (BACKWARD_CONTEXT_BUDGET), the central extraction
-  window (WINDOW_BUDGET, ~400 tokens — ATOM's empirically optimal chunk
-  for decomposition), and forward context (FORWARD_CONTEXT_BUDGET). The
-  central window is what facts are extracted from and attributed to; the
-  context around it exists so the model can place the window and resolve
-  referents — it is placement-only and never extracted from. This is
-  deliberately NOT the PCF grow-and-bank look-ahead: the budgets are
-  fixed, so no growing or rewinding is needed. A fact whose content
-  straddles a cut is a known limitation of fixed windows — the tradeoff
-  for not paying the grow/rewind cost.
-
-* DOMAIN-AGNOSTIC, NO FACT TAXONOMY. The pass targets facts generally: any
-  document, any subject. The prompt does not enumerate fact kinds
-  (definition / theorem / claim / …) and carries no genre vocabulary. The
-  only criteria are atomicity and durability.
-
-* OPERATIONAL ATOMICITY. "One piece of information" is defined by an
-  apply-able test, not left to taste: a fact conveys exactly one unit — one
-  assertion, one instruction, or one question — stated as a complete
-  standalone sentence. The prompt's SPLIT TEST — can the fact be broken at a
-  conjunction or comma into two pieces still true of (or still posed by)
-  the source? — is the judgment call, and compound-to-split examples
-  demonstrate atomicity rather than assert it. Referent-less fragments
-  ("since $a \neq 0$") are rejected: a fact must read standalone.
-
-* NO CONTENT SPECIAL CASES. Nothing in the stream is a special case: no
-  exercise/lead-in/statement/procedure taxonomy, no genre vocabulary. The
-  same atomicity and durability criteria apply to every node; whether a
-  passage turns out to be practice material or not is a decision for later
-  passes, not for this one.
-
-* MINIMAL OUTPUT. ``models.AtomicFact`` carries only ``text`` + ``node_ids``
-  — no kind, no source. Classification is a downstream pass's job;
-  provenance is recoverable by resolving the node ids into the stream.
-
-* STRUCTURAL FILTERING ONLY. ``image`` nodes (placeholder references, no
-  text) are dropped from the window. ``header``, ``bibliographic``, and
-  ``caption`` nodes ride along as context so the model can place the facts,
-  but the prompt instructs the model not to extract facts from them.
-"""
-
 import asyncio
 import logging
 
@@ -59,24 +7,12 @@ from pydantic import BaseModel, Field
 from kms.core import llm, models, recording, state, walker
 
 logger = logging.getLogger(__name__)
-
-# Central extraction window over whole nodes, in TOKENS. ATOM's
-# empirical sweet spot is <400 tokens per chunk: smaller chunks hold
-# exhaustivity and stability as the context grows. A single node larger
-# than the budget still forms a window of its own.
 WINDOW_BUDGET = 600
-
-# Surrounding context budgets (tokens), tunable independently of the
-# central window and of each other. The context is placement-only: the
-# model sees it to place facts and resolve referents, but must not
-# extract facts from it.
 BACKWARD_CONTEXT_BUDGET = 400
 FORWARD_CONTEXT_BUDGET = 400
 
 
 class DSPyAtomicFact(BaseModel):
-    """One atomic fact emitted by the extractor."""
-
     text: str = Field(
         description=(
             'The fact as a short, self-contained standalone sentence '
@@ -205,12 +141,6 @@ class Signature(dspy.Signature):
 
 
 class AtomicFactExtractor(dspy.Module):
-    """Extracts atomic facts from one fixed window of nodes.
-
-    Args:
-        language_model: The LM to run on.
-    """
-
     def __init__(
         self,
         language_model: dspy.LM,
@@ -227,18 +157,6 @@ class AtomicFactExtractor(dspy.Module):
         context_before: str | None = None,
         context_after: str | None = None,
     ) -> list[models.AtomicFact]:
-        """Extract the atomic facts from one window.
-
-        Args:
-            current_nodes: The window's nodes, in document order.
-            context_before: Optional text immediately before the window,
-                placement-only, never extracted from.
-            context_after: Optional text immediately after the window,
-                placement-only, never extracted from.
-
-        Returns:
-            The atomic facts found, or an empty list.
-        """
         result = await self.extractor.acall(
             current_nodes=current_nodes,
             context_before=context_before or '',
@@ -276,7 +194,6 @@ class AtomicFactExtractor(dspy.Module):
         context_before: str | None = None,
         context_after: str | None = None,
     ) -> list[models.AtomicFact]:
-        """Sync forward for DSPy optimisers."""
         return asyncio.run(
             self.aforward(
                 current_nodes=current_nodes,
@@ -286,33 +203,11 @@ class AtomicFactExtractor(dspy.Module):
         )
 
 
-# ============================================================================
-# Entry point
-# ============================================================================
-
-
 async def extract_atomic_facts(
     nodes: list[models.ASTNode],
     module: AtomicFactExtractor,
     max_concurrency: int | None = None,
 ) -> list[models.AtomicFact]:
-    """Extract atomic facts from the whole node stream.
-
-    The stream is cut into adjacent three-part windows — a central
-    extraction window of whole nodes plus placement-only backward/forward
-    context; every window is decomposed concurrently, and the facts are
-    collected in document order. The pass is a pure reader of ``nodes`` —
-    nothing writes back to the stream.
-
-    Args:
-        nodes: The flat node stream.
-        module: The atomic fact extractor.
-        max_concurrency: Windows in flight at once. None uses
-            ``llm.MAX_CONCURRENT_CALLS``.
-
-    Returns:
-        The atomic facts, in document order.
-    """
     windows = walker.fixed_windows_with_context(
         nodes,
         WINDOW_BUDGET,
@@ -357,34 +252,12 @@ async def extract_atomic_facts(
     return facts
 
 
-# ============================================================================
-# LangGraph node
-# ============================================================================
-
-
 class AtomicFactNode:
-    """Extracts atomic facts from the node stream.
-
-    Runs after the hub builder and before the ingestion
-    persister. Reads only the final ``nodes`` stream; writes the
-    ``atomic_facts`` channel.
-
-    Args:
-        module: The atomic fact extractor.
-    """
-
     def __init__(self, module: AtomicFactExtractor) -> None:
         self.module = module
 
     async def run(self, state: state.State) -> dict:
-        """Extract atomic facts from the final node stream.
-
-        Args:
-            state: The pipeline state, holding the node stream.
-
-        Returns:
-            The ``atomic_facts`` channel.
-        """
         nodes = state.get('nodes', [])
         facts = await extract_atomic_facts(nodes, module=self.module)
         return {'atomic_facts': facts}
+

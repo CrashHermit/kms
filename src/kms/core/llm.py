@@ -1,44 +1,9 @@
-"""
-Central LLM configuration for the DSPy modules.
-
-Every DSPy module in this package delegates to a shared language model built
-here, so the model choice, credentials, and routing live in one place instead of
-being duplicated across nodes.
-
-Two backends:
-
-- Text reasoning nodes (extractor, seam merger, and the per-type entity
-  finders) run on DeepSeek V4 Flash via DeepSeek's own API (litellm
-  ``deepseek/`` provider, base https://api.deepseek.com). DeepSeek does
-  automatic server-side context caching, so no provider pinning is needed.
-  The key is read from DEEPSEEK_API_KEY. TEXT_MODEL overrides the model.
-- The correction pass sends a page image, so it runs on Qwen3-VL-235B via
-  OpenRouter. The key is read from OPENROUTER_API_KEY.
-
-OpenRouter provider pinning (corrector)
----------------------------------------
-OpenRouter can route the same model to different upstream providers between
-requests, which defeats provider-side prompt caching. To keep cache hits warm
-we pin the corrector to a single upstream provider
-(``allow_fallbacks: false``) via OpenRouter's provider-routing preference,
-defaulting to DeepInfra (262k context + prompt caching). Override
-CORRECTOR_PROVIDER to pin a different upstream, or set it empty to unpin.
-
-Keys are read from the environment — never hard-code them. LM objects are
-cached so every module sharing a backend shares one instance (and therefore
-one connection pool and prompt cache).
-"""
-
 import asyncio
 import os
 from functools import lru_cache
 
 import dspy
 
-# Load a local .env (if present) so the two API keys can live in a file
-# instead of being exported by hand. Guarded: python-dotenv is a convenience,
-# not a hard dep, and a missing .env is fine — keys still resolve from the
-# real environment.
 try:
     from dotenv import load_dotenv
 
@@ -48,41 +13,14 @@ except ImportError:
 
 DEEPSEEK_ENV_KEY = 'DEEPSEEK_API_KEY'
 OPENROUTER_ENV_KEY = 'OPENROUTER_API_KEY'
-
-# How many LM calls a fanned-out stage may have in flight at once. The
-# sub-node stages (hub building, atomic facts) fan out one unit of work
-# per span or per window, which on a full book is tens of thousands —
-# unbounded
-# that is a rate-limit failure, not parallelism. The page-level stages fan out
-# via LangGraph `Send` and are bounded by the page count instead.
 MAX_CONCURRENT_CALLS = int(os.environ.get('KMS_MAX_CONCURRENT_CALLS', '16'))
 
 
 def gate(limit: int | None = None) -> asyncio.Semaphore:
-    """A fresh semaphore bounding one stage's concurrent LM calls.
-
-    Deliberately built per call rather than shared in a module singleton: an
-    ``asyncio.Semaphore`` binds its waiters to the running loop, and the sync
-    ``forward`` paths each spin up their own loop via ``asyncio.run``. One
-    long-lived instance would leak waiters across loops; the shared thing here
-    is the *limit*, not the object.
-
-    Args:
-        limit: Override for the default cap. None uses
-            ``MAX_CONCURRENT_CALLS``.
-
-    Returns:
-        The semaphore.
-    """
     return asyncio.Semaphore(limit or MAX_CONCURRENT_CALLS)
 
 
 def _require_key(env_key: str, example: str) -> str:
-    """Return the named API key, raising a clear error if it is unset.
-
-    We raise on use rather than at import time so the modules stay importable
-    without credentials — the key is only required once a node actually runs.
-    """
     key = os.environ.get(env_key)
     if not key:
         raise RuntimeError(
@@ -93,11 +31,6 @@ def _require_key(env_key: str, example: str) -> str:
 
 
 def _provider_routing(provider: str | None) -> dict:
-    """OpenRouter provider-routing kwargs that pin a single upstream provider.
-
-    Pinning keeps repeated calls on the same backend so its prompt cache stays
-    warm. An empty/None provider means "let OpenRouter choose" (no pinning).
-    """
     if not provider:
         return {}
     return {
@@ -109,27 +42,6 @@ def _provider_routing(provider: str | None) -> dict:
 
 @lru_cache(maxsize=1)
 def text_lm() -> dspy.LM:
-    """DeepSeek V4 Flash via DeepSeek's own API for the text reasoning nodes.
-
-    Uses litellm's ``deepseek/`` provider (base https://api.deepseek.com),
-    which reads the key we pass from DEEPSEEK_API_KEY. DeepSeek caches
-    context server-side automatically, so there is no provider to pin.
-
-    Flash is the default for cost: these nodes are extraction and
-    classification, and Flash does them well. Set TEXT_MODEL to
-    ``deepseek/deepseek-v4-pro`` when debugging STRUCTURAL faults — when a
-    stage misbehaves (the extractor emitting one source block twice, the
-    splitter leaving a packed exercise list whole), the first question is
-    whether the pipeline is wrong or the model simply was, and a stronger
-    model makes that answerable.
-
-    Thinking mode is disabled: v4-flash defaults to thinking and
-    intermittently emits the whole answer into ``reasoning_content`` with an
-    empty content channel, which makes dspy's adapter fail to parse. These
-    nodes are extraction / classification and dspy's ChainOfThought already
-    elicits its own reasoning field, so model-level thinking is redundant
-    here — turning it off is both more reliable and cheaper.
-    """
     return dspy.LM(
         os.environ.get('TEXT_MODEL', 'deepseek/deepseek-v4-flash'),
         api_key=_require_key(DEEPSEEK_ENV_KEY, 'sk-...'),
@@ -142,17 +54,6 @@ def text_lm() -> dspy.LM:
 
 @lru_cache(maxsize=1)
 def corrector_lm() -> dspy.LM:
-    """Qwen3-VL-235B (via OpenRouter) for the correction pass on the
-    Mistral front-end.
-
-    The corrector reads a page image *and* Mistral's markdown and returns a
-    corrected transcription — a verification task that a strong vision model
-    does reliably (tested: Qwen3-VL-235B fixed subtle math errors, e.g. a
-    misread root index, without disturbing correct content, where smaller
-    models were less reliable). Set CORRECTOR_MODEL to swap the model;
-    CORRECTOR_PROVIDER pins a single OpenRouter upstream so prompt caching
-    stays warm (default DeepInfra; empty to unpin).
-    """
     return dspy.LM(
         os.environ.get(
             'CORRECTOR_MODEL', 'openrouter/qwen/qwen3-vl-235b-a22b-instruct'
@@ -163,3 +64,4 @@ def corrector_lm() -> dspy.LM:
         cache=True,
         **_provider_routing(os.environ.get('CORRECTOR_PROVIDER', 'DeepInfra')),
     )
+

@@ -1,21 +1,16 @@
-"""Formatting pass — pure dispatch/collect. No network/LLM."""
-
 import asyncio
 
 from kms.core import models
 from kms.ingestion import formatter
 
-# Keeps the node's pure dispatch/collect off the real LLM constructor.
 SENTINEL = object()
 
 
 def _segment(index, content):
-    # No page image: the formatter works from the markdown and the rules.
     return models.Segment(index=index, image_path='', content=content)
 
 
 def test_worker_takes_the_result_exactly_as_returned():
-    # Unguarded, like the corrector: nothing outside the model touches the page.
     segment = _segment(0, r'inline \(x\) here')
 
     class _Module:
@@ -44,13 +39,11 @@ def test_worker_receives_the_page_markdown():
 
 
 def test_dispatch_formats_every_page_with_content():
-    # Unlike the corrector there is no image requirement, so a segment with no
-    # page render still qualifies.
     segments = [
         _segment(0, 'display $$y$$'),
         _segment(1, 'plain prose'),
-        _segment(2, None),  # no content -> skip
-        _segment(3, ''),  # empty content -> skip
+        _segment(2, None),
+        _segment(3, ''),
     ]
     sends = formatter.FormatterNode(module=SENTINEL).dispatch(
         {'segments': segments}
@@ -87,9 +80,6 @@ def test_collect_is_a_noop_without_results():
 
 
 def test_prompt_forbids_touching_figure_placeholders():
-    # `![N]()` is resolved positionally against its page's extracted figures;
-    # a formatter that rewrote one would silently lose that figure, so the
-    # prompt must say so.
     prompt = formatter.Signature.__doc__
     assert '![N]()' in prompt
     for forbidden in ('Order.', 'Numbering and labels.', 'Code and verbatim'):
@@ -97,11 +87,9 @@ def test_prompt_forbids_touching_figure_placeholders():
 
 
 def test_prompt_joins_split_display_equations():
-    # A display equation broken across two `$$` blocks by the OCR must be
-    # rejoined: the equation extractor runs per-node downstream and expects
-    # each MathNode to carry one complete equation.
     prompt = formatter.Signature.__doc__
     assert 'halves of one equation are joined' in prompt
     assert 'relational operator' in prompt
     assert 'binary operator' in prompt
     assert 'back-to-back equations stay separate' in prompt
+

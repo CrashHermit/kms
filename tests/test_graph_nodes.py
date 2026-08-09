@@ -1,5 +1,3 @@
-"""Structural-node graph mapping — pure, no database."""
-
 from kms.core import models
 from kms.graph import nodes
 
@@ -97,3 +95,4 @@ def test_source_metadata_cannot_clobber_key():
 
 def test_source_properties_drop_none_metadata():
     assert 'title' not in nodes.source_properties('book.pdf', {'title': None})
+

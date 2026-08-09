@@ -1,10 +1,3 @@
-"""Statement-overlay graph mapping, the pure provenance chain, and the
-:MEMBER_OF edges.
-
-Pure mapping plus the chain/overlay writes, which run against a fake driver —
-the Cypher is asserted, nothing is sent anywhere.
-"""
-
 import asyncio
 
 from kms.core import models
@@ -27,24 +20,18 @@ def test_statement_uuid_distinguishes_block_and_source():
 
 
 def test_statement_uuid_covers_the_whole_block():
-    # The identity is the whole block id set: a single-node block and a
-    # multi-node block that starts at the same node never collide.
     assert statements.statement_uuid('book.pdf', [7]) != (
         statements.statement_uuid('book.pdf', [7, 8])
     )
 
 
 def test_statement_uuids_are_disjoint_from_node_uuids():
-    # A statement and its first member node name the same PLACE but are two
-    # vertices in two tiers. They used to share a key, which was only
-    # survivable while they were literally one fused `:Node:Statement` vertex.
     assert statements.statement_uuid('book.pdf', [7]) != nodes.node_uuid(
         'book.pdf', 7
     )
 
 
 def test_statement_properties_carry_uuid_and_provenance_only():
-    # A statement hub carries no text — the raw blocks carry it.
     statement = models.Statement(block=[4, 5], members=[4, 5])
     props = statements.statement_properties(statement, 'book.pdf')
     assert props['uuid'] == statements.statement_uuid('book.pdf', [4, 5])
@@ -62,8 +49,6 @@ def _stream():
 
 
 def test_chain_is_the_pure_node_stream_in_document_order():
-    # The provenance chain is the verbatim stream: even nodes absorbed into a
-    # statement stay in it — statements are not chain elements.
     chain = writer._chain_nodes(_stream(), 'book.pdf')
     assert chain == [
         nodes.node_uuid('book.pdf', 0),
@@ -108,8 +93,6 @@ def test_statement_member_pairs_are_empty_without_statements():
 
 
 class _FakeSession:
-    """Records the Cypher it is handed instead of running it."""
-
     def __init__(self, log):
         self.log = log
 
@@ -124,8 +107,6 @@ class _FakeSession:
 
 
 class _FakeDriver:
-    """Hands out recording sessions in place of a Neo4j driver."""
-
     def __init__(self):
         self.log = []
 
@@ -135,8 +116,6 @@ class _FakeDriver:
 
 def test_persist_chain_writes_head_and_next_over_pure_nodes():
     driver = _FakeDriver()
-    # The statement overlay is irrelevant to the chain: its members stay in
-    # the verbatim stream.
     asyncio.run(
         writer.persist_chain(
             _stream(),
@@ -158,10 +137,6 @@ def test_persist_chain_writes_head_and_next_over_pure_nodes():
         and '(a)-[r:NEXT]->(b)' in query
         for query in queries
     )
-    # The chain never mentions the statement tier: statements hang off their
-    # member nodes via :MEMBER_OF, they are not chain elements. A
-    # label-free `MATCH (a {uuid: ...})` would scan every vertex in the
-    # database.
     assert 'Statement' not in ' '.join(queries)
     assert 'MATCH (a {uuid:' not in ' '.join(queries)
 
@@ -185,6 +160,5 @@ def test_persist_statements_writes_member_edges_from_every_member():
         and '(n)-[r:MEMBER_OF]->(s)' in query
         for query in queries
     )
-    # The membership link is real graph structure: one edge per member node,
-    # absorbed ones included.
     assert 'MATCH (a {uuid:' not in ' '.join(queries)
+

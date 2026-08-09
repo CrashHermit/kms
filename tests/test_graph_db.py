@@ -1,7 +1,3 @@
-"""Connection plumbing for the graph tier — pure, no server (neo4j is stubbed in
-conftest). Covers the config helpers and the driver singleton's lifecycle, not
-any graph model."""
-
 import asyncio
 
 import neo4j
@@ -40,7 +36,7 @@ def test_driver_raises_a_clear_error_when_unconfigured(monkeypatch):
         monkeypatch.delenv(k, raising=False)
     asyncio.run(
         db.close_driver()
-    )  # ensure no singleton lingers from another test
+    )
     with pytest.raises(RuntimeError, match='NEO4J_URI is not set'):
         db.driver()
 
@@ -51,7 +47,7 @@ def test_driver_is_a_reused_singleton_until_closed(monkeypatch):
         first = db.driver()
         assert (
             db.driver() is first
-        )  # same pooled instance, not rebuilt per call
+        )
     finally:
         asyncio.run(db.close_driver())
 
@@ -67,8 +63,9 @@ def test_driver_is_the_native_bolt_driver(monkeypatch):
 
 def test_close_driver_is_a_safe_noop_when_nothing_opened(monkeypatch):
     _set_conn(monkeypatch)
-    asyncio.run(db.close_driver())  # never opened -> must not raise
-    opened = db.driver()
-    asyncio.run(db.close_driver())  # closing a real one resets the singleton
-    assert db.driver() is not opened  # a fresh instance after close
     asyncio.run(db.close_driver())
+    opened = db.driver()
+    asyncio.run(db.close_driver())
+    assert db.driver() is not opened
+    asyncio.run(db.close_driver())
+

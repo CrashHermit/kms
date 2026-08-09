@@ -1,17 +1,3 @@
-"""Opt-in Neo4j integration test. Gated on an EXPLICIT flag (``KMS_NEO4J_IT``),
-not on the mere presence of ``NEO4J_URI`` — a configured ``.env`` (which
-``db.py`` loads) would otherwise drag the slow, network-dependent live tests
-into every ``pytest`` run. With the flag set it checks connectivity, a
-round-trip query, and the structural-layer + entity-overlay writes against a
-real, reachable instance whose creds come from
-``NEO4J_URI``/``NEO4J_USERNAME``/``NEO4J_PASSWORD``.
-
-Driven via asyncio.run so it needs no pytest-asyncio (the repo declares no such
-dev dep). Run against a live DB with, e.g.: KMS_NEO4J_IT=1
-NEO4J_URI=bolt://localhost:7687 NEO4J_USERNAME=neo4j NEO4J_PASSWORD=... \
-        PYTHONPATH=src uv run pytest tests/test_graph_db_integration.py -q
-"""
-
 import asyncio
 import os
 
@@ -40,7 +26,7 @@ def test_connectivity_round_trip_and_idempotent_schema():
             await schema.ensure_schema(_session_factory)
             await schema.ensure_schema(
                 _session_factory
-            )  # idempotent: a second pass must not raise
+            )
         finally:
             await db.close_driver()
 
@@ -79,47 +65,40 @@ def test_persist_nodes_upserts_labels_and_next_chain():
                 source,
                 session_factory=_session_factory,
                 metadata=meta,
-            )  # idempotent re-run
-            # Vertices only came from persist_nodes; the :HEAD/:NEXT spine is
-            # persist_chain's job, and the assertions below cover both.
+            )
             await writer.persist_chain(
                 stream, source, session_factory=_session_factory
             )
             await writer.persist_chain(
                 stream, source, session_factory=_session_factory
-            )  # idempotent re-run
+            )
             async with db.session() as session:
-                # multi-label: the math node is reachable as :Math and carries
-                # base :Node too
                 math = await one(
                     session,
                     "MATCH (n:Math:Node {content: '$x$'}) RETURN count(n) AS c",
                 )
-                # the :NEXT chain threads all three in order: §1 -> a -> $x$
-                # (length 2)
                 chain = await one(
                     session,
                     'MATCH p=(:Node)-[:NEXT*]->(:Node) '
                     'RETURN max(length(p)) AS longest',
                 )
-                # the source roots the chain: :Source -HEAD-> the first node,
-                # and carries metadata
                 head = await one(
                     session,
                     "MATCH (s:Source {title: 'Test Book', "
                     "author: 'A. Mathematician'})"
                     '-[:HEAD]->(n:Node) RETURN n.content AS c',
                 )
-                assert math['c'] == 1  # re-run did not duplicate the node
+                assert math['c'] == 1
                 assert chain['longest'] == 2
                 assert (
                     head['c'] == '§1'
-                )  # title+author on the source, hangs off the first node
+                )
         finally:
             async with db.session() as session:
                 await session.run(
                     'MATCH (n) DETACH DELETE n'
-                )  # test DB: clear the graph
+                )
             await db.close_driver()
 
     asyncio.run(scenario())
+

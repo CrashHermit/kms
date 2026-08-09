@@ -1,53 +1,3 @@
-r"""
-Instruction distributor — records which exercise nodes a grouped-exercise
-lead-in governs, as a hub beside the stream, then removes the lead-in node.
-
-The instruction finder has already stamped ``NodeType.INSTRUCTION`` on every
-lead-in node. This pass walks the stream, anchors on each INSTRUCTION node, and
-asks the LLM which of the following exercise nodes it governs. The answer
-becomes one ``models.Instruction`` hub over those node ids. The INSTRUCTION
-node is then removed from the stream — its sentence lives on the hub.
-
-The hub sits BESIDE the nodes, like ``Statement`` and ``Procedure``, and for
-the same reason. This pass used to prepend the directive onto each governed
-node's ``content``, which put two kinds of wrong text into the provenance
-layer: the same sentence repeated once per governed exercise (55% of all
-``:Node.content`` written on a three-page fixture, 42% of it redundant), and,
-worse, a sentence the page does not contain — the model returns a normalised
-imperative ("simplify") where the page reads "In the following exercises,
-simplify." A ``:Node`` is defined as one verbatim block of the page, so the
-synthesized form could not live there. It is now ``directive`` on the hub,
-beside ``text``, which is the lead-in exactly as printed.
-
-The cost of the move is that a governed node no longer carries its directive
-in its own text: anything reading one node alone — an embedding, a window of
-context — sees the bare exercise and must traverse ``:GOVERNS`` for the
-instruction.
-
-The extent is judged by the LLM, not by numbers. A lead-in may name a range ("In
-Exercises 1.23-1.25, …") or may not ("Answer the following."), so a range parser
-can't decide who is governed — the model reads the following problems and
-decides where the governed run ends. It uses the SAME growing look-ahead pattern
-as the finders and the splitter:
-
-  * Anchor on an INSTRUCTION node. Its candidates are the non-instruction nodes
-    that follow it, up to the next INSTRUCTION (a new lead-in starts a new
-    governance).
-  * Take a look-ahead window of those candidates (whole nodes up to a token
-    budget) and ask the LLM which of them the lead-in governs, plus the shared
-    instruction to apply.
-  * If the governed run reaches the window's edge it may continue, so GROW the
-    window (double the budget) and re-read; if a non-governed node follows the
-    run (bounded), or the candidates are exhausted, BANK — prepend the
-    instruction to each governed node.
-  * After all governance is resolved, delete every INSTRUCTION node from the
-    stream.
-
-Runs BEFORE the node persister — instruction nodes are never written to Neo4j,
-and the persisted stream carries exercises with their instruction already
-prepended to content.
-"""
-
 import asyncio
 import logging
 
@@ -57,15 +7,11 @@ from pydantic import BaseModel
 from kms.core import logs, models, recording, state, walker
 
 logger = logging.getLogger(__name__)
-
-# Same growing look-ahead shape as the finders/splitter (~4 chars/token).
 LOOKAHEAD_BUDGET = 2000
 MAX_LOOKAHEAD_BUDGET = 8000
 
 
 class WindowProblem(BaseModel):
-    """One following node as the LLM sees it: position and content."""
-
     position: int
     content: str | None = None
 
@@ -112,12 +58,6 @@ class GovernExtent(dspy.Signature):
 
 
 class InstructionDistributor(dspy.Module):
-    """Determines which following exercises a lead-in governs.
-
-    Args:
-        language_model: The LM to run on.
-    """
-
     def __init__(
         self,
         language_model: dspy.LM,
@@ -131,15 +71,6 @@ class InstructionDistributor(dspy.Module):
     async def aforward(
         self, lead_in: str, following: list[WindowProblem]
     ) -> tuple[str, list[int]]:
-        """Judge one lead-in's extent.
-
-        Args:
-            lead_in: The lead-in node's text.
-            following: The candidate exercises, each with a local position.
-
-        Returns:
-            The shared instruction and the window-local positions it governs.
-        """
         result = await self.judge.acall(
             lead_in=lead_in, following_problems=following
         )
@@ -164,34 +95,16 @@ class InstructionDistributor(dspy.Module):
     def forward(
         self, lead_in: str, following: list[WindowProblem]
     ) -> tuple[str, list[int]]:
-        """Sync forward for DSPy optimisers."""
         return asyncio.run(self.aforward(lead_in, following))
 
 
 def _node_text(node: models.ASTNode) -> str:
-    """The node's content as the LLM should see it.
-
-    Args:
-        node: The node to render.
-
-    Returns:
-        Its content, stripped, or the empty string.
-    """
     return (node.content or '').strip()
 
 
 def _window(
     candidates: list[models.ASTNode], budget: int
 ) -> list[models.ASTNode]:
-    """The candidates that fit in one look-ahead window.
-
-    Args:
-        candidates: The following nodes, in document order.
-        budget: The soft token budget for the window.
-
-    Returns:
-        Whole nodes up to the budget, always at least one.
-    """
     window, accumulated = [], 0
     for node in candidates:
         token_count = walker.estimate_tokens(node)
@@ -207,20 +120,6 @@ async def _govern_one(
     candidates: list[models.ASTNode],
     module: InstructionDistributor,
 ) -> models.Instruction | None:
-    """Growing-window walk for one lead-in.
-
-    Finds the governed run among the following exercise nodes and records it
-    as a hub over their ids. Nothing is written onto the governed nodes: they
-    are verbatim page blocks and the directive is not part of what they say.
-
-    Args:
-        lead_in: The lead-in node.
-        candidates: The exercise nodes that follow it, in document order.
-        module: The governance module.
-
-    Returns:
-        The hub, or None when this lead-in governs nothing.
-    """
     if not candidates:
         return None
     size = LOOKAHEAD_BUDGET
@@ -241,12 +140,10 @@ async def _govern_one(
         )
 
         if not governed:
-            # This lead-in governs nothing here.
             return None
         run_end = governed[-1]
 
         if exhausted or size >= MAX_LOOKAHEAD_BUDGET or run_end < last_local:
-            # Bounded or nothing left to gather: bank.
             members = [
                 window[position].id
                 for position in governed
@@ -260,7 +157,6 @@ async def _govern_one(
                 directive=instruction or None,
                 members=members,
             )
-        # The run reaches the window edge — grow and re-read.
         size *= 2
 
 
@@ -268,17 +164,6 @@ async def distribute_instructions(
     nodes: list[models.ASTNode],
     module: InstructionDistributor,
 ) -> tuple[list[models.ASTNode], list[models.Instruction]]:
-    """Resolve every lead-in's governance over the exercises that follow it.
-
-    Args:
-        nodes: The flat node stream, with INSTRUCTION nodes already tagged.
-        module: The governance module.
-
-    Returns:
-        The cleaned node stream — instruction nodes removed, every other node
-        untouched — and one ``Instruction`` hub per lead-in that governs
-        anything, in document order.
-    """
     lead_ins = [node for node in nodes if node.type == 'instruction']
     if not lead_ins:
         logger.info(
@@ -288,8 +173,6 @@ async def distribute_instructions(
         return nodes, []
 
     module = module
-
-    # Index the stream so we know what follows each lead-in.
     position_of = {
         node.id: position
         for position, node in enumerate(nodes)
@@ -305,7 +188,6 @@ async def distribute_instructions(
         here = position_of.get(node.id)
         if here is None:
             continue
-        # Candidates end at the next lead-in or the end of the stream.
         next_lead = min(
             (
                 position
@@ -322,9 +204,6 @@ async def distribute_instructions(
         hub = await _govern_one(node, candidates, module)
         if hub is not None:
             instructions.append(hub)
-
-    # Remove instruction nodes from the stream. The lead-in's own sentence is
-    # not lost with them — it is on its hub, verbatim, stored once.
     cleaned = [node for node in nodes if node.type != 'instruction']
     logger.info(
         'instruction distributor: %d lead-in(s) removed, %d hub(s) over %d '
@@ -338,33 +217,14 @@ async def distribute_instructions(
     return cleaned, instructions
 
 
-# --- LangGraph node ---
-
-
 class InstructionDistributorNode:
-    """Distributes lead-in directives, then drops the instruction nodes.
-
-    Runs after the instruction finder and before the node persister, over the
-    ``nodes`` channel.
-
-    Args:
-        module: The governance module.
-    """
-
     def __init__(self, module: InstructionDistributor) -> None:
         self.module = module
 
     async def run(self, state: state.State) -> dict:
-        """Distribute each lead-in's instruction onto its exercises.
-
-        Args:
-            state: The pipeline state, holding the flat node stream.
-
-        Returns:
-            The cleaned `nodes` channel and the `instructions` overlay.
-        """
         nodes = state.get('nodes', [])
         cleaned, instructions = await distribute_instructions(
             nodes, module=self.module
         )
         return {'nodes': cleaned, 'instructions': instructions}
+

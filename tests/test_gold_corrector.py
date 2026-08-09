@@ -1,12 +1,3 @@
-"""Integrity of the corrector gold set. Pure file checks — no network, no LLM.
-
-The gold set is hand-written data (data/gold/corrector), so nothing regenerates
-it if it drifts. These checks pin the invariants an optimizer run would
-otherwise discover the hard way: that every record's files exist, that every
-annotated edit really is the difference between the pair, and that a perturbed
-record never lands in a different split from the page whose gold it copies.
-"""
-
 import json
 from pathlib import Path
 
@@ -37,7 +28,6 @@ def test_record_files_exist_and_are_non_empty(record):
     'record', RECORDS, ids=[record['id'] for record in RECORDS]
 )
 def test_annotated_edits_match_the_pair(record):
-    """Each edit's before/after is real, and no edit means an identical pair."""
     transcription = _text(record, 'transcription')
     corrected = _text(record, 'corrected')
 
@@ -50,9 +40,6 @@ def test_annotated_edits_match_the_pair(record):
     assert transcription != corrected, (
         f'{record["id"]}: edits are annotated but the pair is identical'
     )
-    # An order-class edit describes a resequencing rather than a substring
-    # swap, so its before/after name the sequence, not literal file content.
-    # Applying every other edit must leave a pure permutation of the lines.
     rewritten = transcription
     for edit in record['edits']:
         if edit['class'] == 'order':
@@ -84,7 +71,6 @@ def test_perturbed_records_track_their_source_page():
         assert _text(record, 'corrected') == _text(base, 'corrected'), (
             f'{record["id"]}: gold differs from the page it was derived from'
         )
-        # Same split, or a dev answer is visible in a train demo.
         assert record['split'] == base['split'], (
             f'{record["id"]}: split differs from {base["id"]}'
         )
@@ -103,8 +89,6 @@ def test_every_book_is_represented_in_both_splits():
 def test_ids_are_unique_and_edit_classes_are_known():
     ids = [record['id'] for record in RECORDS]
     assert len(ids) == len(set(ids))
-
-    # The classes named in the corrector's prompt.
     known = {
         'attachment',
         'extent',
@@ -120,3 +104,4 @@ def test_ids_are_unique_and_edit_classes_are_known():
         classes = {edit['class'] for edit in record['edits']}
         assert classes <= known, f'{record["id"]}: unknown class in {classes}'
         assert record['edit_classes'] == sorted(classes)
+

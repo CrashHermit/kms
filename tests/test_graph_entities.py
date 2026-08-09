@@ -1,11 +1,3 @@
-"""Entity-layer graph mapping — the per-triplet ``:Entity`` vertices.
-
-Pure mapping, asserted against deterministic uuids. The invariant this suite
-guards: entity identity is PER-TRIPLET — every triplet's subject and object
-get their own vertices, so two triplets at the same node sharing a surface
-form NEVER share an entity (mirrors the per-triplet Predicate decision).
-"""
-
 from kms.core import models
 from kms.graph import entities, nodes
 from kms.graph.facts import fact_uuid
@@ -68,8 +60,6 @@ def test_entity_identity_distinguishes_roles_within_a_triplet():
 
 
 def test_entity_identity_is_per_triplet_not_shared():
-    # Two triplets at the SAME node with the SAME subject get SEPARATE
-    # vertices — zero sharing, matching the per-triplet Predicate decision.
     fact = _fact([3])
     first_triplet = _triplet('$G_4$', 'is', 'uncountable', fact_index=0)
     second_triplet = _triplet(
@@ -133,12 +123,11 @@ def test_entity_rows_one_row_per_triplet_role():
     rows = entities.entity_rows(
         triplets_list, facts, 'hefferon.pdf', _descriptions()
     )
-    assert len(rows) == 2  # one subject + one object
+    assert len(rows) == 2
     assert {row['role'] for row in rows} == {'subject', 'object'}
 
 
 def test_entity_rows_duplicate_across_triplets_never_share():
-    # Two triplets at the same node, same subject name -> TWO subject rows.
     facts = [_fact([3])]
     triplets_list = [
         _triplet('$G_4$', 'is', 'uncountable', fact_index=0),
@@ -161,4 +150,5 @@ def test_undescribed_endpoint_contributes_no_row():
         triplets_list, facts, 'hefferon.pdf', _descriptions()
     )
     roles = {row['role'] for row in rows}
-    assert roles == {'subject'}  # object '$H_9$' was never described
+    assert roles == {'subject'}
+

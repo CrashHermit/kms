@@ -1,77 +1,3 @@
-r"""
-Formatting pass over each corrected page.
-
-The corrector answers one question — does the transcription say what the page
-says — and is forbidden from touching presentation, because its authority is the
-page image and the image cannot settle how markdown ought to be written. That
-leaves presentation to this stage, which answers the complementary question:
-is the page written down the way every source is written down?
-
-The two passes are exact inverses, and that is the point of splitting them: the
-corrector may change meaning-bearing content and may not reformat; the formatter
-may reformat and may not change meaning. Neither has to trade one objective off
-against the other, and each can later be optimised against a metric that suits
-it — fidelity to an image for the corrector, conformance to stated rules here.
-
-Text only, no page image: standardising markup needs the markdown and the rules,
-not the page, so this runs on the cheap text LM rather than the vision model.
-It sits *after* the corrector for a hard reason — anything that deliberately
-makes the text diverge from the image (a delimiter the page does not show, a
-list marker the author did not use) must happen after the pass whose contract is
-that text and image agree, or the corrector will faithfully undo it.
-
-It closes a gap the corrector's split left open: with delimiter normalization
-removed from the corrector, nothing was converting `\( … \)` / `\[ … \]` to the
-dollar convention the extractor's prompt and every downstream stage assume.
-
-The same gap has a wider mouth than delimiter conversion covers. The OCR
-front-end's markup varies by page: an end-to-end run came back with page 0
-carrying 21 delimited spans and pages 1 and 2 carrying none at all, their
-mathematics transcribed as plain text with Unicode glyphs — `x⁴`, `3ˣ`,
-`9x + 7 when x = 3`. Converting delimiters cannot help a page that has none,
-so those pages reached the equation extractor, whose contract is LaTeX *with*
-its delimiters, with nothing it could recognise: it found five equations on
-the delimited page and none on the other two. Wrapping undelimited
-mathematics, and writing Unicode notation as LaTeX, are therefore required
-work here for the same reason delimiter conversion is — this is the one pass
-positioned to do it, and the corrector cannot, since restoring a delimiter
-the page image does not show is precisely the divergence its contract forbids.
-
-Wrapping is the one rule here that can destroy information rather than merely
-fail to add it: a bare quantity in a drill exercise looks much like an
-expression, and an item number swallowed into a `$ … $` span is an identifier
-the rest of the book cites and nothing downstream can restore. The prompt
-therefore states the test, lists what is never wrapped, and makes the
-tie-break explicit — when in doubt, leave it bare.
-
-**Unguarded**, like the corrector: whatever the model returns is what the page
-becomes. No divergence check, no post-processing — the pipeline's passes are
-bare LLM calls and correctness rests on the prompt.
-
-Delimiter conversion is stated as its own required section rather than as one
-bullet among equals, because a flat rule list was measurably applied only in
-part: on a code-heavy real page the pass reliably fenced the code, normalised
-heading levels, and left all fourteen `\( … \)` delimiters — including ones on a
-heading line it had just edited — the same way on every repeat. Which rules
-fired depended on what else the page had wrong with it, so the rule this stage
-was added for needed to stop competing for attention with markup housekeeping.
-
-Two deliberate omissions, both of which were on the table and both of which
-would break things at this position in the pipeline:
-
-- **Reordering.** Document order is load-bearing downstream: `flatten_segments`
-  assigns node ids by position, the pedagogical component finder cuts
-  *contiguous* spans, and the procedural layer threads `:FIRST`/`:THEN` in
-  stream order. A resequencing pass here would corrupt all three silently.
-- **Renumbering and re-lettering.** An exercise's `(b)` is a referent — the
-  prose says "by part (b)" — and those references are document-scope while this
-  stage, like the corrector, sees one page. It would relabel the item and leave
-  the reference dangling with nothing downstream able to notice.
-
-Both are reachable by editing the prompt if the pipeline later grows a
-document-scope stage that can do them safely.
-"""
-
 import asyncio
 import logging
 
@@ -279,12 +205,6 @@ class Signature(dspy.Signature):
 
 
 class Formatter(dspy.Module):
-    """Standardises one page's markdown formatting.
-
-    Args:
-        language_model: The LM to run on.
-    """
-
     def __init__(
         self,
         language_model: dspy.LM,
@@ -296,14 +216,6 @@ class Formatter(dspy.Module):
         self._recorder = recorder
 
     async def aforward(self, markdown: str) -> str:
-        """Format one page.
-
-        Args:
-            markdown: The page's corrected markdown.
-
-        Returns:
-            The page's markdown with standardised formatting.
-        """
         result = await self.formatter.acall(markdown=markdown)
         if self._recorder:
             self._recorder.record('formatter', {'markdown': markdown}, result)
@@ -314,36 +226,14 @@ class Formatter(dspy.Module):
         return formatted
 
     def forward(self, markdown: str) -> str:
-        """Sync forward for DSPy optimisers."""
         return asyncio.run(self.aforward(markdown))
 
 
-# --- LangGraph node: standardise each corrected page's formatting ---
-
-
 class FormatterNode:
-    """Fans out per-page formatters and collects the standardised text.
-
-    Args:
-        module: The formatting module.
-    """
-
     def __init__(self, module: Formatter) -> None:
         self.module = module
 
     def dispatch(self, state: state.State) -> list[Send] | str:
-        """Fan out one worker per page with content.
-
-        No page image is needed here, so unlike the corrector a segment
-        qualifies on content alone.
-
-        Args:
-            state: The pipeline state, holding the segment backbone.
-
-        Returns:
-            One Send per qualifying segment, or the collect step's name when
-            none qualify (the stage is then a no-op).
-        """
         segments = state.get('segments', [])
         sends = [
             Send('formatter_worker', {'segment': segment})
@@ -353,35 +243,15 @@ class FormatterNode:
         return sends or 'formatter_collect'
 
     async def worker(self, state: dict) -> dict:
-        """Standardise one page's formatting.
-
-        The result is taken exactly as returned — the page becomes whatever the
-        model produced, unexamined and unaltered.
-
-        Args:
-            state: The worker payload, holding its ``segment``.
-
-        Returns:
-            The page's ``format_results`` entry.
-        """
         segment: models.Segment = state['segment']
         formatted = await self.module.aforward(markdown=segment.content)
         return {'format_results': [(segment.index, formatted)]}
 
     def collect(self, state: state.State) -> dict:
-        """Write each formatted page back into its segment.
-
-        Segments that were not dispatched keep their content untouched.
-
-        Args:
-            state: The pipeline state, holding the formatting results.
-
-        Returns:
-            The updated segment backbone.
-        """
         results = state.get('format_results', [])
         segments = models.merge_results_into_segments(
             state['segments'], results, 'content'
         )
         logger.info('formatter: %d page(s) formatted', len(results))
         return {'segments': segments}
+

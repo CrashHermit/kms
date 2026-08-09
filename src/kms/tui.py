@@ -1,8 +1,3 @@
-"""Interactive TUI for the KMS pipeline.
-
-Replaces the old CLI with a guided multi-step TUI powered by InquirerPy.
-"""
-
 import asyncio
 import logging
 import os
@@ -19,14 +14,12 @@ _LOG_LEVEL_ENV = 'KMS_LOG_LEVEL'
 
 
 def _configure_logging(level_name: str) -> None:
-    """Set the log level for all pipeline stages."""
     os.environ[_LOG_LEVEL_ENV] = level_name
     level = logging.getLevelNamesMapping().get(level_name, logging.INFO)
     logging.basicConfig(level=level, format='%(name)s: %(message)s')
 
 
 def _validate_pages(raw: str) -> bool | str:
-    """Return True if *raw* is a valid comma-separated page list."""
     try:
         parts = [int(p.strip()) for p in raw.split(',')]
         if any(part < 0 for part in parts):
@@ -37,11 +30,6 @@ def _validate_pages(raw: str) -> bool | str:
 
 
 def _collect_advanced_options() -> dict:
-    """Prompt for optional advanced pipeline parameters.
-
-    Returns:
-        Dict with optional keys: pages, source, title, author.
-    """
     pages_raw = inquirer.text(
         message=(
             'Limit to pages (0-based, comma-separated, or leave empty for all):'
@@ -83,7 +71,6 @@ def _collect_advanced_options() -> dict:
 
 
 def run() -> None:
-    """Launch the interactive TUI and execute the pipeline."""
     try:
         _run_tui()
     except KeyboardInterrupt:
@@ -92,7 +79,6 @@ def run() -> None:
 
 
 def _run_tui() -> None:
-    # ── 1. Pick the PDF ───────────────────────────────────────────
     pdf_path = inquirer.filepath(
         message='Select the PDF to process:',
         default=str(Path.cwd()),
@@ -107,8 +93,6 @@ def _run_tui() -> None:
     if not pdf_path:
         logger.info('No PDF selected — exiting.')
         return
-
-    # ── 2. Output directory ───────────────────────────────────────
     out_dir = inquirer.text(
         message='Output directory:',
         default='output',
@@ -116,8 +100,6 @@ def _run_tui() -> None:
             True if path.strip() else 'Output directory is required'
         ),
     ).execute()
-
-    # ── 3. Advanced options ───────────────────────────────────────
     use_advanced = inquirer.confirm(
         message='Configure advanced options (pages, source, title, author)?',
         default=False,
@@ -134,8 +116,6 @@ def _run_tui() -> None:
         source = advanced['source']
         title = advanced['title']
         author = advanced['author']
-
-    # ── 4. Log level ──────────────────────────────────────────────
     log_level = inquirer.select(
         message='Log verbosity:',
         choices=[
@@ -147,8 +127,6 @@ def _run_tui() -> None:
     ).execute()
 
     _configure_logging(log_level)
-
-    # ── 5. Confirm and run ────────────────────────────────────────
     logger.info('PDF: %s', pdf_path)
     logger.info('Output: %s', out_dir)
     if pages:
@@ -192,3 +170,4 @@ def _run_tui() -> None:
 
 if __name__ == '__main__':
     run()
+

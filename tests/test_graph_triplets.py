@@ -1,11 +1,3 @@
-"""Triplet-layer graph mapping — ``models.Triplet`` → ``:Triplet`` hubs.
-
-Each triplet is a verbatim hub carrying its subject/predicate/object strings,
-written separately per node occurrence. This suite guards the identity scheme
-(anchored on the source fact AND the anchor node) and the role edges to
-node-local entities.
-"""
-
 from kms.core import models
 from kms.graph import entities, nodes
 from kms.graph.facts import fact_uuid
@@ -59,8 +51,6 @@ def test_triplet_uuid_is_deterministic_and_disjoint():
 
 
 def test_triplet_uuid_distinguishes_per_node_occurrences():
-    # The same triplet whose fact touches two nodes is TWO hubs — each node
-    # gets its own occurrence with its own entity endpoints.
     fact = _fact([3, 9])
     f_uuid = fact_uuid('hefferon.pdf', fact.node_ids, 0)
     at_three = triplet_uuid(
@@ -171,8 +161,6 @@ def test_has_subject_and_has_object_point_at_the_local_entities():
 
 
 def test_undescribed_endpoint_contributes_no_edge():
-    # An entity the enricher never described gets no HAS_SUBJECT/HAS_OBJECT
-    # edge — the verbatim string survives on the triplet hub instead.
     facts = [_fact([3])]
     triplets_list = [
         _triplet('$G_4$', 'is NOT a subgraph of', '$H_9$', fact_index=0),
@@ -185,3 +173,4 @@ def test_undescribed_endpoint_contributes_no_edge():
     )
     assert len(subjects) == 1
     assert objects == []
+

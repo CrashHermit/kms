@@ -1,14 +1,9 @@
-"""Hub builder: role typing + both-block partitioning, one pass. Pure logic
-with scripted modules."""
-
 import asyncio
 
 import pytest
 
 from kms.core import models
 from kms.ingestion import hub_builder
-
-# --- Role typer tests ------------------------------------------------------
 
 
 class _ScriptedRoles:
@@ -45,7 +40,6 @@ def test_a_both_block_creates_both_independent_hubs():
     ]
     by_id = {node.id: node for node in nodes}
     role_mod = _ScriptedRoles([(True, True)])
-    # Both roles present → partitioners run. Script them to keep full span.
     stmt_mod = _ScriptedPositions([[0, 1]])
     proc_mod = _ScriptedPositions([[0, 1]])
     statements, procedures = asyncio.run(
@@ -130,9 +124,6 @@ def test_node_run_on_an_empty_spans_channel_is_a_noop():
     assert out['procedures'] == []
 
 
-# --- Partitioner tests -----------------------------------------------------
-
-
 class _ScriptedPositions:
     def __init__(self, positions):
         self._positions = list(positions)
@@ -193,7 +184,6 @@ def test_both_block_partitions_procedure_members():
 
 def test_single_role_statement_skips_partitioning():
     nodes = _nodes()
-    # Single role: no procedure, partitioners would fail if called.
     role_mod = _ScriptedRoles([(True, False)])
     statements, procedures = asyncio.run(
         hub_builder.build_hubs(
@@ -247,3 +237,4 @@ def test_out_of_range_positions_are_dropped():
         )
     )
     assert statements[0].members == [0]
+

@@ -1,6 +1,3 @@
-"""Extractor — the LLM block type -> ASTNode mapping, and the furniture
-discard. No network/LLM."""
-
 import asyncio
 
 import pytest
@@ -14,8 +11,6 @@ def _block(node_type, content='text'):
 
 
 class _Module:
-    """Stands in for the LLM: returns a fixed block list for any page."""
-
     def __init__(self, blocks):
         self.blocks = blocks
 
@@ -31,8 +26,6 @@ def _worker(blocks, index=0):
 
 
 def test_every_prompt_type_is_in_the_valid_set():
-    # The taxonomy the Signature names and the validation set the consumer
-    # uses must agree, or a type the model is told to emit silently raises.
     described = extractor.DSPyModel.model_fields['type'].description
     for node_type in extractor._VALID_TYPES:
         assert node_type in described, (
@@ -62,8 +55,6 @@ def test_note_block_becomes_a_note_node():
 
 
 def test_notes_are_kept_not_discarded():
-    # A note says something about the subject, so unlike furniture it stays in
-    # the stream and remains eligible for the semantic chain.
     nodes = _worker(
         [
             _block('paragraph', 'body'),
@@ -75,9 +66,6 @@ def test_notes_are_kept_not_discarded():
 
 
 def test_furniture_is_known_to_the_model_but_not_a_node_type():
-    # furniture is a vocabulary the model needs, but it must never become an
-    # ASTNode — if it ever joined _VALID_TYPES the discard would silently stop
-    # working and the blocks would flow downstream.
     assert 'furniture' in extractor.DSPyModel.model_fields['type'].description
     assert '- furniture:' in extractor.Signature.__doc__
     assert 'furniture' not in extractor._VALID_TYPES
@@ -100,12 +88,10 @@ def test_furniture_never_leaves_the_stage():
         '## 1.2 Slope Fields',
         'body text',
     ]
-    # Not merely untyped: it is gone, so no later stage has to know about it.
     assert not any(node.type == 'furniture' for node in nodes)
 
 
 def test_furniture_is_matched_regardless_of_case_or_padding():
-    # The type comes back as free text from the model.
     nodes = _worker([_block(' Furniture ', 'chrome'), _block('paragraph', 'a')])
     assert [node.content for node in nodes] == ['a']
 
@@ -131,9 +117,8 @@ def test_a_page_with_no_furniture_is_untouched():
 
 
 def test_discarded_blocks_are_logged_for_audit(caplog):
-    # The discard is unrecoverable, so the log is the only record that it
-    # happened — a false positive has to be findable after the fact.
     with caplog.at_level('DEBUG', logger='kms.ingestion.extractor'):
         _worker([_block('furniture', 'Richard Hammack Book of Proof')], index=7)
     assert 'Richard Hammack Book of Proof' in caplog.text
     assert 'page 7' in caplog.text
+

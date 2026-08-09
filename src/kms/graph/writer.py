@@ -1,38 +1,3 @@
-"""
-Persist the structural node stream and the statement/procedure overlay into
-Neo4j.
-
-``persist_nodes`` upserts ``:Source`` and ``:Node`` vertices (no edges).
-
-``persist_chain`` writes the pure provenance chain: ``:HEAD`` from
-``:Source`` to the first ``:Node``, then ``:NEXT`` threading every node in
-document order. Nothing is skipped and no statement is slotted in — the
-chain is the verbatim stream.
-
-``persist_statements`` writes the ``:Statement`` overlay as bare vertices,
-plus ``:MEMBER_OF`` edges from each member node. No edge runs from
-``:Source`` to them: a statement is reached from the raw blocks that informed
-it, and scoped to its book by the indexed ``source`` property (see
-``schema``). An edge per statement would duplicate that index and hang the
-whole book off one supernode.
-
-``persist_procedures`` writes ``:Procedure`` vertices and
-``:MEMBER_OF`` edges from their member nodes. ``:Act`` step chains are
-declared but not yet written.
-
-Every vertex and edge carries ``created_at`` and ``modified_at`` — ISO-8601
-UTC stamps, set once when the element is first written and bumped on every
-re-write. These are transaction-time bookkeeping (when we wrote the graph),
-deliberately separate from any semantic time in the content.
-
-Writes are batched: structural node labels are grouped by their per-type
-label and each batch is one MERGE. Statements, procedures and acts each
-carry a single fixed label, so each is one batched MERGE.
-
-The Cypher lives in ``queries`` — this module composes rows and edge pairs
-and hands them to the named queries; no query string is embedded here.
-"""
-
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -115,19 +80,12 @@ from kms.graph.triplets import (
 
 
 def utcnow_iso() -> str:
-    """Current UTC time as an ISO-8601 string, for ``created_at`` stamps.
-
-    Returns:
-        The current time, e.g. ``2026-08-04T03:00:00+00:00``.
-    """
     return datetime.now(UTC).isoformat(timespec='seconds')
 
 
 def node_batches(
     nodes: list[models.ASTNode], source: str
 ) -> dict[str | None, list[dict]]:
-    """Group the nodes' property maps by their per-type label, so each
-    label is one batched MERGE."""
     batches: dict[str | None, list[dict]] = defaultdict(list)
     for node in nodes:
         batches[node_label(node)].append(node_properties(node, source))
@@ -141,18 +99,6 @@ async def persist_nodes(
     session_factory: Callable,
     metadata: dict[str, Any] | None = None,
 ) -> None:
-    """Upsert the book's ``:Source`` root and its ``:Node`` vertices.
-
-    Vertices only — no ``:NEXT`` or ``:HEAD`` edges (those are written
-    by ``persist_chain`` in document order).
-
-    Args:
-        nodes: The flat node stream, in document order.
-        source: The stable book identity.
-        session_factory: A callable that returns an async context manager
-            with a ``run(query, **params)`` method.
-        metadata: Optional ``{title, author}`` for the ``:Source`` node.
-    """
     if not nodes:
         return
     source_props = source_properties(source, metadata)
@@ -173,31 +119,10 @@ async def persist_nodes(
 
 
 def _chain_nodes(nodes: list[models.ASTNode], source: str) -> list[str]:
-    """Every node's uuid in document order — the pure provenance chain.
-
-    The chain is the verbatim stream, nothing skipped: statements are not
-    elements of it — they hang off their member nodes via
-    ``:MEMBER_OF`` (see ``persist_statements``).
-
-    Args:
-        nodes: The flat node stream, in document order.
-        source: The stable book identity.
-
-    Returns:
-        One uuid per node, in document order.
-    """
     return [node_uuid(source, node.id) for node in nodes if node.id is not None]
 
 
 def _chain_pairs(chain: list[str]) -> list[dict]:
-    """The consecutive pairs of the provenance ``:NEXT`` chain.
-
-    Args:
-        chain: The ordered node uuids.
-
-    Returns:
-        One ``{from, to}`` per ``:NEXT`` edge.
-    """
     return [
         {'from': current, 'to': following}
         for current, following in zip(chain, chain[1:], strict=False)
@@ -210,20 +135,6 @@ async def persist_chain(
     *,
     session_factory: Callable,
 ) -> None:
-    """Write the pure provenance ``:NEXT`` chain and ``:HEAD`` edge.
-
-    ``:HEAD`` runs from ``:Source`` to the first ``:Node``, then ``:NEXT``
-    threads every node in document order. Nothing is skipped and no statement
-    is slotted in: the chain is the verbatim stream, and the statement
-    overlay hangs off it via ``(:Node)-[:MEMBER_OF]->(:Statement)``
-    (see ``persist_statements``).
-
-    Args:
-        nodes: The flat node stream, in document order.
-        source: The stable book identity.
-        session_factory: A callable that returns an async context manager
-            with a ``run(query, **params)`` method.
-    """
     if not nodes:
         return
     chain = _chain_nodes(nodes, source)
@@ -247,7 +158,6 @@ async def persist_chain(
 def statement_rows(
     statements: list[models.Statement], source: str
 ) -> list[dict]:
-    """Every statement's property map, one flat list."""
     return [statement_properties(statement, source) for statement in statements]
 
 
@@ -257,21 +167,6 @@ async def persist_statements(
     *,
     session_factory: Callable,
 ) -> None:
-    """Upsert the book's ``:Statement`` overlay as bare vertices, plus the
-    ``:MEMBER_OF`` edges from each member node.
-
-    Statements are deliberately out of the chain — the walkable ``:NEXT``
-    spine is the pure provenance node stream — and each one points at the raw
-    blocks that are its members: one ``(:Node)-[:MEMBER_OF]->(:Statement)``
-    edge per member of the group. Book-scoped lookup goes through the
-    ``statement_source`` index rather than a traversal.
-
-    Args:
-        statements: The statement hubs.
-        source: The stable book identity.
-        session_factory: A callable that returns an async context manager
-            with a ``run(query, **params)`` method.
-    """
     if not statements:
         return
     rows = statement_rows(statements, source)
@@ -292,19 +187,6 @@ async def persist_instructions(
     *,
     session_factory: Callable,
 ) -> None:
-    """Upsert the ``:Instruction`` hubs and their ``:GOVERNS`` edges.
-
-    One hub per lead-in, carrying the page's own sentence, pointing at each
-    exercise node it governs. The edge runs from the hub outward: governance
-    is a claim the instruction makes about those nodes, not a grouping they
-    belong to, so an exercise keeps its statement membership untouched.
-
-    Args:
-        instructions: The instruction hubs.
-        source: The stable book identity.
-        session_factory: A callable that returns an async context manager
-            with a ``run(query, **params)`` method.
-    """
     if not instructions:
         return
     rows = instruction_rows(instructions, source)
@@ -323,15 +205,6 @@ async def persist_procedures(
     *,
     session_factory: Callable,
 ) -> None:
-    """Upsert the procedural layer: one ``:Procedure`` hub per derivation,
-    pointing at its member nodes via ``:MEMBER_OF``.
-
-    Args:
-        procedures: The procedure hubs.
-        source: The stable book identity.
-        session_factory: A callable that returns an async context manager
-            with a ``run(query, **params)`` method.
-    """
     procedure_batch = procedure_rows(procedures, source)
     if not procedure_batch:
         return
@@ -363,18 +236,6 @@ async def persist_facts(
     *,
     session_factory: Callable,
 ) -> None:
-    """Upsert the ``:Fact`` nodes and their ``:EVIDENCE_FOR`` edges.
-
-    One ``:Fact`` per atomic fact, carrying its text. Each provenance node
-    the fact draws on points at it via ``:EVIDENCE_FOR``, the same
-    raw-material → construct anchor the statement and procedure tiers use.
-
-    Args:
-        facts: The atomic facts, in document order.
-        source: The stable book identity.
-        session_factory: A callable that returns an async context manager
-            with a ``run(query, **params)`` method.
-    """
     fact_batch = fact_rows(facts, source)
     if not fact_batch:
         return
@@ -395,23 +256,6 @@ async def persist_entities(
     *,
     session_factory: Callable,
 ) -> None:
-    """Upsert the ``:Entity`` vertices.
-
-    One ``:Entity`` per (node, triplet, role) — each triplet's subject and
-    object reified as their own vertices, carrying the enricher's description
-    of that surface form at that node. Entities are reached through their
-    triplets (the triplet hub's ``:HAS_SUBJECT``/``:HAS_OBJECT`` edges point
-    at them); there is no direct ``(:Node)-[:HAS_ENTITY]->(:Entity)`` edge.
-
-    Args:
-        triplets: The triplets, in document order.
-        facts: The atomic facts, in document order.
-        node_entity_descriptions: The enricher's per-node mapping: node id to
-            a list of ``{name, description}`` dicts.
-        source: The stable book identity.
-        session_factory: A callable that returns an async context manager
-            with a ``run(query, **params)`` method.
-    """
     entity_batch = entity_rows(
         triplets, facts, source, node_entity_descriptions
     )
@@ -430,21 +274,6 @@ async def persist_triplets(
     *,
     session_factory: Callable,
 ) -> None:
-    """Upsert the ``:Triplet`` hubs and their edges.
-
-    One ``:Triplet`` hub per (node, triplet) — an empty connector. The
-    triplet's content lives on its edges: ``(:Triplet)-[:HAS_SUBJECT]->(:Entity)``,
-    ``(:Triplet)-[:HAS_PREDICATE]->(:Predicate)``, and
-    ``(:Triplet)-[:HAS_OBJECT]->(:Entity)``. Each also points back at its
-    source ``:Fact`` via ``(:Fact)-[:YIELDS]->(:Triplet)``.
-
-    Args:
-        triplets: The triplets, in document order.
-        facts: The atomic facts, in document order.
-        source: The stable book identity.
-        session_factory: A callable that returns an async context manager
-            with a ``run(query, **params)`` method.
-    """
     triplet_batch = triplet_rows(triplets, facts, source)
     if not triplet_batch:
         return
@@ -473,22 +302,6 @@ async def persist_predicates(
     session_factory: Callable,
     node_predicate_descriptions: dict[int, list[dict]] | None = None,
 ) -> None:
-    """Upsert the ``:Predicate`` component vertices and their edges.
-
-    One ``:Predicate`` per (node, triplet) — the DESCRIBED predicate
-    component of the triplet hub — carrying the predicate text and, when
-    written, its description. Each triplet hub points at the component via
-    ``(:Triplet)-[:HAS_PREDICATE]->(:Predicate)``.
-
-    Args:
-        triplets: The triplets, in document order.
-        facts: The atomic facts, in document order.
-        source: The stable book identity.
-        session_factory: A callable that returns an async context manager
-            with a ``run(query, **params)`` method.
-        node_predicate_descriptions: The enricher's per-node predicate
-            descriptions.
-    """
     node_predicate_descriptions = node_predicate_descriptions or {}
     predicate_batch = predicate_rows(
         triplets, facts, source, node_predicate_descriptions
@@ -514,25 +327,6 @@ async def persist_entity_hubs(
     session_factory: Callable,
     definitions: list[dict] | None = None,
 ) -> None:
-    """Upsert ``:EntityHub`` vertices, ``:Definition`` vertices, and their
-    edges.
-
-    One ``:EntityHub`` per cluster (empty connector). Each hub points at a
-    ``:Definition`` carrying the synthesised canonical text and its
-    embedding. Every spoke in the cluster points at the hub via
-    ``(:Entity)-[:CANONICAL]->(:EntityHub)``.
-
-    Args:
-        entity_clusters: One list of spoke dicts per cluster. Each spoke
-            dict carries at least ``uuid``.
-        hub_definitions: One dict per hub:
-            ``{hub_uuid, definition_text, definition_embedding}``.
-        source: The stable book identity.
-        session_factory: A callable that returns an async context manager
-            with a ``run(query, **params)`` method.
-        definitions: Optional per-cluster dicts with ``display_name``
-            for the hub node.
-    """
     hub_batch = entity_hub_rows(
         entity_clusters, source, definitions=definitions
     )
@@ -575,23 +369,6 @@ async def persist_predicate_hubs(
     session_factory: Callable,
     definitions: list[dict] | None = None,
 ) -> None:
-    """Upsert ``:PredicateHub`` vertices, ``:Definition`` vertices, and
-    their edges.
-
-    One ``:PredicateHub`` per cluster (empty connector). Each hub points
-    at a ``:Definition`` carrying the synthesised canonical text and its
-    embedding. Every spoke in the cluster points at the hub via
-    ``(:Predicate)-[:CANONICAL]->(:PredicateHub)``.
-
-    Args:
-        predicate_clusters: One list of spoke dicts per cluster.
-        hub_definitions: One dict per hub (same shape as for entities).
-        source: The stable book identity.
-        session_factory: A callable that returns an async context manager
-            with a ``run(query, **params)`` method.
-        definitions: Optional per-cluster dicts with ``display_name``
-            for the hub node.
-    """
     hub_batch = predicate_hub_rows(
         predicate_clusters, source, definitions=definitions
     )
@@ -634,19 +411,6 @@ async def persist_communities(
     *,
     session_factory: Callable,
 ) -> None:
-    """Upsert ``:Community`` nodes and their edges.
-
-    One ``:Community`` per detected community, carrying a summary text
-    and its embedding.  Member hubs are linked via ``:HAS_MEMBER``;
-    evidence triplets via ``:COMMUNITY_EVIDENCE``.
-
-    Args:
-        communities: One dict per community:
-            ``{community_uuid, member_hub_uuids, triplet_uuids,
-              summary_text, summary_embedding}``.
-        source: The stable book identity.
-        session_factory: The injected session factory.
-    """
     if not communities:
         return
     rows = community_rows(communities, source)
@@ -678,19 +442,8 @@ async def persist_triplet_hubs(
     *,
     session_factory: Callable,
 ) -> None:
-    """Upsert ``:TripletHub`` + ``:FactHub`` vertices and their edges.
-
-    Args:
-        groups: One dict per canonical assertion:
-            ``{triplet_hub_uuid, subj_hub, pred_hub, obj_hub,
-              triplet_uuids, fact_text, fact_embedding}``.
-        source: The stable book identity.
-        session_factory: The injected session factory.
-    """
     if not groups:
         return
-
-    # Hub rows (uuid, source only)
     from kms.graph.triplet_hubs import triplet_hub_properties
 
     hub_rows = [
@@ -747,3 +500,4 @@ async def persist_triplet_hubs(
                 pairs=support_pairs,
                 now=now,
             )
+

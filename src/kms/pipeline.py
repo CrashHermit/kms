@@ -1,33 +1,3 @@
-"""
-LangGraph pipeline that turns a PDF into Neo4j graph nodes via Mistral OCR.
-
-Stage order:
-    corrector -> formatter -> extractor -> seam_merger (even, odd) -> splitter
-              -> instruction_finder -> instruction_distributor
-              -> pedagogical_component_finder -> hub_builder
-              -> atomic_facts -> triplet_extraction -> entity_enrichment
-              -> ingestion_persister
-
-Two phases. Ingestion is per-page map-reduce: the corrector proofreads each
-page's transcription against its image, the formatter standardises markup, the
-extractor parses it into structural nodes, and the seam merger heals cross-page
-splits then flattens the backbone into the global ``nodes`` stream. The
-splitter then normalises packed-exercise nodes, the instruction finder tags
-lead-ins, and the distributor prepends directives onto governed exercises.
-
-One semantic chain follows. The pedagogical component finder cuts the stream
-into untyped spans; the hub builder classifies each span's roles and partitions
-both-blocks in one pass (router + gated partitioners). The atomic fact pass then
-decomposes the final node stream into atomic facts for the downstream triplet
-extraction and canonicalization passes.
-
-The ingestion persister writes everything: a ``:Source`` root, its ``:Node``
-provenance chain, and the ``:Statement``/``:Procedure`` hubs hung off member
-nodes via ``:MEMBER_OF``. A no-op when Neo4j isn't
-configured. After the graph returns, ``run()`` returns the pipeline state
-without writing to disk.
-"""
-
 import os
 from collections.abc import Callable
 from pathlib import Path
@@ -66,32 +36,6 @@ def build_graph(
     neo4j_session_factory: Callable | None = None,
     neo4j_configured: bool = False,
 ) -> 'CompiledStateGraph':
-    """Assemble and compile the LangGraph pipeline over ``state.State``.
-
-    A single straight path: the correction pass proofreads each
-    Mistral-transcribed page against its image, the formatter standardises that
-    page's markup, the extractor parses the result into structural nodes, the
-    seam merger heals page-split
-    nodes and flattens to the global stream, and the pedagogical component
-    finder then cuts that stream into untyped spans for the hub builder to
-    label and partition in one pass — before the atomic fact pass
-    decomposes the stream and the persister writes every tier.
-
-    Args:
-        text_language_model: The language model for all text-reasoning
-            stages (extractor, formatter, hub builder, atomic fact
-            extractor, etc.).
-        corrector_language_model: The vision-capable language model for
-            the correction pass.
-        recorder: Optional recorder for capturing DSPy training examples.
-        neo4j_session_factory: A callable that returns an async context
-            manager with a ``run(query, **params)`` method.
-        neo4j_configured: Whether a Neo4j target is wired.
-
-    Returns:
-        The compiled graph.
-    """
-    # --- DSPy modules ---
     corrector_module = corrector.Corrector(
         language_model=corrector_language_model,
         recorder=recorder,
@@ -156,8 +100,6 @@ def build_graph(
         language_model=text_language_model,
         recorder=recorder,
     )
-
-    # --- LangGraph nodes ---
     corrector_node = corrector.CorrectorNode(module=corrector_module)
     formatter_node = formatter.FormatterNode(module=formatter_module)
     extractor_node = extractor.ExtractorNode(module=extractor_module)
@@ -199,8 +141,6 @@ def build_graph(
     )
 
     graph = StateGraph(state.State)
-
-    # Each stage registers its worker (Send target) and collect (drain) nodes.
     graph.add_node('corrector_worker', corrector_node.worker)
     graph.add_node('corrector_collect', corrector_node.collect)
     graph.add_node('formatter_worker', formatter_node.worker)
@@ -224,20 +164,12 @@ def build_graph(
     graph.add_node('triplet_extraction', triplet_extractor_node.run)
     graph.add_node('entity_enrichment', entity_enricher_node.run)
     graph.add_node('entity_embedding', entity_embedder_node.run)
-
-    # A stage's dispatch is a conditional edge off the previous collect: it
-    # either fans out Sends to the worker or short-circuits straight to its own
-    # collect.
     graph.add_conditional_edges(
         START,
         corrector_node.dispatch,
         ['corrector_worker', 'corrector_collect'],
     )
     graph.add_edge('corrector_worker', 'corrector_collect')
-
-    # Formatting runs after correction, never before: anything that
-    # deliberately makes the text diverge from the page image must come after
-    # the pass whose contract is that the two agree.
     graph.add_conditional_edges(
         'corrector_collect',
         formatter_node.dispatch,
@@ -251,9 +183,6 @@ def build_graph(
         ['extractor_worker', 'extractor_collect'],
     )
     graph.add_edge('extractor_worker', 'extractor_collect')
-
-    # Seam healing: even pass then odd pass, so no two concurrent workers touch
-    # the same segment (see seam_merger's parity note).
     graph.add_conditional_edges(
         'extractor_collect',
         seam_node.dispatch_even,
@@ -268,15 +197,8 @@ def build_graph(
     graph.add_edge('seam_odd_worker', 'seam_odd_collect')
 
     graph.add_edge('seam_odd_collect', 'splitter')
-
-    # The instruction finder tags exercise lead-in nodes with type INSTRUCTION.
-    # The instruction distributor prepends each lead-in's directive onto its
-    # governed exercises and removes the instruction nodes from the stream.
     graph.add_edge('splitter', 'instruction_finder')
     graph.add_edge('instruction_finder', 'instruction_distributor')
-
-    # The persister runs last, after every stream mutation, so the persisted
-    # node ids match the overlay's members and instruction nodes are excluded.
     graph.add_edge('instruction_distributor', 'pedagogical_component_finder')
     graph.add_edge('pedagogical_component_finder', 'hub_builder')
     graph.add_edge('hub_builder', 'atomic_facts')
@@ -297,38 +219,10 @@ async def run(
     title: str | None = None,
     author: str | None = None,
 ) -> dict:
-    """Run the full pipeline on a PDF.
-
-    The Mistral OCR API turns each page into reading-ordered markdown plus
-    extracted figures (no GPU, no docling); the graph then corrects, parses,
-    heals, builds the statement overlay, extracts atomic facts, and (when
-    Neo4j is configured) persists the
-    ``:Node`` provenance layer, the ``:Statement`` overlay, and the
-    procedural layer on top of it. Graph persistence is skipped
-    entirely
-    when Neo4j isn't configured — a DB-less run still returns the pipeline
-    state but persists no nodes or statements.
-
-    Args:
-        pdf_path: The source PDF.
-        output_dir: Directory the document's assets are written into.
-        pages: 0-based pages to limit the OCR request to, or None for all.
-        source: The book identity used as the graph's Neo4j key. Defaults to
-            the PDF's filename.
-        title: Optional book title, stored on the ``:Source`` node.
-        author: Optional book author, stored on the ``:Source`` node.
-
-    Returns:
-        The pipeline state: the ``nodes`` stream, the ``:Statement`` /
-        ``:Procedure`` hubs, and the atomic facts.
-    """
-    # Deferred so importing the pipeline does not require the OCR extra.
     from kms.ingestion import ocr
 
     output_dir = Path(output_dir)
     source = source or Path(pdf_path).name
-
-    # -- Wiring: construct every injectable dependency --------------------
     example_recorder = None
     if os.environ.get('KMS_RECORD'):
         example_recorder = recording.Recorder(
@@ -371,3 +265,4 @@ async def run(
         return result
     finally:
         await db.close_driver()
+

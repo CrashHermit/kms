@@ -1,18 +1,3 @@
-"""Live test: semantic pipeline on cached content through to Neo4j.
-
-Uses the combinatorics graph-theory page content from
-``live_semantic_pipeline_test.py`` — already in the DSPy cache, so no
-new LLM calls. Runs atomic-fact extraction → triplet extraction →
-entity enrichment → embedding, then persists Entities, Predicates,
-Triplets, and Facts to Neo4j and verifies.
-
-Requires NEO4J_URI/USERNAME/PASSWORD and OPENROUTER_API_KEY (for
-embeddings) configured in .env.
-
-Run from the repo root with:
-    .venv/bin/python tests/live_neo4j_pipeline_test.py
-"""
-
 import asyncio
 import sys
 from pathlib import Path
@@ -21,9 +6,6 @@ SRC = Path(__file__).resolve().parent.parent / 'src'
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-
-# The same content as live_semantic_pipeline_test.py — the corrected
-# transcription of the combinatorics graph-theory page.
 PAGE_CONTENT = """\
 Here both $G_2$ and $G_3$ are subgraphs of $G_1$. But only $G_2$ is an \
 *induced* subgraph. Every edge in $G_1$ that connects vertices in $G_2$ is \
@@ -45,8 +27,6 @@ other vertex by following some path of edges. A graph that is not connected \
 can be thought of as two separate graphs drawn close together."""
 
 SOURCE = 'combinatorics_graph_theory_page'
-
-# Single-node anchor: the whole page as one paragraph node.
 FAKE_NODES = [
     type(
         'ASTNode',
@@ -75,18 +55,12 @@ async def main() -> None:
     )
 
     lm = llm.text_lm()
-
-    # -- Ensure schema exists ------------------------------------------------
     if db.is_configured():
 
         def _session_factory():
             return db.session()
 
         await schema.ensure_schema(_session_factory)
-
-    # ======================================================================
-    # STAGE 1 — Atomic facts
-    # ======================================================================
     print('=' * 60)
     print('STAGE 1 — Atomic facts')
     print('=' * 60)
@@ -108,10 +82,6 @@ async def main() -> None:
     if not facts:
         print('No facts — stopping.')
         return
-
-    # ======================================================================
-    # STAGE 2 — Triplet extraction
-    # ======================================================================
     print(f'\n{"=" * 60}')
     print('STAGE 2 — Triplet extraction')
     print('=' * 60)
@@ -134,10 +104,6 @@ async def main() -> None:
     if not triplets:
         print('No triplets — stopping.')
         return
-
-    # ======================================================================
-    # STAGE 3 — Entity + predicate enrichment
-    # ======================================================================
     print(f'\n{"=" * 60}')
     print('STAGE 3 — Entity + predicate enrichment')
     print('=' * 60)
@@ -161,10 +127,6 @@ async def main() -> None:
         print(f'\n  Predicates (node {node_id}):')
         for entry in entries:
             print(f'    {entry["predicate"]}: {entry["description"]}')
-
-    # ======================================================================
-    # STAGE 4 — Embedding
-    # ======================================================================
     print(f'\n{"=" * 60}')
     print('STAGE 4 — Embedding')
     print('=' * 60)
@@ -183,10 +145,6 @@ async def main() -> None:
     )
     print(f'{embedded_ent}/{n_entity} entity embeddings, '
           f'{embedded_pred}/{n_pred} predicate embeddings')
-
-    # ======================================================================
-    # STAGE 5 — Persist to Neo4j
-    # ======================================================================
     if not db.is_configured():
         print('\nNeo4j not configured — stopping.')
         return
@@ -197,27 +155,17 @@ async def main() -> None:
 
     def _sf():
         return db.session()
-
-    # Write nodes first (entities/predicates reference them)
     await writer.persist_nodes(nodes, SOURCE, session_factory=_sf)
     print('  :Source + :Node written')
-
-    # Write the provenance chain
     await writer.persist_chain(nodes, SOURCE, session_factory=_sf)
     print('  :NEXT chain written')
-
-    # Write facts
     await writer.persist_facts(facts, SOURCE, session_factory=_sf)
     print(f'  {len(facts)} :Fact(s) written')
-
-    # Write triplets FIRST — Predicate edges reference Triplet hubs
     await writer.persist_triplets(triplets, facts, SOURCE, session_factory=_sf)
     async with db.session() as s:
         r = await s.run('MATCH (t:Triplet) RETURN count(t) AS cnt')
         trip_cnt = (await r.single())['cnt']
     print(f'  {trip_cnt} :Triplet hubs written')
-
-    # Write entities (needs triplets, facts, enriched descriptions)
     await writer.persist_entities(
         triplets, facts, enriched_entities, SOURCE, session_factory=_sf,
     )
@@ -225,8 +173,6 @@ async def main() -> None:
         r = await s.run('MATCH (e:Entity) RETURN count(e) AS cnt')
         ent_cnt = (await r.single())['cnt']
     print(f'  {ent_cnt} :Entity vertices written')
-
-    # Write predicates AFTER triplets — HAS_PREDICATE edges need both
     await writer.persist_predicates(
         triplets, facts, SOURCE,
         session_factory=_sf,
@@ -236,10 +182,6 @@ async def main() -> None:
         r = await s.run('MATCH (p:Predicate) RETURN count(p) AS cnt')
         pred_cnt = (await r.single())['cnt']
     print(f'  {pred_cnt} :Predicate vertices written')
-
-    # ======================================================================
-    # STAGE 6 — Verify
-    # ======================================================================
     print(f'\n{"=" * 60}')
     print('NEO4J VERIFICATION')
     print('=' * 60)
@@ -269,8 +211,6 @@ async def main() -> None:
         for edge in edges:
             cnt = await _edge_count(edge)
             print(f'  [:{edge:<16}] {cnt}')
-
-        # Spot-check: list all triplets with their subject/predicate/object
         print()
         print('  --- All Triplets ---')
         r = await session.run(
@@ -285,8 +225,6 @@ async def main() -> None:
         async for rec in r:
             print(f'  ({rec["subject"]}) --[{rec["predicate"]}]--> '
                   f'({rec["object"]})')
-
-        # Check embedding coverage
         r = await session.run(
             'MATCH (e:Entity) WHERE e.embedding IS NOT NULL '
             'RETURN count(e) AS cnt'
@@ -300,8 +238,6 @@ async def main() -> None:
         print()
         print(f'  Entities with embedding:   {ent_emb}/{ent_cnt}')
         print(f'  Predicates with embedding: {pred_emb}/{pred_cnt}')
-
-        # Spot-check a sample embedding dimension
         r = await session.run(
             'MATCH (e:Entity) WHERE e.embedding IS NOT NULL '
             'RETURN e.name, size(e.embedding) AS dims LIMIT 2'
@@ -320,3 +256,4 @@ async def main() -> None:
 
 if __name__ == '__main__':
     asyncio.run(main())
+

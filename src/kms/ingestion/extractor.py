@@ -1,46 +1,3 @@
-"""Structural node extraction — parses OCR markdown into a flat ordered AST.
-
-Each textbook page's markdown is segmented into top-level block nodes
-(paragraph, math, list, header, table, image, caption, code, bibliographic) by a
-DSPy ChainOfThought module. The result is a flat list of structural nodes per
-page — purely structural, no math-semantic typing (that lives in the entity
-layer).
-
-``furniture`` is the stage's one *discard* type. The apparatus around a
-document — the running head, the folio, the colophon or licence line at the foot
-of the page — is not part of what the document says, and since the OCR front end
-appends each page's extracted footer back onto its markdown (so footnote
-citations survive), that apparatus now reaches this stage. It is identified here
-and dropped before the stage returns, so nothing downstream ever sees it: no
-node, no id, no graph vertex. Identifying it *here* rather than in a later
-finder is what keeps the seam merger correct — a colophon left at the foot of a
-page would take the tail's place and prevent a genuinely split paragraph from
-being healed, exactly as a footnote would.
-
-Discarding is why it is a *type* and not a stage: the judgment is one the
-extractor is already making (which blocks are there, and what each one is), and
-a block that never becomes a node needs nothing else built for it. The cost is
-that it is unrecoverable — a false positive deletes real content silently — so
-the prompt is written to keep anything it is unsure about, and every dropped
-block is logged at DEBUG.
-
-``bibliographic`` and ``note`` are the two types whose test is not the block's
-shape: a footnote and a reference-list entry are both prose paragraphs to look
-at. What separates them from prose is what they are *for* — one names an
-external work, the other hangs off a marker in the body — and between the two,
-naming a work wins. ``bibliographic`` is decided here rather than in a later
-semantic stage because a reference is a *block* — one node per work — and
-blocking is this stage's job; nothing downstream can recover the entry
-boundaries once several works are packed into one paragraph node.
-
-Together with ``furniture`` these give the page's bottom edge a three-way split
-with a positive test each, instead of forcing every footnote to be argued out of
-the discard: furniture talks about the artifact and is dropped, a note talks
-about the subject and is kept, a reference names a work. ``note`` nodes stay in
-the ordinary stream and remain eligible for the semantic chain — a footnote that
-defines a term is a definition wherever it happens to be printed.
-"""
-
 import asyncio
 import logging
 
@@ -52,9 +9,6 @@ from kms.core import logs, models, recording, state
 
 logger = logging.getLogger(__name__)
 
-
-# Block types the stage identifies.  furniture is discarded before reaching
-# _node_for — the model may emit it, but it never becomes an ASTNode.
 _VALID_TYPES = frozenset(
     {
         'paragraph',
@@ -74,18 +28,6 @@ _BLOCK_FURNITURE = 'furniture'
 
 
 def _node_for(node_type: str, content: str | None) -> models.ASTNode:
-    """Create an ASTNode from one extracted block.
-
-    Args:
-        node_type: The type string the LLM emitted.
-        content: The block's markdown.
-
-    Returns:
-        The typed AST node.
-
-    Raises:
-        ValueError: If the type string is not a known block type.
-    """
     node_type = node_type.strip().lower()
     if node_type not in _VALID_TYPES:
         raise ValueError(f'Unknown block type: {node_type!r}')
@@ -93,8 +35,6 @@ def _node_for(node_type: str, content: str | None) -> models.ASTNode:
 
 
 class DSPyModel(BaseModel):
-    """A single extracted block node from the LLM: its type and content."""
-
     type: str = Field(
         description='The block type: paragraph, math, code, list, table, image, caption, header, bibliographic, note, or furniture.'
     )
@@ -106,18 +46,6 @@ class DSPyModel(BaseModel):
 def _partition(
     blocks: list[DSPyModel],
 ) -> tuple[list[DSPyModel], list[DSPyModel]]:
-    """Split one page's blocks into the ones kept and the ones discarded.
-
-    A discarded block is page apparatus (``furniture``): identified so it can
-    be thrown away here, before the stage returns, rather than travelling the
-    pipeline as a node every later stage has to ignore.
-
-    Args:
-        blocks: The blocks the LLM emitted for one page, in document order.
-
-    Returns:
-        The ``(kept, discarded)`` blocks, each in document order.
-    """
     kept: list[DSPyModel] = []
     discarded: list[DSPyModel] = []
     for block in blocks:
@@ -339,12 +267,6 @@ class Signature(dspy.Signature):
 
 
 class Extractor(dspy.Module):
-    """Parses one page's OCR markdown into structural block nodes.
-
-    Args:
-        language_model: The LM to run on.
-    """
-
     def __init__(
         self,
         language_model: dspy.LM,
@@ -356,14 +278,6 @@ class Extractor(dspy.Module):
         self._recorder = recorder
 
     async def aforward(self, segment_markdown: str) -> list[DSPyModel]:
-        """Parse one page.
-
-        Args:
-            segment_markdown: The page's markdown.
-
-        Returns:
-            The page's top-level structural nodes, in document order.
-        """
         result = await self.extractor.acall(segment_markdown=segment_markdown)
         if self._recorder:
             self._recorder.record(
@@ -379,39 +293,14 @@ class Extractor(dspy.Module):
         return nodes
 
     def forward(self, segment_markdown: str) -> list[DSPyModel]:
-        """Sync forward for DSPy optimisers."""
         return asyncio.run(self.aforward(segment_markdown))
 
 
-# --- LangGraph node: parse each segment's markdown into AST nodes ---
-
-
 class ExtractorNode:
-    """Fans out per-segment workers and collects the extracted AST.
-
-    Args:
-        module: The extractor module.
-    """
-
     def __init__(self, module: Extractor) -> None:
         self.module = module
 
     def dispatch(self, state: state.State) -> list[Send] | str:
-        """Fan out one worker per segment that has OCR'd content.
-
-        Each segment is parsed in isolation — no neighbour context. Passing a
-        segment's neighbours as context made the LLM bleed their content into
-        this segment's node list (a measured ~25% duplicate-entity inflation on
-        dense pages). Cross-segment continuations are healed downstream by the
-        seam merger, so the extractor needs only its own page.
-
-        Args:
-            state: The pipeline state, holding the segment backbone.
-
-        Returns:
-            One Send per segment with content, or the collect step's name when
-            none qualify.
-        """
         segments = state.get('segments', [])
         sends = [
             Send('extractor_worker', {'segment': segment})
@@ -421,14 +310,6 @@ class ExtractorNode:
         return sends or 'extractor_collect'
 
     async def worker(self, state: dict) -> dict:
-        """Parse one segment's markdown into a flat list of AST nodes.
-
-        Args:
-            state: The worker payload, holding its ``segment``.
-
-        Returns:
-            The segment's ``extract_results`` entry.
-        """
         segment: models.Segment = state['segment']
         extracted = await self.module.aforward(segment_markdown=segment.content)
         kept, discarded = _partition(extracted)
@@ -449,14 +330,6 @@ class ExtractorNode:
         return {'extract_results': [(segment.index, nodes)]}
 
     def collect(self, state: state.State) -> dict:
-        """Merge each segment's extracted nodes back into the backbone.
-
-        Args:
-            state: The pipeline state, holding the extraction results.
-
-        Returns:
-            The updated segment backbone.
-        """
         results = state.get('extract_results', [])
         segments = models.merge_results_into_segments(
             state['segments'], results, 'nodes'
@@ -467,3 +340,4 @@ class ExtractorNode:
             sum(len(nodes) for _, nodes in results),
         )
         return {'segments': segments}
+

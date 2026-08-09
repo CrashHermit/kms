@@ -1,20 +1,3 @@
-"""Live test: full-rebuild canonicalization against Neo4j.
-
-Reads all :Entity and :Predicate spokes from Neo4j, clusters them,
-synthesises definitions, deletes the old canonical layer, and writes
-fresh :EntityHub/:PredicateHub + :Definition + :CANONICAL edges.
-
-No incremental merge, no cross-batch adjudication — full rebuild
-from spokes.
-
-Requires NEO4J_URI/USERNAME/PASSWORD and EMBEDDING_API_KEY (for
-definition embedding) and DEEPSEEK_API_KEY (for definition synthesis
-LLM calls).
-
-Run from the repo root with:
-    .venv/bin/python tests/live_canonicalize_test.py
-"""
-
 import asyncio
 import sys
 from pathlib import Path
@@ -59,8 +42,6 @@ async def main() -> None:
             print(f'\n  {kind}:')
             print(f'    Clusters: {info.get("clusters", 0)}')
             print(f'    Spokes:   {info.get("spokes", 0)}')
-
-        # Quick verification query
         print(f'\n{"=" * 60}')
         print('NEO4J CHECK')
         print('=' * 60)
@@ -81,8 +62,6 @@ async def main() -> None:
             )
             cnt = (await r.single())['cnt']
             print(f'  [:CANONICAL]          {cnt}')
-
-            # Show a few hubs with their definitions
             r = await s.run(
                 'MATCH (h:EntityHub)-[:HAS_DEFINITION]->(d:Definition) '
                 'RETURN h.display_name AS name, d.text AS definition '
@@ -103,3 +82,4 @@ async def main() -> None:
 
 if __name__ == '__main__':
     asyncio.run(main())
+

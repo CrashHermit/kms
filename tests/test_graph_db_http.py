@@ -1,8 +1,3 @@
-"""The Query API transport — pure, no server (httpx is driven through a
-MockTransport, and the Bolt probe through a fake driver). Covers URL
-derivation, the request/response shape of a statement, error surfacing,
-bookmark chaining, and how `NEO4J_TRANSPORT` picks a transport."""
-
 import asyncio
 import json
 
@@ -20,7 +15,6 @@ _CONN_ENV = {
 
 @pytest.fixture(autouse=True)
 def _clean_module_state(monkeypatch):
-    """Every test starts with no client, no driver, and no cached verdict."""
     for key, value in _CONN_ENV.items():
         monkeypatch.setenv(key, value)
     monkeypatch.delenv('NEO4J_TRANSPORT', raising=False)
@@ -32,19 +26,14 @@ def _clean_module_state(monkeypatch):
 
 
 def _client(handler) -> httpx.AsyncClient:
-    """An httpx client answering from `handler` instead of the network."""
     return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
 def _rows(fields, values, bookmarks=('bm-1',)):
-    """A Query API success body."""
     return {
         'data': {'fields': list(fields), 'values': [list(v) for v in values]},
         'bookmarks': list(bookmarks),
     }
-
-
-# -- URL derivation -------------------------------------------------------
 
 
 def test_aura_uri_maps_to_plain_https(monkeypatch):
@@ -58,8 +47,6 @@ def test_self_hosted_bolt_uri_maps_to_the_http_port(monkeypatch):
 
 
 def test_secure_uri_with_an_explicit_port_maps_to_the_https_port(monkeypatch):
-    # An explicit Bolt port never doubles as the HTTP port, so 7687 must not
-    # survive into the derived URL.
     monkeypatch.setenv('NEO4J_URI', 'neo4j+ssc://graph.internal:7687')
     assert db.http_url() == 'https://graph.internal:7473'
 
@@ -80,9 +67,6 @@ def test_http_url_requires_a_uri(monkeypatch):
     monkeypatch.delenv('NEO4J_URI', raising=False)
     with pytest.raises(RuntimeError, match='NEO4J_URI is not set'):
         db.http_url()
-
-
-# -- Statement round trip -------------------------------------------------
 
 
 def test_run_posts_the_statement_and_maps_rows_to_dicts():
@@ -107,8 +91,6 @@ def test_run_posts_the_statement_and_maps_rows_to_dicts():
         'statement': 'MATCH (n) RETURN n',
         'parameters': {'source': 'book'},
     }
-    # Records are plain mappings, so `record['k']` and `record.get('k')` — the
-    # only two things queries.py asks of a Bolt record — both work.
     assert records == [
         {'uuid': 'u1', 'name': 'a'},
         {'uuid': 'u2', 'name': 'b'},
@@ -204,18 +186,11 @@ def test_bookmarks_from_one_statement_are_replayed_on_the_next():
                 await s.run('MATCH (a:A) RETURN a')
 
     asyncio.run(scenario())
-    # Read-your-writes across statements in one session: the write's bookmark
-    # rides along on the read that follows it.
     assert 'bookmarks' not in bodies[0]
     assert bodies[1]['bookmarks'] == ['bm-1']
 
 
-# -- Transport selection --------------------------------------------------
-
-
 class _FakeDriver:
-    """A Bolt driver whose handshake we control."""
-
     def __init__(self, reachable: bool) -> None:
         self.reachable = reachable
         self.closed = False
@@ -233,7 +208,7 @@ class _FakeDriver:
 
 def test_transport_defaults_to_auto_and_rejects_nonsense(monkeypatch):
     assert db.configured_transport() == 'auto'
-    monkeypatch.setenv('NEO4J_TRANSPORT', 'HTTP')  # case-insensitive
+    monkeypatch.setenv('NEO4J_TRANSPORT', 'HTTP')
     assert db.configured_transport() == 'http'
     monkeypatch.setenv('NEO4J_TRANSPORT', 'grpc')
     with pytest.raises(RuntimeError, match='not valid'):
@@ -269,7 +244,6 @@ def test_auto_falls_back_to_http_when_bolt_is_unreachable(monkeypatch):
     transport, live = asyncio.run(scenario())
     assert transport == 'http'
     assert isinstance(live, db.HTTPSession)
-    # The unusable driver is closed rather than left holding a pool.
     assert driver.closed
     assert db._driver is None
 
@@ -293,7 +267,6 @@ def test_close_driver_clears_the_cached_verdict(monkeypatch):
     assert asyncio.run(db.resolve_transport()) == 'http'
     asyncio.run(db.close_driver())
     assert db._probed_transport is None
-    # A later run re-probes instead of trusting the stale verdict.
     monkeypatch.setattr(db, '_driver', _FakeDriver(reachable=True))
     assert asyncio.run(db.resolve_transport()) == 'bolt'
 
@@ -301,7 +274,8 @@ def test_close_driver_clears_the_cached_verdict(monkeypatch):
 def test_close_driver_closes_the_http_client(monkeypatch):
     monkeypatch.setenv('NEO4J_TRANSPORT', 'http')
     client = db.http_client()
-    assert db.http_client() is client  # reused, not rebuilt per session
+    assert db.http_client() is client
     asyncio.run(db.close_driver())
     assert client.is_closed
     assert db._http_client is None
+

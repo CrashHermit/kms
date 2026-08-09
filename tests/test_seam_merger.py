@@ -1,10 +1,3 @@
-"""Seam merger — edge selection and healing. No network/LLM.
-
-Covers the rule that bibliographic references are passed over when the seam's
-edges are chosen, so a page ending in a footnote citation still gets its real
-tail healed and no citation is ever welded onto a neighbour.
-"""
-
 import asyncio
 
 from kms.core import models
@@ -33,7 +26,6 @@ def _shown(
     top_node_context,
     bottom_node_context,
 ):
-    """The four nodes a call was shown, as content, for comparison."""
     return (
         top_bottom_edge_node.content,
         bottom_top_edge_node.content,
@@ -43,8 +35,6 @@ def _shown(
 
 
 class _Merger:
-    """Stands in for the judge: every pair is one split block."""
-
     def __init__(self):
         self.seen = []
 
@@ -67,15 +57,11 @@ class _Merger:
 
 
 class _NeverMerges:
-    """Stands in for the judge: no pair is ever a split block."""
-
     async def aforward(self, **_kwargs):
         return False
 
 
 class _Rewriter:
-    """Stands in for the rejoin: returns canned text, records its inputs."""
-
     def __init__(self, merged='MERGED'):
         self.merged = merged
         self.seen = []
@@ -99,8 +85,6 @@ class _Rewriter:
 
 
 class _NeverRewrites:
-    """Fails if asked to rejoin — nothing may rewrite a declined seam."""
-
     async def aforward(self, **_kwargs):
         raise AssertionError('the rewriter ran on a seam the judge declined')
 
@@ -116,8 +100,6 @@ def _merge(top, bottom, module, rewriter=None):
 
 
 def test_edges_skip_a_trailing_citation_and_heal_the_real_tail():
-    # The footer lands after the paragraph that actually runs onto the next
-    # page, so the last node is not the tail to merge.
     top = _segment(
         0,
         [
@@ -131,11 +113,8 @@ def test_edges_skip_a_trailing_citation_and_heal_the_real_tail():
     module = _Merger()
     rewriter = _Rewriter('a sentence cut off mid-way through it.')
     result = _merge(top, bottom, module, rewriter)
-
-    # The paragraph, not the citation, was offered to the model.
     assert module.seen[0][0] == 'a sentence cut off mid-'
     assert module.seen[0][1] == 'way through it.'
-    # ... and the merged content landed on it, with the citation left in place.
     assert [node.content for node in result[0]] == [
         'intro',
         'a sentence cut off mid-way through it.',
@@ -152,14 +131,10 @@ def test_a_leading_citation_on_the_bottom_page_is_passed_over():
     result = _merge(top, bottom, module)
 
     assert module.seen[0][1] == 'way through it.'
-    # The healed head is dropped by position — the citation is not the head,
-    # and it survives.
     assert [node.content for node in result[1]] == ['Stein, 2009.']
 
 
 def test_a_trailing_note_also_displaces_nothing():
-    # Same displacement as a citation: the appended footnote is last, but the
-    # paragraph before it is what runs onto the next page.
     top = _segment(
         0,
         [
@@ -210,7 +185,6 @@ def test_context_nodes_also_skip_citations():
 
 
 def test_a_seam_between_two_citations_is_never_judged():
-    # A reference list split across pages: two distinct works, no continuation.
     top = _segment(0, [_ref('Agirre et al. 2000.')])
     bottom = _segment(1, [_ref('Bollacker et al. 2008.')])
 
@@ -233,11 +207,6 @@ def test_unhealed_seam_leaves_both_pages_untouched():
 
 
 def test_a_declined_seam_never_overwrites_the_tail():
-    # Regression: the signature used to return the merged text as `str | None`
-    # and the stage healed on `bool(merged)`. Asked to return None for "these
-    # do not merge", the model returned the four-character STRING 'None' —
-    # truthy — so every declined seam replaced the tail's real content with the
-    # word "None" and deleted the head. It hit 100% of page boundaries.
     top = _segment(0, [_para('**965.** (4² + 5²)²')])
     bottom = _segment(1, [_para('**966.** Simplify: $3(x+2)$')])
 
@@ -250,7 +219,6 @@ def test_a_declined_seam_never_overwrites_the_tail():
 
 
 def test_a_healed_seam_takes_the_rewriter_s_text():
-    # The rejoin is the rewriter's, not a hardcoded concatenation.
     top = _segment(0, [_para('a sentence cut off mid-')])
     bottom = _segment(1, [_para('way through it.')])
 
@@ -264,8 +232,6 @@ def test_a_healed_seam_takes_the_rewriter_s_text():
 
 
 def test_the_rewriter_sees_the_same_nodes_as_the_judge():
-    # Same four nodes, context included: where the interrupted block starts and
-    # stops is the same question in both calls.
     top = _segment(0, [_para('context above'), _para('tail')])
     bottom = _segment(1, [_para('head'), _para('context below')])
 
@@ -282,8 +248,6 @@ def test_the_rewriter_sees_the_same_nodes_as_the_judge():
 
 
 def test_pairs_skip_a_page_with_nothing_mergeable():
-    # A page of pure bibliography has no seam to heal on either side, so no
-    # worker is spawned for it.
     segments = [
         _segment(0, [_para('body')]),
         _segment(1, [_ref('one'), _ref('two')]),
@@ -307,3 +271,4 @@ def test_pairs_still_fan_out_over_ordinary_neighbours():
         (top.index, bottom.index)
         for top, bottom in seam_merger._pairs(segments, parity=1)
     ] == [(1, 2)]
+

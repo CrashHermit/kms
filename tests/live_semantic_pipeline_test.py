@@ -1,12 +1,3 @@
-"""Live test: full semantic pipeline on real textbook content.
-
-Runs atomic-fact extraction → triplet extraction → entity enrichment →
-embedding on the combinatorics graph-theory page from the gold data.
-
-Run from the repo root with:
-    .venv/bin/python tests/live_semantic_pipeline_test.py
-"""
-
 import asyncio
 
 from kms.core import llm, models
@@ -20,9 +11,6 @@ from kms.ingestion.triplet_extractor import TripletExtractor, extract_triplets
 
 
 async def main():
-    # Real content from the combinatorics graph-theory page (corrected
-    # transcription). The figures are placeholders; the semantic passes
-    # ignore them.
     page_content = """\
 Here both $G_2$ and $G_3$ are subgraphs of $G_1$. But only $G_2$ is an \
 *induced* subgraph. Every edge in $G_1$ that connects vertices in $G_2$ is \
@@ -42,8 +30,6 @@ sometimes called **simple**, although we will just call them *graphs*.
 The graphs above are also **connected**: you can get from any vertex to any \
 other vertex by following some path of edges. A graph that is not connected \
 can be thought of as two separate graphs drawn close together."""
-
-    # Create a single node with this content.
     nodes = [
         models.ASTNode(
             id=0, type='paragraph', content=page_content, segment_index=0
@@ -51,8 +37,6 @@ can be thought of as two separate graphs drawn close together."""
     ]
 
     lm = llm.text_lm()
-
-    # --- Stage 1: Atomic facts ----------------------------------------------
     print('=' * 60)
     print('STAGE 1 — Atomic facts')
     print('=' * 60)
@@ -70,16 +54,12 @@ can be thought of as two separate graphs drawn close together."""
     if not facts:
         print('No facts — stopping.')
         return
-
-    # --- Stage 2: Triplet extraction ----------------------------------------
     print(f'\n{"=" * 60}')
     print('STAGE 2 — Triplet extraction')
     print('=' * 60)
 
     t_module = TripletExtractor(language_model=lm)
     triplets = await extract_triplets(facts, module=t_module)
-
-    # Group triplets by fact for display.
     for i, fact in enumerate(facts):
         my_triplets = [t for t in triplets if t.fact_index == i]
         print(f'\n  Fact [{i}]: {fact.text}')
@@ -97,8 +77,6 @@ can be thought of as two separate graphs drawn close together."""
     if not triplets:
         print('No triplets — stopping.')
         return
-
-    # --- Stage 3: Entity + predicate enrichment ----------------------------
     print(f'\n{"=" * 60}')
     print('STAGE 3 — Entity + predicate enrichment')
     print('=' * 60)
@@ -124,8 +102,6 @@ can be thought of as two separate graphs drawn close together."""
         for entry in entries:
             print(f'    {entry["predicate"]}:')
             print(f'      {entry["description"]}')
-
-    # --- Stage 4: Embedding -------------------------------------------------
     print(f'\n{"=" * 60}')
     print('STAGE 4 — Embedding')
     print('=' * 60)
@@ -148,8 +124,6 @@ can be thought of as two separate graphs drawn close together."""
     )
     print(f'{embedded_ent}/{n_entity} entity embeddings, '
           f'{embedded_pred}/{n_pred} predicate embeddings')
-
-    # Show a few sample embeddings.
     if embedded_ent:
         entry = next(
             e
@@ -178,3 +152,4 @@ can be thought of as two separate graphs drawn close together."""
 
 if __name__ == '__main__':
     asyncio.run(main())
+

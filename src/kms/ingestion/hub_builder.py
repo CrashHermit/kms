@@ -1,29 +1,3 @@
-r"""
-Hub builder — one LangGraph node, three DSPy modules.
-
-The node runs over every PCF span. For each:
-
-1. **Role typer** — answers two boolean questions about the span's
-   composition: does it state something, does it work something out?
-   One cheap call, two independent flags.
-
-2. **Statement partitioner** — runs when the span contains a statement role
-   AND a procedure role (a both-block). Selects which nodes form the
-   statement portion.
-
-3. **Procedure partitioner** — runs under the same both-block gate. Selects
-   which nodes form the procedure portion.
-
-Single-role spans skip partitioning entirely — their hubs keep the whole
-span as members. Both-block hubs are created as independent vertices sharing
-the same block; the role typer's union directly gates the partitioners, so
-no block-set recomputation is needed.
-
-The overlay rides its own ``statements`` and ``procedures`` channels beside
-``nodes``, never in it: a hub is an identifier over its group's member node
-ids, with the raw text left on the nodes.
-"""
-
 import asyncio
 import logging
 
@@ -36,16 +10,9 @@ logger = logging.getLogger(__name__)
 
 
 class WindowMember(BaseModel):
-    """One member node of a PCF block as the partitioner sees it."""
-
     position: int
     type: str
     content: str | None = None
-
-
-# ============================================================================
-# 1. Role typer
-# ============================================================================
 
 
 class Classify(dspy.Signature):
@@ -106,12 +73,6 @@ class Classify(dspy.Signature):
 
 
 class RoleTyper(dspy.Module):
-    """Classifies one span's pedagogical composition.
-
-    Args:
-        language_model: The LM to run on.
-    """
-
     def __init__(
         self,
         language_model: dspy.LM,
@@ -123,17 +84,6 @@ class RoleTyper(dspy.Module):
         self._recorder = recorder
 
     async def aforward(self, contents: str) -> tuple[bool, bool]:
-        """Classify one span.
-
-        Args:
-            contents: The span's text, in document order.
-
-        Returns:
-            The two flags ``(has_statement, has_procedure)``.
-
-        Raises:
-            ValueError: If neither flag is True.
-        """
         result = await self.classify.acall(contents=contents)
         if self._recorder:
             self._recorder.record('role_typer', {'contents': contents}, result)
@@ -153,13 +103,7 @@ class RoleTyper(dspy.Module):
         return has_statement, has_procedure
 
     def forward(self, contents: str) -> tuple[bool, bool]:
-        """Sync forward for DSPy optimisers."""
         return asyncio.run(self.aforward(contents))
-
-
-# ============================================================================
-# 2. Statement partitioner
-# ============================================================================
 
 
 class StatementPartitionSignature(dspy.Signature):
@@ -189,12 +133,6 @@ class StatementPartitionSignature(dspy.Signature):
 
 
 class StatementPartitioner(dspy.Module):
-    """Selects the statement-portion nodes of a both-block.
-
-    Args:
-        language_model: The LM to run on.
-    """
-
     def __init__(
         self,
         language_model: dspy.LM,
@@ -206,7 +144,6 @@ class StatementPartitioner(dspy.Module):
         self._recorder = recorder
 
     async def aforward(self, current_nodes: list[WindowMember]) -> list[int]:
-        """Select the statement-portion positions of one block."""
         result = await self.partitioner.acall(current_nodes=current_nodes)
         if self._recorder:
             self._recorder.record(
@@ -223,13 +160,7 @@ class StatementPartitioner(dspy.Module):
         return positions
 
     def forward(self, current_nodes: list[WindowMember]) -> list[int]:
-        """Sync forward for DSPy optimisers."""
         return asyncio.run(self.aforward(current_nodes))
-
-
-# ============================================================================
-# 3. Procedure partitioner
-# ============================================================================
 
 
 class ProcedurePartitionSignature(dspy.Signature):
@@ -259,12 +190,6 @@ class ProcedurePartitionSignature(dspy.Signature):
 
 
 class ProcedurePartitioner(dspy.Module):
-    """Selects the procedure-portion nodes of a both-block.
-
-    Args:
-        language_model: The LM to run on.
-    """
-
     def __init__(
         self,
         language_model: dspy.LM,
@@ -276,7 +201,6 @@ class ProcedurePartitioner(dspy.Module):
         self._recorder = recorder
 
     async def aforward(self, current_nodes: list[WindowMember]) -> list[int]:
-        """Select the procedure-portion positions of one block."""
         result = await self.partitioner.acall(current_nodes=current_nodes)
         if self._recorder:
             self._recorder.record(
@@ -293,19 +217,12 @@ class ProcedurePartitioner(dspy.Module):
         return positions
 
     def forward(self, current_nodes: list[WindowMember]) -> list[int]:
-        """Sync forward for DSPy optimisers."""
         return asyncio.run(self.aforward(current_nodes))
-
-
-# ============================================================================
-# Helpers
-# ============================================================================
 
 
 def _contents_of(
     span: list[int], nodes_by_id: dict[int, models.ASTNode]
 ) -> str:
-    """The span's member content as one blank-line separated string."""
     return '\n\n'.join(
         nodes_by_id[node_id].content
         for node_id in span
@@ -318,7 +235,6 @@ def _contents_of(
 def _member_window(
     members: list[int], nodes_by_id: dict[int, models.ASTNode]
 ) -> list[WindowMember]:
-    """The block's member nodes as window entries, in member order."""
     return [
         WindowMember(
             position=position,
@@ -331,10 +247,6 @@ def _member_window(
 
 
 def _selected_members(members: list[int], positions: list[int]) -> list[int]:
-    """Map the LLM's window positions back to member node ids.
-
-    Out-of-range positions are dropped; the result stays in member order.
-    """
     return [
         members[position]
         for position in positions
@@ -343,23 +255,11 @@ def _selected_members(members: list[int], positions: list[int]) -> list[int]:
 
 
 def _mark_statement(span: list[int]) -> models.Statement:
-    """Build the span's Statement hub.
-
-    The hub's identity is the WHOLE span — the block's member node ids,
-    frozen at creation — and its members start as the whole block until
-    the statement partitioner narrows them to the statement portion.
-    """
     return models.Statement(block=list(span), members=list(span))
 
 
 def _mark_procedure(span: list[int]) -> models.Procedure:
-    """Build the span's Procedure hub."""
     return models.Procedure(block=list(span), members=list(span))
-
-
-# ============================================================================
-# Entry point — build and partition hubs in one pass
-# ============================================================================
 
 
 async def _partition_both_block(
@@ -370,11 +270,6 @@ async def _partition_both_block(
     procedure_partitioner: ProcedurePartitioner,
     gate: asyncio.Semaphore,
 ) -> None:
-    """Find the line in a both-block and narrow each hub's members.
-
-    The two partitioners read the same window and write different hubs, so
-    they are independent — run them together rather than one after the other.
-    """
     window = _member_window(statement.members, nodes_by_id)
     async with gate:
         stmt_positions, proc_positions = await asyncio.gather(
@@ -398,30 +293,6 @@ async def build_hubs(
     procedure_partitioner: ProcedurePartitioner | None = None,
     max_concurrency: int | None = None,
 ) -> tuple[list[models.Statement], list[models.Procedure]]:
-    """Diagnose each span's composition, build hubs, and partition both-blocks.
-
-    For each PCF span:
-    - The role typer answers two boolean questions (has_statement,
-      has_procedure).
-    - Statement and/or Procedure hubs are created from the flags.
-    - When both flags are True, the two partitioners find the line between
-      the statement and procedure portions.
-
-    Args:
-        spans: The untyped spans, each a list of member node ids.
-        nodes_by_id: The full node stream keyed by stable id. Read-only.
-        role_module: The role typer.
-        statement_partitioner: The statement partitioner. Optional —
-            required only when a both-block span is present.
-        procedure_partitioner: The procedure partitioner. Optional —
-            required only when a both-block span is present.
-        max_concurrency: Units in flight at once, for both the
-            role-typing and partitioning rounds. None uses
-            ``llm.MAX_CONCURRENT_CALLS``.
-
-    Returns:
-        The ``(statements, procedures)`` hub overlays, in span order.
-    """
     if not spans:
         logger.info('hub builder: no spans')
         return [], []
@@ -429,7 +300,6 @@ async def build_hubs(
     gate = llm.gate(max_concurrency)
 
     async def _type_one(span: list[int]) -> tuple[bool, bool]:
-        """Classify one span under the stage's concurrency cap."""
         async with gate:
             return await role_module.acall(_contents_of(span, nodes_by_id))
 
@@ -456,12 +326,6 @@ async def build_hubs(
             statements.append(statement)
         if procedure:
             procedures.append(procedure)
-
-    # Hub construction above is pure; the partitioning below is the stage's
-    # second round of I/O. Collecting the both-blocks first lets every one of
-    # them run together instead of one per loop iteration — on a proof-heavy
-    # book most blocks carry both roles, which made this the same serial
-    # bottleneck the sub-node stages had.
     if both_blocks:
         await asyncio.gather(
             *(
@@ -493,26 +357,7 @@ async def build_hubs(
     return statements, procedures
 
 
-# ============================================================================
-# LangGraph node
-# ============================================================================
-
-
 class HubBuilderNode:
-    """Builds Statement and Procedure hubs from PCF spans.
-
-    Runs after the pedagogical component finder and before the atomic
-    fact pass. Classifies each span, creates the hubs, and partitions
-    both-block members in one pass.
-
-    Args:
-        role_module: The role typer.
-        statement_partitioner: The statement partitioner. Optional —
-            required only when a both-block span is present.
-        procedure_partitioner: The procedure partitioner. Optional —
-            required only when a both-block span is present.
-    """
-
     def __init__(
         self,
         role_module: RoleTyper,
@@ -524,15 +369,6 @@ class HubBuilderNode:
         self.procedure_partitioner = procedure_partitioner
 
     async def run(self, state: state.State) -> dict:
-        """Build and partition the hub overlays.
-
-        Args:
-            state: The pipeline state, holding the node stream and spans.
-
-        Returns:
-            The ``statements`` and ``procedures`` channels. ``nodes`` is
-            left exactly as it was.
-        """
         nodes = state.get('nodes', [])
         nodes_by_id = {node.id: node for node in nodes if node.id is not None}
         statements, procedures = await build_hubs(
@@ -543,3 +379,4 @@ class HubBuilderNode:
             procedure_partitioner=self.procedure_partitioner,
         )
         return {'statements': statements, 'procedures': procedures}
+

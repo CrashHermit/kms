@@ -1,10 +1,14 @@
-"""Re-exported from ``kms.graph.hubs`` — use that module directly."""
-
-from kms.graph.hubs import (  # noqa: F401
+from kms.graph.hubs import (
     ENTITY_HUB_LABEL,
-    canonical_pairs as _cp,
+)
+from kms.graph.hubs import canonical_pairs as _cp
+from kms.graph.hubs import (
     hub_properties as entity_hub_properties,
+)
+from kms.graph.hubs import (
     hub_rows as entity_hub_rows,
+)
+from kms.graph.hubs import (
     hub_uuid as entity_hub_uuid,
 )
 
@@ -12,5 +16,14 @@ from kms.graph.hubs import (  # noqa: F401
 def canonical_entity_pairs(
     clusters: list[list[dict]], source: str
 ) -> list[dict]:
-    """``{entity, hub}`` pairs via ``hubs.canonical_pairs``."""
     return _cp(clusters, 'entity')
+
+
+__all__ = [
+    'ENTITY_HUB_LABEL',
+    'canonical_entity_pairs',
+    'entity_hub_properties',
+    'entity_hub_rows',
+    'entity_hub_uuid',
+]
+

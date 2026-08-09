@@ -1,12 +1,3 @@
-"""Live test: TripletHub + FactHub construction over canonical hubs.
-
-Reads the canonical hub graph, groups triplets by (subj_hub, pred_hub,
-obj_hub), builds :TripletHub + :FactHub + edges, and verifies.
-
-Run from the repo root with:
-    .venv/bin/python tests/live_triplet_hub_test.py
-"""
-
 import asyncio
 import sys
 from pathlib import Path
@@ -58,8 +49,6 @@ async def main() -> None:
                 )
                 cnt = (await r.single())['cnt']
                 print(f'  [:{edge:<20}] {cnt}')
-
-            # Show a few FactHub texts
             r = await s.run(
                 'MATCH (fh:FactHub) '
                 'RETURN fh.text AS text, '
@@ -69,8 +58,6 @@ async def main() -> None:
             print('\n  Sample assertions:')
             async for rec in r:
                 print(f'    [{rec["dims"]}-dim] {rec["text"]}')
-
-            # Spot-check: resolve one TripletHub to its hubs
             r = await s.run(
                 'MATCH (th:TripletHub) '
                 'MATCH (sh:EntityHub)-[:CANONICAL_SUBJECT]->(th) '
@@ -99,3 +86,4 @@ async def main() -> None:
 
 if __name__ == '__main__':
     asyncio.run(main())
+

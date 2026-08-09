@@ -1,11 +1,3 @@
-"""Predicate-layer graph mapping — the described predicate component.
-
-Each predicate vertex is per (node, triplet): it carries the predicate text
-and the enricher's description, and hangs off its triplet hub via
-:HAS_PREDICATE. This suite guards the per-triplet identity (same predicate
-text in two triplets of one fact is deliberately duplicated, never shared).
-"""
-
 from kms.core import models
 from kms.graph import entities, nodes
 from kms.graph.facts import fact_uuid
@@ -67,8 +59,6 @@ def test_predicate_uuid_is_deterministic_and_disjoint():
 
 
 def test_predicate_is_duplicated_per_triplet_not_shared():
-    # Two triplets of the SAME fact sharing a predicate text still get their
-    # OWN predicate vertices — the description is deliberately duplicated.
     fact = _fact([3])
     f_uuid = fact_uuid('hefferon.pdf', fact.node_ids, 0)
     first = predicate_uuid(
@@ -114,8 +104,6 @@ def test_predicate_properties_carry_text_description_and_anchor():
 
 
 def test_predicate_rows_write_each_node_occurrence_separately():
-    # A fact touching two nodes produces TWO rows, each carrying that node's
-    # OWN description — never collapsed to the first node.
     facts = [_fact([3, 9])]
     triplets_list = [
         _triplet('$G_4$', 'is NOT a subgraph of', '$G_1$', fact_index=0),
@@ -147,8 +135,6 @@ def test_has_predicate_pairs_link_hub_to_component():
     assert len(pairs) == 2
     f_uuid = fact_uuid('hefferon.pdf', [3, 9], 0)
     for pair in pairs:
-        # The hub and the component are distinct, but the predicate pair
-        # names the same per-node occurrence as the triplet hub does.
         assert pair['predicate'] != pair['triplet']
         assert pair['triplet'] in {
             triplet_uuid(
@@ -161,3 +147,4 @@ def test_has_predicate_pairs_link_hub_to_component():
             )
             for node_id in (3, 9)
         }
+
