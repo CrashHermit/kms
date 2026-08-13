@@ -38,6 +38,49 @@ def test_flatten_assigns_stable_ids_and_seg_index_across_pages():
     ]
 
 
+def test_flatten_resolves_image_nodes_to_picture_paths(tmp_path):
+    first_path = str(tmp_path / 'Image_000.png')
+    second_path = str(tmp_path / 'Image_001.png')
+    segments = [
+        models.Segment(
+            index=0,
+            image_path='p0.png',
+            pictures=[
+                models.Picture(index=1, image_path=first_path),
+                models.Picture(index=2, image_path=second_path),
+            ],
+            nodes=[
+                models.ASTNode(type='paragraph', content='see figure'),
+                models.ASTNode(type='image'),
+                models.ASTNode(type='image', content='![2]()'),
+            ],
+        )
+    ]
+    flat = models.flatten_segments(segments)
+    assert flat[0].image_path is None
+    assert flat[1].image_path == first_path
+    assert flat[2].image_path == second_path
+
+
+def test_flatten_ignores_pictures_without_image_nodes(tmp_path):
+    used_path = str(tmp_path / 'Image_000.png')
+    segments = [
+        models.Segment(
+            index=0,
+            image_path='p0.png',
+            pictures=[
+                models.Picture(index=1, image_path=used_path),
+                models.Picture(
+                    index=2, image_path=str(tmp_path / 'orphan.png')
+                ),
+            ],
+            nodes=[models.ASTNode(type='image')],
+        )
+    ]
+    flat = models.flatten_segments(segments)
+    assert flat[0].image_path == used_path
+
+
 class _AllStatements:
     async def acall(self, contents):
         return (True, False)
@@ -77,4 +120,3 @@ def test_overlay_leaves_each_block_in_the_stream_exactly_once():
     ):
         assert contents.count(content) == 1, f'{content!r} appears twice'
     assert state['statements'][0].members == [0, 1, 2]
-

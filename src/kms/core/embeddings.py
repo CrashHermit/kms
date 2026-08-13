@@ -2,9 +2,10 @@ import math
 import os
 from collections.abc import Sequence
 from functools import lru_cache
-from typing import Any
 
 import httpx
+
+from kms.core import content
 
 try:
     from dotenv import load_dotenv
@@ -13,48 +14,35 @@ try:
 except ImportError:
     pass
 
+VOYAGE_API_KEY_ENV = 'VOYAGE_API_KEY'
 EMBEDDING_MODEL_ENV = 'EMBEDDING_MODEL'
-EMBEDDING_BASE_URL_ENV = 'EMBEDDING_BASE_URL'
-EMBEDDING_API_KEY_ENV = 'EMBEDDING_API_KEY'
-
+VOYAGE_BASE_URL = 'https://api.voyageai.com/v1'
 DEFAULT_EMBEDDING_MODEL = 'voyage-multimodal-3.5'
-DEFAULT_EMBEDDING_BASE_URL = 'https://openrouter.ai/api/v1'
 BATCH_SIZE = 200
 
 TIMEOUT_SECONDS = 60.0
 
 
-def _api_key() -> str:
-    key = os.environ.get(EMBEDDING_API_KEY_ENV) or os.environ.get(
-        'OPENROUTER_API_KEY'
-    )
-    if not key:
-        raise RuntimeError(
-            f'{EMBEDDING_API_KEY_ENV} is not set (and no OPENROUTER_API_KEY '
-            f'to fall back to). Export your API key before running a vector '
-            f'pass.'
-        )
-    return key
-
-
 def is_configured() -> bool:
-    return bool(
-        os.environ.get(EMBEDDING_API_KEY_ENV)
-        or os.environ.get('OPENROUTER_API_KEY')
-    )
+    """True if a Voyage API key is configured."""
+    return bool(os.environ.get(VOYAGE_API_KEY_ENV))
 
 
 class Embedder:
+    """Embeds text and image content via the Voyage multimodal API.
+
+    Every input — text, image, or a mix — is sent as multimodal
+    content parts, so there is a single embedding path.
+    """
+
     def __init__(
         self,
-        base_url: str = DEFAULT_EMBEDDING_BASE_URL,
         model: str = DEFAULT_EMBEDDING_MODEL,
         api_key: str | None = None,
         *,
         timeout: float = TIMEOUT_SECONDS,
         batch_size: int = BATCH_SIZE,
     ) -> None:
-        self.base_url = base_url.rstrip('/')
         self.model = model
         self.api_key = api_key
         self.timeout = timeout
@@ -70,15 +58,24 @@ class Embedder:
         return self._client
 
     def _require_key(self) -> str:
-        return self.api_key or _api_key()
+        if self.api_key:
+            return self.api_key
+        key = os.environ.get(VOYAGE_API_KEY_ENV)
+        if not key:
+            raise RuntimeError(
+                f'{VOYAGE_API_KEY_ENV} is not set. Export your Voyage API '
+                f'key before running a vector pass.'
+            )
+        return key
 
     async def _embed_batch(
-        self, texts: Sequence[str | dict[str, Any]]
+        self, contents: Sequence[content.Content]
     ) -> list[list[float]]:
         client = await self._client_for()
+        inputs = [{'content': item.embedding_blocks()} for item in contents]
         response = await client.post(
-            f'{self.base_url}/embeddings',
-            json={'model': self.model, 'input': list(texts)},
+            f'{VOYAGE_BASE_URL}/multimodalembeddings',
+            json={'model': self.model, 'inputs': inputs},
         )
         if response.status_code != 200:
             body = response.text[:500]
@@ -87,19 +84,19 @@ class Embedder:
                 f'{response.status_code}: {body}'
             )
         data = response.json().get('data')
-        if not data or len(data) != len(texts):
+        if not data or len(data) != len(contents):
             raise RuntimeError(
-                f'embedding response mismatch: asked for {len(texts)} '
+                f'embedding response mismatch: asked for {len(contents)} '
                 f'vector(s), got {len(data or [])}'
             )
         return [item['embedding'] for item in data]
 
     async def embed(
-        self, texts: Sequence[str | dict[str, Any]]
+        self, contents: Sequence[content.Content]
     ) -> list[list[float]]:
         vectors: list[list[float]] = []
-        for start in range(0, len(texts), self.batch_size):
-            batch = texts[start : start + self.batch_size]
+        for start in range(0, len(contents), self.batch_size):
+            batch = contents[start : start + self.batch_size]
             vectors.extend(await self._embed_batch(batch))
         return vectors
 
@@ -111,10 +108,8 @@ class Embedder:
 
 @lru_cache(maxsize=1)
 def embedder() -> Embedder:
+    """Returns the shared Embedder, created lazily."""
     return Embedder(
-        base_url=os.environ.get(
-            EMBEDDING_BASE_URL_ENV, DEFAULT_EMBEDDING_BASE_URL
-        ),
         model=os.environ.get(EMBEDDING_MODEL_ENV, DEFAULT_EMBEDDING_MODEL),
     )
 
@@ -143,4 +138,3 @@ def top_k(
         scored = [entry for entry in scored if entry[1] >= threshold]
     scored.sort(key=lambda entry: entry[1], reverse=True)
     return scored[:k]
-

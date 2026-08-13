@@ -34,9 +34,7 @@ def test_database_defaults_to_neo4j_and_honours_override(monkeypatch):
 def test_driver_raises_a_clear_error_when_unconfigured(monkeypatch):
     for k in _CONN_ENV:
         monkeypatch.delenv(k, raising=False)
-    asyncio.run(
-        db.close_driver()
-    )
+    asyncio.run(db.close_driver())
     with pytest.raises(RuntimeError, match='NEO4J_URI is not set'):
         db.driver()
 
@@ -45,9 +43,7 @@ def test_driver_is_a_reused_singleton_until_closed(monkeypatch):
     _set_conn(monkeypatch)
     try:
         first = db.driver()
-        assert (
-            db.driver() is first
-        )
+        assert db.driver() is first
     finally:
         asyncio.run(db.close_driver())
 
@@ -68,4 +64,3 @@ def test_close_driver_is_a_safe_noop_when_nothing_opened(monkeypatch):
     asyncio.run(db.close_driver())
     assert db.driver() is not opened
     asyncio.run(db.close_driver())
-

@@ -121,4 +121,3 @@ def test_discarded_blocks_are_logged_for_audit(caplog):
         _worker([_block('furniture', 'Richard Hammack Book of Proof')], index=7)
     assert 'Richard Hammack Book of Proof' in caplog.text
     assert 'page 7' in caplog.text
-

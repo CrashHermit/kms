@@ -285,4 +285,3 @@ async def close_driver() -> None:
         await _http_client.aclose()
         _http_client = None
     _probed_transport = None
-

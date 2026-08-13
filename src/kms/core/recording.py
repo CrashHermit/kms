@@ -24,6 +24,7 @@ class Recorder:
         self._run_id = str(uuid5(_NAMESPACE_KMS, source))
         self._output_dir = output_dir
         self._run_meta = dict(meta, source=source)
+
     def record(
         self,
         module_name: str,
@@ -47,6 +48,7 @@ class Recorder:
                 module_name,
                 exc_info=True,
             )
+
     def _ensure_run_dir(self, module_name: str) -> Path:
         run_dir = Path(self._output_dir) / module_name / self._run_id
         if not run_dir.exists():
@@ -160,4 +162,3 @@ def load_examples(
         examples.append(example)
 
     return examples
-

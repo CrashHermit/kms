@@ -271,4 +271,3 @@ def test_pairs_still_fan_out_over_ordinary_neighbours():
         (top.index, bottom.index)
         for top, bottom in seam_merger._pairs(segments, parity=1)
     ] == [(1, 2)]
-

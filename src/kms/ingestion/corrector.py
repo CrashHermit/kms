@@ -1,21 +1,12 @@
 import asyncio
-import base64
 import logging
-from pathlib import Path
 
 import dspy
 from langgraph.types import Send
 
-from kms.core import models, recording, state
+from kms.core import content, models, recording, state
 
 logger = logging.getLogger(__name__)
-
-
-def _load_dspy_image(path: str | None) -> dspy.Image | None:
-    if not path:
-        return None
-    encoded = base64.b64encode(Path(path).read_bytes()).decode('utf-8')
-    return dspy.Image(url=f'data:image/png;base64,{encoded}')
 
 
 class Signature(dspy.Signature):
@@ -196,7 +187,7 @@ class CorrectorNode:
     async def worker(self, state: dict) -> dict:
         segment: models.Segment = state['segment']
         corrected = await self.module.aforward(
-            page_image=_load_dspy_image(segment.image_path),
+            page_image=content.load_image(segment.image_path),
             transcription=segment.content,
         )
         return {'correction_results': [(segment.index, corrected)]}
@@ -208,4 +199,3 @@ class CorrectorNode:
         )
         logger.info('corrector: %d page(s) proofread', len(results))
         return {'segments': segments}
-

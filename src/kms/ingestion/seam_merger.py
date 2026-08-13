@@ -117,6 +117,7 @@ class MergeSignature(dspy.Signature):
     where the interrupted block starts and stops — never include their content
     in what you return.
     """
+
     tail: str = dspy.InputField(
         description='The first half — the block as it was cut off at the foot of the page.'
     )
@@ -148,7 +149,7 @@ class SeamMerger(dspy.Module):
         recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
-        self.merger = dspy.ChainOfThought(Signature)
+        self.merger = dspy.Predict(Signature)
         self.set_lm(language_model)
         self._recorder = recorder
 
@@ -202,7 +203,7 @@ class SeamRewriter(dspy.Module):
         recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
-        self.rewriter = dspy.ChainOfThought(MergeSignature)
+        self.rewriter = dspy.Predict(MergeSignature)
         self.set_lm(language_model)
         self._recorder = recorder
 
@@ -253,6 +254,7 @@ def _to_seam_node_dto(node: models.ASTNode | None) -> SeamNodeDTO:
     if node is None:
         return SeamNodeDTO(content=None, types=[])
     return SeamNodeDTO(content=node.content, types=[node.type])
+
 
 _APPARATUS = {'bibliographic', 'note'}
 
@@ -381,4 +383,3 @@ class SeamMergerNode:
             'segments': segments,
             'nodes': nodes,
         }
-

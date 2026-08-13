@@ -8,7 +8,7 @@ class _ScriptedFinder:
     def __init__(self, scripted):
         self._scripted = list(scripted)
 
-    async def aforward(self, current_nodes, context_before=None):
+    async def aforward(self, current_nodes):
         return self._scripted.pop(0) if self._scripted else []
 
 
@@ -19,47 +19,43 @@ def _nodes():
             content='In the following exercises, simplify.',
             id=0,
         ),
-        models.ASTNode(type='list', content='3 matrix A', id=1),
-        models.ASTNode(type='list', content='4 matrix B', id=2),
-        models.ASTNode(type='paragraph', content='ordinary prose', id=3),
+        models.ASTNode(type='image', image_path='a.png', id=1),
+        models.ASTNode(type='list', content='3 matrix A', id=2),
+        models.ASTNode(type='list', content='4 matrix B', id=3),
+        models.ASTNode(type='paragraph', content='ordinary prose', id=4),
     ]
 
 
-def test_tags_the_lead_in_node_and_leaves_others_untouched():
-    out = asyncio.run(
-        instruction_finder.tag_instructions(
-            _nodes(), module=_ScriptedFinder([[0]])
-        )
-    )
-    assert out[0].type == 'instruction'
-    assert out[1].type == 'list'
-    assert out[2].type == 'list'
-    assert out[3].type == 'paragraph'
-
-
-def test_no_lead_in_leaves_every_node_unchanged():
-    out = asyncio.run(
-        instruction_finder.tag_instructions(
-            _nodes(), module=_ScriptedFinder([[]])
-        )
-    )
-    assert all(not n.type == 'instruction' for n in out)
-
-
-def test_out_of_range_position_is_clamped_not_fatal():
-    out = asyncio.run(
-        instruction_finder.tag_instructions(
-            _nodes(), module=_ScriptedFinder([[99]])
-        )
-    )
-    assert out[3].type == 'instruction'
-
-
-def test_instruction_finder_node_writes_the_nodes_channel():
+def test_finder_node_emits_instruction_hubs_without_mutating_nodes():
+    span = instruction_finder.Span(start=0, end=1)
     node = instruction_finder.InstructionFinderNode(
-        module=_ScriptedFinder([[0]])
+        module=_ScriptedFinder([[span]])
     )
     out = asyncio.run(node.run({'nodes': _nodes()}))
-    assert set(out) == {'nodes'}
-    assert out['nodes'][0].type == 'instruction'
 
+    assert set(out) == {'instructions'}
+    assert len(out['instructions']) == 1
+    instruction = out['instructions'][0]
+    assert instruction.block == [0, 1]
+    assert instruction.members == [0, 1]
+
+
+def test_finder_node_emits_nothing_without_spans():
+    node = instruction_finder.InstructionFinderNode(
+        module=_ScriptedFinder([[]])
+    )
+    out = asyncio.run(node.run({'nodes': _nodes()}))
+    assert out['instructions'] == []
+
+
+def test_find_instruction_spans_maps_positions_to_node_ids():
+    spans = [
+        instruction_finder.Span(start=0, end=1),
+        instruction_finder.Span(start=2, end=2),
+    ]
+    result = asyncio.run(
+        instruction_finder.find_instruction_spans(
+            _nodes(), module=_ScriptedFinder([spans])
+        )
+    )
+    assert result == [[0, 1], [2]]

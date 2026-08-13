@@ -16,7 +16,7 @@ RERANK_MODEL_ENV = 'RERANK_MODEL'
 RERANK_BASE_URL_ENV = 'RERANK_BASE_URL'
 RERANK_API_KEY_ENV = 'RERANK_API_KEY'
 
-DEFAULT_RERANK_MODEL = 'cohere/rerank-v3.5'
+DEFAULT_RERANK_MODEL = 'nvidia/llama-nemotron-rerank-vl-1b-v2'
 DEFAULT_RERANK_BASE_URL = 'https://openrouter.ai/api/v1'
 
 TIMEOUT_SECONDS = 60.0
@@ -104,4 +104,3 @@ def reranker() -> Reranker:
         base_url=os.environ.get(RERANK_BASE_URL_ENV, DEFAULT_RERANK_BASE_URL),
         model=os.environ.get(RERANK_MODEL_ENV, DEFAULT_RERANK_MODEL),
     )
-

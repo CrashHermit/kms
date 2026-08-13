@@ -110,4 +110,3 @@ def test_seam_merger_logs_the_flattened_stream_size(caplog):
         )
     assert len(result['nodes']) == 2
     assert '1 page(s) -> flat stream of 2 node(s)' in caplog.text
-

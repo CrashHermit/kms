@@ -96,4 +96,3 @@ def test_persist_procedures_points_each_member_at_the_procedure():
     )
     assert 'HAS_PROCEDURE' not in ' '.join(queries)
     assert 'MATCH (a {uuid:' not in ' '.join(queries)
-

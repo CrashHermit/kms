@@ -9,16 +9,15 @@ from langgraph.graph import END, START, StateGraph
 from kms.core import llm, recording, state
 from kms.graph import db, persister
 from kms.ingestion import (
-    atomic_fact_extractor,
     corrector,
-    entity_embedder,
-    entity_enricher,
+    entity_canonicalizer,
     extractor,
     formatter,
     hub_builder,
-    instruction_distributor,
     instruction_finder,
+    ocr,
     pedagogical_component_finder,
+    procedure_creator,
     seam_merger,
     splitter,
     triplet_extractor,
@@ -28,6 +27,47 @@ if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
 
 
+class EntityCanonicalizerNode:
+    def __init__(
+        self,
+        session_factory,
+        language_model,
+    ) -> None:
+        self._session_factory = session_factory
+        self._language_model = language_model
+
+    async def run(self, state: state.State) -> dict:
+        if not self._session_factory:
+            return {}
+        result = await entity_canonicalizer.rebuild(
+            threshold=0.8,
+            language_model=self._language_model,
+            session_factory=self._session_factory,
+        )
+        return {'entity_clusters': result['clusters']}
+
+
+class ProcedureCreatorNode:
+    def __init__(
+        self,
+        session_factory,
+        language_model,
+        creator_model=None,
+    ) -> None:
+        self._session_factory = session_factory
+        self._language_model = language_model
+        self._creator_model = creator_model
+
+    async def run(self, state: state.State) -> dict:
+        if not self._session_factory:
+            return {}
+        created = await procedure_creator.create_procedures(
+            self._session_factory,
+            language_model=self._creator_model or self._language_model,
+        )
+        return {'procedures_created': created}
+
+
 def build_graph(
     text_language_model: dspy.LM,
     corrector_language_model: dspy.LM,
@@ -35,6 +75,7 @@ def build_graph(
     recorder: recording.Recorder | None = None,
     neo4j_session_factory: Callable | None = None,
     neo4j_configured: bool = False,
+    procedure_creator_model: dspy.LM | None = None,
 ) -> 'CompiledStateGraph':
     corrector_module = corrector.Corrector(
         language_model=corrector_language_model,
@@ -64,12 +105,6 @@ def build_graph(
         language_model=text_language_model,
         recorder=recorder,
     )
-    instruction_distributor_module = (
-        instruction_distributor.InstructionDistributor(
-            language_model=text_language_model,
-            recorder=recorder,
-        )
-    )
     component_finder_module = (
         pedagogical_component_finder.PedagogicalComponentFinder(
             language_model=text_language_model,
@@ -85,18 +120,6 @@ def build_graph(
         recorder=recorder,
     )
     procedure_partitioner_module = hub_builder.ProcedurePartitioner(
-        language_model=text_language_model,
-        recorder=recorder,
-    )
-    atomic_fact_module = atomic_fact_extractor.AtomicFactExtractor(
-        language_model=text_language_model,
-        recorder=recorder,
-    )
-    triplet_extractor_module = triplet_extractor.TripletExtractor(
-        language_model=text_language_model,
-        recorder=recorder,
-    )
-    entity_enricher_module = entity_enricher.EntityEnricher(
         language_model=text_language_model,
         recorder=recorder,
     )
@@ -124,20 +147,18 @@ def build_graph(
         statement_partitioner=statement_partitioner_module,
         procedure_partitioner=procedure_partitioner_module,
     )
-    atomic_fact_node = atomic_fact_extractor.AtomicFactNode(
-        module=atomic_fact_module
-    )
     triplet_extractor_node = triplet_extractor.TripletNode(
-        module=triplet_extractor_module
+        language_model=text_language_model,
+        recorder=recorder,
     )
-    entity_enricher_node = entity_enricher.EntityEnricherNode(
-        module=entity_enricher_module
+    canonicalizer_node = EntityCanonicalizerNode(
+        session_factory=neo4j_session_factory,
+        language_model=text_language_model,
     )
-    entity_embedder_node = entity_embedder.EntityEmbedderNode()
-    instruction_distributor_node = (
-        instruction_distributor.InstructionDistributorNode(
-            module=instruction_distributor_module
-        )
+    procedure_creator_node = ProcedureCreatorNode(
+        session_factory=neo4j_session_factory,
+        language_model=text_language_model,
+        creator_model=procedure_creator_model,
     )
 
     graph = StateGraph(state.State)
@@ -153,17 +174,12 @@ def build_graph(
     graph.add_node('seam_odd_collect', seam_node.odd_collect)
     graph.add_node('splitter', splitter_node.run)
     graph.add_node('instruction_finder', instruction_finder_node.run)
-    graph.add_node(
-        'instruction_distributor',
-        instruction_distributor_node.run,
-    )
     graph.add_node('ingestion_persister', node_persister_node.run)
     graph.add_node('pedagogical_component_finder', component_finder_node.run)
     graph.add_node('hub_builder', hub_builder_node.run)
-    graph.add_node('atomic_facts', atomic_fact_node.run)
     graph.add_node('triplet_extraction', triplet_extractor_node.run)
-    graph.add_node('entity_enrichment', entity_enricher_node.run)
-    graph.add_node('entity_embedding', entity_embedder_node.run)
+    graph.add_node('entity_canonicalizer', canonicalizer_node.run)
+    graph.add_node('procedure_creator', procedure_creator_node.run)
     graph.add_conditional_edges(
         START,
         corrector_node.dispatch,
@@ -176,7 +192,6 @@ def build_graph(
         ['formatter_worker', 'formatter_collect'],
     )
     graph.add_edge('formatter_worker', 'formatter_collect')
-
     graph.add_conditional_edges(
         'formatter_collect',
         extractor_node.dispatch,
@@ -198,15 +213,13 @@ def build_graph(
 
     graph.add_edge('seam_odd_collect', 'splitter')
     graph.add_edge('splitter', 'instruction_finder')
-    graph.add_edge('instruction_finder', 'instruction_distributor')
-    graph.add_edge('instruction_distributor', 'pedagogical_component_finder')
+    graph.add_edge('instruction_finder', 'pedagogical_component_finder')
     graph.add_edge('pedagogical_component_finder', 'hub_builder')
-    graph.add_edge('hub_builder', 'atomic_facts')
-    graph.add_edge('atomic_facts', 'triplet_extraction')
-    graph.add_edge('triplet_extraction', 'entity_enrichment')
-    graph.add_edge('entity_enrichment', 'entity_embedding')
-    graph.add_edge('entity_embedding', 'ingestion_persister')
-    graph.add_edge('ingestion_persister', END)
+    graph.add_edge('hub_builder', 'triplet_extraction')
+    graph.add_edge('triplet_extraction', 'ingestion_persister')
+    graph.add_edge('ingestion_persister', 'entity_canonicalizer')
+    graph.add_edge('entity_canonicalizer', 'procedure_creator')
+    graph.add_edge('procedure_creator', END)
 
     return graph.compile()
 
@@ -219,8 +232,6 @@ async def run(
     title: str | None = None,
     author: str | None = None,
 ) -> dict:
-    from kms.ingestion import ocr
-
     output_dir = Path(output_dir)
     source = source or Path(pdf_path).name
     example_recorder = None
@@ -244,14 +255,16 @@ async def run(
 
     metadata = {'title': title, 'author': author}
     segments = ocr.extract(pdf_path, output_dir=output_dir, pages=pages)
-    text_language_model = llm.text_lm()
+    text_language_model = llm.pipeline_lm()
     corrector_language_model = llm.corrector_lm()
+    procedure_creator_language_model = llm.procedure_creator_lm()
     graph = build_graph(
         text_language_model=text_language_model,
         corrector_language_model=corrector_language_model,
         recorder=example_recorder,
         neo4j_session_factory=neo4j_session_factory,
         neo4j_configured=neo4j_configured,
+        procedure_creator_model=procedure_creator_language_model,
     )
     try:
         result = await graph.ainvoke(
@@ -265,4 +278,3 @@ async def run(
         return result
     finally:
         await db.close_driver()
-

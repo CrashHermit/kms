@@ -4,17 +4,219 @@ import logging
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import llm, models, recording, state
+from kms.core import llm, models, recording, state, walker
 
 logger = logging.getLogger(__name__)
 
+_WINDOW_BUDGET = 600
+_BACKWARD_CONTEXT_BUDGET = 400
+_FORWARD_CONTEXT_BUDGET = 400
 
-class DSPyTriplet(BaseModel):
+# ── fact-extraction phase ────────────────────────────────────────────
+
+
+class _FactInput(BaseModel):
+    text: str = Field(
+        description=(
+            'The fact as a short, self-contained standalone sentence '
+            'conveying exactly one unit of information: one assertion, one '
+            'instruction, or one question.'
+        )
+    )
+    node_ids: list[int] = Field(
+        description=(
+            'The ids of every node in the window the fact is drawn from.'
+        )
+    )
+
+
+class _FactSignature(dspy.Signature):
+    r"""
+    You are given a run of nodes from a document, in document order. Each
+    node carries its id, its structural type, and its content. Decompose the
+    window into ATOMIC FACTS.
+
+    AN ATOMIC FACT is the smallest piece of the text that is still worth
+    knowing on its own: a claim, a property, a relationship, an event, a
+    definition, a result, an instruction to act, or a question posed for
+    the reader. It conveys exactly ONE such unit, stated as a complete
+    standalone sentence. This is domain-neutral: the document may be about
+    anything. Do not assume a subject or a genre, and do not classify
+    facts into kinds. Just find the facts.
+
+    THE ATOMICITY TEST. A fact is atomic when it conveys exactly one unit
+    of information — one assertion, one instruction, or one question —
+    with no second independent unit joined on. Apply the SPLIT TEST before
+    emitting: if you can break the fact at a conjunction or a comma into
+    two pieces that would each still be true of — or each still be posed
+    by — the source, it is not atomic — split it into those pieces. When
+    in doubt, split.
+
+    EXAMPLES.
+
+    - "The discriminant of $ax^2 + bx + c = 0$ is $b^2 - 4ac$, and its
+      roots are given by the quadratic formula" is TWO facts:
+        1. "The discriminant of $ax^2 + bx + c = 0$ is $b^2 - 4ac$."
+        2. "The roots of $ax^2 + bx + c = 0$ are given by the quadratic
+           formula."
+    - "Since $a \neq 0$, the equation $ax^2 + bx + c = 0$ is quadratic" is
+      ONE fact with its condition carried inside: "When $a \neq 0$, the
+      equation $ax^2 + bx + c = 0$ is quadratic." Never emit the bare
+      fragment "Since $a \neq 0$".
+    - Successive lines of a worked manipulation — "$8a - 3a > 5a + 18$",
+      then "$5a > 5a + 18$" — are scratch work, not facts. The durable
+      content is the conclusion: "From $8a - 3a > 5a + 18$ it follows that
+      $0 > 18$, a contradiction."
+
+    RULES:
+    - ONE UNIT PER FACT. One assertion, one instruction, or one question
+      per fact. A sentence that makes two independent claims yields two
+      facts; a passage that asserts several things yields one fact per
+      assertion.
+    - STANDALONE, NOT FRAGMENTED. State every fact as a complete sentence
+      that names its own subject and carries its own conditions and
+      qualifiers — whether it asserts, instructs, or asks. Resolve every
+      "it", "this", "the former" into its referent. Never emit a fragment
+      ("since $a \neq 0$", "which is continuous", "as above").
+    - SELF-CONTAINED IS NOT COPYING. Include what the fact needs to stand
+      alone (names, conditions, values) — but a multi-claim source sentence
+      yields several SHORTER facts, never one copied sentence.
+    - LATEX FORMAT. Everything that can be in LaTeX format is written in
+      LaTeX WITH its delimiters, exactly as in the source: inline math in
+      `$...$`, display math in `$$...$$`. This covers mathematical notation,
+      chemical formulas, units, and any other technical notation. When a
+      fact mentions an equation, a symbol, or any such content, keep it in
+      that delimited LaTeX form inside the fact text — never plain text,
+      never Unicode (no `x⁴`, `≤`, `α`, bare `H₂O`) when a LaTeX spelling
+      exists.
+    - DURABLE, NOT TRANSITIONAL. Emit facts — things worth knowing — not
+      navigation ("in this section", "as we will see"), not rhetorical
+      framing, not formatting, not the scratch lines of a worked
+      manipulation.
+    - NO DUPLICATES. State each distinct claim once per window. If the
+      window restates the same claim — rephrased, repeated, re-derived —
+      emit it once. When a sentence asserts X and then gives a reason
+      ("X because Y"), emit X as one fact — do NOT emit a second
+      near-identical fact that restates the whole sentence including the
+      reason clause.
+    - META-TEXT IS NOT A FACT. Do not emit facts about the document itself:
+      "The text states that …", "The author writes …", "This passage
+      says …", "The book now turns to …". These are about the writing, not
+      the subject. Extract the subject-matter claim they describe, or
+      nothing if there is none.
+    - CONTEXT-ONLY NODES. header (a title), bibliographic (a reference
+      entry), and caption nodes are context to help you place the facts —
+      do NOT extract facts from them.
+    - CONTEXT-ONLY SURROUNDING TEXT. context_before and context_after are
+      the text immediately around the window, included so you can place
+      the facts and resolve referents. They are context only — never
+      extract facts from them, and never attribute a fact to them.
+    - FIND EVERYTHING. A missed fact is a lost fact. When unsure whether
+      something is a fact, include it.
+    - Return an empty list if the window contains no facts.
+    """
+
+    current_nodes: list[walker.WindowNode] = dspy.InputField(
+        description=(
+            "The window's nodes, in document order, each with its id, type, "
+            'and content.'
+        )
+    )
+    context_before: str | None = dspy.InputField(
+        default=None,
+        description=(
+            'Optional text immediately before the window, in document '
+            'order. CONTEXT ONLY — use it to place the facts; never '
+            'extract facts from it.'
+        ),
+    )
+    context_after: str | None = dspy.InputField(
+        default=None,
+        description=(
+            'Optional text immediately after the window, in document '
+            'order. CONTEXT ONLY — use it to place the facts; never '
+            'extract facts from it.'
+        ),
+    )
+    facts: list[_FactInput] = dspy.OutputField(
+        description='Every atomic fact found in the window; empty if none.'
+    )
+
+
+class _FactExtractor(dspy.Module):
+    def __init__(
+        self,
+        language_model: dspy.LM,
+        recorder: recording.Recorder | None = None,
+    ) -> None:
+        super().__init__()
+        self.extractor = dspy.Predict(_FactSignature)
+        self.set_lm(language_model)
+        self._recorder = recorder
+
+    async def aforward(
+        self,
+        current_nodes: list[walker.WindowNode],
+        context_before: str | None = None,
+        context_after: str | None = None,
+    ) -> list[dict]:
+        result = await self.extractor.acall(
+            current_nodes=current_nodes,
+            context_before=context_before or '',
+            context_after=context_after or '',
+        )
+        if self._recorder:
+            self._recorder.record(
+                'atomic_fact_extractor',
+                {
+                    'current_nodes': [
+                        node.model_dump() for node in current_nodes
+                    ],
+                    'context_before': context_before,
+                    'context_after': context_after,
+                },
+                result,
+            )
+        facts = [
+            {'text': f.text, 'node_ids': list(f.node_ids or [])}
+            for f in (result.facts or [])
+        ]
+        logger.debug(
+            'fact extractor: %d node(s) -> %d fact(s)',
+            len(current_nodes),
+            len(facts),
+        )
+        return facts
+
+    def forward(
+        self,
+        current_nodes: list[walker.WindowNode],
+        context_before: str | None = None,
+        context_after: str | None = None,
+    ) -> list[dict]:
+        return asyncio.run(
+            self.aforward(
+                current_nodes=current_nodes,
+                context_before=context_before,
+                context_after=context_after,
+            )
+        )
+
+
+# ── triplet-decomposition phase ──────────────────────────────────────
+
+
+class _TripletInput(BaseModel):
     subject: str = Field(
         description=(
             'The subject of the relation — an exact verbatim substring '
-            'of the fact text. A concrete noun phrase already present in '
-            'the source; never normalized, never invented.'
+            'of the fact text. When the subject is a local variable '
+            '(a single letter or symbol with no inherent meaning outside '
+            'the fact), append a brief parenthetical role: '
+            '"$f$ (a function)", "$G$ (a graph)", "$c$ (a point)". '
+            r'For named entities with inherent meaning '
+            r'("$\mathbb{R}$", "the derivative of $\sin x$"), '
+            'no annotation is needed.'
         )
     )
     predicate: str = Field(
@@ -27,15 +229,19 @@ class DSPyTriplet(BaseModel):
     )
     object: str = Field(
         description=(
-            'The object of the relation — an exact verbatim substring of '
-            'the fact text. A concrete noun phrase, value, or formula '
-            'already present in the source; never normalized, never '
-            'invented.'
+            'The object of the relation — an exact verbatim substring '
+            'of the fact text. Same annotation rule as subject: append '
+            'a brief parenthetical role for local variables '
+            '"$c$ (a point)", "$G_1$ (a graph)", "$E_1$ (an edge set)", '
+            '"$[0,1]$ (an interval)"), '
+            'omit for named entities. The annotation must be '
+            'CONSISTENT with how the same variable is annotated '
+            'when it appears as subject elsewhere in the fact.'
         )
     )
 
 
-class Signature(dspy.Signature):
+class _TripletSignature(dspy.Signature):
     r"""
     You are given one ATOMIC FACT — a single, self-contained sentence
     conveying exactly one piece of information. Decompose it into
@@ -52,6 +258,27 @@ class Signature(dspy.Signature):
     If the fact says "$f$ is continuous on $[0,1]$", the subject is "$f$"
     and the object is "continuous on $[0,1]$" — exactly as they appear.
 
+    CASE NORMALIZATION. After lifting the verbatim text, lowercase
+    everything EXCEPT content inside $...$ LaTeX math delimiters.
+    Characters between $...$ retain their original case.  "Graph"
+    becomes "graph", "Edge Set" becomes "edge set", but "$G$" stays
+    "$G$" and "$V'$" stays "$V'$".  Apply this to both subject and
+    object independently.
+
+    LOCAL-VARIABLE ANNOTATION. When the subject or object is a bare
+    variable — a single letter or symbol that serves only as a local
+    placeholder ("$f$", "$G$", "$c$", "$a$", "$x$", "$E_1$", "$E_3$") —
+    append a brief parenthetical role drawn from how the fact uses it.
+    This rule applies to BOTH subject AND object equally: "$G_1$ (a
+    graph)", "$E_1$ (an edge set)", "$c$ (a point)". A variable that
+    appears in one triplet as subject and in another as object must
+    carry the SAME annotation in both roles — decide the annotation
+    from how the fact introduces it. Named entities that carry
+    inherent meaning — "$\mathbb{R}$", "the derivative of $\sin x$",
+    "the discriminant", "every continuous function on $[0,1]$" — need
+    no annotation. The annotation is ONE short word or phrase, not a
+    description.
+
     PREDICATE is a short verb phrase (a verb or verb+preposition) that
     captures the relation: "is", "has", "equals", "is a subset of",
     "implies", "is defined as", etc. It is NOT a full sentence.
@@ -66,9 +293,9 @@ class Signature(dspy.Signature):
 
     Fact: "A function $f$ is continuous at $c$ if $\lim_{x\to c} f(x) = f(c)$."
     Triplets:
-        1. subject="$f$"
+        1. subject="$f$ (a function)"
            predicate="is continuous at"
-           object="$c$"
+           object="$c$ (a point)"
            (when $\lim_{x\to c} f(x) = f(c)$ — the condition is part of the
            definition, captured as a separate triplet:)
         2. subject="$\lim_{x\to c} f(x)$"
@@ -121,20 +348,15 @@ class Signature(dspy.Signature):
     extract relations that appear only inside a conditional premise
     when the main question is a value request.)
 
-    Fact: "The graph is not connected because there is no path from
-    $a$ to $b$."
+    Fact: "The graph $G_4$ is NOT a subgraph of $G_1$, even though it looks
+    like all we did is remove vertex $e$."
     Triplets:
-        1. subject="The graph"
-           predicate="is not"
-           object="connected"
-    (The second clause — "there is no path from $a$ to $b$" — is the
-    REASON, not an independent relation. Do NOT extract "there" as a
-    subject. The existential "there is no X" is a way of saying
-    something does not exist, not a subject-predicate-object triple.
-    Note: "is not" is the whole predicate here because "connected" is a
-    predicate adjective. Contrast with "$G_4$ is NOT a subgraph of
-    $G_1$" where the predicate is "is NOT a subgraph of" — the negation
-    stays attached to the full verb phrase.)
+        1. subject="$G_4$ (a graph)"
+           predicate="is NOT a subgraph of"
+           object="$G_1$ (a graph)"
+    (The second clause — "even though it looks like all we did is remove
+    vertex $e$" — is the REASON, not an independent relation. Do NOT
+    extract triplets from reason clauses that merely narrate background.)
 
     FACT: "The Bridges of Königsberg graph had double edges because
     there really are two bridges connecting a particular island to the
@@ -149,8 +371,10 @@ class Signature(dspy.Signature):
 
     RULES:
     - VERBATIM ONLY. Subject and object must be exact substrings of the
-      fact text. Never rephrase, never normalize, never invent a term
-      not present in the source.
+      fact text — never rephrase, never normalize, never invent a term
+      not present in the source. The parenthetical annotation for local
+      variables (see above) is the ONLY text you may add beyond the
+      verbatim substring.
     - ONE RELATION PER TRIPLET. A fact that asserts two independent
       relationships yields two triplets. Apply the SPLIT TEST: if the
       predicate connects the subject to two objects with different
@@ -205,6 +429,17 @@ class Signature(dspy.Signature):
       predicate is "is called" or "are called", and the object is the
       name (Y). Do not extract the naming verb as a separate relation
       or the name as a dangling entity.
+    - NOTATION CONVENTIONS. "X are denoted by Y", "we write X for Y",
+      "we use X to represent Y" — these are statements about notation,
+      not about the subject matter. Skip them — they do not assert a
+      relationship between entities in the domain.
+    - META-DISCOURSE. "We will first consider...", "this book studies",
+      "the remainder of this section is organized as follows" — these
+      are statements about the book's structure, not about its content.
+      Skip them.
+    - TRIVIAL DEFINITIONS OF NOTATION. When a fact essentially says
+      "we use the symbol X to mean Y", it is a notation convention —
+      skip it. The triplet should capture the meaning, not the naming.
     - LATEX FORMAT. Preserve LaTeX delimiters exactly as in the fact:
       `$...$` for inline, `$$...$$` for display. Never convert to
       Unicode, never strip delimiters.
@@ -217,25 +452,25 @@ class Signature(dspy.Signature):
     fact_text: str = dspy.InputField(
         description='One atomic fact — a single self-contained sentence.'
     )
-    triplets: list[DSPyTriplet] = dspy.OutputField(
+    triplets: list[_TripletInput] = dspy.OutputField(
         description='Every (subject, predicate, object) triplet found in '
         'the fact; empty if none.'
     )
 
 
-class TripletExtractor(dspy.Module):
+class _TripletDecomposer(dspy.Module):
     def __init__(
         self,
         language_model: dspy.LM,
         recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
-        self.extractor = dspy.ChainOfThought(Signature)
+        self.decomposer = dspy.Predict(_TripletSignature)
         self.set_lm(language_model)
         self._recorder = recorder
 
     async def aforward(self, fact_text: str) -> list[models.Triplet]:
-        result = await self.extractor.acall(fact_text=fact_text)
+        result = await self.decomposer.acall(fact_text=fact_text)
         if self._recorder:
             self._recorder.record(
                 'triplet_extractor',
@@ -244,14 +479,14 @@ class TripletExtractor(dspy.Module):
             )
         triplets = [
             models.Triplet(
-                subject=triplet.subject,
-                predicate=triplet.predicate,
-                object=triplet.object,
+                subject=t.subject,
+                predicate=t.predicate,
+                object=t.object,
             )
-            for triplet in (result.triplets or [])
+            for t in (result.triplets or [])
         ]
         logger.debug(
-            'triplet extractor: fact -> %d triplet(s)',
+            'triplet decomposer: fact -> %d triplet(s)',
             len(triplets),
         )
         return triplets
@@ -260,47 +495,106 @@ class TripletExtractor(dspy.Module):
         return asyncio.run(self.aforward(fact_text=fact_text))
 
 
-async def extract_triplets(
-    facts: list[models.AtomicFact],
-    module: TripletExtractor,
+# ── orchestration ─────────────────────────────────────────────────────
+
+
+async def _extract_triplets(
+    nodes: list[models.ASTNode],
+    fact_module: _FactExtractor,
+    triplet_module: _TripletDecomposer,
     max_concurrency: int | None = None,
 ) -> list[models.Triplet]:
-    if not facts:
-        logger.info('triplet extractor: no facts')
+    if not nodes:
+        logger.info('triplet extraction: no nodes')
+        return []
+
+    windows = walker.fixed_windows_with_context(
+        nodes,
+        _WINDOW_BUDGET,
+        _BACKWARD_CONTEXT_BUDGET,
+        _FORWARD_CONTEXT_BUDGET,
+    )
+    if not windows:
+        logger.info('triplet extraction: no windows')
         return []
 
     gate = llm.gate(max_concurrency)
 
-    async def _extract_one(
-        fact_index: int, fact: models.AtomicFact
-    ) -> list[models.Triplet]:
+    async def _extract_one_window(
+        window_nodes: list[models.ASTNode],
+        before: str | None,
+        after: str | None,
+    ) -> list[dict]:
         async with gate:
-            triplets = await module.aforward(fact.text)
+            return await fact_module.aforward(
+                [
+                    walker.WindowNode(
+                        node_id=n.id, type=n.type, content=n.content
+                    )
+                    for n in window_nodes
+                ],
+                context_before=before,
+                context_after=after,
+            )
+
+    per_window = await asyncio.gather(
+        *(_extract_one_window(wn, b, a) for wn, b, a in windows)
+    )
+    facts = [f for window_facts in per_window for f in window_facts]
+
+    logger.info(
+        'triplet extraction: %d node(s) -> %d fact(s)',
+        len(nodes),
+        len(facts),
+    )
+
+    if not facts:
+        return []
+
+    async def _decompose_one(fact: dict) -> list[models.Triplet]:
+        async with gate:
+            triplets = await triplet_module.aforward(fact['text'])
             for triplet in triplets:
-                triplet.fact_index = fact_index
+                triplet.node_ids = list(fact['node_ids'])
             return triplets
 
-    per_fact = await asyncio.gather(
-        *(_extract_one(i, fact) for i, fact in enumerate(facts))
-    )
+    per_fact = await asyncio.gather(*(_decompose_one(f) for f in facts))
     triplets = [
         triplet for fact_triplets in per_fact for triplet in fact_triplets
     ]
 
     logger.info(
-        'triplet extractor: %d fact(s) -> %d triplet(s)',
+        'triplet extraction: %d fact(s) -> %d triplet(s)',
         len(facts),
         len(triplets),
     )
     return triplets
 
 
+# ── public API ────────────────────────────────────────────────────────
+
+
 class TripletNode:
-    def __init__(self, module: TripletExtractor) -> None:
-        self.module = module
+    """Extracts knowledge triplets from document nodes.
 
-    async def run(self, state: state.State) -> dict:
-        facts = state.get('atomic_facts', [])
-        triplets = await extract_triplets(facts, module=self.module)
+    Internally this runs two LLM passes:
+    1. Atomic fact extraction — nodes → standalone sentences
+    2. Triplet decomposition — each fact → (subject, predicate, object)
+    """
+
+    def __init__(
+        self,
+        language_model: dspy.LM,
+        recorder: recording.Recorder | None = None,
+    ) -> None:
+        self._fact_module = _FactExtractor(language_model, recorder)
+        self._triplet_module = _TripletDecomposer(language_model, recorder)
+
+    async def run(self, s: state.State) -> dict:
+        nodes = s.get('nodes', [])
+        triplets = await _extract_triplets(
+            nodes,
+            fact_module=self._fact_module,
+            triplet_module=self._triplet_module,
+        )
         return {'triplets': triplets}
-

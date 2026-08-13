@@ -4,7 +4,7 @@ import logging
 import dspy
 from pydantic import BaseModel
 
-from kms.core import llm, logs, models, recording, state
+from kms.core import content, llm, logs, models, recording, state
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +13,7 @@ class WindowMember(BaseModel):
     position: int
     type: str
     content: str | None = None
+    image_path: str | None = None
 
 
 class Classify(dspy.Signature):
@@ -61,8 +62,8 @@ class Classify(dspy.Signature):
     it out has both flags True.
     """
 
-    contents: str = dspy.InputField(
-        description="The span's text (markdown + LaTeX), in document order."
+    contents: content.ContentParts = dspy.InputField(
+        description="The span's text and figures, in document order."
     )
     has_statement: bool = dspy.OutputField(
         description='True when the block states something (a claim, definition, theorem, example, exercise, or problem posed).'
@@ -79,30 +80,33 @@ class RoleTyper(dspy.Module):
         recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
-        self.classify = dspy.ChainOfThought(Classify)
+        self.classify = dspy.Predict(Classify)
         self.set_lm(language_model)
         self._recorder = recorder
 
-    async def aforward(self, contents: str) -> tuple[bool, bool]:
+    async def aforward(
+        self, contents: content.ContentParts
+    ) -> tuple[bool, bool]:
         result = await self.classify.acall(contents=contents)
+        label = contents.content.render()
         if self._recorder:
-            self._recorder.record('role_typer', {'contents': contents}, result)
+            self._recorder.record('role_typer', {'contents': label}, result)
         has_statement = result.has_statement
         has_procedure = result.has_procedure
         if not has_statement and not has_procedure:
             raise ValueError(
                 'Block classified as neither statement nor procedure. '
-                f'Contents: {logs.elide(contents)}'
+                f'Contents: {logs.elide(label)}'
             )
         logger.debug(
             'roles: has_statement=%s has_procedure=%s | from %r',
             has_statement,
             has_procedure,
-            logs.elide(contents),
+            logs.elide(label),
         )
         return has_statement, has_procedure
 
-    def forward(self, contents: str) -> tuple[bool, bool]:
+    def forward(self, contents: content.ContentParts) -> tuple[bool, bool]:
         return asyncio.run(self.aforward(contents))
 
 
@@ -124,8 +128,12 @@ class StatementPartitionSignature(dspy.Signature):
     portion, or both — never neither.
     """
 
-    current_nodes: list[WindowMember] = dspy.InputField(
-        description="The block's member nodes, in order, each with a local position and its type."
+    current_nodes: content.ContentParts = dspy.InputField(
+        description=(
+            "The block's member nodes, in order. Each text node is a "
+            'line `[position] (type): content`; each image node is a line '
+            '`[position] (image):` followed by the image itself.'
+        )
     )
     statement_positions: list[int] = dspy.OutputField(
         description='Positions of the nodes that form the STATEMENT portion — the text that poses or asserts.'
@@ -139,12 +147,50 @@ class StatementPartitioner(dspy.Module):
         recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
-        self.partitioner = dspy.ChainOfThought(StatementPartitionSignature)
+        self.partitioner = dspy.Predict(StatementPartitionSignature)
+        self.partitioner.demos = [
+            dspy.Example(
+                current_nodes=content.labeled_content_parts(
+                    [
+                        WindowMember(
+                            position=0,
+                            type='paragraph',
+                            content="**Exercise 1.2.1:** Sketch the slope field for $y' = e^{x-y}$.",
+                        ),
+                        WindowMember(
+                            position=1,
+                            type='paragraph',
+                            content="**Exercise 1.2.2:** Sketch the slope field for $y' = x^2$.",
+                        ),
+                    ]
+                ),
+                statement_positions=[0, 1],
+            ).with_inputs('current_nodes'),
+            dspy.Example(
+                current_nodes=content.labeled_content_parts(
+                    [
+                        WindowMember(
+                            position=0,
+                            type='paragraph',
+                            content="**Example 1.2.1:** Attempt to solve: $y' = \\frac{1}{x}, y(0) = 0$.",
+                        ),
+                        WindowMember(
+                            position=1,
+                            type='paragraph',
+                            content='Integrate to find the general solution $y = \\ln |x| + C$.',
+                        ),
+                    ]
+                ),
+                statement_positions=[0],
+            ).with_inputs('current_nodes'),
+        ]
         self.set_lm(language_model)
         self._recorder = recorder
 
     async def aforward(self, current_nodes: list[WindowMember]) -> list[int]:
-        result = await self.partitioner.acall(current_nodes=current_nodes)
+        result = await self.partitioner.acall(
+            current_nodes=content.labeled_content_parts(current_nodes)
+        )
         if self._recorder:
             self._recorder.record(
                 'statement_partitioner',
@@ -181,8 +227,12 @@ class ProcedurePartitionSignature(dspy.Signature):
     portion, or both — never neither.
     """
 
-    current_nodes: list[WindowMember] = dspy.InputField(
-        description="The block's member nodes, in order, each with a local position and its type."
+    current_nodes: content.ContentParts = dspy.InputField(
+        description=(
+            "The block's member nodes, in order. Each text node is a "
+            'line `[position] (type): content`; each image node is a line '
+            '`[position] (image):` followed by the image itself.'
+        )
     )
     procedure_positions: list[int] = dspy.OutputField(
         description='Positions of the nodes that form the PROCEDURE portion — the text that works something out.'
@@ -196,12 +246,14 @@ class ProcedurePartitioner(dspy.Module):
         recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
-        self.partitioner = dspy.ChainOfThought(ProcedurePartitionSignature)
+        self.partitioner = dspy.Predict(ProcedurePartitionSignature)
         self.set_lm(language_model)
         self._recorder = recorder
 
     async def aforward(self, current_nodes: list[WindowMember]) -> list[int]:
-        result = await self.partitioner.acall(current_nodes=current_nodes)
+        result = await self.partitioner.acall(
+            current_nodes=content.labeled_content_parts(current_nodes)
+        )
         if self._recorder:
             self._recorder.record(
                 'procedure_partitioner',
@@ -220,16 +272,21 @@ class ProcedurePartitioner(dspy.Module):
         return asyncio.run(self.aforward(current_nodes))
 
 
-def _contents_of(
+def _span_parts(
     span: list[int], nodes_by_id: dict[int, models.ASTNode]
-) -> str:
-    return '\n\n'.join(
-        nodes_by_id[node_id].content
-        for node_id in span
-        if node_id in nodes_by_id
-        and nodes_by_id[node_id].content
-        and nodes_by_id[node_id].content.strip()
-    )
+) -> content.ContentParts:
+    parts: list[content.TextPart | content.ImagePart] = []
+    for node_id in span:
+        node = nodes_by_id.get(node_id)
+        if node is None:
+            continue
+        if node.type == 'image' and node.image_path:
+            image = content.load_image(node.image_path)
+            if image:
+                parts.append(content.ImagePart(image=image))
+        elif node.content and node.content.strip():
+            parts.append(content.TextPart(text=node.content))
+    return content.ContentParts(content=content.Content(parts=parts))
 
 
 def _member_window(
@@ -240,6 +297,7 @@ def _member_window(
             position=position,
             type=node.type,
             content=node.content,
+            image_path=node.image_path,
         )
         for position, node_id in enumerate(members)
         if (node := nodes_by_id.get(node_id)) is not None
@@ -300,8 +358,11 @@ async def build_hubs(
     gate = llm.gate(max_concurrency)
 
     async def _type_one(span: list[int]) -> tuple[bool, bool]:
+        parts = _span_parts(span, nodes_by_id)
+        if not parts.content.parts:
+            return (False, False)
         async with gate:
-            return await role_module.acall(_contents_of(span, nodes_by_id))
+            return await role_module.acall(parts)
 
     roles_by_span = await asyncio.gather(*(_type_one(span) for span in spans))
 
@@ -379,4 +440,3 @@ class HubBuilderNode:
             procedure_partitioner=self.procedure_partitioner,
         )
         return {'statements': statements, 'procedures': procedures}
-

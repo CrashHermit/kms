@@ -32,9 +32,7 @@ def test_dispatch_proofreads_every_page_with_content_and_image():
         _segment(0, 'definition with $x^2$'),
         _segment(1, 'plain prose, no math at all'),
         _segment(2, None),
-        _segment(
-            3, 'content but', image_path=''
-        ),
+        _segment(3, 'content but', image_path=''),
     ]
     sends = corrector.CorrectorNode(module=SENTINEL).dispatch(
         {'segments': segments}
@@ -55,4 +53,3 @@ def test_collect_writes_corrected_back_and_leaves_others_untouched():
     )
     assert out['segments'][0].content == 'fixed0'
     assert out['segments'][1].content == 'orig1'
-

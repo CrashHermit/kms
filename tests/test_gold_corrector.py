@@ -104,4 +104,3 @@ def test_ids_are_unique_and_edit_classes_are_known():
         classes = {edit['class'] for edit in record['edits']}
         assert classes <= known, f'{record["id"]}: unknown class in {classes}'
         assert record['edit_classes'] == sorted(classes)
-

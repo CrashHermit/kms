@@ -1,29 +1,30 @@
-from kms.graph.hubs import (
-    ENTITY_HUB_LABEL,
-)
-from kms.graph.hubs import canonical_pairs as _cp
-from kms.graph.hubs import (
-    hub_properties as entity_hub_properties,
-)
-from kms.graph.hubs import (
-    hub_rows as entity_hub_rows,
-)
-from kms.graph.hubs import (
-    hub_uuid as entity_hub_uuid,
-)
+from uuid import NAMESPACE_URL, uuid5
+
+from kms.graph import nodes
+
+ENTITY_HUB_LABEL = 'EntityHub'
 
 
-def canonical_entity_pairs(
-    clusters: list[list[dict]], source: str
-) -> list[dict]:
-    return _cp(clusters, 'entity')
+def entity_hub_uuid(source: str, canonical_name: str) -> str:
+    return uuid5(
+        NAMESPACE_URL,
+        f'{source}#entity_hub#{canonical_name}',
+    ).hex
 
 
-__all__ = [
-    'ENTITY_HUB_LABEL',
-    'canonical_entity_pairs',
-    'entity_hub_properties',
-    'entity_hub_rows',
-    'entity_hub_uuid',
-]
-
+def entity_hub_properties(
+    source: str,
+    canonical_name: str,
+    description: str,
+    embedding: list[float] | None = None,
+) -> dict:
+    properties = {
+        'uuid': entity_hub_uuid(source, canonical_name),
+        'source': nodes.source_uuid(source),
+        'canonical_name': canonical_name,
+        'description': description,
+        'embedding': embedding,
+    }
+    return {
+        key: value for key, value in properties.items() if value is not None
+    }

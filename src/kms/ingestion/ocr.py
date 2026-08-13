@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 import httpx
+import pypdfium2 as pdfium
 
 from kms.core import models
 
@@ -16,6 +17,7 @@ _TIMEOUT = httpx.Timeout(300.0, connect=30.0)
 
 class MistralOCRError(RuntimeError):
     pass
+
 
 def _require_key() -> str:
     key = os.environ.get(MISTRAL_ENV_KEY) or os.environ.get('MISTRAL_OCR_API')
@@ -58,6 +60,7 @@ def ocr_pdf(pdf_bytes: bytes, pages: list[int] | None = None) -> dict:
     except httpx.HTTPError as exc:
         raise MistralOCRError(f'Mistral OCR request failed: {exc}') from exc
     return response.json()
+
 
 _IMG_REF = re.compile(r'!\[[^\]]*\]\(([^)]+)\)')
 
@@ -141,15 +144,6 @@ def _render_page_images(
     segments: list[models.Segment],
     pages: list[int] | None,
 ) -> None:
-    try:
-        import pypdfium2 as pdfium
-    except ImportError as exc:
-        raise MistralOCRError(
-            'pypdfium2 is required to render page images for the correction '
-            'pass. Install the Mistral front-end deps: '
-            ' uv sync --extra mistral'
-        ) from exc
-
     pdf = pdfium.PdfDocument(str(pdf_path))
     try:
         for i, segment in enumerate(segments):
@@ -173,4 +167,3 @@ def extract(
     if render_pages:
         _render_page_images(pdf_path, segments, pages)
     return segments
-

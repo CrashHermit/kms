@@ -170,4 +170,3 @@ def _run_tui() -> None:
 
 if __name__ == '__main__':
     run()
-

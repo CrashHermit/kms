@@ -107,4 +107,3 @@ def test_splitter_node():
     out = asyncio.run(node.run({'nodes': _nodes()}))
     assert set(out) == {'nodes'}
     assert len(out['nodes']) == 4
-

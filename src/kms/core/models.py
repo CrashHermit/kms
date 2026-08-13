@@ -8,12 +8,13 @@ class ASTNode:
     content: str | None = None
     id: int | None = None
     segment_index: int | None = None
+    image_path: str | None = None
 
 
 @dataclass(slots=True)
-class AtomicFact:
+class Step:
     text: str
-    node_ids: list[int] = field(default_factory=list)
+    index: int = 0
 
 
 @dataclass(slots=True)
@@ -21,13 +22,12 @@ class Procedure:
     block: list[int]
     index: int = 0
     members: list[int] = field(default_factory=list)
+    steps: list[Step] = field(default_factory=list)
 
 
 @dataclass(slots=True)
 class Instruction:
-    node_id: int
-    text: str
-    directive: str | None = None
+    block: list[int]
     members: list[int] = field(default_factory=list)
 
 
@@ -49,9 +49,7 @@ class Segment:
     image_path: str
     pictures: list[Picture] = field(default_factory=list)
     content: str | None = None
-    nodes: list[ASTNode] = field(
-        default_factory=list
-    )
+    nodes: list[ASTNode] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -59,7 +57,7 @@ class Triplet:
     subject: str
     predicate: str
     object: str
-    fact_index: int = -1
+    node_ids: list[int] = field(default_factory=list)
 
 
 def merge_results_into_segments(
@@ -75,10 +73,14 @@ def merge_results_into_segments(
 def flatten_segments(segments: list[Segment]) -> list[ASTNode]:
     flat: list[ASTNode] = []
     for segment in segments:
+        pictures = list(segment.pictures or [])
+        picture_cursor = 0
         for node in segment.nodes or []:
             node.segment_index = segment.index
+            if node.type == 'image' and picture_cursor < len(pictures):
+                node.image_path = pictures[picture_cursor].image_path
+                picture_cursor += 1
             flat.append(node)
-    for i, node in enumerate(flat):
-        node.id = i
+    for index, node in enumerate(flat):
+        node.id = index
     return flat
-

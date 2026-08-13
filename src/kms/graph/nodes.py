@@ -43,6 +43,7 @@ def node_properties(
         'content': node.content,
         'index': node.id,
         'segment_index': node.segment_index,
+        'image_path': node.image_path,
         'embedding': embedding,
     }
     return {
@@ -52,4 +53,3 @@ def node_properties(
 
 def block_key(block: list[int]) -> str:
     return '#'.join(str(node_id) for node_id in block)
-

@@ -278,4 +278,3 @@ def test_close_driver_closes_the_http_client(monkeypatch):
     asyncio.run(db.close_driver())
     assert client.is_closed
     assert db._http_client is None
-

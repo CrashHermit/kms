@@ -254,4 +254,3 @@ class FormatterNode:
         )
         logger.info('formatter: %d page(s) formatted', len(results))
         return {'segments': segments}
-

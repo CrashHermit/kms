@@ -92,4 +92,3 @@ def test_prompt_joins_split_display_equations():
     assert 'relational operator' in prompt
     assert 'binary operator' in prompt
     assert 'back-to-back equations stay separate' in prompt
-

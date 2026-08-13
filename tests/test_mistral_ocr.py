@@ -123,4 +123,3 @@ def test_pages_are_indexed_densely(tmp_path):
     assert [s.index for s in segs] == [0, 1]
     assert all(len(s.pictures) == 1 for s in segs)
     assert all('![1]()' in s.content for s in segs)
-

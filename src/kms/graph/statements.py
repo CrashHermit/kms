@@ -2,6 +2,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from kms.core import models
 from kms.graph import nodes
+from kms.graph.procedures import procedure_uuid
 
 STATEMENT_LABEL = 'Statement'
 
@@ -34,3 +35,26 @@ def statement_member_pairs(
         for node_id in statement.members
     ]
 
+
+def has_procedure_pairs(
+    statements: list[models.Statement],
+    procedures: list[models.Procedure],
+    source: str,
+) -> list[dict]:
+    pairs: list[dict] = []
+    proc_by_block: dict[tuple, models.Procedure] = {}
+    for proc in procedures:
+        proc_by_block[tuple(proc.block)] = proc
+
+    for statement in statements:
+        key = tuple(statement.block)
+        if key in proc_by_block:
+            pairs.append(
+                {
+                    'statement': statement_uuid(source, statement.block),
+                    'procedure': procedure_uuid(
+                        source, statement.block, proc_by_block[key].index
+                    ),
+                }
+            )
+    return pairs

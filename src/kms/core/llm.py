@@ -41,14 +41,39 @@ def _provider_routing(provider: str | None) -> dict:
 
 
 @lru_cache(maxsize=1)
-def text_lm() -> dspy.LM:
+def pipeline_lm() -> dspy.LM:
+    api_base = os.environ.get('PIPELINE_API_BASE')
+    if api_base:
+        return dspy.LM(
+            os.environ.get('PIPELINE_MODEL', 'openai/gemma-4-e4b-it'),
+            api_base=api_base,
+            api_key=os.environ.get('PIPELINE_API_KEY', 'not-needed'),
+            temperature=0.0,
+            max_tokens=128000,
+            cache=True,
+        )
     return dspy.LM(
-        os.environ.get('TEXT_MODEL', 'deepseek/deepseek-v4-flash'),
+        os.environ.get('PIPELINE_MODEL', 'deepseek/deepseek-v4-flash'),
         api_key=_require_key(DEEPSEEK_ENV_KEY, 'sk-...'),
         temperature=0.0,
         max_tokens=128000,
         cache=True,
         extra_body={'thinking': {'type': 'disabled'}},
+    )
+
+
+@lru_cache(maxsize=1)
+def procedure_creator_lm() -> dspy.LM | None:
+    model = os.environ.get('PROCEDURE_CREATOR_MODEL')
+    if not model:
+        return None
+    return dspy.LM(
+        model,
+        api_key=_require_key(OPENROUTER_ENV_KEY, 'sk-or-...'),
+        temperature=0.0,
+        max_tokens=128000,
+        cache=True,
+        **_provider_routing(os.environ.get('PROCEDURE_CREATOR_PROVIDER')),
     )
 
 
@@ -64,4 +89,3 @@ def corrector_lm() -> dspy.LM:
         cache=True,
         **_provider_routing(os.environ.get('CORRECTOR_PROVIDER', 'DeepInfra')),
     )
-

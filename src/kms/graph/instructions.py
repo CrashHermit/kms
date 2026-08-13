@@ -6,19 +6,18 @@ from kms.graph import nodes
 INSTRUCTION_LABEL = 'Instruction'
 
 
-def instruction_uuid(source: str, node_id: int) -> str:
-    return uuid5(NAMESPACE_URL, f'{source}#instruction#{node_id}').hex
+def instruction_uuid(source: str, block: list[int]) -> str:
+    return uuid5(
+        NAMESPACE_URL, f'{source}#instruction#{nodes.block_key(block)}'
+    ).hex
 
 
 def instruction_properties(
     instruction: models.Instruction, source: str
 ) -> dict:
     properties = {
-        'uuid': instruction_uuid(source, instruction.node_id),
+        'uuid': instruction_uuid(source, instruction.block),
         'source': nodes.source_uuid(source),
-        'text': instruction.text,
-        'directive': instruction.directive,
-        'index': instruction.node_id,
     }
     return {
         key: value for key, value in properties.items() if value is not None
@@ -34,15 +33,14 @@ def instruction_rows(
     ]
 
 
-def governs_pairs(
+def instruction_member_pairs(
     instructions: list[models.Instruction], source: str
 ) -> list[dict]:
     return [
         {
-            'instruction': instruction_uuid(source, instruction.node_id),
-            'node': nodes.node_uuid(source, member_id),
+            'node': nodes.node_uuid(source, node_id),
+            'instruction': instruction_uuid(source, instruction.block),
         }
         for instruction in instructions
-        for member_id in instruction.members
+        for node_id in instruction.members
     ]
-

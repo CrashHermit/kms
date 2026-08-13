@@ -161,4 +161,3 @@ def test_persist_statements_writes_member_edges_from_every_member():
         for query in queries
     )
     assert 'MATCH (a {uuid:' not in ' '.join(queries)
-

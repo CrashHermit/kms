@@ -1,6 +1,6 @@
 import asyncio
 
-from kms.core import models
+from kms.core import content, models
 from kms.ingestion import pedagogical_component_finder
 
 
@@ -98,3 +98,20 @@ def test_node_run_on_empty_stream_yields_an_empty_channel():
     )
     assert asyncio.run(node.run({'nodes': []})) == {'spans': []}
 
+
+def test_window_parts_labels_text_and_loads_images(tmp_path):
+    image_path = tmp_path / 'Image_000.png'
+    image_path.write_bytes(b'png-bytes')
+    nodes = [
+        pedagogical_component_finder.WindowNode(
+            position=0, type='paragraph', content='intro'
+        ),
+        pedagogical_component_finder.WindowNode(
+            position=1, type='image', image_path=str(image_path)
+        ),
+    ]
+    parts = content.labeled_content_parts(nodes).content.parts
+    assert len(parts) == 3
+    assert parts[0].text == '[0] (paragraph): intro'
+    assert parts[1].text == '[1] (image)'
+    assert isinstance(parts[2], content.ImagePart)

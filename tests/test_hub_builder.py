@@ -237,4 +237,3 @@ def test_out_of_range_positions_are_dropped():
         )
     )
     assert statements[0].members == [0]
-

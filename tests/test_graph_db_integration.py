@@ -3,6 +3,9 @@ import os
 
 import pytest
 
+from kms.core import models
+from kms.graph import db, schema, writer
+
 pytestmark = pytest.mark.skipif(
     not os.environ.get('KMS_NEO4J_IT'),
     reason='set KMS_NEO4J_IT=1 (with NEO4J_URI/USERNAME/PASSWORD) '
@@ -11,8 +14,6 @@ pytestmark = pytest.mark.skipif(
 
 
 def test_connectivity_round_trip_and_idempotent_schema():
-    from kms.graph import db, schema
-
     async def scenario():
         def _session_factory():
             return db.session()
@@ -24,9 +25,7 @@ def test_connectivity_round_trip_and_idempotent_schema():
                 record = await result.single()
                 assert record['n'] == 1
             await schema.ensure_schema(_session_factory)
-            await schema.ensure_schema(
-                _session_factory
-            )
+            await schema.ensure_schema(_session_factory)
         finally:
             await db.close_driver()
 
@@ -34,9 +33,6 @@ def test_connectivity_round_trip_and_idempotent_schema():
 
 
 def test_persist_nodes_upserts_labels_and_next_chain():
-    from kms.core import models
-    from kms.graph import db, schema, writer
-
     source = 'integration-test-book'
     stream = [
         models.ASTNode(type='header', content='§1', id=0, segment_index=0),
@@ -90,15 +86,10 @@ def test_persist_nodes_upserts_labels_and_next_chain():
                 )
                 assert math['c'] == 1
                 assert chain['longest'] == 2
-                assert (
-                    head['c'] == '§1'
-                )
+                assert head['c'] == '§1'
         finally:
             async with db.session() as session:
-                await session.run(
-                    'MATCH (n) DETACH DELETE n'
-                )
+                await session.run('MATCH (n) DETACH DELETE n')
             await db.close_driver()
 
     asyncio.run(scenario())
-

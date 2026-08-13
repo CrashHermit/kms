@@ -4,7 +4,7 @@ import logging
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import logs, models, recording, state, walker
+from kms.core import content, logs, models, recording, state, walker
 
 logger = logging.getLogger(__name__)
 LOOKAHEAD_BUDGET = 2000
@@ -15,6 +15,7 @@ class WindowNode(BaseModel):
     position: int
     type: str
     content: str | None = None
+    image_path: str | None = None
 
 
 class Span(BaseModel):
@@ -78,8 +79,8 @@ class Signature(dspy.Signature):
     in ONE span. Ask what the number does — does it name a problem the book can
     refer back to, or sequence a step inside something already named?
 
-    NOT SPANS AT ALL: ordinary narrative prose, section headers, figures,
-    running text between blocks. Return nothing for them.
+    NOT SPANS AT ALL: ordinary narrative prose, section headers, running text
+    between blocks. Return nothing for them.
 
 
     EXTENT (what nodes a span includes):
@@ -107,19 +108,22 @@ class Signature(dspy.Signature):
     A worked example and a following exercise are two units.
 
     POSITIONS:
-    - Emit spans over the given nodes ONLY, using their `position` values; a
+    - Emit spans over the given nodes ONLY, using their `[position]` labels; a
       span is the inclusive [start, end] range it occupies.
-    - Return the spans in document order. A node MAY belong to more than one
-      span (a long paragraph that straddles two units, a caption shared by a
-      figure and the example that follows it).
+    - Return the spans in document order. Each node belongs to at most one
+      span.
     - Include a span even if it is unfinished at the last given node — still
       emit it, spanning it out to that last node.
     - If there are no units in the window, return an empty list.
     """
 
-    current_nodes: list[WindowNode] = dspy.InputField(
-        description="The look-ahead window's nodes, in order, each with a local position. "
-        'Emit spans over these only.'
+    current_nodes: content.ContentParts = dspy.InputField(
+        description=(
+            "The look-ahead window's nodes, in order. Each text node is a "
+            'line `[position] (type): content`; each image node is a line '
+            '`[position] (image):` followed by the image itself. Emit spans '
+            'over the `[position]` values only.'
+        )
     )
     spans: list[Span] = dspy.OutputField(
         description='Every pedagogical unit found in current_nodes, as position spans, in '
@@ -136,12 +140,81 @@ class PedagogicalComponentFinder(dspy.Module):
         recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
-        self.finder = dspy.ChainOfThought(Signature)
+        self.finder = dspy.Predict(Signature)
+        self.finder.demos = [
+            dspy.Example(
+                current_nodes=content.labeled_content_parts(
+                    [
+                        WindowNode(
+                            position=0,
+                            type='paragraph',
+                            content="**Exercise 1.2.1:** Sketch the slope field for $y' = e^{x-y}$.",
+                        ),
+                        WindowNode(
+                            position=1,
+                            type='paragraph',
+                            content="**Exercise 1.2.2:** Sketch the slope field for $y' = x^2$.",
+                        ),
+                        WindowNode(
+                            position=2,
+                            type='paragraph',
+                            content="**Exercise 1.2.3:** Sketch the slope field for $y' = y^2$.",
+                        ),
+                    ]
+                ),
+                spans=[
+                    Span(start=0, end=0),
+                    Span(start=1, end=1),
+                    Span(start=2, end=2),
+                ],
+            ).with_inputs('current_nodes'),
+            dspy.Example(
+                current_nodes=content.labeled_content_parts(
+                    [
+                        WindowNode(
+                            position=0,
+                            type='paragraph',
+                            content='**Exercise 1.2.7:** Let $\\{x_n\\}$ be a sequence.',
+                        ),
+                        WindowNode(
+                            position=1,
+                            type='list',
+                            content='a) Show that $\\lim x_n = 0$ iff $\\lim |x_n| = 0$.',
+                        ),
+                        WindowNode(
+                            position=2,
+                            type='list',
+                            content='b) Find an example where $\\{|x_n|\\}$ converges and $\\{x_n\\}$ diverges.',
+                        ),
+                    ]
+                ),
+                spans=[Span(start=0, end=2)],
+            ).with_inputs('current_nodes'),
+            dspy.Example(
+                current_nodes=content.labeled_content_parts(
+                    [
+                        WindowNode(
+                            position=0,
+                            type='paragraph',
+                            content='**Theorem 2.1.10.** Every bounded monotone sequence converges.',
+                        ),
+                        WindowNode(
+                            position=1,
+                            type='paragraph',
+                            content='Proof. Assume without loss of generality that the sequence is increasing.',
+                        ),
+                    ]
+                ),
+                spans=[Span(start=0, end=1)],
+            ).with_inputs('current_nodes'),
+        ]
         self.set_lm(language_model)
         self._recorder = recorder
 
     async def aforward(self, current_nodes: list[WindowNode]) -> list[Span]:
-        result = await self.finder.acall(current_nodes=current_nodes)
+        result = await self.finder.acall(
+            current_nodes=content.labeled_content_parts(current_nodes)
+        )
         if self._recorder:
             self._recorder.record(
                 'pedagogical_component_finder',
@@ -195,6 +268,7 @@ async def find_spans(
                         position=position,
                         type=node.type,
                         content=node.content,
+                        image_path=node.image_path,
                     )
                     for position, node in enumerate(window)
                 ]
@@ -252,6 +326,12 @@ class PedagogicalComponentFinderNode:
         self.module = module
 
     async def run(self, state: state.State) -> dict:
-        spans = await find_spans(state.get('nodes', []), module=self.module)
+        nodes = state.get('nodes', [])
+        excluded = {
+            member
+            for instruction in state.get('instructions', [])
+            for member in instruction.members
+        }
+        eligible = [node for node in nodes if node.id not in excluded]
+        spans = await find_spans(eligible, module=self.module)
         return {'spans': spans}
-

@@ -34,4 +34,3 @@ def test_every_send_target_and_dispatch_fallback_is_a_registered_node():
 def test_all_modules_parse():
     for f in MODULE_DIR.rglob('*.py'):
         ast.parse(f.read_text())
-

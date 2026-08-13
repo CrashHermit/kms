@@ -150,9 +150,15 @@ class Signature(dspy.Signature):
       or title lines inside table — those belong in caption when they appear as
       separate blocks.
     - image: Indexed placeholder only: `![N]()` where `N` matches the OCR
-      picture index for that slot. Do not put caption prose in image — use
-      caption node(s) for any labels or explanatory text. Never embed file paths
-      in image content; paths live on the node's `src` field after merging.
+      picture index for that slot. A placeholder that carries a leading
+      sub-part marker or list bullet — "a) ![1]()", "* a) ![1]()" — is
+      STILL an image node: the marker is a label, not text. Drop the marker
+      and emit the bare `![N]()` as the node's content. A run of such
+      placeholders is NOT a list: emit EACH placeholder as its OWN image
+      node, never merged into one list node. Do not put caption prose in
+      image — use caption node(s) for any labels or explanatory text. Never
+      embed file paths in image content; paths live on the node's `src` field
+      after merging.
     - caption: Figure captions, table titles, notes, or labels when shown as
       separate prose blocks from the picture placeholder or table grid. Include
       identifiers (e.g. "Figure 3.2", "Table 4.") and all descriptive text for
@@ -160,7 +166,11 @@ class Signature(dspy.Signature):
     - header: A heading/title for a section/chapter/exercise set/etc. Emit
       exactly one header node per heading; do not split a heading into multiple
       nodes. A short label that opens a labelled block (e.g. "Example 6.7",
-      "Theorem 2.1", "Exercise 12") is a header.
+      "Theorem 2.1", "Exercise 12") is a header — but ONLY when it stands
+      alone on its line. A label that runs into its block's own text on the
+      same line ("**Exercise 1.2.1:** Sketch the slope field …", "**Theorem
+      2.1** A set is …") is NOT a header: the label and its text are one
+      PARAGRAPH.
       Copy the heading line EXACTLY as the markdown has it, keeping its leading
       `#` markers and any bold or italic markup: the node for "## 1.5 Project"
       has content "## 1.5 Project", never "1.5 Project". The markers are what
@@ -273,7 +283,47 @@ class Extractor(dspy.Module):
         recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
-        self.extractor = dspy.ChainOfThought(Signature)
+        self.extractor = dspy.Predict(Signature)
+        self.extractor.demos = [
+            dspy.Example(
+                segment_markdown=(
+                    '**Exercise 2.4:** Match each equation to its slope '
+                    'field.\n\n'
+                    'a) ![1]()\n\nb) ![2]()\n\nc) ![3]()'
+                ),
+                nodes=[
+                    DSPyModel(
+                        type='paragraph',
+                        content=(
+                            '**Exercise 2.4:** Match each equation to its '
+                            'slope field.'
+                        ),
+                    ),
+                    DSPyModel(type='image', content='![1]()'),
+                    DSPyModel(type='image', content='![2]()'),
+                    DSPyModel(type='image', content='![3]()'),
+                ],
+            ).with_inputs('segment_markdown'),
+            dspy.Example(
+                segment_markdown=(
+                    '**Exercise 2.4:** Match each equation to its slope '
+                    'field.\n\n'
+                    '* a) ![1]()\n* b) ![2]()\n* c) ![3]()'
+                ),
+                nodes=[
+                    DSPyModel(
+                        type='paragraph',
+                        content=(
+                            '**Exercise 2.4:** Match each equation to its '
+                            'slope field.'
+                        ),
+                    ),
+                    DSPyModel(type='image', content='![1]()'),
+                    DSPyModel(type='image', content='![2]()'),
+                    DSPyModel(type='image', content='![3]()'),
+                ],
+            ).with_inputs('segment_markdown'),
+        ]
         self.set_lm(language_model)
         self._recorder = recorder
 
@@ -340,4 +390,3 @@ class ExtractorNode:
             sum(len(nodes) for _, nodes in results),
         )
         return {'segments': segments}
-

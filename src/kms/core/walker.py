@@ -152,4 +152,3 @@ def context_around(
     content_before = '\n\n'.join(before_parts) or None
     content_after = '\n\n'.join(after_parts) or None
     return content_before, content_after
-

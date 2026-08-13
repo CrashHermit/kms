@@ -1,85 +1,95 @@
 import asyncio
-import sys
-from pathlib import Path
 
-SRC = Path(__file__).resolve().parent.parent / 'src'
-if str(SRC) not in sys.path:
-    sys.path.insert(0, str(SRC))
+from kms.core import llm, models
+from kms.graph import db, schema, writer
+from kms.ingestion.entity_canonicalizer import rebuild
+from kms.ingestion.triplet_extractor import TripletNode
+
+CONTENT = """\
+Here both $G_2$ and $G_3$ are subgraphs of $G_1$. But only $G_2$ is an \
+*induced* subgraph. Every edge in $G_1$ that connects vertices in $G_2$ is \
+also an edge in $G_2$. In $G_3$, the edge $\\{a, b\\}$ is in $E_1$ but not \
+$E_3$, even though vertices $a$ and $b$ are in $V_3$.
+
+The graph $G_4$ is NOT a subgraph of $G_1$, even though it looks like all we \
+did is remove vertex $e$. The reason is that in $E_4$ we have the edge \
+$\\{c, f\\}$, but this is not an element of $E_1$, so we don't have the \
+required $E_4 \\subseteq E_1$.
+
+Back to some basic graph theory definitions. Notice that all the graphs we \
+have drawn above have the property that no pair of vertices is connected \
+more than once, and no vertex is connected to itself. Graphs like these are \
+sometimes called **simple**, although we will just call them *graphs*.
+
+We say that $G' = (V', E')$ is a **subgraph** of $G = (V, E)$, and write \
+$G' \\subseteq G$, provided $V' \\subseteq V$ and $E' \\subseteq E$.
+
+We say that $G' = (V', E')$ is an **induced subgraph** of $G = (V, E)$ \
+provided $V' \\subseteq V$ and every edge in $E$ whose vertices are still \
+in $V'$ is also an edge in $E'$.
+
+Notice that every induced subgraph is also an ordinary subgraph, but not \
+conversely. Think of a subgraph as the result of deleting some vertices and \
+edges from the larger graph. For the subgraph to be an induced subgraph, \
+we can still delete vertices, but now we only delete those edges that \
+included the deleted vertices.
+
+The graphs above are also **connected**: you can get from any vertex to any \
+other vertex by following some path of edges. A graph that is not connected \
+can be thought of as two separate graphs drawn close together."""
+
+SOURCE = 'graph_theory_page'
 
 
-async def main() -> None:
-    from kms.core import llm
-    from kms.graph import db
-    from kms.ingestion.canonicalizer import rebuild
-
+async def main():
     if not db.is_configured():
-        print('Neo4j not configured — stopping.')
+        print('Neo4j not configured.')
         return
 
-    language_model = llm.text_lm()
-
-    def _sf():
+    def _session():
         return db.session()
 
-    threshold = 0.85
+    async with _session() as session:
+        await session.run('MATCH (n) DETACH DELETE n')
+    await schema.ensure_schema(_session)
 
-    try:
-        result = await rebuild(
-            threshold=threshold,
-            language_model=language_model,
-            session_factory=_sf,
-            entity_kind=True,
-            predicate_kind=True,
-            rebuild_triplets=True,
-        )
+    lm = llm.pipeline_lm()
+    nodes = [models.ASTNode(id=0, type='paragraph', content=CONTENT)]
+    triplet_node = TripletNode(language_model=lm)
+    result = await triplet_node.run({'nodes': nodes, 'source': SOURCE})
+    triplets = result.get('triplets', [])
 
-        print(f'\n{"=" * 60}')
-        print('SUMMARY')
-        print('=' * 60)
+    print(f'{len(triplets)} triplets:')
+    for t in triplets:
+        print(f'  {t.subject} | {t.predicate} | {t.object}')
 
-        for kind in ('entity', 'predicate'):
-            info = result.get(kind, {})
-            print(f'\n  {kind}:')
-            print(f'    Clusters: {info.get("clusters", 0)}')
-            print(f'    Spokes:   {info.get("spokes", 0)}')
-        print(f'\n{"=" * 60}')
-        print('NEO4J CHECK')
-        print('=' * 60)
+    await writer.persist_nodes(nodes, SOURCE, session_factory=_session)
+    await writer.persist_triplets(triplets, SOURCE, session_factory=_session)
+    await writer.persist_chain(nodes, SOURCE, session_factory=_session)
 
-        async with db.session() as s:
-            for label in (
-                'EntityHub', 'PredicateHub', 'Definition',
-                'TripletHub', 'FactHub',
-            ):
-                r = await s.run(
-                    f'MATCH (n:`{label}`) RETURN count(n) AS cnt'
-                )
-                cnt = (await r.single())['cnt']
-                print(f'  :{label:<16} {cnt}')
-
-            r = await s.run(
-                'MATCH ()-[r:CANONICAL]->() RETURN count(r) AS cnt'
-            )
-            cnt = (await r.single())['cnt']
-            print(f'  [:CANONICAL]          {cnt}')
-            r = await s.run(
-                'MATCH (h:EntityHub)-[:HAS_DEFINITION]->(d:Definition) '
-                'RETURN h.display_name AS name, d.text AS definition '
-                'LIMIT 5'
-            )
-            print('\n  Sample entity hubs:')
-            async for rec in r:
-                print(f'    {rec["name"]}: '
-                      f'{rec["definition"][:100]}...')
-
-    finally:
-        await db.close_driver()
-
-    print(f'\n{"=" * 60}')
-    print('Done.')
+    print('\n' + '=' * 60)
+    print('CANONICALIZER (threshold 0.8)')
     print('=' * 60)
+
+    result = await rebuild(
+        threshold=0.8, language_model=lm, session_factory=_session
+    )
+    print(f'\nEntities: {result["entities"]}')
+    print(f'Clusters: {result["clusters"]}')
+
+    async with _session() as session:
+        hubs = await session.run(
+            'MATCH (h:EntityHub) '
+            'RETURN h.canonical_name AS name, h.description AS description '
+            'ORDER BY name'
+        )
+        records = [r async for r in hubs]
+        print(f'\n{len(records)} EntityHub(s):')
+        for r in records:
+            print(f'  {r["name"]}')
+            print(f'    {r["description"]}')
+    print('\nDone.')
 
 
 if __name__ == '__main__':
     asyncio.run(main())
-

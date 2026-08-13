@@ -8,37 +8,14 @@ class State(TypedDict, total=False):
     segments: list[models.Segment]
     nodes: list[models.ASTNode]
     source: str
-    source_metadata: dict[
-        str, str
-    ]
-    spans: list[
-        list[int]
-    ]
-    instructions: list[
-        models.Instruction
-    ]
-    statements: list[
-        models.Statement
-    ]
+    source_metadata: dict[str, str]
+    spans: list[list[int]]
+    instructions: list[models.Instruction]
+    statements: list[models.Statement]
     procedures: list[models.Procedure]
-    atomic_facts: list[
-        models.AtomicFact
-    ]
-    triplets: list[
-        models.Triplet
-    ]
-    node_entity_descriptions: dict[
-        int, list[dict]
-    ]
-    node_predicate_descriptions: dict[
-        int, list[dict]
-    ]
-    correction_results: Annotated[
-        list[tuple[int, str]], operator.add
-    ]
-    format_results: Annotated[
-        list[tuple[int, str]], operator.add
-    ]
+    triplets: list[models.Triplet]
+    correction_results: Annotated[list[tuple[int, str]], operator.add]
+    format_results: Annotated[list[tuple[int, str]], operator.add]
     extract_results: Annotated[
         list[tuple[int, list[models.ASTNode]]], operator.add
     ]
@@ -48,4 +25,3 @@ class State(TypedDict, total=False):
     seam_odd_results: Annotated[
         list[tuple[int, list[models.ASTNode]]], operator.add
     ]
-

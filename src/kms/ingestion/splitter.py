@@ -4,7 +4,7 @@ import logging
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import models, recording, state, walker
+from kms.core import content, models, recording, state, walker
 
 logger = logging.getLogger(__name__)
 LOOKAHEAD_BUDGET = 2000
@@ -15,11 +15,12 @@ class WindowNode(BaseModel):
     position: int
     type: str
     content: str | None = None
+    image_path: str | None = None
 
 
 class SplitExercise(BaseModel):
     number: str = Field(
-        description="The exercise's own reference number as written, e.g. '1.23'. EMPTY for a leading continuation fragment that belongs to a previous exercise, or for an embedded shared-instruction lead-in."
+        description="The exercise's own reference number as written, e.g. '1.23'. EMPTY for a leading continuation fragment that belongs to a previous exercise."
     )
     content: str = Field(
         description="The piece's own text, copied verbatim, with its subparts, WITHOUT the leading number."
@@ -54,12 +55,6 @@ class Signature(dspy.Signature):
     here), return it as the FIRST item with an EMPTY `number` and that fragment
     as its verbatim `content`, so nothing is lost.
 
-    BREAK OUT AN EMBEDDED LEAD-IN: if a piece BETWEEN the exercises is a
-    shared-instruction lead-in (no number of its own, a directive for the run
-    that follows it, e.g. "9-16 Sketch the polar curve."), return it as its OWN
-    item with an EMPTY `number` and its verbatim text as `content`, so it lands
-    on its own node as atomic input for the pedagogical component finder.
-
     Every character of the node must land in exactly one item, in order. A node
     holding only ONE exercise is NOT a split — leave it out. Worked examples,
     definitions, theorems, prose, and headers are never splits.
@@ -68,8 +63,12 @@ class Signature(dspy.Signature):
     empty.
     """
 
-    current_nodes: list[WindowNode] = dspy.InputField(
-        description="The look-ahead window's nodes, in order, each with a local position."
+    current_nodes: content.ContentParts = dspy.InputField(
+        description=(
+            "The look-ahead window's nodes, in order. Each text node is a "
+            'line `[position] (type): content`; each image node is a line '
+            '`[position] (image):` followed by the image itself.'
+        )
     )
     context_before: str | None = dspy.InputField(
         default=None,
@@ -95,7 +94,7 @@ class Splitter(dspy.Module):
         recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
-        self.splitter = dspy.ChainOfThought(Signature)
+        self.splitter = dspy.Predict(Signature)
         self.set_lm(language_model)
         self._recorder = recorder
 
@@ -103,7 +102,7 @@ class Splitter(dspy.Module):
         self, current_nodes: list[WindowNode], context_before: str | None = None
     ) -> list[NodeSplit]:
         result = await self.splitter.acall(
-            current_nodes=current_nodes,
+            current_nodes=content.labeled_content_parts(current_nodes),
             context_before=context_before or '',
         )
         if self._recorder:
@@ -145,6 +144,7 @@ async def _gather_decisions(
                     position=position,
                     type=node.type,
                     content=node.content,
+                    image_path=node.image_path,
                 )
                 for position, node in enumerate(window)
             ],
@@ -220,4 +220,3 @@ class SplitterNode:
             state.get('nodes', []), module=self.module
         )
         return {'nodes': nodes}
-
