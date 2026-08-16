@@ -132,6 +132,46 @@ The initial implementation may combine detection and proposal in one
 multimodal corrector, provided the output remains line-addressed edits and the
 program applies and validates them deterministically.
 
+## Corrector implementation plan
+
+The first corrector refactor uses three proposal specialists while keeping one
+public `corrector` workflow node:
+
+1. `MathCorrector` reviews mathematical and notation fidelity.
+2. `ProseCorrector` reviews ordinary prose fidelity.
+3. `LayoutCorrector` reviews visual presence and placement.
+4. Each specialist receives the same immutable page image and transcription.
+5. Each specialist returns only validated line-edit proposals.
+6. The program consolidates proposals by line number and rejects conflicting
+   replacements conservatively.
+7. The program applies the accepted edits once with the shared deterministic
+   line-edit helper.
+8. Recording identifies the proposal stage separately as `corrector_math`,
+   `corrector_prose`, or `corrector_layout`.
+
+The initial implementation is intentionally sequential across specialists so
+that proposal behavior and conflicts are observable. Once the contracts and
+model behavior are measured, the specialists may run concurrently because they
+all read the same immutable input. They must still consolidate before any edit
+is applied.
+
+The current public workflow remains unchanged: `CorrectorNode` calls the
+composite corrector and receives one corrected transcription per segment. The
+next planned steps are:
+
+- add specialist-specific gold fixtures and category-level metrics;
+- add post-application verification for changed lines and local context;
+- decide whether a detector/router is worthwhile after measuring redundant
+  specialist review;
+- add a conflict adjudicator only if deterministic conflict rejection is too
+  conservative;
+- remove the old monolithic corrector prompt once replacement coverage is
+  established.
+
+The corrector must not perform formatter work. It must not add math
+delimiters, normalize Markdown, remove furniture, correct mathematical facts,
+or rewrite prose for style.
+
 ## Formatter decomposition
 
 The formatter normalizes representation without changing the author's

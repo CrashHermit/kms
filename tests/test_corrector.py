@@ -57,31 +57,38 @@ def test_collect_writes_corrected_back_and_leaves_others_untouched():
     assert out['segments'][1].content == 'orig1'
 
 
-def test_prompt_describes_numbered_lines_and_edit_output():
-    prompt = corrector.Signature.__doc__
-    assert 'numbered lines' in prompt
-    assert 'EDIT FORMAT' in prompt
-    assert 'empty list' in prompt
+def test_specialist_prompts_describe_narrow_edit_contracts():
+    for signature in (
+        corrector.MathSignature,
+        corrector.ProseSignature,
+        corrector.LayoutSignature,
+    ):
+        prompt = signature.__doc__
+        assert 'numbered' in prompt
+        assert 'line edits' in prompt
+        assert 'empty list' in prompt
 
 
 def _dummy_lm() -> dspy.LM:
     return dspy.LM('openai/dummy', api_key='x')
 
 
-def test_aforward_applies_the_proofreader_edits():
-    class _FakeProofreader:
-        async def acall(self, **kwargs):
+def test_aforward_applies_consolidated_specialist_edits():
+    class _FakeSpecialist:
+        def __init__(self, edits):
+            self.edits = edits
+
+        async def aforward(self, **kwargs):
             assert kwargs['page_image'] is SENTINEL
-            assert kwargs['lines'] == '[1] a\n[2] x_2\n[3] c'
-            return type(
-                'Result',
-                (),
-                {'edits': [corrector.LineEdit(index=2, replacement='x^2')]},
-            )()
+            assert kwargs['transcription'] == 'a\nx_2\nc'
+            return self.edits
 
     module = corrector.Corrector(language_model=_dummy_lm())
-    module.predictor = _FakeProofreader()
-    module._recorder = None
+    module.math = _FakeSpecialist(
+        [corrector.LineEdit(index=2, replacement='x^2')]
+    )
+    module.prose = _FakeSpecialist([])
+    module.layout = _FakeSpecialist([])
     out = asyncio.run(
         module.aforward(page_image=SENTINEL, transcription='a\nx_2\nc')
     )
@@ -89,14 +96,26 @@ def test_aforward_applies_the_proofreader_edits():
 
 
 def test_aforward_returns_transcription_unchanged_when_no_edits():
-    class _FakeProofreader:
-        async def acall(self, **kwargs):
-            return type('Result', (), {'edits': []})()
+    class _FakeSpecialist:
+        async def aforward(self, **kwargs):
+            return []
 
     module = corrector.Corrector(language_model=_dummy_lm())
-    module.predictor = _FakeProofreader()
-    module._recorder = None
+    module.math = _FakeSpecialist()
+    module.prose = _FakeSpecialist()
+    module.layout = _FakeSpecialist()
     out = asyncio.run(
         module.aforward(page_image=SENTINEL, transcription='a\nb\nc')
     )
     assert out == 'a\nb\nc'
+
+
+def test_conflicting_proposals_keep_the_first_and_log(caplog):
+    edits = [
+        corrector.LineEdit(index=1, replacement='first'),
+        corrector.LineEdit(index=1, replacement='second'),
+    ]
+    with caplog.at_level('WARNING'):
+        result = corrector.consolidate_edits(edits, line_count=1)
+    assert result == [corrector.LineEdit(index=1, replacement='first')]
+    assert 'conflicting correction proposals' in caplog.text

@@ -32,15 +32,15 @@ async def main():
     module = corrector.Corrector(language_model=llm.module_lm('corrector'))
     page_image = content.load_image(str(image_path))
 
-    result = await module.predictor.acall(
-        page_image=page_image, lines=corrector.number_lines(transcription)
+    output = await module.aforward(
+        page_image=page_image, transcription=transcription
     )
-    edits = list(result.edits or [])
-    print('=== edits emitted ===')
-    for edit in edits:
-        print(f'  [{edit.index}] -> {edit.replacement!r}')
+    print('=== specialist proposals applied ===')
 
-    output = corrector.apply_line_edits(transcription, edits)
+    edits = list(difflib.ndiff(transcription.splitlines(), output.splitlines()))
+    for edit in edits:
+        if edit.startswith(('+ ', '- ')):
+            print(f'  {edit}')
     print('\n=== diff (output vs gold) ===')
     diff = list(
         difflib.unified_diff(

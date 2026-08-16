@@ -29,8 +29,8 @@ def _by_stage(output_dir: Path) -> dict[str, loading.Dataset]:
 def test_loads_a_dspy_image_input(tmp_path):
     recorder = recording.Recorder('src', output_dir=str(tmp_path / 'ex'))
     recorder.record(
-        'corrector',
-        corrector.Signature,
+        'corrector_math',
+        corrector.MathSignature,
         {
             'page_image': dspy.Image(url=_data_url(_png_bytes())),
             'lines': '[1] hi',
@@ -38,8 +38,8 @@ def test_loads_a_dspy_image_input(tmp_path):
         dspy.Prediction(edits=[]),
     )
 
-    dataset = _by_stage(tmp_path / 'ex')['corrector']
-    assert dataset.signature is corrector.Signature
+    dataset = _by_stage(tmp_path / 'ex')['corrector_math']
+    assert dataset.signature is corrector.MathSignature
     example = dataset.examples[0]
     assert set(example.inputs().keys()) == {'page_image', 'lines'}
     assert isinstance(example.page_image, dspy.Image)
@@ -49,15 +49,15 @@ def test_loads_a_dspy_image_input(tmp_path):
 def test_loads_auxiliary_prediction_fields(tmp_path):
     recorder = recording.Recorder('src', output_dir=str(tmp_path / 'ex'))
     recorder.record(
-        'corrector',
-        corrector.Signature,
+        'corrector_prose',
+        corrector.ProseSignature,
         {'page_image': None, 'lines': 'hi'},
         dspy.Prediction(
             edits=[], analysis='I checked the transcription before editing.'
         ),
     )
 
-    example = _by_stage(tmp_path / 'ex')['corrector'].examples[0]
+    example = _by_stage(tmp_path / 'ex')['corrector_prose'].examples[0]
     assert example.analysis == ('I checked the transcription before editing.')
 
 
@@ -125,10 +125,12 @@ def test_round_trip_through_a_module(tmp_path):
         language_model=dspy.LM('openai/dummy', api_key='x'),
         recorder=recorder,
     )
-    module.predictor = _Fake()
+    module.math.predictor = _Fake()
+    module.prose.predictor = _Fake()
+    module.layout.predictor = _Fake()
     page = dspy.Image(url=_data_url(_png_bytes()))
     asyncio.run(module.aforward(page_image=page, transcription='hi'))
 
-    example = _by_stage(tmp_path / 'ex')['corrector'].examples[0]
+    example = _by_stage(tmp_path / 'ex')['corrector_math'].examples[0]
     assert isinstance(example.page_image, dspy.Image)
     assert 'hi' in example.lines

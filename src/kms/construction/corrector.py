@@ -11,186 +11,161 @@ from kms.core.edits import LineEdit, apply_line_edits, number_lines
 logger = logging.getLogger(__name__)
 
 
-class Signature(dspy.Signature):
+class MathSignature(dspy.Signature):
     r"""
-    You are a meticulous proofreader of OCR transcriptions. You are given the
-    image of a single document page and an OCR transcription of that page as
-    numbered lines of markdown. Compare them and return a list of edits that
-    fix the lines where the transcription disagrees with the image. A line you
-    do not mention is left exactly as it is.
+    Check the numbered transcription against the page image. Review only
+    mathematical and notation fidelity. Return line edits only when the image
+    proves the transcription is wrong.
 
-    The image is your only authority. Correct a difference only when the image
-    settles it. If deciding would take knowledge the image cannot give you —
-    what the subject matter ought to say, which convention the document
-    follows, what would read better — leave the transcription as it is.
+    Check symbols, digits, signs, exponents, subscripts, fractions, radicals,
+    grouping, equation extent, inequalities, Greek letters, matrices, tables,
+    and mathematical part markers. Preserve the source's mathematical meaning
+    even when the source itself is incorrect. Do not format Markdown, add math
+    delimiters, simplify expressions, or rewrite surrounding prose.
 
-    Correct differences that change meaning, and leave every other difference
-    alone. This is a check on fidelity, not on quality.
-
-    HOW CLOSELY TO READ
-
-    Redundancy, not subject matter, decides how much scrutiny a passage needs.
-    Prose says the same thing several ways at once, so context repairs a
-    misread word and you can read it for sense. Notation, identifiers,
-    quantities, code, and tabular data carry no such slack — `x_2` and `x^2`
-    are equally plausible in isolation, and only the image tells you which was
-    written. Read low-redundancy content character by character.
-
-    WHAT COUNTS AS A MEANING-CHANGING DIFFERENCE
-
-    - Attachment — what a mark binds to, where binding it elsewhere would say
-      something different.
-    - Extent — where something begins and ends: what a grouping, a span, or a
-      notational construct encloses.
-    - Substitution — one character or symbol transcribed as another it
-      resembles, including a mark that carries meaning being dropped or added.
-    - Polarity — a negation gained or lost.
-    - Quantity — any change to a value, its magnitude, its precision, or the
-      range something is taken over.
-    - Relation — a logical, conditional, or ordering connective exchanged for a
-      different one.
-    - Position — where content sits inside a structure, when the structure is
-      what gives it meaning: a cell's row and column, an item's nesting depth,
-      a heading's level, the indentation that places a line inside a block of
-      code.
-    - Order — content sequenced in a way the page does not support, such as
-      material lifted out of a separate region and interleaved with the body.
-    - Presence — content the transcription dropped or duplicated, other than
-      the page furniture named below.
-
-    Judge by effect rather than by this list: if the transcription asserts
-    something the page does not, correct it.
-
-    SUB-PART MARKERS
-
-    A marker that letters an exercise's parts — `ⓐ`, `ⓑ`, `ⓒ`, `(a)`, `a)` —
-    is content, and OCR misreads it often, because it is a glyph rather than a
-    letter: `ⓐ` comes back as `$\odot$`, as `©`, as `a`, or as nothing at all.
-
-    Restore the marker the image shows, spelled with the glyph the image
-    prints. This licenses nothing beyond the marker itself: the words, the
-    notation, and the markup around it stay exactly as transcribed. Restoring
-    `ⓐ` in "ⓐ m = 3" does not also mean writing `m = 3` as `$m = 3$` — math
-    delimiters are Formatting, they belong to a later pass, and adding them
-    here is a change this pass is forbidden to make even when the page image
-    shows the mathematics typeset.
-
-    Three ways to get the marker wrong, all of them seen:
-
-    - DELETING the markers. "round to the nearest ⓐ hundred ⓑ thousand ⓒ ten
-      thousand" is three sub-parts; transcribed as "the nearest hundred,
-      thousand, ten thousand" it is one instruction and the exercise has
-      silently lost two of its questions. Never resolve a misread marker by
-      dropping it or by replacing it with punctuation. This pass does not
-      delete.
-    - RESPELLING them. If the page prints `ⓐ`, write `ⓐ` — not `(a)`, not
-      `a)`, not `**a**`. Choosing one house form across a book is a later
-      pass's job and it works from what you leave; guessing here just hides
-      what the page did.
-    - Letting one page disagree with itself. The same marker misread twice on
-      one page gets the same answer both times.
-
-    The letter itself is an identifier — the prose says "by part (b)" — so it
-    is never renumbered or re-lettered, only restored.
-
-    WHAT NOT TO TOUCH
-
-    - The document's substance. Transcribe the source's own errors faithfully —
-      a wrong step, a bad value, a claim that does not follow. You are checking
-      the transcription, not the document.
-    - Arrangement. Do not reorganise content that already follows the page's
-      own order.
-    - Numbering and labels. Never renumber or re-letter anything.
-    - Notation and terminology. Keep the document's conventions and symbols as
-      they are; do not standardise them.
-    - Formatting. Markdown structure, math delimiters, emphasis, and whitespace
-      that only affects appearance stay exactly as transcribed, even where you
-      would write them differently. Whitespace that carries meaning is not
-      formatting and belongs to Position above: indentation inside a block of
-      code is structure, and a line indented to the wrong depth says something
-      the page does not.
-    - Page furniture. Running heads, folios, and marginal labels are out of
-      scope in both directions — leave them wherever the transcription has
-      them, and do not add them where it has none, even if the page shows
-      them. A footnote is not furniture. Neither is an entry in a reference
-      list. Both are content wherever they sit on the page, and a citation of
-      a published work is read character by character like any other
-      low-redundancy content: every author, title, year, page range, and
-      identifier is checked against the image and kept.
-    - Wording. Do not reword anything that matches the image.
-    - Punctuation that changes no meaning, in BOTH directions. A doubled comma
-      in a lead-in ("In the following exercises,, simplify.") asserts nothing
-      the page denies, so leave it; equally, do not introduce one the
-      transcription lacks. Punctuation that does change meaning — a decimal
-      point, a negation, a delimiter inside notation — is Quantity or
-      Substitution above and is corrected like anything else.
-    - Boundaries. Content that starts or ends abruptly at the edge of the page
-      stays that way — do not complete or trim it.
-
-    EDIT FORMAT
-
-    Each transcription line is shown prefixed with its 1-based line number in
-    square brackets, as `[14] some text`. For every line where the
-    transcription disagrees with the image in a way this pass corrects, emit
-    one edit with two fields:
-
-    - index: the line's number.
-    - replacement: the full corrected text of that line, with only the
-      meaning-changing difference fixed — everything else on the line is
-      reproduced exactly as transcribed. An empty replacement deletes the
-      line; a replacement containing line breaks inserts several lines in its
-      place.
-
-    Emit an edit ONLY for a line that changes. Never emit an edit for a line
-    that already matches the image. If the transcription already matches the
-    image, return an empty list. Return edits in line order, each index used
-    at most once.
-
-    Return only the list of edits.
+    Every replacement must preserve the rest of its line exactly. Return an
+    empty list when no visual correction is certain. Return only the edits.
     """
 
     page_image: dspy.Image = dspy.InputField(
-        description='The image of the document page — the ground truth to check the transcription against.'
+        description='The document page image, which is the only authority.'
     )
     lines: str = dspy.InputField(
-        description='The OCR markdown transcription as numbered lines, one '
-        'line per row, each prefixed with its 1-based line number in square '
-        'brackets.'
+        description='The OCR transcription as numbered Markdown lines.'
     )
     edits: list[LineEdit] = dspy.OutputField(
-        description='One edit per line where the transcription disagrees with '
-        'the image: the line number and the corrected replacement text.'
+        description='Meaning-changing mathematical corrections, by line number.'
     )
 
 
-class Corrector(module.Module):
-    """Proofreads an OCR transcription against its page image."""
+class ProseSignature(dspy.Signature):
+    r"""
+    Check the numbered transcription against the page image. Review only
+    ordinary prose fidelity. Return line edits only when the image proves the
+    transcription is wrong.
 
-    signature = Signature
-    record_name = 'corrector'
+    Check missing or duplicated words, clear character substitutions, broken
+    words, and meaning-changing punctuation or capitalization. Preserve the
+    source's wording, terminology, claims, and errors. Do not correct
+    mathematics, improve grammar or style, change Markdown, or rewrite a line
+    that already matches the image.
+
+    Every replacement must preserve the rest of its line exactly. Return an
+    empty list when no visual correction is certain. Return only the edits.
+    """
+
+    page_image: dspy.Image = dspy.InputField(
+        description='The document page image, which is the only authority.'
+    )
+    lines: str = dspy.InputField(
+        description='The OCR transcription as numbered Markdown lines.'
+    )
+    edits: list[LineEdit] = dspy.OutputField(
+        description='Meaning-changing prose corrections, by line number.'
+    )
+
+
+class LayoutSignature(dspy.Signature):
+    r"""
+    Check the numbered transcription against the page image. Review only
+    visual content and placement. Return line edits only when the image proves
+    the transcription is wrong.
+
+    Check missing or duplicated content, line order, list or table position,
+    indentation, headings, image placeholders, and exercise part markers.
+    Preserve every source word and the page's own content. Do not correct
+    mathematical or prose characters, normalize Markdown, remove page
+    furniture, or fill in missing content by inference.
+
+    Every replacement must preserve the rest of its line exactly. Return an
+    empty list when no visual correction is certain. Return only the edits.
+    """
+
+    page_image: dspy.Image = dspy.InputField(
+        description='The document page image, which is the only authority.'
+    )
+    lines: str = dspy.InputField(
+        description='The OCR transcription as numbered Markdown lines.'
+    )
+    edits: list[LineEdit] = dspy.OutputField(
+        description='Certain visual layout and presence corrections, by line number.'
+    )
+
+
+class _ProposalModule(module.Module):
+    signature: type[dspy.Signature]
+    record_name: str
 
     def encode(self, page_image: dspy.Image, transcription: str) -> dict:
-        """Builds the proofreader-signature kwargs for one page."""
         return {
             'page_image': page_image,
             'lines': number_lines(transcription),
         }
 
-    def decode(self, prediction, **inputs) -> str:
-        """Returns the transcription with meaning-changing errors fixed."""
-        return apply_line_edits(
-            inputs['transcription'], module.as_list(prediction.edits)
-        )
+    def decode(self, prediction, **inputs) -> list[LineEdit]:
+        return module.as_list(prediction.edits)
+
+
+class MathCorrector(_ProposalModule):
+    signature = MathSignature
+    record_name = 'corrector_math'
+
+
+class ProseCorrector(_ProposalModule):
+    signature = ProseSignature
+    record_name = 'corrector_prose'
+
+
+class LayoutCorrector(_ProposalModule):
+    signature = LayoutSignature
+    record_name = 'corrector_layout'
+
+
+def consolidate_edits(edits: list[LineEdit], line_count: int) -> list[LineEdit]:
+    accepted: dict[int, LineEdit] = {}
+    for edit in edits:
+        if not 1 <= edit.index <= line_count:
+            raise RuntimeError(
+                f'edit line {edit.index} out of range ({line_count} lines)'
+            )
+        previous = accepted.get(edit.index)
+        if previous is None:
+            accepted[edit.index] = edit
+        elif previous.replacement != edit.replacement:
+            logger.warning(
+                'rejecting conflicting correction proposals for line %d',
+                edit.index,
+            )
+    return [accepted[index] for index in sorted(accepted)]
+
+
+class Corrector:
+    def __init__(
+        self,
+        language_model: dspy.LM,
+        recorder=None,
+    ) -> None:
+        self.math = MathCorrector(language_model, recorder)
+        self.prose = ProseCorrector(language_model, recorder)
+        self.layout = LayoutCorrector(language_model, recorder)
+
+    async def aforward(self, page_image: dspy.Image, transcription: str) -> str:
+        proposals: list[LineEdit] = []
+        for specialist in (self.math, self.prose, self.layout):
+            proposals.extend(
+                await specialist.aforward(
+                    page_image=page_image, transcription=transcription
+                )
+            )
+        edits = consolidate_edits(proposals, len(transcription.split('\n')))
+        return apply_line_edits(transcription, edits)
 
 
 class CorrectorNode:
-    """Langgraph node dispatching one proofreader worker per segment."""
-
     def __init__(self, module: Corrector) -> None:
         self.module = module
 
     def dispatch(self, state: state.State) -> list[Send] | str:
-        """Sends one worker per segment with content and a page image."""
         segments = state.get('segments', [])
         sends = [
             Send('corrector_worker', {'segment': segment})
@@ -200,7 +175,6 @@ class CorrectorNode:
         return sends or 'corrector_collect'
 
     async def worker(self, state: dict) -> dict:
-        """Proofreads one segment against its rendered page image."""
         segment: models.Segment = state['segment']
         corrected = await self.module.aforward(
             page_image=content.load_image(segment.image_path),
@@ -209,7 +183,6 @@ class CorrectorNode:
         return {'correction_results': [(segment.index, corrected)]}
 
     def collect(self, state: state.State) -> dict:
-        """Merges per-page correction results back onto the segments."""
         results = state.get('correction_results', [])
         segments = models.merge_results_into_segments(
             state['segments'], results, 'content'
