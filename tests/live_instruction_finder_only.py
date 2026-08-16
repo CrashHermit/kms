@@ -1,12 +1,16 @@
 import asyncio
 import os
 
-os.environ['PIPELINE_API_BASE'] = 'http://localhost:8080/v1'
-os.environ['PIPELINE_MODEL'] = 'openai/unsloth/gemma-4-e4b-it-GGUF'
-os.environ['PIPELINE_API_KEY'] = 'not-needed'
+os.environ['KMS_MODELS__MODULES__INSTRUCTION_FINDER__BASE_URL'] = (
+    'http://localhost:8080/v1'
+)
+os.environ['KMS_MODELS__MODULES__INSTRUCTION_FINDER__MODEL'] = (
+    'openai/unsloth/gemma-4-e4b-it-GGUF'
+)
+os.environ['KMS_MODELS__MODULES__INSTRUCTION_FINDER__API_KEY'] = 'not-needed'
 
+from kms.construction import instruction_finder
 from kms.core import llm
-from kms.ingestion import instruction_finder
 
 
 def _nodes():
@@ -55,9 +59,11 @@ def _nodes():
 
 
 async def main():
-    finder = instruction_finder.InstructionFinder(language_model=llm.pipeline_lm())
+    finder = instruction_finder.InstructionFinder(
+        language_model=llm.module_lm('instruction_finder')
+    )
     nodes = _nodes()
-    spans = await finder.aforward(nodes)
+    spans = await finder.aforward(current_nodes=nodes)
     print(f'\n=== {len(spans)} instruction span(s) ===')
     for span in spans:
         members = list(range(span.start, span.end + 1))

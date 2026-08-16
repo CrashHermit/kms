@@ -1,7 +1,7 @@
 # Corrector gold set
 
 Hand-verified `(page image, OCR transcription) -> corrected transcription`
-triples for the correction pass (`kms.ingestion.corrector`), built to be the
+triples for the correction pass (`kms.construction.corrector`), built to be
 train/dev material for a later MIPROv2 run. **This directory is data only** —
 there is no optimizer here, just the examples, their provenance, and an
 annotation of every difference between input and gold.
@@ -22,7 +22,7 @@ errors that 38 real pages do not.
 ## Provenance
 
 - **Transcriptions**: real Mistral `mistral-ocr-latest` output, harvested
-  2026-07-30 through `kms.ingestion.ocr` with the pipeline's own settings
+  2026-07-30 through `kms.construction.ocr` with the pipeline's own settings
   (`extract_header` / `extract_footer` on, figure refs rewritten to the
   positional `![N]()` convention). `real/*/transcription.md` is the page
   markdown exactly as the API returned it — untouched, including its
@@ -36,10 +36,8 @@ errors that 38 real pages do not.
   front-end uses (`ocr.RENDER_SCALE = 2.5`).
 - **Gold**: written by hand (Claude, in a Claude Code session), reading each
   page image against its transcription under the rules in the corrector's own
-  prompt. No teacher model was involved — an earlier deleted
-  `kms.training.generate_corrector_data` had a strong LM produce the gold; this
-  set deliberately does not, so it can be used to *judge* models rather than
-  inherit one's mistakes.
+  prompt. No teacher model was involved, so this set can be used to *judge*
+  models rather than inherit a teacher model's mistakes.
 
 ## Layout
 

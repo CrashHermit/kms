@@ -1,9 +1,10 @@
 import asyncio
 
 import dspy
+from PIL import Image
 
-from kms import search as search_module
 from kms.core import content, embeddings
+from kms.core import search as search_module
 from kms.graph import queries
 
 
@@ -96,6 +97,31 @@ def test_raw_path_returns_single_group(monkeypatch):
         'b',
     ]
     assert fake_embedder.calls == [[content.Content.from_text('subgraph')]]
+
+
+def test_source_filter_is_forwarded_to_vector_search(monkeypatch):
+    async def _vector_search(
+        session_factory, *, index_name, query_embedding, top_k, source
+    ):
+        assert source == 'book-a'
+        return [_candidate('a')]
+
+    _install_fakes(monkeypatch, vector_search=_vector_search)
+    monkeypatch.setattr(
+        search_module.DecomposeJudge, 'aforward', _async_return(False)
+    )
+
+    async def scenario():
+        return await search_module.search(
+            'subgraph',
+            index_name='entity_hub_embedding',
+            text_field='description',
+            session_factory=_session_factory,
+            source='book-a',
+        )
+
+    groups = asyncio.run(scenario())
+    assert groups[0].results[0].properties['uuid'] == 'a'
 
 
 def test_decomposed_path_slices_query_parts(monkeypatch):
@@ -339,7 +365,7 @@ class _FakeResponse:
 
 
 def test_embed_batch_wraps_content_per_input(monkeypatch):
-    embedder = embeddings.Embedder(api_key='test')
+    embedder = embeddings.Embedder(api_key='test', dimension=2)
     fake_client = _FakeClient()
 
     async def _client_for():
@@ -365,7 +391,7 @@ def test_embed_batch_wraps_content_per_input(monkeypatch):
 
 def test_image_candidate_reaches_judge_as_image(monkeypatch, tmp_path):
     image_file = tmp_path / 'fig.png'
-    image_file.write_bytes(b'\x89PNG\r\n\x1a\n')
+    Image.new('RGB', (10, 10), (0, 255, 0)).save(image_file)
 
     async def _vector_search(
         session_factory, *, index_name, query_embedding, top_k, source

@@ -1,3 +1,5 @@
+"""Graph node that persists the whole extraction result to Neo4j."""
+
 from collections.abc import Callable
 
 from kms.core import state
@@ -5,6 +7,11 @@ from kms.graph import schema, writer
 
 
 class IngestionPersisterNode:
+    """Persists nodes, statements, procedures, and assertions in order.
+
+    A no-op when Neo4j is not configured or the state has no source.
+    """
+
     def __init__(
         self,
         session_factory: Callable | None = None,
@@ -14,6 +21,14 @@ class IngestionPersisterNode:
         self._neo4j_configured = neo4j_configured
 
     async def run(self, state: state.State) -> dict:
+        """Runs the persistence writes for the current pipeline state.
+
+        Args:
+            state: The pipeline state holding the extracted knowledge.
+
+        Returns:
+            An empty update dict.
+        """
         source = state.get('source')
         if not self._neo4j_configured or not source:
             return {}
@@ -49,10 +64,14 @@ class IngestionPersisterNode:
             source,
             session_factory=self._session_factory,
         )
-        await writer.persist_triplets(
+        await writer.persist_assertions(
             state.get('triplets', []),
             source,
             session_factory=self._session_factory,
+            entity_descriptions=state.get('entity_descriptions', {}),
+            predicate_descriptions=state.get('predicate_descriptions', {}),
+            entity_embeddings=state.get('entity_embeddings', {}),
+            predicate_embeddings=state.get('predicate_embeddings', {}),
         )
         await writer.persist_chain(
             nodes,

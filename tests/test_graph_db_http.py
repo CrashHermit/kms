@@ -7,9 +7,9 @@ import pytest
 from kms.graph import db
 
 _CONN_ENV = {
-    'NEO4J_URI': 'neo4j+s://xxxx.databases.neo4j.io',
-    'NEO4J_USERNAME': 'neo4j',
-    'NEO4J_PASSWORD': 'secret',
+    'KMS_DATABASE__URI': 'neo4j+s://xxxx.databases.neo4j.io',
+    'KMS_DATABASE__USERNAME': 'neo4j',
+    'KMS_DATABASE__PASSWORD': 'secret',
 }
 
 
@@ -17,9 +17,9 @@ _CONN_ENV = {
 def _clean_module_state(monkeypatch):
     for key, value in _CONN_ENV.items():
         monkeypatch.setenv(key, value)
-    monkeypatch.delenv('NEO4J_TRANSPORT', raising=False)
-    monkeypatch.delenv('NEO4J_HTTP_URL', raising=False)
-    monkeypatch.delenv('NEO4J_DATABASE', raising=False)
+    monkeypatch.delenv('KMS_DATABASE__TRANSPORT', raising=False)
+    monkeypatch.delenv('KMS_DATABASE__HTTP_URL', raising=False)
+    monkeypatch.delenv('KMS_DATABASE__DATABASE', raising=False)
     asyncio.run(db.close_driver())
     yield
     asyncio.run(db.close_driver())
@@ -37,35 +37,39 @@ def _rows(fields, values, bookmarks=('bm-1',)):
 
 
 def test_aura_uri_maps_to_plain_https(monkeypatch):
-    monkeypatch.setenv('NEO4J_URI', 'neo4j+s://abc123.databases.neo4j.io')
+    monkeypatch.setenv(
+        'KMS_DATABASE__URI', 'neo4j+s://abc123.databases.neo4j.io'
+    )
     assert db.http_url() == 'https://abc123.databases.neo4j.io'
 
 
 def test_self_hosted_bolt_uri_maps_to_the_http_port(monkeypatch):
-    monkeypatch.setenv('NEO4J_URI', 'bolt://localhost:7687')
+    monkeypatch.setenv('KMS_DATABASE__URI', 'bolt://localhost:7687')
     assert db.http_url() == 'http://localhost:7474'
 
 
 def test_secure_uri_with_an_explicit_port_maps_to_the_https_port(monkeypatch):
-    monkeypatch.setenv('NEO4J_URI', 'neo4j+ssc://graph.internal:7687')
+    monkeypatch.setenv('KMS_DATABASE__URI', 'neo4j+ssc://graph.internal:7687')
     assert db.http_url() == 'https://graph.internal:7473'
 
 
 def test_explicit_http_url_wins_and_loses_its_trailing_slash(monkeypatch):
-    monkeypatch.setenv('NEO4J_HTTP_URL', 'https://proxy.internal/neo4j/')
+    monkeypatch.setenv(
+        'KMS_DATABASE__HTTP_URL', 'https://proxy.internal/neo4j/'
+    )
     assert db.http_url() == 'https://proxy.internal/neo4j'
 
 
 def test_query_endpoint_targets_the_configured_database(monkeypatch):
-    monkeypatch.setenv('NEO4J_DATABASE', 'kms')
+    monkeypatch.setenv('KMS_DATABASE__DATABASE', 'kms')
     assert db.query_endpoint() == (
         'https://xxxx.databases.neo4j.io/db/kms/query/v2'
     )
 
 
 def test_http_url_requires_a_uri(monkeypatch):
-    monkeypatch.delenv('NEO4J_URI', raising=False)
-    with pytest.raises(RuntimeError, match='NEO4J_URI is not set'):
+    monkeypatch.delenv('KMS_DATABASE__URI', raising=False)
+    with pytest.raises(RuntimeError, match='KMS_DATABASE__URI is not set'):
         db.http_url()
 
 
@@ -208,21 +212,21 @@ class _FakeDriver:
 
 def test_transport_defaults_to_auto_and_rejects_nonsense(monkeypatch):
     assert db.configured_transport() == 'auto'
-    monkeypatch.setenv('NEO4J_TRANSPORT', 'HTTP')
+    monkeypatch.setenv('KMS_DATABASE__TRANSPORT', 'HTTP')
     assert db.configured_transport() == 'http'
-    monkeypatch.setenv('NEO4J_TRANSPORT', 'grpc')
+    monkeypatch.setenv('KMS_DATABASE__TRANSPORT', 'grpc')
     with pytest.raises(RuntimeError, match='not valid'):
         db.configured_transport()
 
 
 def test_explicit_http_transport_yields_an_http_session(monkeypatch):
-    monkeypatch.setenv('NEO4J_TRANSPORT', 'http')
+    monkeypatch.setenv('KMS_DATABASE__TRANSPORT', 'http')
     assert isinstance(db.session(), db.HTTPSession)
 
 
 def test_explicit_bolt_transport_yields_a_bolt_session(monkeypatch):
-    monkeypatch.setenv('NEO4J_TRANSPORT', 'bolt')
-    monkeypatch.setenv('NEO4J_DATABASE', 'kms')
+    monkeypatch.setenv('KMS_DATABASE__TRANSPORT', 'bolt')
+    monkeypatch.setenv('KMS_DATABASE__DATABASE', 'kms')
     monkeypatch.setattr(db, '_driver', _FakeDriver(reachable=True))
     assert db.session() == ('bolt-session', {'database': 'kms'})
 
@@ -272,7 +276,7 @@ def test_close_driver_clears_the_cached_verdict(monkeypatch):
 
 
 def test_close_driver_closes_the_http_client(monkeypatch):
-    monkeypatch.setenv('NEO4J_TRANSPORT', 'http')
+    monkeypatch.setenv('KMS_DATABASE__TRANSPORT', 'http')
     client = db.http_client()
     assert db.http_client() is client
     asyncio.run(db.close_driver())

@@ -1,4 +1,7 @@
+"""Record per-module LLM call examples, capturing images as sidecars."""
+
 import base64
+import hashlib
 import json
 import logging
 import re
@@ -13,8 +16,24 @@ logger = logging.getLogger(__name__)
 
 _NAMESPACE_KMS = uuid5(NAMESPACE_URL, 'kms')
 
+FORMAT_VERSION = 1
+
+IMAGE_FIELD = 'image_path'
+
 
 class Recorder:
+    """Persists LLM inputs and predictions as replayable examples.
+
+    Each module gets its own run directory under the output directory,
+    keyed by a stable id derived from the source. Records capture the
+    signature-form inputs the LM actually saw, the model that produced
+    them, and per-call timing. Images are written once as
+    content-addressed sidecars under a shared ``images/`` directory, so
+    the same image referenced by many windows is stored once. Each
+    signature's field schema is kept in a ``manifest.json`` so records
+    can be replayed without re-deriving the prompt.
+    """
+
     def __init__(
         self,
         source: str,
@@ -22,26 +41,51 @@ class Recorder:
         **meta: object,
     ) -> None:
         self._run_id = str(uuid5(_NAMESPACE_KMS, source))
-        self._output_dir = output_dir
+        self._output_dir = Path(output_dir)
         self._run_meta = dict(meta, source=source)
+        self._manifest: dict[str, dict] = {}
+        self._manifest_loaded = False
 
     def record(
         self,
         module_name: str,
+        signature: type[dspy.Signature],
         inputs: dict,
         prediction: dspy.Prediction,
+        *,
+        model: str | None = None,
+        duration_ms: float | None = None,
     ) -> None:
-        try:
-            run_dir = self._ensure_run_dir(module_name)
-            images_dir = run_dir / 'images'
-            jsonl = run_dir / 'examples.jsonl'
+        """Appends one example record for a module call.
 
+        Serialization failures are logged and swallowed so recording
+        never breaks the pipeline.
+
+        Args:
+            module_name: The module that produced the prediction.
+            signature: The signature class the module uses.
+            inputs: The signature-form inputs the LM was called with.
+            prediction: The prediction to record.
+            model: The language model name, when known.
+            duration_ms: Wall-clock duration of the call in milliseconds.
+        """
+        try:
+            images_dir = self._output_dir / 'images'
+            run_dir = self._ensure_run_dir(module_name, signature, model)
+            prediction_fields = dict(prediction)
             record = {
-                'inputs': _serialize_images(inputs, images_dir),
-                'outputs': _jsonable(dict(prediction)),
+                'schema': _qualified_name(signature),
+                'inputs': _serialize(inputs, images_dir),
+                'outputs': _serialize(prediction_fields, images_dir),
+                'timestamp': datetime.now(UTC).isoformat(),
             }
-            with jsonl.open('a') as handle:
+            if model is not None:
+                record['model'] = model
+            if duration_ms is not None:
+                record['duration_ms'] = duration_ms
+            with (run_dir / 'examples.jsonl').open('a') as handle:
                 handle.write(json.dumps(record, ensure_ascii=False) + '\n')
+            self._record_schema(signature, prediction_fields)
         except (TypeError, ValueError, OSError):
             logger.warning(
                 'recorder: failed to record a %s example',
@@ -49,31 +93,195 @@ class Recorder:
                 exc_info=True,
             )
 
-    def _ensure_run_dir(self, module_name: str) -> Path:
-        run_dir = Path(self._output_dir) / module_name / self._run_id
+    def _ensure_run_dir(
+        self,
+        module_name: str,
+        signature: type[dspy.Signature],
+        model: str | None,
+    ) -> Path:
+        """Returns the run directory, creating it with metadata if new."""
+        run_dir = self._output_dir / module_name / self._run_id
         if not run_dir.exists():
             run_dir.mkdir(parents=True, exist_ok=True)
             meta_path = run_dir / 'meta.json'
-            if not meta_path.exists() and self._run_meta:
+            if not meta_path.exists():
+                meta = {
+                    'format_version': FORMAT_VERSION,
+                    'run_id': self._run_id,
+                    'stage': module_name,
+                    'schema': _qualified_name(signature),
+                    'created': datetime.now(UTC).isoformat(),
+                    **self._run_meta,
+                }
+                if model is not None:
+                    meta['model'] = model
                 meta_path.write_text(
-                    json.dumps(
-                        {
-                            'run_id': self._run_id,
-                            'created': datetime.now(UTC).isoformat(),
-                            **self._run_meta,
-                        },
-                        indent=2,
-                        ensure_ascii=False,
-                    )
+                    json.dumps(meta, indent=2, ensure_ascii=False)
                 )
         return run_dir
 
+    def _record_schema(
+        self,
+        signature: type[dspy.Signature],
+        prediction: dict[str, object],
+    ) -> None:
+        """Registers the signature and observed prediction fields."""
+        if not self._manifest_loaded:
+            self._load_manifest()
+        key = _qualified_name(signature)
+        schema = self._manifest.get(key)
+        schema_changed = schema is None
+        if schema is None:
+            schema = _signature_schema(signature)
+            self._manifest[key] = schema
+        for name, value in prediction.items():
+            if name not in schema['outputs']:
+                schema['outputs'][name] = _value_schema(value)
+                schema_changed = True
+        if not schema_changed:
+            return
+        self._output_dir.mkdir(parents=True, exist_ok=True)
+        (self._output_dir / 'manifest.json').write_text(
+            json.dumps(
+                {
+                    'format_version': FORMAT_VERSION,
+                    'signatures': self._manifest,
+                },
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+
+    def _load_manifest(self) -> None:
+        """Loads a pre-existing manifest, if any, for cumulative runs."""
+        self._manifest_loaded = True
+        manifest_path = self._output_dir / 'manifest.json'
+        if not manifest_path.exists():
+            return
+        data = json.loads(manifest_path.read_text())
+        self._manifest = data.get('signatures', {})
+
+
+def _qualified_name(signature: type[dspy.Signature]) -> str:
+    """Returns the qualified class name identifying a signature."""
+    return f'{signature.__module__}.{signature.__qualname__}'
+
+
+def _signature_schema(signature: type[dspy.Signature]) -> dict:
+    """Dumps a signature's prompt and field descriptions."""
+    return {
+        'docstring': signature.__doc__ or '',
+        'inputs': {
+            name: _field_schema(field)
+            for name, field in signature.input_fields.items()
+        },
+        'outputs': {
+            name: _field_schema(field)
+            for name, field in signature.output_fields.items()
+        },
+    }
+
+
+def _field_schema(field: object) -> dict:
+    """Dumps one signature field's description and type name."""
+    return {
+        'description': getattr(field, 'description', None) or '',
+        'type': _type_name(getattr(field, 'annotation', None)),
+    }
+
+
+def _value_schema(value: object) -> dict:
+    """Dumps the basic schema for an undeclared prediction field."""
+    return {
+        'description': 'Observed auxiliary prediction field.',
+        'type': _type_name(type(value)),
+    }
+
+
+def _type_name(annotation: object) -> str:
+    """Renders a field annotation as a readable type name."""
+    if annotation is None:
+        return 'Any'
+    name = getattr(annotation, '__name__', None)
+    return name or str(annotation)
+
+
+def _serialize(value: object, images_dir: Path) -> object:
+    """Serializes a value, capturing images as content-addressed sidecars.
+
+    ``dspy.Image`` values and ``image_path`` strings are written into
+    ``images_dir`` under their SHA-256 digest and replaced by their
+    relative path, so recorded examples are self-contained and the same
+    image is stored once.
+    """
+    if isinstance(value, dspy.Image):
+        return _capture_image(value.url or '', images_dir)
+    if isinstance(value, BaseModel):
+        return {
+            name: _serialize_field(name, getattr(value, name), images_dir)
+            for name in type(value).model_fields
+        }
+    if isinstance(value, dict):
+        return {
+            str(key): _serialize_field(key, item, images_dir)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_serialize(item, images_dir) for item in value]
+    return _jsonable(value)
+
+
+def _serialize_field(key: str, value: object, images_dir: Path) -> object:
+    """Serializes one dict entry, sidecaring image_path references."""
+    if key == IMAGE_FIELD and isinstance(value, str) and value:
+        return _capture_image(value, images_dir)
+    return _serialize(value, images_dir)
+
+
+def _capture_image(source: str, images_dir: Path) -> str:
+    """Writes an image to a content-addressed sidecar.
+
+    Args:
+        source: A data URL or a file path.
+        images_dir: The shared directory holding sidecar files.
+
+    Returns:
+        The sidecar's relative path, or the original source when the
+        image bytes cannot be read.
+    """
+    data = _image_bytes(source)
+    if data is None:
+        return source
+    digest = hashlib.sha256(data).hexdigest()
+    filename = f'{digest}.png'
+    images_dir.mkdir(parents=True, exist_ok=True)
+    path = images_dir / filename
+    if not path.exists():
+        path.write_bytes(data)
+    return f'images/{filename}'
+
+
+def _image_bytes(source: str) -> bytes | None:
+    """Returns the raw bytes for a data URL or file path, or None."""
+    if _is_data_url(source):
+        return base64.b64decode(source.split(',', 1)[1])
+    path = Path(source)
+    if path.exists():
+        return path.read_bytes()
+    return None
+
 
 def _is_data_url(value: str) -> bool:
+    """True if the string is a base64 data URL."""
     return bool(re.match(r'^data:[^;]+;base64,', value))
 
 
 def _jsonable(value: object) -> object:
+    """Converts a value into a JSON-serializable shape.
+
+    Pydantic models are dumped, dicts and lists are converted
+    recursively, and anything else becomes its string form.
+    """
     if isinstance(value, BaseModel):
         return value.model_dump(mode='json')
     if isinstance(value, dict):
@@ -83,82 +291,3 @@ def _jsonable(value: object) -> object:
     if value is None or isinstance(value, str | bool | int | float):
         return value
     return str(value)
-
-
-def _serialize_images(inputs: dict, images_dir: Path) -> dict:
-    index = 0
-    serialized: dict = {}
-    for name, value in inputs.items():
-        if isinstance(value, dspy.Image):
-            images_dir.mkdir(parents=True, exist_ok=True)
-            filename = f'{name}_{index}.png'
-            sidecar = images_dir / filename
-            _write_image_sidecar(value, sidecar)
-            serialized[name] = f'images/{filename}'
-            index += 1
-        else:
-            serialized[name] = _jsonable(value)
-    return serialized
-
-
-def _write_image_sidecar(image: dspy.Image, path: Path) -> None:
-    url = image.url or ''
-    if _is_data_url(url):
-        path.write_bytes(base64.b64decode(url.split(',', 1)[1]))
-    else:
-        source = Path(url)
-        if source.exists():
-            path.write_bytes(source.read_bytes())
-
-
-def _deserialize_images(
-    inputs: dict, run_dir: Path, image_fields: frozenset[str]
-) -> dict:
-    deserialized: dict = {}
-    for name, value in inputs.items():
-        if name in image_fields and isinstance(value, str):
-            deserialized[name] = dspy.Image(url=str(run_dir / value))
-        else:
-            deserialized[name] = value
-    return deserialized
-
-
-def load_examples(
-    module_name: str,
-    run_name: str | None = None,
-    *,
-    output_dir: str = 'output/examples',
-    image_fields: frozenset[str] = frozenset(),
-) -> list[dspy.Example]:
-    base = Path(output_dir) / module_name
-    if not base.exists():
-        return []
-
-    if run_name:
-        run_dir = base / run_name
-    else:
-        run_dirs = sorted(entry for entry in base.iterdir() if entry.is_dir())
-        run_dir = run_dirs[-1] if run_dirs else None
-
-    if not run_dir or not run_dir.exists():
-        return []
-
-    jsonl = run_dir / 'examples.jsonl'
-    if not jsonl.exists():
-        return []
-
-    examples: list[dspy.Example] = []
-    for line in jsonl.read_text().strip().splitlines():
-        if not line.strip():
-            continue
-        record = json.loads(line)
-        inputs = record['inputs']
-        outputs = record['outputs']
-
-        inputs = _deserialize_images(inputs, run_dir, image_fields)
-
-        example = dspy.Example(**inputs, **outputs)
-        example = example.with_inputs(*inputs.keys())
-        examples.append(example)
-
-    return examples

@@ -1,36 +1,36 @@
+"""Shared language-model factories and concurrency gates."""
+
 import asyncio
-import os
-from functools import lru_cache
+from functools import cache
 
 import dspy
 
-try:
-    from dotenv import load_dotenv
-
-    load_dotenv()
-except ImportError:
-    pass
-
-DEEPSEEK_ENV_KEY = 'DEEPSEEK_API_KEY'
-OPENROUTER_ENV_KEY = 'OPENROUTER_API_KEY'
-MAX_CONCURRENT_CALLS = int(os.environ.get('KMS_MAX_CONCURRENT_CALLS', '16'))
+from kms import config
 
 
 def gate(limit: int | None = None) -> asyncio.Semaphore:
-    return asyncio.Semaphore(limit or MAX_CONCURRENT_CALLS)
+    """Returns a semaphore limiting concurrent LLM calls.
+
+    Args:
+        limit: The concurrency cap; defaults to the configured value.
+    """
+    if limit is None:
+        limit = config.get_settings().concurrency.max_concurrent_calls
+    return asyncio.Semaphore(limit)
 
 
-def _require_key(env_key: str, example: str) -> str:
-    key = os.environ.get(env_key)
-    if not key:
+def _require_key(value: str, name: str, example: str) -> str:
+    """Returns a configured API key or raises."""
+    if not value:
         raise RuntimeError(
-            f'{env_key} is not set. Export your API key '
-            f'(e.g. `export {env_key}={example}`) before running the pipeline.'
+            f'{name} is not set. Export your API key '
+            f'(e.g. `export {name}={example}`) before running KMS.'
         )
-    return key
+    return value
 
 
 def _provider_routing(provider: str | None) -> dict:
+    """Builds the OpenRouter provider-pinning extra body."""
     if not provider:
         return {}
     return {
@@ -40,52 +40,55 @@ def _provider_routing(provider: str | None) -> dict:
     }
 
 
-@lru_cache(maxsize=1)
-def pipeline_lm() -> dspy.LM:
-    api_base = os.environ.get('PIPELINE_API_BASE')
-    if api_base:
-        return dspy.LM(
-            os.environ.get('PIPELINE_MODEL', 'openai/gemma-4-e4b-it'),
-            api_base=api_base,
-            api_key=os.environ.get('PIPELINE_API_KEY', 'not-needed'),
-            temperature=0.0,
-            max_tokens=128000,
-            cache=True,
+@cache
+def module_lm(module_name: str) -> dspy.LM:
+    """Returns the LM configured for one module.
+
+    Module names are configuration keys, not aliases for a shared pipeline
+    role. Keeping resolution here means every module has an explicit model
+    boundary while callers remain independent of provider details.
+    """
+    settings = config.get_settings()
+    try:
+        module_config = settings.models.modules[module_name]
+    except KeyError as exc:
+        raise RuntimeError(
+            f'No model configured for module {module_name!r}. '
+            f'Add [models.modules.{module_name}] to config.toml.'
+        ) from exc
+
+    if module_config.base_url:
+        model = _require_key(
+            module_config.model,
+            f'KMS_MODELS__MODULES__{module_name.upper()}__MODEL',
+            'qwen3.5-9b',
         )
+        if not model.startswith('openai/'):
+            model = f'openai/{model}'
+        return dspy.LM(
+            model,
+            api_base=module_config.base_url,
+            api_key=module_config.api_key or 'not-needed',
+            temperature=module_config.temperature,
+            max_tokens=module_config.max_tokens,
+            cache=False,
+        )
+
     return dspy.LM(
-        os.environ.get('PIPELINE_MODEL', 'deepseek/deepseek-v4-flash'),
-        api_key=_require_key(DEEPSEEK_ENV_KEY, 'sk-...'),
-        temperature=0.0,
-        max_tokens=128000,
-        cache=True,
-        extra_body={'thinking': {'type': 'disabled'}},
-    )
-
-
-@lru_cache(maxsize=1)
-def procedure_creator_lm() -> dspy.LM | None:
-    model = os.environ.get('PROCEDURE_CREATOR_MODEL')
-    if not model:
-        return None
-    return dspy.LM(
-        model,
-        api_key=_require_key(OPENROUTER_ENV_KEY, 'sk-or-...'),
-        temperature=0.0,
-        max_tokens=128000,
-        cache=True,
-        **_provider_routing(os.environ.get('PROCEDURE_CREATOR_PROVIDER')),
-    )
-
-
-@lru_cache(maxsize=1)
-def corrector_lm() -> dspy.LM:
-    return dspy.LM(
-        os.environ.get(
-            'CORRECTOR_MODEL', 'openrouter/qwen/qwen3-vl-235b-a22b-instruct'
+        module_config.model,
+        api_key=_require_key(
+            settings.models.openrouter_api_key
+            if module_config.api_key_source == 'openrouter'
+            else settings.models.deepseek_api_key,
+            'KMS_MODELS__OPENROUTER_API_KEY'
+            if module_config.api_key_source == 'openrouter'
+            else 'KMS_MODELS__DEEPSEEK_API_KEY',
+            'sk-or-...'
+            if module_config.api_key_source == 'openrouter'
+            else 'sk-...',
         ),
-        api_key=_require_key(OPENROUTER_ENV_KEY, 'sk-or-...'),
-        temperature=0.0,
-        max_tokens=128000,
-        cache=True,
-        **_provider_routing(os.environ.get('CORRECTOR_PROVIDER', 'DeepInfra')),
+        temperature=module_config.temperature,
+        max_tokens=module_config.max_tokens,
+        cache=False,
+        **_provider_routing(module_config.provider or None),
     )

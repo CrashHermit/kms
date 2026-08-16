@@ -1,7 +1,9 @@
 import asyncio
 
-from kms.core import content, models
-from kms.ingestion import pedagogical_component_finder
+from PIL import Image
+
+from kms.construction import pedagogical_component_finder
+from kms.core import content, models, walker
 
 
 class _ScriptedFinder:
@@ -22,9 +24,7 @@ def _nodes():
 
 
 def test_banks_a_bounded_span_and_emits_member_ids():
-    module = _ScriptedFinder(
-        [[pedagogical_component_finder.Span(start=1, end=2)], []]
-    )
+    module = _ScriptedFinder([[walker.Span(start=1, end=2)], []])
     spans = asyncio.run(
         pedagogical_component_finder.find_spans(_nodes(), module=module)
     )
@@ -35,8 +35,8 @@ def test_banks_multiple_bounded_spans_in_document_order():
     module = _ScriptedFinder(
         [
             [
-                pedagogical_component_finder.Span(start=1, end=1),
-                pedagogical_component_finder.Span(start=2, end=2),
+                walker.Span(start=1, end=1),
+                walker.Span(start=2, end=2),
             ],
             [],
         ]
@@ -57,18 +57,16 @@ def test_on_prose_only_stream_returns_nothing():
 
 
 def test_normalize_spans_clamps_into_the_window():
-    cleaned = pedagogical_component_finder._normalize_spans(
-        [pedagogical_component_finder.Span(start=-5, end=99)], 2
-    )
+    cleaned = walker.normalize_spans([walker.Span(start=-5, end=99)], 2)
     assert (cleaned[0].start, cleaned[0].end) == (0, 2)
 
 
 def test_normalize_spans_preserves_overlaps():
-    cleaned = pedagogical_component_finder._normalize_spans(
+    cleaned = walker.normalize_spans(
         [
-            pedagogical_component_finder.Span(start=0, end=2),
-            pedagogical_component_finder.Span(start=1, end=3),
-            pedagogical_component_finder.Span(start=3, end=3),
+            walker.Span(start=0, end=2),
+            walker.Span(start=1, end=3),
+            walker.Span(start=3, end=3),
         ],
         3,
     )
@@ -80,8 +78,8 @@ def test_node_run_writes_the_spans_channel():
         module=_ScriptedFinder(
             [
                 [
-                    pedagogical_component_finder.Span(start=1, end=1),
-                    pedagogical_component_finder.Span(start=2, end=2),
+                    walker.Span(start=1, end=1),
+                    walker.Span(start=2, end=2),
                 ],
                 [],
             ]
@@ -101,14 +99,10 @@ def test_node_run_on_empty_stream_yields_an_empty_channel():
 
 def test_window_parts_labels_text_and_loads_images(tmp_path):
     image_path = tmp_path / 'Image_000.png'
-    image_path.write_bytes(b'png-bytes')
+    Image.new('RGB', (10, 10), (0, 0, 255)).save(image_path)
     nodes = [
-        pedagogical_component_finder.WindowNode(
-            position=0, type='paragraph', content='intro'
-        ),
-        pedagogical_component_finder.WindowNode(
-            position=1, type='image', image_path=str(image_path)
-        ),
+        walker.WindowNode(position=0, type='paragraph', content='intro'),
+        walker.WindowNode(position=1, type='image', image_path=str(image_path)),
     ]
     parts = content.labeled_content_parts(nodes).content.parts
     assert len(parts) == 3

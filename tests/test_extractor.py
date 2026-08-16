@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
+from kms.construction import extractor
 from kms.core import models
-from kms.ingestion import extractor
 
 
 def _block(node_type, content='text'):
@@ -117,7 +117,7 @@ def test_a_page_with_no_furniture_is_untouched():
 
 
 def test_discarded_blocks_are_logged_for_audit(caplog):
-    with caplog.at_level('DEBUG', logger='kms.ingestion.extractor'):
+    with caplog.at_level('DEBUG', logger='kms.construction.extractor'):
         _worker([_block('furniture', 'Richard Hammack Book of Proof')], index=7)
     assert 'Richard Hammack Book of Proof' in caplog.text
     assert 'page 7' in caplog.text

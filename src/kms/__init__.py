@@ -1,3 +1,5 @@
-from kms.pipeline import run
+"""KMS application runtime and document-ingestion entry points."""
 
-__all__ = ['run']
+from kms.runtime import Runtime, ingest
+
+__all__ = ['Runtime', 'ingest']

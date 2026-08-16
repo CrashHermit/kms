@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from kms.ingestion import ocr
+from kms.construction import ocr
 
 _PNG_B64 = (
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4'
@@ -102,6 +102,27 @@ def test_page_without_a_footer_is_unchanged(tmp_path):
     }
     assert ocr.build_segments(resp, tmp_path)[0].content == 'body text'
     assert ocr._with_footer('body text', '   ') == 'body text'
+
+
+def test_ocr_node_reads_graph_input_and_emits_segments(monkeypatch, tmp_path):
+    segments = [object()]
+    calls = []
+
+    def fake_extract(pdf_path, output_dir, pages):
+        calls.append((pdf_path, output_dir, pages))
+        return segments
+
+    monkeypatch.setattr(ocr, 'extract', fake_extract)
+    result = ocr.OCRNode().run(
+        {
+            'pdf_path': 'book.pdf',
+            'output_dir': str(tmp_path),
+            'pages': [2],
+        }
+    )
+
+    assert calls == [('book.pdf', str(tmp_path), [2])]
+    assert result == {'segments': segments}
 
 
 def test_pages_are_indexed_densely(tmp_path):

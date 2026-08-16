@@ -6,9 +6,9 @@ import pytest
 from kms.graph import db
 
 _CONN_ENV = {
-    'NEO4J_URI': 'bolt://localhost:7687',
-    'NEO4J_USERNAME': 'neo4j',
-    'NEO4J_PASSWORD': 'secret',
+    'KMS_DATABASE__URI': 'bolt://localhost:7687',
+    'KMS_DATABASE__USERNAME': 'neo4j',
+    'KMS_DATABASE__PASSWORD': 'secret',
 }
 
 
@@ -18,16 +18,16 @@ def _set_conn(monkeypatch):
 
 
 def test_is_configured_tracks_the_uri_env(monkeypatch):
-    monkeypatch.delenv('NEO4J_URI', raising=False)
+    monkeypatch.delenv('KMS_DATABASE__URI', raising=False)
     assert db.is_configured() is False
-    monkeypatch.setenv('NEO4J_URI', 'bolt://localhost:7687')
+    monkeypatch.setenv('KMS_DATABASE__URI', 'bolt://localhost:7687')
     assert db.is_configured() is True
 
 
 def test_database_defaults_to_neo4j_and_honours_override(monkeypatch):
-    monkeypatch.delenv('NEO4J_DATABASE', raising=False)
+    monkeypatch.delenv('KMS_DATABASE__DATABASE', raising=False)
     assert db.database() == 'neo4j'
-    monkeypatch.setenv('NEO4J_DATABASE', 'kms')
+    monkeypatch.setenv('KMS_DATABASE__DATABASE', 'kms')
     assert db.database() == 'kms'
 
 
@@ -35,7 +35,7 @@ def test_driver_raises_a_clear_error_when_unconfigured(monkeypatch):
     for k in _CONN_ENV:
         monkeypatch.delenv(k, raising=False)
     asyncio.run(db.close_driver())
-    with pytest.raises(RuntimeError, match='NEO4J_URI is not set'):
+    with pytest.raises(RuntimeError, match='KMS_DATABASE__URI is not set'):
         db.driver()
 
 

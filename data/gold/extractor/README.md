@@ -7,10 +7,10 @@ that cannot be undone.
 
 ## Why this exists
 
-`kms.ingestion.extractor` types page apparatus as `furniture` and drops those
-blocks inside the stage — no node, no id, no graph vertex, nothing downstream
-that could notice. A wrong drop deletes content silently, and there is no other
-record of it than a DEBUG log line.
+`kms.construction.extractor` types page apparatus as `furniture` and drops
+those blocks inside the stage — no node, no id, no graph vertex, nothing
+that could notice. A wrong drop deletes content silently, and there is no
+other record of it than a DEBUG log line.
 
 The judgement is the LLM's and should stay the LLM's: "is this text about the
 book as an object?" is language, and a rule written against one publisher's

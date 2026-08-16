@@ -49,7 +49,7 @@ def test_triplet_uuid_changes_when_the_content_changes():
     assert first != second
 
 
-def test_triplet_properties_carry_the_verbatim_strings():
+def test_triplet_properties_are_a_pure_connector():
     triplet = _triplet('$G_4$', 'is NOT a subgraph of', '$G_1$', node_ids=[3])
     props = triplet_properties(triplet, 'hefferon.pdf', 3)
     assert props['uuid'] == triplet_uuid(
@@ -57,9 +57,9 @@ def test_triplet_properties_carry_the_verbatim_strings():
     )
     assert props['source'] == nodes.source_uuid('hefferon.pdf')
     assert props['node_id'] == 3
-    assert props['subject'] == '$G_4$'
-    assert props['predicate'] == 'is NOT a subgraph of'
-    assert props['object'] == '$G_1$'
+    assert 'subject' not in props
+    assert 'predicate' not in props
+    assert 'object' not in props
 
 
 def test_triplet_rows_write_each_node_occurrence_separately():

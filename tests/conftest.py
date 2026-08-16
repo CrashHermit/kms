@@ -2,9 +2,25 @@ import pathlib
 import sys
 import types
 
+import pytest
+
+from kms import config
+
 SRC = pathlib.Path(__file__).resolve().parent.parent / 'src'
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
+
+
+@pytest.fixture(autouse=True)
+def _uncached_settings(monkeypatch):
+    """Makes settings re-read the environment on every access.
+
+    Tests mutate env vars (via monkeypatch.setenv/delenv) and expect
+    ``config.get_settings()`` consumers to reflect the change. The
+    production ``get_settings`` is lru-cached, so swap it for the
+    uncached builder during tests.
+    """
+    monkeypatch.setattr(config, 'get_settings', config.load_settings)
 
 
 def _install_if_missing(name: str, build) -> None:

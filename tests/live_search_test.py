@@ -7,8 +7,7 @@ sys.path.insert(0, '.')
 
 import dspy
 
-from kms import search
-from kms.core import llm
+from kms.core import llm, search
 from kms.graph import db
 
 QUERIES = [
@@ -26,7 +25,8 @@ def _load_image(path: str) -> dspy.Image:
 async def main() -> None:
     if not db.is_configured():
         print(
-            'Neo4j not configured. Set NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD.'
+            'Neo4j not configured. Set KMS_DATABASE__URI, '
+            'KMS_DATABASE__USERNAME, KMS_DATABASE__PASSWORD.'
         )
         return
 
@@ -48,7 +48,7 @@ async def main() -> None:
                 text_field='description',
                 session_factory=_session,
                 top_k=5,
-                language_model=llm.pipeline_lm(),
+                language_model=llm.module_lm('search_judge'),
             )
             for group in groups:
                 print(

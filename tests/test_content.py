@@ -1,4 +1,5 @@
 import dspy
+from PIL import Image
 
 from kms.core import content
 
@@ -20,7 +21,7 @@ def test_from_text_makes_single_text_part():
 
 def test_from_text_and_pictures_loads_image_paths(tmp_path):
     image_file = tmp_path / 'fig.png'
-    image_file.write_bytes(b'\x89PNG\r\n\x1a\n')
+    Image.new('RGB', (10, 10), (255, 0, 0)).save(image_file)
     content_value = content.Content.from_text_and_pictures(
         'see the figure',
         [{'index': 0, 'segment_index': 1, 'image_path': str(image_file)}],

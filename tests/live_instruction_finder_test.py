@@ -1,11 +1,10 @@
 import asyncio
-import os
 
-os.environ['PIPELINE_API_BASE'] = 'http://localhost:8080/v1'
-os.environ['PIPELINE_MODEL'] = 'openai/unsloth/gemma-4-e4b-it-GGUF'
-os.environ['PIPELINE_API_KEY'] = 'not-needed'
+from tests.live_support import configure_local_formatter
 
-from kms import pipeline
+from kms import runtime
+
+configure_local_formatter()
 
 
 def _elide(text: str | None, limit: int = 90) -> str:
@@ -14,7 +13,7 @@ def _elide(text: str | None, limit: int = 90) -> str:
 
 
 async def main():
-    result = await pipeline.run(
+    result = await runtime.ingest(
         'tests/fixtures/books/calc3_gradients_exercises.pdf',
         output_dir='output/live_instr_test',
         source='calc3_gradients',
@@ -36,20 +35,20 @@ async def main():
     print(f'\n=== instructions: {len(instructions)} ===')
     for instruction in instructions:
         print(
-            f'  instruction block={instruction.block} members={instruction.members}'
+            f'  instruction block={instruction.block} '
+            f'members={instruction.members}'
         )
         for member_id in instruction.members:
             node = by_id.get(member_id)
             if node:
-                print(
-                    f'    [{member_id}] ({node.type}) {_elide(node.content)}'
-                )
+                print(f'    [{member_id}] ({node.type}) {_elide(node.content)}')
 
     statements = result.get('statements') or []
     print(f'\n=== statements: {len(statements)} ===')
     for statement in statements:
         kinds = [
-            f'{member_id}:{by_id.get(member_id).type if by_id.get(member_id) else "?"}'
+            f'{member_id}:'
+            f'{by_id.get(member_id).type if by_id.get(member_id) else "?"}'
             for member_id in statement.members
         ]
         print(f'  statement members=[{", ".join(kinds)}]')

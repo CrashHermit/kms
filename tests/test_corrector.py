@@ -1,7 +1,9 @@
 import asyncio
 
+import dspy
+
+from kms.construction import corrector
 from kms.core import models
-from kms.ingestion import corrector
 
 SENTINEL = object()
 
@@ -53,3 +55,48 @@ def test_collect_writes_corrected_back_and_leaves_others_untouched():
     )
     assert out['segments'][0].content == 'fixed0'
     assert out['segments'][1].content == 'orig1'
+
+
+def test_prompt_describes_numbered_lines_and_edit_output():
+    prompt = corrector.Signature.__doc__
+    assert 'numbered lines' in prompt
+    assert 'EDIT FORMAT' in prompt
+    assert 'empty list' in prompt
+
+
+def _dummy_lm() -> dspy.LM:
+    return dspy.LM('openai/dummy', api_key='x')
+
+
+def test_aforward_applies_the_proofreader_edits():
+    class _FakeProofreader:
+        async def acall(self, **kwargs):
+            assert kwargs['page_image'] is SENTINEL
+            assert kwargs['lines'] == '[1] a\n[2] x_2\n[3] c'
+            return type(
+                'Result',
+                (),
+                {'edits': [corrector.LineEdit(index=2, replacement='x^2')]},
+            )()
+
+    module = corrector.Corrector(language_model=_dummy_lm())
+    module.predictor = _FakeProofreader()
+    module._recorder = None
+    out = asyncio.run(
+        module.aforward(page_image=SENTINEL, transcription='a\nx_2\nc')
+    )
+    assert out == 'a\nx^2\nc'
+
+
+def test_aforward_returns_transcription_unchanged_when_no_edits():
+    class _FakeProofreader:
+        async def acall(self, **kwargs):
+            return type('Result', (), {'edits': []})()
+
+    module = corrector.Corrector(language_model=_dummy_lm())
+    module.predictor = _FakeProofreader()
+    module._recorder = None
+    out = asyncio.run(
+        module.aforward(page_image=SENTINEL, transcription='a\nb\nc')
+    )
+    assert out == 'a\nb\nc'

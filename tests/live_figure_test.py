@@ -1,12 +1,11 @@
 import asyncio
-import os
 from collections import Counter
 
-os.environ['PIPELINE_API_BASE'] = 'http://localhost:8080/v1'
-os.environ['PIPELINE_MODEL'] = 'openai/unsloth/gemma-4-e4b-it-GGUF'
-os.environ['PIPELINE_API_KEY'] = 'not-needed'
+from tests.live_support import configure_local_formatter
 
-from kms import pipeline
+from kms import runtime
+
+configure_local_formatter()
 
 
 def _elide(text, limit=80):
@@ -15,7 +14,7 @@ def _elide(text, limit=80):
 
 
 async def main():
-    result = await pipeline.run(
+    result = await runtime.ingest(
         'tests/fixtures/books/ode_lebl_diffyqs.pdf',
         output_dir='output/live_figure_test',
         source='ode_lebl_diffyqs',
@@ -52,7 +51,9 @@ async def main():
         for member_id in instruction.members:
             node = by_id.get(member_id)
             if node is not None:
-                members.append(f'[{member_id}] ({node.type}) {_elide(node.content, 45)}')
+                members.append(
+                    f'[{member_id}] ({node.type}) {_elide(node.content, 45)}'
+                )
         print(f'  instruction: {members}')
 
 

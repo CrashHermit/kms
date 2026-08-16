@@ -1,0 +1,229 @@
+# KMS configuration.
+#
+# Precedence (highest first):
+#   1. environment variables (KMS_MODELS__MODULES__FORMATTER__MODEL, ...)
+#   2. the repo-root .env file
+#   3. this file
+#   4. code defaults
+#
+# Secrets (API keys, the database password) are intentionally NOT here;
+# put them in .env or export them in the shell.
+
+# ── LLM modules ──────────────────────────────────────────────────────
+# base_url set (e.g. "http://127.0.0.1:8080/v1") means a local server;
+# base_url = "" means "use the provider's own endpoint" (remote).
+
+# Every LLM boundary is configured by module. There is no shared pipeline
+# model: modules may use the same provider/model, but the dependency is
+# explicit at each module boundary. The ``model`` value here is an
+# OpenAI-compatible provider-prefixed ID; its suffix must match the local
+# router preset name (see [serving.module_models]).
+
+[models.modules.corrector]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3-vl-4b"
+
+[models.modules.procedure_creator]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+
+[models.modules.formatter]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+
+[models.modules.extractor]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+
+[models.modules.seam_merger]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+
+[models.modules.seam_rewriter]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+
+[models.modules.splitter]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+
+[models.modules.instruction_finder]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+
+[models.modules.pedagogical_component_finder]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+
+[models.modules.role_typer]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+
+[models.modules.statement_partitioner]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+
+[models.modules.procedure_partitioner]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+
+[models.modules.atomic_fact_extractor]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+
+[models.modules.triplet_extractor]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+
+[models.modules.component_enrichment]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+
+[models.modules.canonicalizer]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+
+[models.modules.search_judge]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+
+[models.modules.decompose_judge]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+
+[models.modules.query_decomposer]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+
+# ── local model serving (router-mode llama-server) ───────────────────
+
+[serving]
+manage = true
+host = "127.0.0.1"
+port = 8080
+ready_timeout = 300.0
+poll_interval = 1.0
+max_loaded_models = 1
+request_timeout = 30.0
+terminate_timeout = 15.0
+
+[serving.module_models]
+corrector = "qwen3-vl-4b"
+procedure_creator = "qwen3.5-9b"
+formatter = "qwen3.5-9b"
+extractor = "qwen3.5-9b"
+seam_merger = "qwen3.5-9b"
+seam_rewriter = "qwen3.5-9b"
+splitter = "qwen3.5-9b"
+instruction_finder = "qwen3.5-9b"
+pedagogical_component_finder = "qwen3.5-9b"
+role_typer = "qwen3.5-9b"
+statement_partitioner = "qwen3.5-9b"
+procedure_partitioner = "qwen3.5-9b"
+atomic_fact_extractor = "qwen3.5-9b"
+triplet_extractor = "qwen3.5-9b"
+component_enrichment = "qwen3.5-9b"
+canonicalizer = "qwen3.5-9b"
+search_judge = "qwen3.5-9b"
+decompose_judge = "qwen3.5-9b"
+query_decomposer = "qwen3.5-9b"
+
+[serving.presets."qwen3.5-9b"]
+model = "~/models/qwen3.5-9b/Qwen3.5-9B-Q4_K_M.gguf"
+mmproj = "~/models/qwen3.5-9b/mmproj-F16.gguf"
+ctx_size = 32768
+cache_type_k = "q4_0"
+cache_type_v = "q4_0"
+n_gpu_layers = 999
+no_warmup = true
+parallel = 1
+reasoning = "off"
+
+[serving.presets."qwen3-vl-4b"]
+model = "~/models/qwen3-vl-4b/Qwen3VL-4B-Instruct-Q4_K_M.gguf"
+mmproj = "~/models/qwen3-vl-4b/mmproj-Qwen3VL-4B-Instruct-F16.gguf"
+ctx_size = 8192
+n_gpu_layers = 999
+no_warmup = true
+parallel = 1
+temperature = 0.0
+threads = 12
+
+[serving.presets."gemma-4-e4b-it"]
+model = "~/models/gemma-4-e4b-it/gemma-4-E4B-it-Q4_K_M.gguf"
+mmproj = "~/models/gemma-4-e4b-it/mmproj-F16.gguf"
+ctx_size = 32768
+cache_type_k = "q4_0"
+cache_type_v = "q4_0"
+n_gpu_layers = 999
+no_warmup = true
+parallel = 1
+
+# ── external services ────────────────────────────────────────────────
+
+[embeddings]
+model = "voyage-multimodal-3.5"
+base_url = "https://api.voyageai.com/v1"
+dimension = 1024
+batch_size = 200
+timeout_seconds = 60.0
+
+[reranker]
+model = "nvidia/llama-nemotron-rerank-vl-1b-v2:free"
+base_url = "https://openrouter.ai/api/v1"
+timeout_seconds = 60.0
+
+[ocr]
+model = "mistral-ocr-latest"
+url = "https://api.mistral.ai/v1/ocr"
+render_scale = 3.0
+
+[database]
+database = "neo4j"
+transport = "auto"
+http_timeout = 60.0
+bolt_probe_timeout = 5.0
+max_connection_lifetime = 300.0
+http_port = 7474
+https_port = 7473
+
+# ── module settings ─────────────────────────────────────────────────
+
+[image]
+max_dim = 768
+
+[concurrency]
+max_concurrent_calls = 16
+recursion_limit = 1000
+
+[recording]
+enabled = false
+
+[stages.splitter]
+backward_context_budget = 200
+lookahead_budget = 2000
+
+[stages.finders]
+lookahead_budget = 2000
+max_lookahead_budget = 8000
+
+[stages.component_enrichment]
+before_budget = 200
+after_budget = 200
+
+[stages.triplet]
+window_budget = 600
+backward_context_budget = 400
+forward_context_budget = 400
+
+[stages.canonicalizer]
+recall_threshold = 0.55
+merge_above = 0.85
+separate_below = 0.35
+
+[stages.search]
+top_k = 20
+rerank_top_n = 5
+
+[stages.procedure]
+entity_definition_top_k = 10

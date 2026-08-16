@@ -1,3 +1,5 @@
+"""Row and edge builders for the raw triplet layer."""
+
 from uuid import NAMESPACE_URL, uuid5
 
 from kms.core import models
@@ -13,6 +15,11 @@ def triplet_uuid(
     predicate: str,
     object: str,
 ) -> str:
+    """Returns the deterministic uuid for one triplet occurrence.
+
+    Identity covers the source, the node the fact was extracted from,
+    and the verbatim subject/predicate/object strings.
+    """
     return uuid5(
         NAMESPACE_URL,
         f'{source}#triplet#{node_id}#{subject}#{predicate}#{object}',
@@ -23,9 +30,15 @@ def triplet_properties(
     triplet: models.Triplet,
     source: str,
     node_id: int,
-    embedding: list[float] | None = None,
 ) -> dict:
-    properties = {
+    """Builds the empty :Triplet connector's properties.
+
+    The verbatim subject/predicate/object strings are not persisted on
+    the :Triplet; they live on its :Entity and :Predicate components.
+    Only the uuid (derived from those strings so identity stays
+    deterministic), source, and node_id are stored.
+    """
+    return {
         'uuid': triplet_uuid(
             source,
             node_id,
@@ -35,13 +48,6 @@ def triplet_properties(
         ),
         'source': nodes.source_uuid(source),
         'node_id': node_id,
-        'subject': triplet.subject,
-        'predicate': triplet.predicate,
-        'object': triplet.object,
-        'embedding': embedding,
-    }
-    return {
-        key: value for key, value in properties.items() if value is not None
     }
 
 
@@ -49,6 +55,7 @@ def triplet_rows(
     triplets: list[models.Triplet],
     source: str,
 ) -> list[dict]:
+    """Builds one row per triplet occurrence (per evidence node)."""
     rows: list[dict] = []
     for triplet in triplets:
         for node_id in triplet.node_ids:
@@ -60,6 +67,7 @@ def evidence_pairs(
     triplets: list[models.Triplet],
     source: str,
 ) -> list[dict]:
+    """Builds evidence node→triplet edge pairs."""
     pairs: list[dict] = []
     for triplet in triplets:
         for node_id in triplet.node_ids:

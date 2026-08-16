@@ -29,6 +29,33 @@ def test_procedure_uuid_covers_the_whole_block():
     )
 
 
+def test_procedure_uuid_distinguishes_statement_backed_procedures():
+    assert procedures.procedure_uuid(
+        'book.pdf', [], 0, statement_uuid='statement-a'
+    ) != procedures.procedure_uuid(
+        'book.pdf', [], 0, statement_uuid='statement-b'
+    )
+
+
+def test_statement_backed_procedure_persistence_uses_its_disambiguated_uuid():
+    procedure = _procedure()
+    procedure.statement_uuid = 'statement-a'
+    expected = procedures.procedure_uuid(
+        'book.pdf', [1, 2], 0, statement_uuid='statement-a'
+    )
+
+    assert (
+        procedures.procedure_properties('book.pdf', procedure)['uuid']
+        == expected
+    )
+    assert (
+        procedures.procedure_member_pairs([procedure], 'book.pdf')[0][
+            'procedure'
+        ]
+        == expected
+    )
+
+
 def test_procedure_properties_carry_index_and_provenance_only():
     props = procedures.procedure_properties('book.pdf', _procedure())
     assert props['uuid'] == procedures.procedure_uuid('book.pdf', [1, 2], 0)

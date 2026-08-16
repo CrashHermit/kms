@@ -1,10 +1,15 @@
 import asyncio
 from pathlib import Path
 
-from kms.core import llm, models
+from kms.construction import canonicalizer
+from kms.construction.canonicalizer import rebuild
+from kms.construction.triplet_extractor import (
+    TripletNode,
+    _FactExtractor,
+    _TripletDecomposer,
+)
+from kms.core import embeddings, llm, models
 from kms.graph import db, schema, writer
-from kms.ingestion.entity_canonicalizer import rebuild
-from kms.ingestion.triplet_extractor import TripletNode
 
 PAGES = [
     ('combinatorics_levin_p00', 'transcription'),
@@ -28,7 +33,7 @@ async def main():
         await session.run('MATCH (n) DETACH DELETE n')
     await schema.ensure_schema(_session)
 
-    lm = llm.pipeline_lm()
+    lm = llm.module_lm('triplet_extractor')
     all_triplets = []
     all_nodes = []
     node_id = 0
@@ -50,7 +55,10 @@ async def main():
         all_nodes.append(node)
         node_id += 1
 
-        triplet_node = TripletNode(language_model=lm)
+        triplet_node = TripletNode(
+            fact_module=_FactExtractor(lm),
+            triplet_module=_TripletDecomposer(lm),
+        )
         result = await triplet_node.run({'nodes': [node], 'source': SOURCE})
         triplets = result.get('triplets', [])
         all_triplets.extend(triplets)
@@ -59,8 +67,30 @@ async def main():
     print(f'\nTotal: {len(all_triplets)} triplets from {len(PAGES)} pages')
 
     await writer.persist_nodes(all_nodes, SOURCE, session_factory=_session)
-    await writer.persist_triplets(
-        all_triplets, SOURCE, session_factory=_session
+
+    enricher = canonicalizer.ComponentEnricher(language_model=lm)
+    (
+        entity_descriptions,
+        predicate_descriptions,
+    ) = await canonicalizer.enrich_components(all_nodes, all_triplets, enricher)
+
+    (
+        entity_embeddings,
+        predicate_embeddings,
+    ) = await canonicalizer.embed_components(
+        entity_descriptions,
+        predicate_descriptions,
+        embeddings.embedder(),
+    )
+
+    await writer.persist_assertions(
+        all_triplets,
+        SOURCE,
+        session_factory=_session,
+        entity_descriptions=entity_descriptions,
+        predicate_descriptions=predicate_descriptions,
+        entity_embeddings=entity_embeddings,
+        predicate_embeddings=predicate_embeddings,
     )
     await writer.persist_chain(all_nodes, SOURCE, session_factory=_session)
 
@@ -69,9 +99,12 @@ async def main():
     print('=' * 60)
 
     result = await rebuild(
-        threshold=0.8, language_model=lm, session_factory=_session
+        'entity',
+        language_model=lm,
+        session_factory=_session,
+        source=SOURCE,
     )
-    print(f'\nEntities: {result["entities"]}')
+    print(f'\nRecords: {result["records"]}')
     print(f'Clusters: {result["clusters"]}')
 
     async with _session() as session:

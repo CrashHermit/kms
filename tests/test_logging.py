@@ -1,12 +1,12 @@
 import asyncio
 import logging
 
-from kms.core import logs, models
-from kms.ingestion import (
-    hub_builder,
+from kms.construction import (
     pedagogical_component_finder,
     seam_merger,
+    statement_procedure_builder,
 )
+from kms.core import logs, models, walker
 
 
 def test_elide_collapses_whitespace_and_newlines():
@@ -53,14 +53,14 @@ def test_pedagogical_component_finder_logs_the_span_count(caplog):
     module = _ScriptedFinder(
         [
             [
-                pedagogical_component_finder.Span(start=0, end=0),
-                pedagogical_component_finder.Span(start=1, end=1),
+                walker.Span(start=0, end=0),
+                walker.Span(start=1, end=1),
             ],
             [],
         ]
     )
     with caplog.at_level(
-        logging.INFO, logger='kms.ingestion.pedagogical_component_finder'
+        logging.INFO, logger='kms.construction.pedagogical_component_finder'
     ):
         asyncio.run(
             pedagogical_component_finder.find_spans(
@@ -78,24 +78,30 @@ class _ScriptedRoles:
         return self._roles.pop(0)
 
 
-def test_hub_builder_logs_composition(caplog):
-    node = hub_builder.HubBuilderNode(
+def test_statement_procedure_builder_logs_composition(caplog):
+    node = statement_procedure_builder.StatementProcedureBuilderNode(
         role_module=_ScriptedRoles([(True, False), (False, True)])
     )
-    with caplog.at_level(logging.INFO, logger='kms.ingestion.hub_builder'):
-        out = asyncio.run(
-            node.run({'nodes': _nodes('a', 'b'), 'spans': [[0], [1]]})
-        )
+    caplog.set_level(
+        logging.INFO,
+        logger='kms.construction.statement_procedure_builder',
+    )
+    out = asyncio.run(
+        node.run({'nodes': _nodes('a', 'b'), 'spans': [[0], [1]]})
+    )
     assert '2 span(s) -> 1 statement(s), 1 procedure(s)' in caplog.text
     assert [p.block for p in out['procedures']] == [[1]]
 
 
-def test_hub_builder_logs_zero_derivations(caplog):
-    node = hub_builder.HubBuilderNode(
+def test_statement_procedure_builder_logs_zero_derivations(caplog):
+    node = statement_procedure_builder.StatementProcedureBuilderNode(
         role_module=_ScriptedRoles([(True, False)])
     )
-    with caplog.at_level(logging.INFO, logger='kms.ingestion.hub_builder'):
-        asyncio.run(node.run({'nodes': _nodes('a'), 'spans': [[0]]}))
+    caplog.set_level(
+        logging.INFO,
+        logger='kms.construction.statement_procedure_builder',
+    )
+    asyncio.run(node.run({'nodes': _nodes('a'), 'spans': [[0]]}))
     assert '1 statement(s), 0 procedure(s)' in caplog.text
     assert '0 both-block(s)' in caplog.text
 
@@ -104,7 +110,7 @@ def test_seam_merger_logs_the_flattened_stream_size(caplog):
     segment = models.Segment(index=0, image_path='p0.png')
     segment.nodes = _nodes('a', 'b')
     node = seam_merger.SeamMergerNode(module=None, rewriter=None)
-    with caplog.at_level(logging.INFO, logger='kms.ingestion.seam_merger'):
+    with caplog.at_level(logging.INFO, logger='kms.construction.seam_merger'):
         result = node.odd_collect(
             {'segments': [segment], 'seam_odd_results': []}
         )

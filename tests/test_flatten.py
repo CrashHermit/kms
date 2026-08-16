@@ -1,7 +1,7 @@
 import asyncio
 
+from kms.construction import statement_procedure_builder
 from kms.core import models
-from kms.ingestion import hub_builder
 
 
 def _segments():
@@ -109,7 +109,9 @@ def test_overlay_leaves_each_block_in_the_stream_exactly_once():
     ]
     state = {'nodes': nodes, 'spans': [[0, 1, 2], [1, 2], [3]]}
 
-    typer = hub_builder.HubBuilderNode(role_module=_AllStatements())
+    typer = statement_procedure_builder.StatementProcedureBuilderNode(
+        role_module=_AllStatements()
+    )
     state.update(asyncio.run(typer.run(state)))
 
     contents = [node.content for node in state['nodes']]

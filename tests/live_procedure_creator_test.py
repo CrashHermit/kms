@@ -3,11 +3,13 @@ import sys
 
 sys.path.insert(0, '.')
 
-from kms.core import llm, models
+from kms.construction import (
+    canonicalizer,
+    procedure_creator,
+    triplet_extractor,
+)
+from kms.core import embeddings, llm, models
 from kms.graph import db, schema, writer
-from kms.ingestion.entity_canonicalizer import rebuild as canonicalize
-from kms.ingestion.procedure_creator import create_procedures
-from kms.ingestion.triplet_extractor import TripletNode
 
 SOURCE = 'graph_theory_test'
 
@@ -29,7 +31,8 @@ Prove that every induced subgraph is also a subgraph.
 async def main():
     if not db.is_configured():
         print(
-            'Neo4j not configured. Set NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD.'
+            'Neo4j not configured. Set KMS_DATABASE__URI, '
+            'KMS_DATABASE__USERNAME, KMS_DATABASE__PASSWORD.'
         )
         return
 
@@ -40,10 +43,13 @@ async def main():
         await session.run('MATCH (n) DETACH DELETE n')
     await schema.ensure_schema(_session)
 
-    language_model = llm.pipeline_lm()
+    language_model = llm.module_lm('procedure_creator')
 
     nodes = [models.ASTNode(id=0, type='paragraph', content=CONTENT)]
-    triplet_node = TripletNode(language_model=language_model)
+    triplet_node = triplet_extractor.TripletNode(
+        fact_module=triplet_extractor._FactExtractor(language_model),
+        triplet_module=triplet_extractor._TripletDecomposer(language_model),
+    )
     result = await triplet_node.run({'nodes': nodes, 'source': SOURCE})
     triplets = result.get('triplets', [])
     print(f'Extracted {len(triplets)} triplet(s):')
@@ -51,18 +57,43 @@ async def main():
         print(f'  {t.subject} | {t.predicate} | {t.object}')
 
     await writer.persist_nodes(nodes, SOURCE, session_factory=_session)
-    await writer.persist_triplets(triplets, SOURCE, session_factory=_session)
+
+    enricher = canonicalizer.ComponentEnricher(language_model=language_model)
+    (
+        entity_descriptions,
+        predicate_descriptions,
+    ) = await canonicalizer.enrich_components(nodes, triplets, enricher)
+
+    (
+        entity_embeddings,
+        predicate_embeddings,
+    ) = await canonicalizer.embed_components(
+        entity_descriptions,
+        predicate_descriptions,
+        embeddings.embedder(),
+    )
+
+    await writer.persist_assertions(
+        triplets,
+        SOURCE,
+        session_factory=_session,
+        entity_descriptions=entity_descriptions,
+        predicate_descriptions=predicate_descriptions,
+        entity_embeddings=entity_embeddings,
+        predicate_embeddings=predicate_embeddings,
+    )
     await writer.persist_chain(nodes, SOURCE, session_factory=_session)
 
     print('\nRunning canonicalization...')
-    canonical_result = await canonicalize(
-        threshold=0.8,
+    canonical_result = await canonicalizer.rebuild(
+        'entity',
         language_model=language_model,
         session_factory=_session,
+        source=SOURCE,
     )
     print(
         f'  {canonical_result["clusters"]} cluster(s), '
-        f'{canonical_result["entities"]} entity/entities'
+        f'{canonical_result["records"]} record(s)'
     )
 
     async with _session() as session:
@@ -82,7 +113,7 @@ async def main():
     print('\nCreated 1 Statement (orphan).')
 
     print('\nRunning procedure creator...')
-    created = await create_procedures(
+    created = await procedure_creator.create_procedures(
         _session, language_model=language_model, top_k=5
     )
     print(f'Created {created} procedure(s).')

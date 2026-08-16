@@ -1,7 +1,9 @@
 import asyncio
 
+import pytest
+
+from kms.construction import formatter
 from kms.core import models
-from kms.ingestion import formatter
 
 SENTINEL = object()
 
@@ -92,3 +94,64 @@ def test_prompt_joins_split_display_equations():
     assert 'relational operator' in prompt
     assert 'binary operator' in prompt
     assert 'back-to-back equations stay separate' in prompt
+
+
+def test_number_lines_prefixes_each_line_with_its_index():
+    assert formatter.number_lines('alpha\nbeta\n\ngamma') == (
+        '[1] alpha\n[2] beta\n[3] \n[4] gamma'
+    )
+
+
+def test_apply_line_edits_replaces_a_single_line():
+    edits = [formatter.LineEdit(index=2, replacement='B')]
+    assert formatter.apply_line_edits('a\nb\nc', edits) == 'a\nB\nc'
+
+
+def test_apply_line_edits_deletes_a_line_on_empty_replacement():
+    edits = [formatter.LineEdit(index=2, replacement='')]
+    assert formatter.apply_line_edits('a\nb\nc', edits) == 'a\nc'
+
+
+def test_apply_line_edits_expands_a_line_on_multiline_replacement():
+    edits = [formatter.LineEdit(index=2, replacement='B1\nB2')]
+    assert formatter.apply_line_edits('a\nb\nc', edits) == 'a\nB1\nB2\nc'
+
+
+def test_apply_line_edits_applies_multiple_edits():
+    edits = [
+        formatter.LineEdit(index=1, replacement='A'),
+        formatter.LineEdit(index=3, replacement='C'),
+    ]
+    assert formatter.apply_line_edits('a\nb\nc\nd', edits) == 'A\nb\nC\nd'
+
+
+def test_apply_line_edits_rewrites_heading_and_deletes_underline():
+    edits = [
+        formatter.LineEdit(index=1, replacement='# Heading'),
+        formatter.LineEdit(index=2, replacement=''),
+    ]
+    assert (
+        formatter.apply_line_edits('Heading\n=======\nbody', edits)
+        == '# Heading\nbody'
+    )
+
+
+def test_apply_line_edits_rejects_out_of_range_index():
+    edits = [formatter.LineEdit(index=5, replacement='')]
+    with pytest.raises(RuntimeError, match='out of range'):
+        formatter.apply_line_edits('a\nb', edits)
+
+
+def test_apply_line_edits_rejects_zero_index():
+    edits = [formatter.LineEdit(index=0, replacement='')]
+    with pytest.raises(RuntimeError, match='out of range'):
+        formatter.apply_line_edits('a\nb', edits)
+
+
+def test_apply_line_edits_rejects_duplicate_index():
+    edits = [
+        formatter.LineEdit(index=2, replacement=''),
+        formatter.LineEdit(index=2, replacement=''),
+    ]
+    with pytest.raises(RuntimeError, match='duplicate'):
+        formatter.apply_line_edits('a\nb\nc', edits)

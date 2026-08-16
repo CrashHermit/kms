@@ -1,63 +1,60 @@
-import os
+"""OpenRouter reranking client for search result re-scoring."""
+
 from collections.abc import Sequence
 from functools import lru_cache
 from typing import Any
 
 import httpx
 
-try:
-    from dotenv import load_dotenv
-
-    load_dotenv()
-except ImportError:
-    pass
-
-RERANK_MODEL_ENV = 'RERANK_MODEL'
-RERANK_BASE_URL_ENV = 'RERANK_BASE_URL'
-RERANK_API_KEY_ENV = 'RERANK_API_KEY'
-
-DEFAULT_RERANK_MODEL = 'nvidia/llama-nemotron-rerank-vl-1b-v2'
-DEFAULT_RERANK_BASE_URL = 'https://openrouter.ai/api/v1'
-
-TIMEOUT_SECONDS = 60.0
+from kms import config
 
 
 def _api_key() -> str:
-    key = os.environ.get(RERANK_API_KEY_ENV) or os.environ.get(
-        'OPENROUTER_API_KEY'
-    )
+    """Returns the configured reranker API key.
+
+    Raises:
+        RuntimeError: If neither the reranker key nor the OpenRouter
+            key is configured.
+    """
+    settings = config.get_settings()
+    key = settings.reranker.api_key or settings.models.openrouter_api_key
     if not key:
         raise RuntimeError(
-            f'{RERANK_API_KEY_ENV} is not set (and no OPENROUTER_API_KEY '
-            f'to fall back to). Export your API key before calling the '
-            f'reranker.'
+            'KMS_RERANKER__API_KEY is not set (and no '
+            'KMS_MODELS__OPENROUTER_API_KEY to fall back to). Export '
+            'your API key before calling the reranker.'
         )
     return key
 
 
 def is_configured() -> bool:
-    return bool(
-        os.environ.get(RERANK_API_KEY_ENV)
-        or os.environ.get('OPENROUTER_API_KEY')
-    )
+    """True if a reranker API key is configured."""
+    settings = config.get_settings()
+    return bool(settings.reranker.api_key or settings.models.openrouter_api_key)
 
 
 class Reranker:
+    """Reranks document candidates against a query via an HTTP API."""
+
     def __init__(
         self,
-        base_url: str = DEFAULT_RERANK_BASE_URL,
-        model: str = DEFAULT_RERANK_MODEL,
+        base_url: str | None = None,
+        model: str | None = None,
         api_key: str | None = None,
         *,
-        timeout: float = TIMEOUT_SECONDS,
+        timeout: float | None = None,
     ) -> None:
-        self.base_url = base_url.rstrip('/')
-        self.model = model
+        settings = config.get_settings().reranker
+        self.base_url = (base_url or settings.base_url).rstrip('/')
+        self.model = model or settings.model
         self.api_key = api_key
-        self.timeout = timeout
+        self.timeout = (
+            timeout if timeout is not None else settings.timeout_seconds
+        )
         self._client: httpx.AsyncClient | None = None
 
     async def _client_for(self) -> httpx.AsyncClient:
+        """Returns the lazily-created HTTP client."""
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=self.timeout,
@@ -66,6 +63,7 @@ class Reranker:
         return self._client
 
     def _require_key(self) -> str:
+        """Returns the constructor key or the configured key."""
         return self.api_key or _api_key()
 
     async def rerank(
@@ -74,6 +72,20 @@ class Reranker:
         documents: Sequence[str | dict[str, Any]],
         top_n: int | None = None,
     ) -> list[dict[str, Any]]:
+        """Reranks the documents and returns the scored results.
+
+        Args:
+            query: The query, as text or multimodal content.
+            documents: The candidate documents, as text or multimodal
+                content.
+            top_n: Maximum number of reranked results to return.
+
+        Returns:
+            The reranker's ``results`` list, highest score first.
+
+        Raises:
+            RuntimeError: If the rerank request fails.
+        """
         client = await self._client_for()
         payload: dict[str, Any] = {
             'model': self.model,
@@ -93,6 +105,7 @@ class Reranker:
         return response.json().get('results', [])
 
     async def aclose(self) -> None:
+        """Closes the HTTP client if one was created."""
         if self._client is not None:
             await self._client.aclose()
             self._client = None
@@ -100,7 +113,5 @@ class Reranker:
 
 @lru_cache(maxsize=1)
 def reranker() -> Reranker:
-    return Reranker(
-        base_url=os.environ.get(RERANK_BASE_URL_ENV, DEFAULT_RERANK_BASE_URL),
-        model=os.environ.get(RERANK_MODEL_ENV, DEFAULT_RERANK_MODEL),
-    )
+    """Returns the shared Reranker, configured from the settings."""
+    return Reranker()

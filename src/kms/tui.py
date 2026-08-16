@@ -1,3 +1,5 @@
+"""Interactive TUI entry point for document ingestion."""
+
 import asyncio
 import logging
 import os
@@ -6,7 +8,7 @@ from pathlib import Path
 
 from InquirerPy import inquirer
 
-from kms import pipeline
+from kms import runtime
 
 logger = logging.getLogger(__name__)
 
@@ -14,14 +16,16 @@ _LOG_LEVEL_ENV = 'KMS_LOG_LEVEL'
 
 
 def _configure_logging(level_name: str) -> None:
+    """Sets the log level via env var and basicConfig."""
     os.environ[_LOG_LEVEL_ENV] = level_name
     level = logging.getLevelNamesMapping().get(level_name, logging.INFO)
     logging.basicConfig(level=level, format='%(name)s: %(message)s')
 
 
 def _validate_pages(raw: str) -> bool | str:
+    """Validates a comma-separated page list; returns True or an error."""
     try:
-        parts = [int(p.strip()) for p in raw.split(',')]
+        parts = [int(page.strip()) for page in raw.split(',')]
         if any(part < 0 for part in parts):
             return 'All page numbers must be >= 0'
         return True
@@ -30,6 +34,7 @@ def _validate_pages(raw: str) -> bool | str:
 
 
 def _collect_advanced_options() -> dict:
+    """Prompts for pages, source, title, and author options."""
     pages_raw = inquirer.text(
         message=(
             'Limit to pages (0-based, comma-separated, or leave empty for all):'
@@ -42,7 +47,7 @@ def _collect_advanced_options() -> dict:
 
     pages: list[int] | None = None
     if pages_raw.strip():
-        pages = [int(p.strip()) for p in pages_raw.split(',')]
+        pages = [int(page.strip()) for page in pages_raw.split(',')]
 
     source_raw = inquirer.text(
         message='Source key (defaults to PDF filename if empty):',
@@ -71,6 +76,7 @@ def _collect_advanced_options() -> dict:
 
 
 def run() -> None:
+    """Runs the TUI, exiting cleanly on Ctrl-C."""
     try:
         _run_tui()
     except KeyboardInterrupt:
@@ -79,6 +85,7 @@ def run() -> None:
 
 
 def _run_tui() -> None:
+    """Prompts for settings and runs document ingestion."""
     pdf_path = inquirer.filepath(
         message='Select the PDF to process:',
         default=str(Path.cwd()),
@@ -140,7 +147,7 @@ def _run_tui() -> None:
     logger.info('Log level: %s', log_level)
 
     proceed = inquirer.confirm(
-        message='Run the pipeline with these settings?',
+        message='Ingest the document with these settings?',
         default=True,
     ).execute()
 
@@ -148,16 +155,18 @@ def _run_tui() -> None:
         logger.info('Cancelled.')
         return
 
-    result = asyncio.run(
-        pipeline.run(
-            pdf_path,
-            output_dir=out_dir,
-            pages=pages,
-            source=source,
-            title=title,
-            author=author,
-        )
-    )
+    async def ingest_selected_pdf():
+        async with runtime.Runtime() as application:
+            return await application.ingest(
+                pdf_path,
+                output_dir=out_dir,
+                pages=pages,
+                source=source,
+                title=title,
+                author=author,
+            )
+
+    result = asyncio.run(ingest_selected_pdf())
     logger.info(
         'Done: %d node(s), %d statement(s), %d procedure(s), '
         '%d instruction(s).',

@@ -1,7 +1,7 @@
 import asyncio
 
+from kms.construction import splitter
 from kms.core import models
-from kms.ingestion import splitter
 
 
 class _ScriptedSplitter:

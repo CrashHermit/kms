@@ -1,18 +1,53 @@
 """Typed multimodal content: ordered text and image parts."""
 
 import base64
+import io
 from pathlib import Path
 from typing import Any
 
 import dspy
+from PIL import Image
 from pydantic import BaseModel, Field
 
+from kms import config
 
-def load_image(path: str | None) -> dspy.Image | None:
-    """Loads an image file into a dspy.Image, or None if absent."""
+
+def _resize_bytes(data: bytes, max_dim: int) -> bytes:
+    """Resizes image bytes so the longest side is at most max_dim.
+
+    Images already within the cap are returned unchanged.
+    """
+    with Image.open(io.BytesIO(data)) as img:
+        width, height = img.size
+        longest = max(width, height)
+        if longest <= max_dim:
+            return data
+        scale = max_dim / longest
+        resized = img.resize(
+            (round(width * scale), round(height * scale)),
+            Image.Resampling.LANCZOS,
+        )
+        buf = io.BytesIO()
+        resized.save(buf, format='PNG')
+        return buf.getvalue()
+
+
+def load_image(
+    path: str | None, max_dim: int | None = None
+) -> dspy.Image | None:
+    """Loads an image file into a dspy.Image, or None if absent.
+
+    Args:
+        path: Path to the image file.
+        max_dim: Optional longest-side cap in pixels; larger images are
+            resized down while preserving aspect ratio.
+    """
     if not path:
         return None
-    encoded = base64.b64encode(Path(path).read_bytes()).decode('utf-8')
+    data = Path(path).read_bytes()
+    if max_dim is not None:
+        data = _resize_bytes(data, max_dim)
+    encoded = base64.b64encode(data).decode('utf-8')
     return dspy.Image(url=f'data:image/png;base64,{encoded}')
 
 
@@ -29,10 +64,14 @@ def image_url(image: dspy.Image) -> str:
 
 
 class TextPart(BaseModel):
+    """A single text part of a Content value."""
+
     text: str
 
 
 class ImagePart(BaseModel):
+    """A single image part of a Content value."""
+
     image: dspy.Image
 
 
@@ -50,6 +89,7 @@ class Content(BaseModel):
 
     @classmethod
     def from_parts(cls, parts: list[str | dspy.Image]) -> 'Content':
+        """Builds Content from a flat list of strings and images."""
         return cls(
             parts=[
                 TextPart(text=part)
@@ -61,17 +101,22 @@ class Content(BaseModel):
 
     @classmethod
     def from_text(cls, text: str) -> 'Content':
+        """Builds Content from a single text string."""
         return cls(parts=[TextPart(text=text)])
 
     @classmethod
     def from_text_and_pictures(
         cls, text: str, pictures: list[dict]
     ) -> 'Content':
+        """Builds Content from text plus picture records with image paths."""
         parts: list[TextPart | ImagePart] = []
         if text:
             parts.append(TextPart(text=text))
         for picture in pictures:
-            image = load_image(picture.get('image_path'))
+            image = load_image(
+                picture.get('image_path'),
+                max_dim=config.get_settings().image.max_dim,
+            )
             if image:
                 parts.append(ImagePart(image=image))
         return cls(parts=parts)
@@ -124,7 +169,10 @@ def labeled_content(nodes: list[Any]) -> Content:
     for node in nodes:
         label = f'[{node.position}] ({node.type})'
         if node.image_path:
-            image = load_image(node.image_path)
+            image = load_image(
+                node.image_path,
+                max_dim=config.get_settings().image.max_dim,
+            )
             parts.append(TextPart(text=label))
             if image:
                 parts.append(ImagePart(image=image))
@@ -139,8 +187,10 @@ class ContentParts(dspy.Type):
     content: Content
 
     def format(self) -> list[dict[str, Any]]:
+        """Returns OpenAI-style content blocks for LLM payloads."""
         return self.content.openai_blocks()
 
 
 def labeled_content_parts(nodes: list[Any]) -> ContentParts:
+    """Builds a ContentParts dspy input from node-like objects."""
     return ContentParts(content=labeled_content(nodes))

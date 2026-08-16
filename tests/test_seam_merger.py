@@ -1,7 +1,7 @@
 import asyncio
 
+from kms.construction import seam_merger
 from kms.core import models
-from kms.ingestion import seam_merger
 
 
 def _segment(index, nodes):
