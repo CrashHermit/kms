@@ -11,6 +11,7 @@ from kms.graph import (
     entities,
     hubs,
     instructions,
+    learning_hubs,
     names,
     nodes,
     predicates,
@@ -68,6 +69,12 @@ MERGE_STATEMENTS = (
     f'SET s += row, s.modified_at = $now'
 )
 
+MERGE_STATEMENT_ENRICHMENT = (
+    f'UNWIND $rows AS row '
+    f'MATCH (s:{statements.STATEMENT_LABEL} {{uuid: row.uuid}}) '
+    f'SET s.description = row.description, s.embedding = row.embedding'
+)
+
 MERGE_STATEMENT_MEMBERS = (
     f'UNWIND $pairs AS pair '
     f'MATCH (n:{nodes.NODE_LABEL} {{uuid: pair.node}}), '
@@ -98,6 +105,12 @@ MERGE_PROCEDURES = (
     f'MERGE (p:{procedures.PROCEDURE_LABEL} {{uuid: row.uuid}}) '
     f'ON CREATE SET p.created_at = $now '
     f'SET p += row, p.modified_at = $now'
+)
+
+MERGE_PROCEDURE_ENRICHMENT = (
+    f'UNWIND $rows AS row '
+    f'MATCH (p:{procedures.PROCEDURE_LABEL} {{uuid: row.uuid}}) '
+    f'SET p.description = row.description, p.embedding = row.embedding'
 )
 
 MERGE_STEPS = (
@@ -204,6 +217,64 @@ def merge_hubs_query(label: str) -> str:
         f'MERGE (h:{label} {{uuid: row.uuid}}) '
         f'ON CREATE SET h.created_at = $now '
         f'SET h += row, h.modified_at = $now'
+    )
+
+
+def merge_learning_hubs_query(kind: str) -> str:
+    label = learning_hubs.hub_label(kind)
+    return merge_hubs_query(label)
+
+
+def merge_learning_hub_memberships_query(kind: str) -> str:
+    base_label = learning_hubs.base_label(kind)
+    hub_label = learning_hubs.hub_label(kind)
+    return (
+        f'UNWIND $pairs AS pair '
+        f'MATCH (b:{base_label} {{uuid: pair.base}}), '
+        f'(h:{hub_label} {{uuid: pair.hub}}) '
+        f'MERGE (b)-[r:CANONICAL]->(h) '
+        f'ON CREATE SET r.created_at = $now '
+        f'SET r.modified_at = $now'
+    )
+
+
+def merge_meta_learning_hubs_query(kind: str) -> str:
+    meta_label = learning_hubs.hub_label(kind, tier='meta')
+    return (
+        f'UNWIND $rows AS row '
+        f'MERGE (h:{meta_label} {{uuid: row.uuid}}) '
+        f'ON CREATE SET h.created_at = $now '
+        f'SET h += row, h.modified_at = $now'
+    )
+
+
+def merge_meta_learning_alignments_query(kind: str) -> str:
+    source_label = learning_hubs.hub_label(kind)
+    meta_label = learning_hubs.hub_label(kind, tier='meta')
+    return (
+        f'UNWIND $pairs AS pair '
+        f'MATCH (s:{source_label} {{uuid: pair.source_hub}}), '
+        f'(m:{meta_label} {{uuid: pair.meta_hub}}) '
+        f'MERGE (s)-[r:ALIGNS_TO]->(m) '
+        f'ON CREATE SET r.created_at = $now '
+        f'SET r.modified_at = $now'
+    )
+
+
+def delete_meta_learning_hubs_query(kind: str) -> str:
+    return (
+        f'MATCH (h:{learning_hubs.hub_label(kind, tier="meta")}) '
+        f'DETACH DELETE h'
+    )
+
+
+def delete_learning_hubs_query(kind: str) -> str:
+    label = learning_hubs.hub_label(kind)
+    return (
+        f'MATCH (h:{label}) '
+        f'MATCH (src:{nodes.SOURCE_LABEL} {{uuid: h.source}}) '
+        f'WHERE src.key = $source '
+        f'DETACH DELETE h'
     )
 
 
@@ -783,6 +854,8 @@ async def qualified_meta_hub_uuids(
 
 _VECTOR_INDEX_LABELS = {
     'node_content': nodes.NODE_LABEL,
+    'statement_embedding': statements.STATEMENT_LABEL,
+    'procedure_embedding': procedures.PROCEDURE_LABEL,
     'entity_embedding': entities.ENTITY_LABEL,
     'predicate_embedding': predicates.PREDICATE_LABEL,
     'entity_hub_embedding': hubs.ENTITY_HUB_LABEL,
@@ -862,6 +935,110 @@ async def vector_search(
         ]
 
 
+async def all_source_learning_hubs(
+    session_factory: Callable,
+    kind: str,
+) -> list[dict]:
+    label = learning_hubs.hub_label(kind)
+    cypher = (
+        f'MATCH (h:{label}) '
+        f'MATCH (src:{nodes.SOURCE_LABEL} {{uuid: h.source}}) '
+        f'RETURN h.uuid AS uuid, h.description AS description, '
+        f'h.embedding AS embedding, src.key AS source '
+        f'ORDER BY h.uuid'
+    )
+    async with session_factory() as session:
+        result = await session.run(cypher)
+        return [dict(record) async for record in result]
+
+
+async def learning_hub_items(
+    session_factory: Callable,
+    kind: str,
+    source: str,
+) -> list[dict]:
+    label = learning_hubs.base_label(kind)
+    description = 'b.description'
+    cypher = (
+        f'MATCH (b:{label}) '
+        f'MATCH (src:{nodes.SOURCE_LABEL} {{uuid: b.source}}) '
+        f'WHERE src.key = $source '
+        f'RETURN b.uuid AS uuid, {description} AS description, '
+        f'b.embedding AS embedding, src.key AS source '
+        f'ORDER BY b.uuid'
+    )
+    async with session_factory() as session:
+        result = await session.run(cypher, source=source)
+        return [dict(record) async for record in result]
+
+
+async def statement_enrichment_items(
+    session_factory: Callable,
+    source: str | None = None,
+) -> list[dict]:
+    """Returns Statements with optional source-key filtering."""
+    source_clause = 'WHERE src.key = $source ' if source else ''
+    cypher = (
+        f'MATCH (s:{statements.STATEMENT_LABEL}) '
+        f'MATCH (src:{nodes.SOURCE_LABEL} {{uuid: s.source}}) '
+        f'{source_clause}'
+        f'RETURN s.uuid AS statement_uuid, src.key AS source '
+        f'ORDER BY s.uuid'
+    )
+    parameters = {'source': source} if source else {}
+    async with session_factory() as session:
+        result = await session.run(cypher, **parameters)
+        return [dict(record) async for record in result]
+
+
+async def procedure_enrichment_items(
+    session_factory: Callable,
+    source: str | None = None,
+) -> list[dict]:
+    """Returns Procedures with optional source-key filtering."""
+    source_clause = 'WHERE src.key = $source ' if source else ''
+    cypher = (
+        f'MATCH (p:{procedures.PROCEDURE_LABEL}) '
+        f'MATCH (src:{nodes.SOURCE_LABEL} {{uuid: p.source}}) '
+        f'{source_clause}'
+        f'OPTIONAL MATCH (s:{statements.STATEMENT_LABEL})-[:HAS_PROCEDURE]->(p) '
+        f'RETURN p.uuid AS procedure_uuid, s.uuid AS statement_uuid, '
+        f'src.key AS source ORDER BY p.uuid'
+    )
+    parameters = {'source': source} if source else {}
+    async with session_factory() as session:
+        result = await session.run(cypher, **parameters)
+        return [dict(record) async for record in result]
+
+
+async def statement_knowledge(
+    statement_uuid: str,
+    session_factory: Callable,
+) -> list[dict]:
+    """Returns canonical concepts, relations, and facts for a statement."""
+    cypher = (
+        f'MATCH (n:{nodes.NODE_LABEL})-[:MEMBER_OF]->'
+        f'(s:{statements.STATEMENT_LABEL} {{uuid: $statement_uuid}}) '
+        f'MATCH (n)-[:SUPPORTS]->(t:{triplets.TRIPLET_LABEL}) '
+        f'MATCH (t)-[:INSTANCE_OF]->(th:{hubs.TRIPLET_HUB_LABEL}) '
+        f'OPTIONAL MATCH (t)-[:HAS_SUBJECT]->'
+        f'(:{entities.ENTITY_LABEL})-[:CANONICAL]->'
+        f'(sh:{hubs.ENTITY_HUB_LABEL}) '
+        f'OPTIONAL MATCH (t)-[:HAS_PREDICATE]->'
+        f'(:{predicates.PREDICATE_LABEL})-[:CANONICAL]->'
+        f'(ph:{hubs.PREDICATE_HUB_LABEL}) '
+        f'RETURN DISTINCT sh.canonical_name AS name, '
+        f'sh.description AS description, '
+        f'ph.canonical_name AS predicate_name, '
+        f'ph.description AS predicate_description, '
+        f'th.canonical_name AS fact_name, '
+        f'th.description AS fact_description'
+    )
+    async with session_factory() as session:
+        result = await session.run(cypher, statement_uuid=statement_uuid)
+        return [dict(record) async for record in result]
+
+
 async def compose_statement(
     statement_uuid: str,
     session_factory: Callable,
@@ -919,26 +1096,107 @@ async def compose_statement(
     return {'text': '\n\n'.join(text_parts), 'pictures': pictures}
 
 
-async def orphan_statements(
+async def statement_procedure_work_items(
     session_factory: Callable,
 ) -> list[dict]:
-    """Returns statements that have no linked procedure.
+    """Returns every statement and its attached procedure state.
 
     Args:
         session_factory: Async callable returning a Neo4j session.
 
     Returns:
-        ``{'uuid', 'source'}`` dicts for each orphaned statement.
+        One row per statement/procedure pair, or one row for a statement
+        without a procedure. Each row contains the raw source key and a
+        ``has_steps`` flag for an attached procedure.
     """
     cypher = (
         f'MATCH (s:{statements.STATEMENT_LABEL})\n'
-        f'WHERE NOT (s)-[:HAS_PROCEDURE]->(:{procedures.PROCEDURE_LABEL})\n'
         f'MATCH (src:{nodes.SOURCE_LABEL} {{uuid: s.source}})\n'
-        f'RETURN s.uuid AS uuid, src.key AS source'
+        f'OPTIONAL MATCH (s)-[:HAS_PROCEDURE]->'
+        f'(p:{procedures.PROCEDURE_LABEL})\n'
+        f'OPTIONAL MATCH (p)-[:FIRST]->(first:{procedures.STEP_LABEL})\n'
+        f'RETURN s.uuid AS statement_uuid, src.key AS source,\n'
+        f'       p.uuid AS procedure_uuid,\n'
+        f'       count(first) > 0 AS has_steps\n'
+        f'ORDER BY statement_uuid, procedure_uuid'
     )
     async with session_factory() as session:
         result = await session.run(cypher)
         return [
-            {'uuid': record['uuid'], 'source': record['source']}
+            {
+                'statement_uuid': record['statement_uuid'],
+                'source': record['source'],
+                'procedure_uuid': record['procedure_uuid'],
+                'has_steps': record['has_steps'],
+            }
             async for record in result
         ]
+
+
+async def compose_procedure(
+    procedure_uuid: str,
+    session_factory: Callable,
+) -> dict:
+    """Assembles a source procedure's member nodes in document order.
+
+    Args:
+        procedure_uuid: UUID of the Procedure node.
+        session_factory: Async callable returning a Neo4j session.
+
+    Returns:
+        A dict with ``text``, ``pictures``, and ``member_count`` fields.
+    """
+    cypher = (
+        f'MATCH (n:{nodes.NODE_LABEL})-[:MEMBER_OF]->'
+        f'(p:{procedures.PROCEDURE_LABEL} {{uuid: $procedure_uuid}})\n'
+        f'RETURN n.content AS content, n.type AS type, '
+        f'n.index AS index, n.segment_index AS segment_index, '
+        f'n.image_path AS image_path\n'
+        f'ORDER BY n.index'
+    )
+    async with session_factory() as session:
+        result = await session.run(cypher, procedure_uuid=procedure_uuid)
+        member_nodes = [
+            {
+                'content': record['content'],
+                'type': record['type'],
+                'index': record['index'],
+                'segment_index': record.get('segment_index'),
+                'image_path': record.get('image_path'),
+            }
+            async for record in result
+        ]
+        step_result = await session.run(
+            f'MATCH (p:{procedures.PROCEDURE_LABEL} '
+            f'{{uuid: $procedure_uuid}})-[:FIRST]->'
+            f'(first:{procedures.STEP_LABEL}) '
+            f'OPTIONAL MATCH (first)-[:THEN*0..]->'
+            f'(step:{procedures.STEP_LABEL}) '
+            f'RETURN DISTINCT step.index AS index, step.text AS text '
+            f'ORDER BY index',
+            procedure_uuid=procedure_uuid,
+        )
+        steps = [dict(record) async for record in step_result]
+
+    text_parts: list[str] = []
+    pictures: list[dict] = []
+    for node_data in member_nodes:
+        if node_data['type'] == 'image':
+            pictures.append(
+                {
+                    'index': node_data['index'],
+                    'segment_index': node_data['segment_index'],
+                    'image_path': node_data['image_path'],
+                }
+            )
+        else:
+            node_content = node_data['content'] or ''
+            if node_content:
+                text_parts.append(node_content)
+
+    return {
+        'text': '\n\n'.join(text_parts),
+        'pictures': pictures,
+        'member_count': len(member_nodes),
+        'steps': steps,
+    }

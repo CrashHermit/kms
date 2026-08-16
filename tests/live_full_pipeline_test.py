@@ -1,14 +1,17 @@
 import asyncio
 from pathlib import Path
 
-from kms.construction import canonicalizer
-from kms.construction.canonicalizer import rebuild
+from kms.construction import (
+    entity_enrichment,
+    entity_hubs,
+    predicate_enrichment,
+)
 from kms.construction.triplet_extractor import (
     TripletNode,
     _FactExtractor,
     _TripletDecomposer,
 )
-from kms.core import embeddings, llm, models
+from kms.core import llm, models, semantic
 from kms.graph import db, schema, writer
 
 PAGES = [
@@ -68,19 +71,19 @@ async def main():
 
     await writer.persist_nodes(all_nodes, SOURCE, session_factory=_session)
 
-    enricher = canonicalizer.ComponentEnricher(language_model=lm)
-    (
-        entity_descriptions,
-        predicate_descriptions,
-    ) = await canonicalizer.enrich_components(all_nodes, all_triplets, enricher)
+    enricher = entity_enrichment.EntityEnricher(language_model=lm)
+    entity_descriptions = await entity_enrichment.enrich(
+        all_nodes, all_triplets, enricher
+    )
+    predicate_descriptions = await predicate_enrichment.enrich(
+        all_nodes,
+        all_triplets,
+        predicate_enrichment.PredicateEnricher(language_model=lm),
+    )
 
-    (
-        entity_embeddings,
-        predicate_embeddings,
-    ) = await canonicalizer.embed_components(
-        entity_descriptions,
-        predicate_descriptions,
-        embeddings.embedder(),
+    entity_embeddings = await semantic.embed_descriptions(entity_descriptions)
+    predicate_embeddings = await semantic.embed_descriptions(
+        predicate_descriptions
     )
 
     await writer.persist_assertions(
@@ -95,14 +98,15 @@ async def main():
     await writer.persist_chain(all_nodes, SOURCE, session_factory=_session)
 
     print('\n' + '=' * 60)
-    print('CANONICALIZER')
+    print('ENTITY HUB BUILD')
     print('=' * 60)
 
-    result = await rebuild(
-        'entity',
+    result = await entity_hubs.rebuild_source(
+        SOURCE,
         language_model=lm,
+        adjudicator=entity_hubs.EntityHubAdjudicator(language_model=lm),
+        synthesizer=entity_hubs.EntityHubSynthesizer(language_model=lm),
         session_factory=_session,
-        source=SOURCE,
     )
     print(f'\nRecords: {result["records"]}')
     print(f'Clusters: {result["clusters"]}')

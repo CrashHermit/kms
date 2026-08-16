@@ -7,6 +7,7 @@ from kms.graph import (
     entities,
     hubs,
     instructions,
+    learning_hubs,
     names,
     nodes,
     predicates,
@@ -92,6 +93,10 @@ def schema_statements() -> list[str]:
         f'`vector.similarity_function`: "cosine"}}}}',
         f'CREATE INDEX statement_source IF NOT EXISTS '
         f'FOR (s:{statements.STATEMENT_LABEL}) ON (s.source)',
+        f'CREATE VECTOR INDEX statement_embedding IF NOT EXISTS '
+        f'FOR (s:{statements.STATEMENT_LABEL}) ON (s.embedding) '
+        f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
+        f'`vector.similarity_function`: "cosine"}}}}',
         f'CREATE INDEX triplet_source IF NOT EXISTS '
         f'FOR (t:{triplets.TRIPLET_LABEL}) ON (t.source)',
         f'CREATE VECTOR INDEX entity_embedding IF NOT EXISTS '
@@ -146,6 +151,42 @@ def schema_statements() -> list[str]:
         f'FOR (h:{hubs.META_TRIPLET_HUB_LABEL}) REQUIRE h.uuid IS UNIQUE',
         f'CREATE VECTOR INDEX meta_triplet_hub_embedding IF NOT EXISTS '
         f'FOR (h:{hubs.META_TRIPLET_HUB_LABEL}) ON (h.embedding) '
+        f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
+        f'`vector.similarity_function`: "cosine"}}}}',
+        f'CREATE VECTOR INDEX procedure_embedding IF NOT EXISTS '
+        f'FOR (p:{procedures.PROCEDURE_LABEL}) ON (p.embedding) '
+        f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
+        f'`vector.similarity_function`: "cosine"}}}}',
+        f'CREATE CONSTRAINT meta_statement_hub_uuid IF NOT EXISTS '
+        f'FOR (h:{learning_hubs.META_STATEMENT_HUB_LABEL}) '
+        f'REQUIRE h.uuid IS UNIQUE',
+        f'CREATE VECTOR INDEX meta_statement_hub_embedding IF NOT EXISTS '
+        f'FOR (h:{learning_hubs.META_STATEMENT_HUB_LABEL}) ON (h.embedding) '
+        f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
+        f'`vector.similarity_function`: "cosine"}}}}',
+        f'CREATE CONSTRAINT meta_procedure_hub_uuid IF NOT EXISTS '
+        f'FOR (h:{learning_hubs.META_PROCEDURE_HUB_LABEL}) '
+        f'REQUIRE h.uuid IS UNIQUE',
+        f'CREATE VECTOR INDEX meta_procedure_hub_embedding IF NOT EXISTS '
+        f'FOR (h:{learning_hubs.META_PROCEDURE_HUB_LABEL}) ON (h.embedding) '
+        f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
+        f'`vector.similarity_function`: "cosine"}}}}',
+        f'CREATE CONSTRAINT statement_hub_uuid IF NOT EXISTS '
+        f'FOR (h:{learning_hubs.STATEMENT_HUB_LABEL}) '
+        f'REQUIRE h.uuid IS UNIQUE',
+        f'CREATE INDEX statement_hub_source IF NOT EXISTS '
+        f'FOR (h:{learning_hubs.STATEMENT_HUB_LABEL}) ON (h.source)',
+        f'CREATE VECTOR INDEX statement_hub_embedding IF NOT EXISTS '
+        f'FOR (h:{learning_hubs.STATEMENT_HUB_LABEL}) ON (h.embedding) '
+        f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
+        f'`vector.similarity_function`: "cosine"}}}}',
+        f'CREATE CONSTRAINT procedure_hub_uuid IF NOT EXISTS '
+        f'FOR (h:{learning_hubs.PROCEDURE_HUB_LABEL}) '
+        f'REQUIRE h.uuid IS UNIQUE',
+        f'CREATE INDEX procedure_hub_source IF NOT EXISTS '
+        f'FOR (h:{learning_hubs.PROCEDURE_HUB_LABEL}) ON (h.source)',
+        f'CREATE VECTOR INDEX procedure_hub_embedding IF NOT EXISTS '
+        f'FOR (h:{learning_hubs.PROCEDURE_HUB_LABEL}) ON (h.embedding) '
         f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
         f'`vector.similarity_function`: "cosine"}}}}',
     ]

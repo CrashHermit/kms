@@ -60,6 +60,19 @@ def procedure_properties(source: str, procedure: models.Procedure) -> dict:
     }
 
 
+def procedure_enrichment_properties(
+    procedure_uuid_value: str,
+    description: str,
+    embedding: list[float],
+) -> dict:
+    """Builds derived semantic properties for one Procedure."""
+    return {
+        'uuid': procedure_uuid_value,
+        'description': description,
+        'embedding': embedding,
+    }
+
+
 def step_properties(
     source: str,
     procedure_uuid: str,
@@ -95,18 +108,54 @@ def procedure_rows(
     return [procedure_properties(source, procedure) for procedure in procedures]
 
 
-def step_rows(procedures: list[models.Procedure], source: str) -> list[dict]:
+def step_rows(
+    procedure_list: list[models.Procedure], source: str
+) -> list[dict]:
     """Builds the row dicts for every step of every procedure."""
     rows: list[dict] = []
-    for procedure in procedures:
+    for procedure in procedure_list:
         if not procedure.steps:
             continue
         procedure_id = _procedure_id(source, procedure)
-        for step in procedure.steps:
-            rows.append(
-                step_properties(source, procedure_id, step.index, step.text)
-            )
+        rows.extend(existing_step_rows(source, procedure_id, procedure.steps))
     return rows
+
+
+def existing_step_rows(
+    source: str, procedure_uuid: str, steps: list[models.Step]
+) -> list[dict]:
+    """Builds step rows for a procedure that already exists in the graph."""
+    return [
+        step_properties(source, procedure_uuid, step.index, step.text)
+        for step in steps
+    ]
+
+
+def existing_first_pairs(
+    source: str, procedure_uuid: str, steps: list[models.Step]
+) -> list[dict]:
+    """Builds the FIRST edge for an existing procedure UUID."""
+    if not steps:
+        return []
+    return [
+        {
+            'procedure': procedure_uuid,
+            'step': step_uuid(source, procedure_uuid, steps[0].index),
+        }
+    ]
+
+
+def existing_then_pairs(
+    source: str, procedure_uuid: str, steps: list[models.Step]
+) -> list[dict]:
+    """Builds THEN edges for an existing procedure UUID."""
+    return [
+        {
+            'from': step_uuid(source, procedure_uuid, current.index),
+            'to': step_uuid(source, procedure_uuid, following.index),
+        }
+        for current, following in zip(steps, steps[1:], strict=False)
+    ]
 
 
 def procedure_member_pairs(

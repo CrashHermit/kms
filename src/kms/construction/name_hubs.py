@@ -127,12 +127,22 @@ async def _judged_groups(
     gate: asyncio.Semaphore,
 ) -> list[list[dict]]:
     """Runs lexical judgment only on deterministic similarity candidates."""
-    candidate_pairs = names.lexical_candidate_pairs(
-        rows,
-        threshold=similarity_threshold,
-    )
+    exact_pairs = [
+        (left, right)
+        for left in range(len(rows))
+        for right in range(left + 1, len(rows))
+        if rows[left]['normalized_text'] == rows[right]['normalized_text']
+    ]
+    candidate_pairs = [
+        pair
+        for pair in names.lexical_candidate_pairs(
+            rows,
+            threshold=similarity_threshold,
+        )
+        if pair not in exact_pairs
+    ]
     if not candidate_pairs:
-        return names.lexical_groups_from_pairs(rows, [])
+        return names.lexical_groups_from_pairs(rows, exact_pairs)
 
     judge = _LexicalMembershipJudge(language_model)
 
@@ -154,7 +164,9 @@ async def _judged_groups(
     decisions = await asyncio.gather(
         *(_judge_pair(pair) for pair in candidate_pairs)
     )
-    accepted_pairs = [pair for pair in decisions if pair is not None]
+    accepted_pairs = exact_pairs + [
+        pair for pair in decisions if pair is not None
+    ]
     return names.lexical_groups_from_pairs(rows, accepted_pairs)
 
 

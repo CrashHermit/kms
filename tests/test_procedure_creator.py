@@ -9,14 +9,17 @@ def test_step_splitter_returns_model_stages_without_fallback():
     steps = procedure_creator.StepSplitter.decode(
         None,
         prediction,
-        procedure='Set up the claim. Verify the first condition. Conclude.',
+        statement=procedure_creator.content.Content.from_text('Claim.'),
+        procedure=procedure_creator.content.Content.from_text(
+            'Set up the claim. Verify the first condition. Conclude.'
+        ),
+        entity_definitions='definition',
     )
 
     assert steps == prediction.steps
 
 
 def test_step_splitter_accepts_complete_grouped_stages():
-    procedure = 'Set up the claim. Verify the first condition. Conclude.'
     prediction = SimpleNamespace(
         steps=['Set up the claim. Verify the first condition.', 'Conclude.']
     )
@@ -24,7 +27,11 @@ def test_step_splitter_accepts_complete_grouped_stages():
     steps = procedure_creator.StepSplitter.decode(
         None,
         prediction,
-        procedure=procedure,
+        statement=procedure_creator.content.Content.from_text('Claim.'),
+        procedure=procedure_creator.content.Content.from_text(
+            'Set up the claim. Verify the first condition. Conclude.'
+        ),
+        entity_definitions='definition',
     )
 
     assert steps == prediction.steps

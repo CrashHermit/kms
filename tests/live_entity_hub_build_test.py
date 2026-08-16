@@ -1,13 +1,16 @@
 import asyncio
 
-from kms.construction import canonicalizer
-from kms.construction.canonicalizer import rebuild
+from kms.construction import (
+    entity_enrichment,
+    entity_hubs,
+    predicate_enrichment,
+)
 from kms.construction.triplet_extractor import (
     TripletNode,
     _FactExtractor,
     _TripletDecomposer,
 )
-from kms.core import embeddings, llm, models
+from kms.core import llm, models, semantic
 from kms.graph import db, schema, writer
 
 CONTENT = """\
@@ -58,7 +61,7 @@ async def main():
         await session.run('MATCH (n) DETACH DELETE n')
     await schema.ensure_schema(_session)
 
-    lm = llm.module_lm('canonicalizer')
+    lm = llm.module_lm('entity_enrichment')
     nodes = [models.ASTNode(id=0, type='paragraph', content=CONTENT)]
     triplet_node = TripletNode(
         fact_module=_FactExtractor(lm), triplet_module=_TripletDecomposer(lm)
@@ -70,19 +73,19 @@ async def main():
     for t in triplets:
         print(f'  {t.subject} | {t.predicate} | {t.object}')
 
-    enricher = canonicalizer.ComponentEnricher(language_model=lm)
-    (
-        entity_descriptions,
-        predicate_descriptions,
-    ) = await canonicalizer.enrich_components(nodes, triplets, enricher)
-
-    (
-        entity_embeddings,
-        predicate_embeddings,
-    ) = await canonicalizer.embed_components(
-        entity_descriptions,
-        predicate_descriptions,
-        embeddings.embedder(),
+    enricher = entity_enrichment.EntityEnricher(language_model=lm)
+    entity_descriptions = await entity_enrichment.enrich(
+        nodes, triplets, enricher
+    )
+    predicate_enricher = predicate_enrichment.PredicateEnricher(
+        language_model=lm
+    )
+    predicate_descriptions = await predicate_enrichment.enrich(
+        nodes, triplets, predicate_enricher
+    )
+    entity_embeddings = await semantic.embed_descriptions(entity_descriptions)
+    predicate_embeddings = await semantic.embed_descriptions(
+        predicate_descriptions
     )
 
     await writer.persist_nodes(nodes, SOURCE, session_factory=_session)
@@ -98,14 +101,15 @@ async def main():
     await writer.persist_chain(nodes, SOURCE, session_factory=_session)
 
     print('\n' + '=' * 60)
-    print('CANONICALIZER (maintenance rebuild)')
+    print('ENTITY HUB BUILD (maintenance rebuild)')
     print('=' * 60)
 
-    result = await rebuild(
-        'entity',
+    result = await entity_hubs.rebuild_source(
+        SOURCE,
         language_model=lm,
+        adjudicator=entity_hubs.EntityHubAdjudicator(language_model=lm),
+        synthesizer=entity_hubs.EntityHubSynthesizer(language_model=lm),
         session_factory=_session,
-        source=SOURCE,
     )
     print(f'\nRecords: {result["records"]}')
     print(f'Clusters: {result["clusters"]}')

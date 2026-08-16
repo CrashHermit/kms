@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from kms.construction import canonicalizer
+from kms.construction import hub_builder
 from kms.core import models
 from kms.graph import db, nodes, schema, writer
 
@@ -132,7 +132,7 @@ def test_meta_rebuild_preserves_durable_components_and_source_hubs(monkeypatch):
         'predicate': 'integration-meta-predicate-hub',
     }
 
-    async def fake_canonicalize_records(*args, **kwargs):
+    async def fake_build_hubs(*args, **kwargs):
         kind = args[0]
         return {
             'clusters': [],
@@ -148,11 +148,9 @@ def test_meta_rebuild_preserves_durable_components_and_source_hubs(monkeypatch):
             'subsumption_edges': [],
         }
 
+    monkeypatch.setattr(hub_builder, 'build_hubs', fake_build_hubs)
     monkeypatch.setattr(
-        canonicalizer, 'canonicalize_records', fake_canonicalize_records
-    )
-    monkeypatch.setattr(
-        canonicalizer.name_hubs,
+        hub_builder.name_hubs,
         'rebuild_meta',
         lambda *args, **kwargs: asyncio.sleep(
             0, result={'name_hubs': 0, 'source_name_hubs': 0}
@@ -239,7 +237,7 @@ def test_meta_rebuild_preserves_durable_components_and_source_hubs(monkeypatch):
                     )
 
             for kind in ('entity', 'predicate'):
-                await canonicalizer.rebuild_meta(
+                await hub_builder.rebuild_meta_hubs(
                     kind,
                     language_model=object(),
                     session_factory=_session_factory,

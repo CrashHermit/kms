@@ -19,10 +19,41 @@ def _capturing_session(captured):
             return False
 
         async def run(self, cypher, **kwargs):
-            captured['cypher'] = cypher
+            captured.setdefault('queries', []).append(cypher)
             return _Result()
 
     return _Session()
+
+
+def test_statement_procedure_work_items_query_reads_raw_source():
+    captured = {}
+
+    async def scenario():
+        await queries.statement_procedure_work_items(
+            lambda: _capturing_session(captured)
+        )
+
+    asyncio.run(scenario())
+
+    cypher = '\n'.join(captured['queries'])
+    assert 'src.key AS source' in cypher
+    assert 'HAS_PROCEDURE' in cypher
+    assert 'FIRST' in cypher
+
+
+def test_compose_procedure_query_reads_members_in_order():
+    captured = {}
+
+    async def scenario():
+        await queries.compose_procedure(
+            'procedure-a', lambda: _capturing_session(captured)
+        )
+
+    asyncio.run(scenario())
+
+    cypher = '\n'.join(captured['queries'])
+    assert 'MEMBER_OF' in cypher
+    assert 'ORDER BY n.index' in cypher
 
 
 def test_all_components_entity_returns_raw_source_key():
@@ -35,9 +66,10 @@ def test_all_components_entity_returns_raw_source_key():
 
     asyncio.run(scenario())
 
-    assert 'src.key AS source' in captured['cypher']
-    assert 'c.name AS name' in captured['cypher']
-    assert 't.source AS source' not in captured['cypher']
+    cypher = '\n'.join(captured['queries'])
+    assert 'src.key AS source' in cypher
+    assert 'c.name AS name' in cypher
+    assert 't.source AS source' not in cypher
 
 
 def test_all_components_predicate_reads_predicate_field():
@@ -52,8 +84,9 @@ def test_all_components_predicate_reads_predicate_field():
 
     asyncio.run(scenario())
 
-    assert 'src.key AS source' in captured['cypher']
-    assert 'c.predicate AS name' in captured['cypher']
+    cypher = '\n'.join(captured['queries'])
+    assert 'src.key AS source' in cypher
+    assert 'c.predicate AS name' in cypher
 
 
 def test_unassigned_components_exclude_canonicalized_records():
@@ -66,8 +99,9 @@ def test_unassigned_components_exclude_canonicalized_records():
 
     asyncio.run(scenario())
 
-    assert 'NOT (c)-[:CANONICAL]->(:EntityHub)' in captured['cypher']
-    assert 'src.key = $source' in captured['cypher']
+    cypher = '\n'.join(captured['queries'])
+    assert 'NOT (c)-[:CANONICAL]->(:EntityHub)' in cypher
+    assert 'src.key = $source' in cypher
 
 
 def test_all_source_hubs_reads_canonical_fields_and_can_filter():
@@ -80,11 +114,12 @@ def test_all_source_hubs_reads_canonical_fields_and_can_filter():
 
     asyncio.run(scenario())
 
-    assert 'MATCH (h:EntityHub)' in captured['cypher']
-    assert 'h.canonical_name AS name' in captured['cypher']
-    assert 'h.aliases AS aliases' in captured['cypher']
-    assert 'src.key AS source' in captured['cypher']
-    assert 'WHERE h.source = $source_uuid' in captured['cypher']
+    cypher = '\n'.join(captured['queries'])
+    assert 'MATCH (h:EntityHub)' in cypher
+    assert 'h.canonical_name AS name' in cypher
+    assert 'h.aliases AS aliases' in cypher
+    assert 'src.key AS source' in cypher
+    assert 'WHERE h.source = $source_uuid' in cypher
 
 
 def test_all_source_hubs_can_filter_to_changed_hub_ids():
@@ -99,7 +134,8 @@ def test_all_source_hubs_can_filter_to_changed_hub_ids():
 
     asyncio.run(scenario())
 
-    assert 'WHERE h.uuid IN $hub_uuids' in captured['cypher']
+    cypher = '\n'.join(captured['queries'])
+    assert 'WHERE h.uuid IN $hub_uuids' in cypher
 
 
 def test_qualified_meta_hub_query_requires_two_source_values():
@@ -112,11 +148,10 @@ def test_qualified_meta_hub_query_requires_two_source_values():
 
     asyncio.run(scenario())
 
-    assert (
-        'OPTIONAL MATCH (m)<-[:ALIGNS_TO]-(s:EntityHub)' in captured['cypher']
-    )
-    assert 'count(DISTINCT s.source)' in captured['cypher']
-    assert 'WHERE source_count >= 2' in captured['cypher']
+    cypher = '\n'.join(captured['queries'])
+    assert 'OPTIONAL MATCH (m)<-[:ALIGNS_TO]-(s:EntityHub)' in cypher
+    assert 'count(DISTINCT s.source)' in cypher
+    assert 'WHERE source_count >= 2' in cypher
 
 
 def test_all_components_can_filter_to_one_source():

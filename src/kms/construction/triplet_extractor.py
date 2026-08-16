@@ -1,4 +1,10 @@
-"""Two-pass knowledge extraction: atomic facts, then triplets."""
+"""Extract source-level facts and relational evidence for later abstraction.
+
+The fact and triplet passes preserve what a document explicitly says. They do
+not write canonical definitions or invent general knowledge. Canonical hubs
+later abstract repeated source-level evidence into reusable concepts, relations,
+and facts.
+"""
 
 import asyncio
 import logging
@@ -13,13 +19,13 @@ logger = logging.getLogger(__name__)
 
 
 class _FactInput(BaseModel):
-    """One atomic fact and the window nodes it was drawn from."""
+    """One explicit source-level fact and its provenance nodes."""
 
     text: str = Field(
         description=(
-            'The fact as a short, self-contained standalone sentence '
-            'conveying exactly one unit of information: one assertion, one '
-            'instruction, or one question.'
+            'A short, self-contained rendering of one explicit source-level '
+            'claim or relation. Preserve the fact; do not infer an answer, '
+            'canonical definition, or generalization.'
         )
     )
     node_ids: list[int] = Field(
@@ -187,7 +193,7 @@ class _FactExtractor(module.Module):
 
 
 class _TripletInput(BaseModel):
-    """One subject/predicate/object decomposition of a fact."""
+    """One source-level subject/predicate/object decomposition of a fact."""
 
     subject: str = Field(
         description=(
@@ -227,7 +233,14 @@ class _TripletSignature(dspy.Signature):
     r"""
     You are given one ATOMIC FACT — a single, self-contained sentence
     conveying exactly one piece of information. Decompose it into
-    (subject, predicate, object) TRIPLETS.
+    (subject, predicate, object) TRIPLETS as source-level relational evidence.
+
+    This pass records what the source fact asserts so later hub building
+    can group and abstract it. A triplet is not yet a canonical hub or a
+    standalone textbook definition: keep the source wording and qualifiers,
+    do not merge mentions, and do not infer facts that the source does not
+    state. The later hub layer will synthesize reusable concepts, relations,
+    and canonical assertions from supported triplet evidence.
 
     A TRIPLET is one relational assertion: a subject, a predicate that
     connects it to an object, and the object. Every triplet is ONE
@@ -442,7 +455,11 @@ class _TripletSignature(dspy.Signature):
     """
 
     fact_text: str = dspy.InputField(
-        description='One atomic fact — a single self-contained sentence.'
+        description=(
+            'One source-level atomic fact — a single self-contained '
+            'sentence. Preserve its explicit relation; do not generalize it '
+            'into a canonical hub fact.'
+        )
     )
     triplets: list[_TripletInput] = dspy.OutputField(
         description='Every (subject, predicate, object) triplet found in '
@@ -451,7 +468,7 @@ class _TripletSignature(dspy.Signature):
 
 
 class _TripletDecomposer(module.Module):
-    """Decomposes one atomic fact into knowledge triplets."""
+    """Decomposes one source-level fact into relational evidence triplets."""
 
     signature = _TripletSignature
     record_name = 'triplet_extractor'

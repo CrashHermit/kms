@@ -18,7 +18,13 @@ from pathlib import Path
 from typing import Literal
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import (
     BaseSettings,
     SettingsConfigDict,
@@ -44,7 +50,7 @@ class LMModel(_ConfigModel):
     api_key_source: str = 'deepseek'
     model: str = ''
     temperature: float = Field(default=0.0, ge=0.0)
-    max_tokens: int = Field(default=128000, gt=0)
+    max_tokens: int = Field(default=8192, gt=0)
 
 
 class ProviderLMModel(LMModel):
@@ -175,11 +181,12 @@ class FindersConfig(_ConfigModel):
     max_lookahead_budget: int = Field(default=8000, gt=0)
 
 
-class ComponentEnrichmentConfig(_ConfigModel):
-    """Entity and predicate component-enrichment window budgets."""
+class EnrichmentConfig(_ConfigModel):
+    """Semantic enrichment window and concurrency settings."""
 
     before_budget: int = Field(default=200, ge=0)
     after_budget: int = Field(default=200, ge=0)
+    max_concurrent_calls: int = Field(default=16, gt=0)
 
 
 class TripletConfig(_ConfigModel):
@@ -190,12 +197,19 @@ class TripletConfig(_ConfigModel):
     forward_context_budget: int = Field(default=400, ge=0)
 
 
-class CanonicalizerConfig(_ConfigModel):
-    """Canonicalization clustering thresholds."""
+class HubConfig(_ConfigModel):
+    """Semantic hub clustering thresholds."""
 
     recall_threshold: float = Field(default=0.55, ge=0.0, le=1.0)
     merge_above: float = Field(default=0.85, ge=0.0, le=1.0)
     separate_below: float = Field(default=0.35, ge=0.0, le=1.0)
+    max_concurrent_calls: int = Field(default=16, gt=0)
+
+
+class TripletHubConfig(_ConfigModel):
+    """Triplet hub synthesis settings."""
+
+    max_concurrent_calls: int = Field(default=16, gt=0)
 
 
 class SearchConfig(_ConfigModel):
@@ -216,15 +230,26 @@ class StagesConfig(_ConfigModel):
 
     splitter: SplitterConfig = Field(default_factory=SplitterConfig)
     finders: FindersConfig = Field(default_factory=FindersConfig)
-    component_enrichment: ComponentEnrichmentConfig = Field(
-        default_factory=ComponentEnrichmentConfig
+    entity_enrichment: EnrichmentConfig = Field(
+        default_factory=EnrichmentConfig
+    )
+    predicate_enrichment: EnrichmentConfig = Field(
+        default_factory=EnrichmentConfig
     )
     triplet: TripletConfig = Field(default_factory=TripletConfig)
-    canonicalizer: CanonicalizerConfig = Field(
-        default_factory=CanonicalizerConfig
+    entity_hubs: HubConfig = Field(default_factory=HubConfig)
+    predicate_hubs: HubConfig = Field(default_factory=HubConfig)
+    triplet_hubs: TripletHubConfig = Field(default_factory=TripletHubConfig)
+    statement_enrichment: EnrichmentConfig = Field(
+        default_factory=EnrichmentConfig
+    )
+    procedure_enrichment: EnrichmentConfig = Field(
+        default_factory=EnrichmentConfig
     )
     search: SearchConfig = Field(default_factory=SearchConfig)
     procedure: ProcedureConfig = Field(default_factory=ProcedureConfig)
+    statement_hubs: HubConfig = Field(default_factory=HubConfig)
+    procedure_hubs: HubConfig = Field(default_factory=HubConfig)
 
 
 class Settings(BaseSettings):
@@ -246,6 +271,26 @@ class Settings(BaseSettings):
     concurrency: ConcurrencyConfig = Field(default_factory=ConcurrencyConfig)
     recording: RecordingConfig = Field(default_factory=RecordingConfig)
     stages: StagesConfig = Field(default_factory=StagesConfig)
+
+    @model_validator(mode='after')
+    def validate_local_model_budgets(self):
+        """Keeps local completion budgets below router context windows."""
+        for module_name, module in self.models.modules.items():
+            if not module.base_url:
+                continue
+            preset_name = self.serving.module_models.get(module_name)
+            if not preset_name:
+                continue
+            preset = self.serving.presets.get(preset_name)
+            if preset is None:
+                continue
+            if module.max_tokens >= preset.ctx_size:
+                raise ValueError(
+                    f'local module {module_name!r} max_tokens '
+                    f'({module.max_tokens}) must be less than '
+                    f'{preset_name!r} ctx_size ({preset.ctx_size})'
+                )
+        return self
 
     @classmethod
     def settings_customise_sources(

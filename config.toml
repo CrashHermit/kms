@@ -22,78 +22,132 @@
 [models.modules.corrector]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3-vl-4b"
+max_tokens = 4096
 
 [models.modules.procedure_creator]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
+max_tokens = 8192
 
 [models.modules.formatter]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
+max_tokens = 8192
 
 [models.modules.extractor]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
+max_tokens = 8192
 
 [models.modules.seam_merger]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
+max_tokens = 8192
 
 [models.modules.seam_rewriter]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
+max_tokens = 8192
 
 [models.modules.splitter]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
+max_tokens = 8192
 
 [models.modules.instruction_finder]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
+max_tokens = 8192
 
 [models.modules.pedagogical_component_finder]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
+max_tokens = 8192
 
 [models.modules.role_typer]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
+max_tokens = 8192
 
 [models.modules.statement_partitioner]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
+max_tokens = 8192
 
 [models.modules.procedure_partitioner]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
+max_tokens = 8192
 
 [models.modules.atomic_fact_extractor]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
+max_tokens = 8192
 
 [models.modules.triplet_extractor]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
+max_tokens = 8192
 
-[models.modules.component_enrichment]
+[models.modules.entity_enrichment]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
+max_tokens = 8192
 
-[models.modules.canonicalizer]
+[models.modules.predicate_enrichment]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
+max_tokens = 8192
+
+[models.modules.statement_enrichment]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+max_tokens = 8192
+
+[models.modules.procedure_enrichment]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+max_tokens = 8192
+
+[models.modules.statement_hub_builder]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+max_tokens = 8192
+
+[models.modules.procedure_hub_builder]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+max_tokens = 8192
+
+[models.modules.entity_hub_builder]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+max_tokens = 8192
+
+[models.modules.predicate_hub_builder]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+max_tokens = 8192
+
+[models.modules.triplet_hub_builder]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+max_tokens = 8192
 
 [models.modules.search_judge]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
+max_tokens = 8192
 
 [models.modules.decompose_judge]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
+max_tokens = 8192
 
 [models.modules.query_decomposer]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
+max_tokens = 8192
 
 # ── local model serving (router-mode llama-server) ───────────────────
 
@@ -122,8 +176,15 @@ statement_partitioner = "qwen3.5-9b"
 procedure_partitioner = "qwen3.5-9b"
 atomic_fact_extractor = "qwen3.5-9b"
 triplet_extractor = "qwen3.5-9b"
-component_enrichment = "qwen3.5-9b"
-canonicalizer = "qwen3.5-9b"
+entity_enrichment = "qwen3.5-9b"
+predicate_enrichment = "qwen3.5-9b"
+statement_enrichment = "qwen3.5-9b"
+procedure_enrichment = "qwen3.5-9b"
+statement_hub_builder = "qwen3.5-9b"
+procedure_hub_builder = "qwen3.5-9b"
+entity_hub_builder = "qwen3.5-9b"
+predicate_hub_builder = "qwen3.5-9b"
+triplet_hub_builder = "qwen3.5-9b"
 search_judge = "qwen3.5-9b"
 decompose_judge = "qwen3.5-9b"
 query_decomposer = "qwen3.5-9b"
@@ -207,19 +268,41 @@ lookahead_budget = 2000
 lookahead_budget = 2000
 max_lookahead_budget = 8000
 
-[stages.component_enrichment]
+[stages.entity_enrichment]
 before_budget = 200
 after_budget = 200
+max_concurrent_calls = 16
+
+[stages.predicate_enrichment]
+before_budget = 200
+after_budget = 200
+max_concurrent_calls = 16
 
 [stages.triplet]
 window_budget = 600
 backward_context_budget = 400
 forward_context_budget = 400
 
-[stages.canonicalizer]
+[stages.entity_hubs]
 recall_threshold = 0.55
 merge_above = 0.85
 separate_below = 0.35
+max_concurrent_calls = 16
+
+[stages.predicate_hubs]
+recall_threshold = 0.55
+merge_above = 0.85
+separate_below = 0.35
+max_concurrent_calls = 16
+
+[stages.triplet_hubs]
+max_concurrent_calls = 16
+
+[stages.statement_enrichment]
+max_concurrent_calls = 16
+
+[stages.procedure_enrichment]
+max_concurrent_calls = 16
 
 [stages.search]
 top_k = 20
@@ -227,3 +310,15 @@ rerank_top_n = 5
 
 [stages.procedure]
 entity_definition_top_k = 10
+
+[stages.statement_hubs]
+recall_threshold = 0.55
+merge_above = 0.85
+separate_below = 0.35
+max_concurrent_calls = 16
+
+[stages.procedure_hubs]
+recall_threshold = 0.55
+merge_above = 0.85
+separate_below = 0.35
+max_concurrent_calls = 16

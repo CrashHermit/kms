@@ -81,6 +81,36 @@ def test_procedure_member_pairs_are_empty_without_procedures():
     assert procedures.procedure_member_pairs([], 'book.pdf') == []
 
 
+def test_existing_step_rows_use_existing_procedure_uuid():
+    steps = [models.Step(text='Set up.', index=0)]
+
+    rows = procedures.existing_step_rows('book.pdf', 'procedure-a', steps)
+
+    assert rows[0]['uuid'] == procedures.step_uuid('book.pdf', 'procedure-a', 0)
+
+
+def test_existing_edges_use_existing_procedure_uuid():
+    steps = [
+        models.Step(text='Set up.', index=0),
+        models.Step(text='Conclude.', index=1),
+    ]
+
+    assert procedures.existing_first_pairs(
+        'book.pdf', 'procedure-a', steps
+    ) == [
+        {
+            'procedure': 'procedure-a',
+            'step': procedures.step_uuid('book.pdf', 'procedure-a', 0),
+        }
+    ]
+    assert procedures.existing_then_pairs('book.pdf', 'procedure-a', steps) == [
+        {
+            'from': procedures.step_uuid('book.pdf', 'procedure-a', 0),
+            'to': procedures.step_uuid('book.pdf', 'procedure-a', 1),
+        }
+    ]
+
+
 class _FakeSession:
     def __init__(self, log):
         self.log = log
@@ -101,6 +131,26 @@ class _FakeDriver:
 
     def session(self, database=None):
         return _FakeSession(self.log)
+
+
+def test_persist_existing_procedure_steps_uses_existing_uuid():
+    driver = _FakeDriver()
+    steps = [models.Step(text='Set up.', index=0)]
+
+    asyncio.run(
+        writer.persist_procedure_steps(
+            'procedure-a',
+            steps,
+            'book.pdf',
+            session_factory=lambda: driver.session(database='neo4j'),
+        )
+    )
+
+    step_query, step_parameters = driver.log[0]
+    assert 'MERGE (s:Step {uuid: row.uuid})' in step_query
+    assert step_parameters['rows'][0]['uuid'] == procedures.step_uuid(
+        'book.pdf', 'procedure-a', 0
+    )
 
 
 def test_persist_procedures_points_each_member_at_the_procedure():

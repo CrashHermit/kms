@@ -26,7 +26,7 @@ _COMPONENT_LABELS = {
 
 
 def component_label(kind: str) -> str:
-    """Returns the durable component label for a canonicalization kind."""
+    """Returns the durable component label for a hub-building kind."""
     try:
         return _COMPONENT_LABELS[kind]
     except KeyError as error:
@@ -122,7 +122,7 @@ def hub_uuid(kind: str, source: str, identity: str) -> str:
 def meta_hub_uuid(kind: str, identity: str) -> str:
     """Returns a stable uuid for a meta hub identity.
 
-    ``identity`` is supplied by the meta canonicalizer and is based on
+    ``identity`` is supplied by the meta hub builder and is based on
     source-hub membership rather than a mutable synthesized canonical name.
     """
     return uuid5(

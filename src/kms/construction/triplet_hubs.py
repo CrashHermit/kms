@@ -1,4 +1,11 @@
-"""Deterministic TripletHub and MetaTripletHub materialization."""
+"""Materialize reusable canonical facts from canonical graph components.
+
+Source-level triplets preserve explicit relational evidence and provenance.
+This module groups exact subject/predicate/object hub memberships and asks the
+LLM to synthesize a standalone learner-facing assertion for each supported
+TripletHub. MetaTripletHub performs the same abstraction across sources; it
+must be supported by multiple sources and must not invent consequences.
+"""
 
 import asyncio
 from collections.abc import Callable
@@ -11,28 +18,34 @@ from kms.graph import hubs, queries, writer
 
 
 class _TripletDefinition(BaseModel):
-    """The synthesized searchable representation of one triplet hub."""
+    """A reusable canonical fact synthesized from supported triplets."""
 
     canonical_name: str = Field(
         description='A concise canonical statement of the assertion.'
     )
     description: str = Field(
-        description='A standalone 1-2 sentence description of the assertion.'
+        description=(
+            'A standalone 1-2 sentence learner-facing explanation of the '
+            'canonical fact, supported by the supplied triplets.'
+        )
     )
 
 
 class _TripletDefinitionSignature(dspy.Signature):
     r"""
-    Synthesize one canonical assertion from a fixed subject, predicate, and
-    object hub tuple and the source triplets that belong to exactly that
+    Synthesize one reusable canonical fact from a fixed subject, predicate,
+    and object hub tuple and the source triplets that belong to exactly that
     tuple.
+
+    The source triplets are evidence, not the final educational abstraction.
+    Produce a concise assertion and a standalone learner-facing explanation
+    that can be understood without the original passage. Generalize only the
+    common fact supported by the evidence. Preserve negation, conditions,
+    quantifiers, mathematical notation, and other qualifiers that appear in
+    the evidence.
 
     The tuple membership is already decided by the graph. Do not add facts,
     infer consequences, or combine the assertion with neighboring facts.
-    Preserve negation, conditions, quantifiers, mathematical notation, and
-    other qualifiers that appear in the evidence. The canonical name should
-    be a concise readable assertion. The description should state only the
-    common assertion supported by the evidence.
     """
 
     subject_hub: str = dspy.InputField(
@@ -51,7 +64,10 @@ class _TripletDefinitionSignature(dspy.Signature):
         description='Whether this is source-local or cross-source synthesis.'
     )
     result: _TripletDefinition = dspy.OutputField(
-        description='Canonical assertion name and description.'
+        description=(
+            'Canonical reusable fact name and standalone learner-facing '
+            'explanation.'
+        )
     )
 
 

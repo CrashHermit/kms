@@ -27,6 +27,19 @@ def statement_properties(statement: models.Statement, source: str) -> dict:
     }
 
 
+def statement_enrichment_properties(
+    statement_uuid_value: str,
+    description: str,
+    embedding: list[float],
+) -> dict:
+    """Builds derived semantic properties for one Statement."""
+    return {
+        'uuid': statement_uuid_value,
+        'description': description,
+        'embedding': embedding,
+    }
+
+
 def statement_member_pairs(
     statements: list[models.Statement], source: str
 ) -> list[dict]:

@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from kms.construction import canonicalizer
+from kms.construction import hub_builder
 from kms.graph import hubs
 
 
@@ -12,9 +12,9 @@ def _stub_lexical_rebuild(monkeypatch):
     async def fake_rebuild(*args, **kwargs):
         return {'name_hubs': 0, 'names': 0}
 
-    monkeypatch.setattr(canonicalizer.name_hubs, 'rebuild', fake_rebuild)
+    monkeypatch.setattr(hub_builder.name_hubs, 'rebuild', fake_rebuild)
     monkeypatch.setattr(
-        canonicalizer.name_hubs,
+        hub_builder.name_hubs,
         'rebuild_meta',
         lambda *args, **kwargs: asyncio.sleep(
             0, result={'name_hubs': 0, 'source_name_hubs': 0}
@@ -22,13 +22,14 @@ def _stub_lexical_rebuild(monkeypatch):
     )
 
 
-def test_canonicalize_records_empty_result():
+def test_build_hubs_empty_result():
     result = asyncio.run(
-        canonicalizer.canonicalize_records(
+        hub_builder.build_hubs(
             'entity',
             [],
-            language_model=object(),
-            spec=canonicalizer.SOURCE_SPEC,
+            spec=hub_builder.SOURCE_SPEC,
+            adjudicator=object(),
+            synthesizer=object(),
         )
     )
 
@@ -46,8 +47,8 @@ def test_meta_hub_ids_are_membership_stable():
         {'uuid': 'source-hub-a'},
     ]
 
-    assert canonicalizer._meta_hub_id('entity', records, {}) == (
-        canonicalizer._meta_hub_id('entity', list(reversed(records)), {})
+    assert hub_builder._meta_hub_id('entity', records, {}) == (
+        hub_builder._meta_hub_id('entity', list(reversed(records)), {})
     )
 
 
@@ -66,8 +67,8 @@ def test_rebuild_replaces_only_the_requested_source(monkeypatch):
             }
         ]
 
-    async def fake_canonicalize(kind, records, **kwargs):
-        calls.append(('canonicalize', kind, kwargs['spec'].tier))
+    async def fake_build_hubs(kind, records, **kwargs):
+        calls.append(('build_hubs', kind, kwargs['spec'].tier))
         return {
             'clusters': 1,
             'records': len(records),
@@ -82,28 +83,28 @@ def test_rebuild_replaces_only_the_requested_source(monkeypatch):
         calls.append(('persist', kind, hubs, kwargs['tier']))
 
     monkeypatch.setattr(
-        canonicalizer.queries, 'all_components', fake_all_components
+        hub_builder.queries, 'all_components', fake_all_components
     )
+    monkeypatch.setattr(hub_builder, 'build_hubs', fake_build_hubs)
+    monkeypatch.setattr(hub_builder.writer, 'clear_source_hubs', fake_clear)
+    monkeypatch.setattr(hub_builder.writer, 'persist_hubs', fake_persist)
     monkeypatch.setattr(
-        canonicalizer, 'canonicalize_records', fake_canonicalize
-    )
-    monkeypatch.setattr(canonicalizer.writer, 'clear_source_hubs', fake_clear)
-    monkeypatch.setattr(canonicalizer.writer, 'persist_hubs', fake_persist)
-    monkeypatch.setattr(
-        canonicalizer.triplet_hubs,
+        hub_builder.triplet_hubs,
         'rebuild',
         lambda **kwargs: asyncio.sleep(0),
     )
     monkeypatch.setattr(
-        canonicalizer.name_hubs,
+        hub_builder.name_hubs,
         'rebuild',
         lambda *args, **kwargs: asyncio.sleep(0),
     )
 
     result = asyncio.run(
-        canonicalizer.rebuild(
+        hub_builder.rebuild_hubs(
             'entity',
             language_model=object(),
+            adjudicator=object(),
+            synthesizer=object(),
             session_factory=object(),
             source='book-a',
         )
@@ -112,7 +113,7 @@ def test_rebuild_replaces_only_the_requested_source(monkeypatch):
     assert result == {'clusters': 1, 'records': 1}
     assert calls == [
         ('read', 'entity', 'book-a'),
-        ('canonicalize', 'entity', 'source'),
+        ('build_hubs', 'entity', 'source'),
         ('clear', 'entity', 'book-a'),
         ('persist', 'entity', [{'uuid': 'hub-a'}], 'source'),
     ]
@@ -142,8 +143,8 @@ def test_rebuild_meta_replaces_the_disposable_meta_layer(monkeypatch):
             },
         ]
 
-    async def fake_canonicalize(kind, records, **kwargs):
-        calls.append(('canonicalize', kind, kwargs['spec']))
+    async def fake_build_hubs(kind, records, **kwargs):
+        calls.append(('build_hubs', kind, kwargs['spec']))
         return {
             'clusters': 1,
             'hubs': [
@@ -162,31 +163,33 @@ def test_rebuild_meta_replaces_the_disposable_meta_layer(monkeypatch):
         calls.append(('persist', kind, hubs, kwargs['tier']))
 
     monkeypatch.setattr(
-        canonicalizer.queries, 'all_source_hubs', fake_source_hubs
+        hub_builder.queries, 'all_source_hubs', fake_source_hubs
     )
+    monkeypatch.setattr(hub_builder, 'build_hubs', fake_build_hubs)
+    monkeypatch.setattr(hub_builder.writer, 'clear_meta_hubs', fake_clear)
+    monkeypatch.setattr(hub_builder.writer, 'persist_hubs', fake_persist)
     monkeypatch.setattr(
-        canonicalizer, 'canonicalize_records', fake_canonicalize
-    )
-    monkeypatch.setattr(canonicalizer.writer, 'clear_meta_hubs', fake_clear)
-    monkeypatch.setattr(canonicalizer.writer, 'persist_hubs', fake_persist)
-    monkeypatch.setattr(
-        canonicalizer.triplet_hubs,
+        hub_builder.triplet_hubs,
         'rebuild_meta',
         lambda **kwargs: asyncio.sleep(0),
     )
 
     result = asyncio.run(
-        canonicalizer.rebuild_meta(
-            'entity', language_model=object(), session_factory=object()
+        hub_builder.rebuild_meta_hubs(
+            'entity',
+            language_model=object(),
+            adjudicator=object(),
+            synthesizer=object(),
+            session_factory=object(),
         )
     )
 
     assert result == {'clusters': 1, 'hubs': 1}
     assert calls[0] == ('read', 'entity')
     assert calls[1] == (
-        'canonicalize',
+        'build_hubs',
         'entity',
-        canonicalizer.META_SPEC,
+        hub_builder.META_SPEC,
     )
     assert calls[2:] == [
         ('clear', 'entity'),
@@ -222,21 +225,25 @@ def test_rebuild_meta_requires_two_distinct_sources(monkeypatch):
         ]
 
     monkeypatch.setattr(
-        canonicalizer.queries, 'all_source_hubs', fake_source_hubs
+        hub_builder.queries, 'all_source_hubs', fake_source_hubs
     )
 
     with pytest.raises(
         RuntimeError, match='requires at least two distinct sources'
     ):
         asyncio.run(
-            canonicalizer.rebuild_meta(
-                'entity', language_model=object(), session_factory=object()
+            hub_builder.rebuild_meta_hubs(
+                'entity',
+                language_model=object(),
+                adjudicator=object(),
+                synthesizer=object(),
+                session_factory=object(),
             )
         )
 
 
 def test_meta_qualification_discards_same_source_clusters():
-    result = canonicalizer._qualify_meta_result(
+    result = hub_builder._qualify_meta_result(
         {
             'clusters': 2,
             'records': 3,
@@ -274,7 +281,7 @@ def test_engine_builds_source_and_meta_records(monkeypatch):
     ]
 
     monkeypatch.setattr(
-        canonicalizer,
+        hub_builder,
         '_coarse_clusters',
         lambda values, threshold: [values],
     )
@@ -289,39 +296,32 @@ def test_engine_builds_source_and_meta_records(monkeypatch):
         async def embed(self, values):
             return [[0.5, 0.5] for _ in values]
 
-    monkeypatch.setattr(canonicalizer, '_adjudicate_component', fake_adjudicate)
+    monkeypatch.setattr(hub_builder, '_adjudicate_component', fake_adjudicate)
     monkeypatch.setattr(
-        canonicalizer, '_synthesize_definitions', fake_definitions
+        hub_builder, '_synthesize_definitions', fake_definitions
     )
     monkeypatch.setattr(
-        canonicalizer, '_Adjudicator', lambda language_model: object()
-    )
-    monkeypatch.setattr(
-        canonicalizer,
-        '_DefinitionSynthesizer',
-        lambda language_model: object(),
-    )
-    monkeypatch.setattr(
-        canonicalizer.llm,
+        hub_builder.llm,
         'gate',
         lambda max_concurrency: asyncio.Semaphore(1),
     )
     monkeypatch.setattr(
-        canonicalizer.embeddings,
+        hub_builder.embeddings,
         'embedder',
         lambda: _Embedder(),
     )
 
     source_result = asyncio.run(
-        canonicalizer.canonicalize_records(
+        hub_builder.build_hubs(
             'entity',
             records,
-            language_model=object(),
-            spec=canonicalizer.SOURCE_SPEC,
+            spec=hub_builder.SOURCE_SPEC,
+            adjudicator=object(),
+            synthesizer=object(),
         )
     )
     meta_result = asyncio.run(
-        canonicalizer.canonicalize_records(
+        hub_builder.build_hubs(
             'entity',
             [
                 {
@@ -330,8 +330,9 @@ def test_engine_builds_source_and_meta_records(monkeypatch):
                     'source': None,
                 }
             ],
-            language_model=object(),
-            spec=canonicalizer.META_SPEC,
+            spec=hub_builder.META_SPEC,
+            adjudicator=object(),
+            synthesizer=object(),
         )
     )
 
@@ -398,16 +399,19 @@ def test_assign_source_creates_a_new_hub_when_candidates_are_separate(
         calls.append(('attach', assignments))
 
     monkeypatch.setattr(
-        canonicalizer.queries, 'unassigned_components', fake_unassigned
+        hub_builder.queries, 'unassigned_components', fake_unassigned
     )
-    monkeypatch.setattr(canonicalizer.queries, 'vector_search', fake_search)
-    monkeypatch.setattr(canonicalizer, '_Adjudicator', lambda lm: _Judge())
+    monkeypatch.setattr(hub_builder.queries, 'vector_search', fake_search)
+    monkeypatch.setattr(hub_builder, '_new_hub', fake_new_hub)
     monkeypatch.setattr(
-        canonicalizer, '_DefinitionSynthesizer', lambda lm: object()
+        hub_builder,
+        '_choose_hub',
+        lambda *args, **kwargs: asyncio.sleep(
+            0, result=(None, [], 0.0, 'Separate')
+        ),
     )
-    monkeypatch.setattr(canonicalizer, '_new_hub', fake_new_hub)
     monkeypatch.setattr(
-        canonicalizer,
+        hub_builder,
         '_refresh_source_hubs',
         lambda *args, **kwargs: asyncio.sleep(
             0,
@@ -424,21 +428,22 @@ def test_assign_source_creates_a_new_hub_when_candidates_are_separate(
             ],
         ),
     )
-    monkeypatch.setattr(canonicalizer.writer, 'persist_hubs', fake_persist)
+    monkeypatch.setattr(hub_builder.writer, 'persist_hubs', fake_persist)
     monkeypatch.setattr(
-        canonicalizer.writer, 'attach_source_components', fake_attach
+        hub_builder.writer, 'attach_source_components', fake_attach
     )
     monkeypatch.setattr(
-        canonicalizer.llm,
+        hub_builder.llm,
         'gate',
         lambda max_concurrency: asyncio.Semaphore(1),
     )
 
     result = asyncio.run(
-        canonicalizer.assign_source(
+        hub_builder.assign_source_hubs(
             'entity',
             'book-a',
-            language_model=object(),
+            adjudicator=object(),
+            synthesizer=object(),
             session_factory=object(),
         )
     )
@@ -503,35 +508,30 @@ def test_assign_source_attaches_to_a_high_similarity_hub(monkeypatch):
         calls.append(('attach', assignments, kwargs['aliases']))
 
     monkeypatch.setattr(
-        canonicalizer.queries, 'unassigned_components', fake_unassigned
+        hub_builder.queries, 'unassigned_components', fake_unassigned
     )
-    monkeypatch.setattr(canonicalizer.queries, 'vector_search', fake_search)
+    monkeypatch.setattr(hub_builder.queries, 'vector_search', fake_search)
     monkeypatch.setattr(
-        canonicalizer,
+        hub_builder,
         '_refresh_source_hubs',
         lambda *args, **kwargs: asyncio.sleep(0, result=[]),
     )
-    monkeypatch.setattr(canonicalizer.writer, 'persist_hubs', fake_persist)
+    monkeypatch.setattr(hub_builder.writer, 'persist_hubs', fake_persist)
     monkeypatch.setattr(
-        canonicalizer.writer, 'attach_source_components', fake_attach
+        hub_builder.writer, 'attach_source_components', fake_attach
     )
     monkeypatch.setattr(
-        canonicalizer, '_Adjudicator', lambda language_model: object()
-    )
-    monkeypatch.setattr(
-        canonicalizer, '_DefinitionSynthesizer', lambda language_model: object()
-    )
-    monkeypatch.setattr(
-        canonicalizer.llm,
+        hub_builder.llm,
         'gate',
         lambda max_concurrency: asyncio.Semaphore(1),
     )
 
     result = asyncio.run(
-        canonicalizer.assign_source(
+        hub_builder.assign_source_hubs(
             'entity',
             'book-a',
-            language_model=object(),
+            adjudicator=object(),
+            synthesizer=object(),
             session_factory=object(),
         )
     )
@@ -613,32 +613,27 @@ def test_assign_source_considers_hubs_created_earlier_in_the_batch(
         calls.append(('attach', assignments))
 
     monkeypatch.setattr(
-        canonicalizer.queries, 'unassigned_components', fake_unassigned
+        hub_builder.queries, 'unassigned_components', fake_unassigned
     )
-    monkeypatch.setattr(canonicalizer.queries, 'vector_search', fake_search)
-    monkeypatch.setattr(canonicalizer, '_new_hub', fake_new_hub)
-    monkeypatch.setattr(canonicalizer, '_refresh_source_hubs', fake_refresh)
-    monkeypatch.setattr(canonicalizer.writer, 'persist_hubs', fake_persist)
+    monkeypatch.setattr(hub_builder.queries, 'vector_search', fake_search)
+    monkeypatch.setattr(hub_builder, '_new_hub', fake_new_hub)
+    monkeypatch.setattr(hub_builder, '_refresh_source_hubs', fake_refresh)
+    monkeypatch.setattr(hub_builder.writer, 'persist_hubs', fake_persist)
     monkeypatch.setattr(
-        canonicalizer.writer, 'attach_source_components', fake_attach
-    )
-    monkeypatch.setattr(
-        canonicalizer, '_Adjudicator', lambda language_model: object()
+        hub_builder.writer, 'attach_source_components', fake_attach
     )
     monkeypatch.setattr(
-        canonicalizer, '_DefinitionSynthesizer', lambda language_model: object()
-    )
-    monkeypatch.setattr(
-        canonicalizer.llm,
+        hub_builder.llm,
         'gate',
         lambda max_concurrency: asyncio.Semaphore(1),
     )
 
     result = asyncio.run(
-        canonicalizer.assign_source(
+        hub_builder.assign_source_hubs(
             'entity',
             'book-a',
-            language_model=object(),
+            adjudicator=object(),
+            synthesizer=object(),
             session_factory=object(),
         )
     )
@@ -714,43 +709,39 @@ def test_align_meta_persists_only_cross_source_assignments(monkeypatch):
         return {'meta-hub-a'}
 
     monkeypatch.setattr(
-        canonicalizer.queries, 'all_source_hubs', fake_source_hubs
+        hub_builder.queries, 'all_source_hubs', fake_source_hubs
     )
     monkeypatch.setattr(
-        canonicalizer.queries,
+        hub_builder.queries,
         'qualified_meta_hub_uuids',
         fake_qualified_meta_hubs,
     )
-    monkeypatch.setattr(canonicalizer.queries, 'vector_search', fake_search)
-    monkeypatch.setattr(canonicalizer.writer, 'persist_hubs', fake_persist)
-    monkeypatch.setattr(canonicalizer.writer, 'attach_meta_hubs', fake_attach)
+    monkeypatch.setattr(hub_builder.queries, 'vector_search', fake_search)
+    monkeypatch.setattr(hub_builder.writer, 'persist_hubs', fake_persist)
+    monkeypatch.setattr(hub_builder.writer, 'attach_meta_hubs', fake_attach)
     monkeypatch.setattr(
-        canonicalizer.writer,
+        hub_builder.writer,
         'clear_invalid_meta_hubs',
         lambda *args, **kwargs: asyncio.sleep(0),
     )
     monkeypatch.setattr(
-        canonicalizer, '_Adjudicator', lambda language_model: object()
-    )
-    monkeypatch.setattr(
-        canonicalizer, '_DefinitionSynthesizer', lambda language_model: object()
-    )
-    monkeypatch.setattr(
-        canonicalizer.llm,
+        hub_builder.llm,
         'gate',
         lambda max_concurrency: asyncio.Semaphore(1),
     )
     monkeypatch.setattr(
-        canonicalizer.triplet_hubs,
+        hub_builder.triplet_hubs,
         'rebuild_meta',
         lambda **kwargs: asyncio.sleep(0),
     )
 
     result = asyncio.run(
-        canonicalizer.align_meta(
+        hub_builder.align_meta_hubs(
             'entity',
             ['source-hub-a', 'source-hub-b'],
             language_model=object(),
+            adjudicator=object(),
+            synthesizer=object(),
             session_factory=object(),
         )
     )
@@ -792,14 +783,14 @@ def test_align_meta_requires_two_distinct_sources(monkeypatch):
         ]
 
     monkeypatch.setattr(
-        canonicalizer.queries, 'all_source_hubs', fake_source_hubs
+        hub_builder.queries, 'all_source_hubs', fake_source_hubs
     )
 
     with pytest.raises(
         RuntimeError, match='requires at least two distinct sources'
     ):
         asyncio.run(
-            canonicalizer.align_meta(
+            hub_builder.align_meta_hubs(
                 'entity',
                 ['source-hub-a'],
                 language_model=object(),

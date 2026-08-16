@@ -28,7 +28,11 @@ async def main():
         )
         print('PROCEDURE:\n', procedure)
         splitter = procedure_creator.StepSplitter(language_model)
-        steps = await splitter.aforward(procedure=procedure)
+        steps = await splitter.aforward(
+            statement=parts,
+            procedure=content.Content.from_text(procedure),
+            entity_definitions=ENTITY_DEFS,
+        )
         for index, step in enumerate(steps, 1):
             print(f'{index}. {step}')
     finally:

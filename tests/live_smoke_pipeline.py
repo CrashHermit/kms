@@ -38,7 +38,7 @@ async def main():
     for triplet in triplets:
         print(f'  {triplet.subject} | {triplet.predicate} | {triplet.object}')
 
-    print('\n=== canonicalization ===')
+    print('\n=== hub building ===')
     print(f'  entity assigned: {result.get("entity_assigned")}')
     print(f'  predicate assigned: {result.get("predicate_assigned")}')
     print(f'  procedures created: {result.get("procedures_created")}')

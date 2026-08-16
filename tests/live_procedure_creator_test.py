@@ -4,11 +4,13 @@ import sys
 sys.path.insert(0, '.')
 
 from kms.construction import (
-    canonicalizer,
+    entity_enrichment,
+    entity_hubs,
+    predicate_enrichment,
     procedure_creator,
     triplet_extractor,
 )
-from kms.core import embeddings, llm, models
+from kms.core import llm, models, semantic
 from kms.graph import db, schema, writer
 
 SOURCE = 'graph_theory_test'
@@ -58,19 +60,18 @@ async def main():
 
     await writer.persist_nodes(nodes, SOURCE, session_factory=_session)
 
-    enricher = canonicalizer.ComponentEnricher(language_model=language_model)
-    (
-        entity_descriptions,
-        predicate_descriptions,
-    ) = await canonicalizer.enrich_components(nodes, triplets, enricher)
-
-    (
-        entity_embeddings,
-        predicate_embeddings,
-    ) = await canonicalizer.embed_components(
-        entity_descriptions,
-        predicate_descriptions,
-        embeddings.embedder(),
+    enricher = entity_enrichment.EntityEnricher(language_model=language_model)
+    entity_descriptions = await entity_enrichment.enrich(
+        nodes, triplets, enricher
+    )
+    predicate_descriptions = await predicate_enrichment.enrich(
+        nodes,
+        triplets,
+        predicate_enrichment.PredicateEnricher(language_model=language_model),
+    )
+    entity_embeddings = await semantic.embed_descriptions(entity_descriptions)
+    predicate_embeddings = await semantic.embed_descriptions(
+        predicate_descriptions
     )
 
     await writer.persist_assertions(
@@ -84,16 +85,21 @@ async def main():
     )
     await writer.persist_chain(nodes, SOURCE, session_factory=_session)
 
-    print('\nRunning canonicalization...')
-    canonical_result = await canonicalizer.rebuild(
-        'entity',
+    print('\nRunning hub building...')
+    hub_result = await entity_hubs.rebuild_source(
+        SOURCE,
         language_model=language_model,
+        adjudicator=entity_hubs.EntityHubAdjudicator(
+            language_model=language_model
+        ),
+        synthesizer=entity_hubs.EntityHubSynthesizer(
+            language_model=language_model
+        ),
         session_factory=_session,
-        source=SOURCE,
     )
     print(
-        f'  {canonical_result["clusters"]} cluster(s), '
-        f'{canonical_result["records"]} record(s)'
+        f'  {hub_result["clusters"]} cluster(s), '
+        f'{hub_result["records"]} record(s)'
     )
 
     async with _session() as session:

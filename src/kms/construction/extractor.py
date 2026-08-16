@@ -1,6 +1,7 @@
 """Structural block extraction: page markdown into typed AST nodes."""
 
 import logging
+import re
 
 import dspy
 from langgraph.types import Send
@@ -24,7 +25,6 @@ _VALID_TYPES = frozenset(
         'note',
     }
 )
-
 _BLOCK_FURNITURE = 'furniture'
 
 
@@ -33,7 +33,7 @@ def _node_for(node_type: str, content: str | None) -> models.ASTNode:
 
     Args:
         node_type: The block type as emitted by the model.
-        content: The block content.
+        content: The source content covered by the block.
 
     Returns:
         The AST node.
@@ -44,18 +44,86 @@ def _node_for(node_type: str, content: str | None) -> models.ASTNode:
     node_type = node_type.strip().lower()
     if node_type not in _VALID_TYPES:
         raise ValueError(f'Unknown block type: {node_type!r}')
+    if node_type == 'image':
+        content = _image_placeholder(content)
     return models.ASTNode(type=node_type, content=content)
 
 
+def _image_placeholder(content: str | None) -> str | None:
+    """Removes a source-list marker from a standalone image placeholder."""
+    if not content:
+        return content
+    match = re.fullmatch(
+        r'\s*(?:[*-]\s*)?(?:[A-Za-z]\)\s*)?'
+        r'(!\[[^\]]+\]\(\))\s*',
+        content,
+    )
+    return match.group(1) if match else content
+
+
 class DSPyModel(BaseModel):
-    """One typed structural block emitted by the extractor signature."""
+    """One reconstructed structural block used by the extractor worker."""
 
     type: str = Field(
-        description='The block type: paragraph, math, code, list, table, image, caption, header, bibliographic, note, or furniture.'
+        description=(
+            'The block type: paragraph, math, code, list, table, image, '
+            'caption, header, bibliographic, note, or furniture.'
+        )
     )
     content: str | None = Field(
-        default=None, description='The content of the node'
+        default=None, description='The verbatim source content of the block.'
     )
+
+
+class LineSpan(BaseModel):
+    """One inclusive, 1-based source-line span and its structural type."""
+
+    start: int = Field(description='The first 1-based source line.')
+    end: int = Field(description='The last 1-based source line.')
+    type: str = Field(
+        description=(
+            'The block type: paragraph, math, code, list, table, image, '
+            'caption, header, bibliographic, note, or furniture.'
+        )
+    )
+
+
+def _validate_spans(spans: list[LineSpan], source_lines: list[str]) -> None:
+    """Checks that spans cover every nonblank source line exactly once."""
+    if not spans:
+        raise ValueError('Extractor returned no line spans')
+
+    next_line = 1
+    line_count = len(source_lines)
+    for span in spans:
+        if span.start < 1 or span.end < span.start:
+            raise ValueError(f'Invalid line span: {span!r}')
+        if span.end > line_count:
+            raise ValueError(
+                f'Line span {span!r} exceeds source line count {line_count}'
+            )
+        if span.start < next_line:
+            raise ValueError(
+                f'Line span {span!r} overlaps before source line {next_line}'
+            )
+        skipped = source_lines[next_line - 1 : span.start - 1]
+        if any(line.strip() for line in skipped):
+            raise ValueError(
+                f'Line span {span!r} leaves nonblank source lines '
+                f'before source line {span.start}'
+            )
+        if not any(
+            line.strip() for line in source_lines[span.start - 1 : span.end]
+        ):
+            raise ValueError(f'Line span {span!r} contains only blank lines')
+        next_line = span.end + 1
+
+    trailing = source_lines[next_line - 1 : line_count]
+    if any(line.strip() for line in trailing):
+        raise ValueError(
+            f'Line spans leave nonblank source lines after source line '
+            f'{next_line - 1}'
+        )
 
 
 def _partition(
@@ -76,218 +144,65 @@ def _partition(
 
 class Signature(dspy.Signature):
     r"""
-    Parse the markdown of one textbook page into a flat list of top-level
-    structural nodes, in document order.
+    Partition one textbook segment into ordered structural blocks.
 
-    LATEX FORMAT: All mathematical notation must use LaTeX format. Use single
-    dollar signs `$ $` for inline math and double dollar signs `$$ $$` for
-    block/display math.
+    The input is the original markdown as a list of lines, each with a number.
+    Return only inclusive line spans and block types. The caller copies all
+    block text from the original source.
 
-    This extractor is purely STRUCTURAL and domain-agnostic: emit only general
-    document structure. Do NOT try to identify math-semantic units (definitions,
-    theorems, problems, exercises) or attach any subject-specific meaning. Your
-    job is faithful block segmentation of the markdown, nothing more.
+    COVERAGE IS MANDATORY
 
-    EXTRACTION RULES:
-    - Extract nodes from the given markdown, in document order.
-    - One node per top-level markdown block, as the block appears. A node is the
-      outermost structural unit (a paragraph, a display-math block, a list, a
-      table, a heading, …); do not break a block's sub-parts into separate
-      nodes, and do not merge distinct blocks into one. Segment on structure
-      (block boundaries) only — never on meaning: do NOT split a block because
-      of what it says (e.g. a paragraph that runs into "Proof." or "Solution."
-      stays one node). The single exception is a run of bibliographic
-      references, which is split per cited work — see that type below.
-    - A node's content is its block copied AS WRITTEN, including whatever leads
-      it: a heading's `#` markers, an item's number or letter ("282.", "(b)"),
-      a note's marker, a label naming the block. A leading marker is not
-      formatting to be tidied away — it is part of what the block IS, and an
-      exercise stripped of its number is no longer the exercise the rest of the
-      book refers to. This holds whatever the block's type: a numbered item
-      whose body is display math is still that numbered item, so it keeps the
-      number and does not become bare math.
-    - If content starts or ends abruptly at the boundary of the given markdown,
-      extract it as-is — do not try to complete or trim it, and NEVER leave it
-      out. A page often opens or closes mid-block, so the first or last thing
-      on it may be a bare number, a stray pair of values, an unpunctuated
-      half-sentence, or a piece of a code listing. Such a fragment is content:
-      fold it into the block it continues when that is clear (a numeric line
-      directly above a code listing belongs INSIDE that code node), and give
-      it its own node otherwise. It is rejoined to its other half downstream,
-      but only if it survives this stage. A leading bare number is a fragment
-      of this kind, not a page number.
-      When it gets its own node, TYPE IT AS WHAT IT IS A PIECE OF, never by
-      where it sits on the page: an unpunctuated half-sentence of prose is a
-      paragraph, a run of code is code, a row of values is table. A fragment is
-      NEVER a header — a heading is a short title that opens what follows, so
-      text that starts lowercase, starts mid-sentence, or completes a sentence
-      the previous page began cannot be one. The first line of a page is not a
-      heading merely because it is first.
-      Type it right or the repair never happens: the stage that rejoins the two
-      halves downstream merges only nodes of the SAME type, so a fragment that
-      survives with the wrong type is as lost as one deleted.
+    - Read every numbered line from top to bottom before answering.
+    - Every nonblank line belongs to exactly one span.
+    - Do not create a span containing only blank lines.
+    - Never skip ordinary prose, continuation text, notes, or uncertain text.
+    - Spans are ordered, non-overlapping, in range, and source-preserving.
+    - Blank separator lines may be omitted.
+    - A span may contain several nonblank lines and internal blank lines when
+      they belong to one structure.
+    - Never copy, rewrite, summarize, repair, normalize, duplicate, or reorder
+      source text.
 
-    NODE TYPES (emit `type` as exactly one of these values):
-    - paragraph: Standard prose text. Inline math remains in the paragraph.
-      Callout/sidebar prose (Notes, Tips, Warnings, worked Examples, Theorems,
-      exercises) with no better fit goes here. When in doubt, a block of text is
-      a paragraph.
-    - math: Standalone display math block (e.g. `$$ ... $$`).
-    - code: Fenced code block.
-    - list: Bullet/numbered list (steps, features, recall items, or a run of
-      exercises). Emit the whole list as a single list node — do not split it
-      into per-item nodes.
-      A RUN OF CONSECUTIVE NUMBERED ITEMS IS ONE LIST NODE. This holds when a
-      blank line separates each item, and it holds when the items are short:
-      "1005. $|8-4|$", "1006. $|9-6|$", "1007. …" arriving as separate lines
-      is ONE list node, never four paragraphs. A blank line between items of
-      a run is list formatting, not a block boundary — the run is one block
-      because the items are one series, and where the series starts and ends
-      is the only judgement to make.
-      A RUN ENDS AT THE FIRST BLOCK THAT IS NOT A NUMBERED ITEM. A heading,
-      an unnumbered sentence, or any prose sitting between two items closes
-      the list; that block is its OWN node of whatever type it is; and the
-      numbering that resumes after it opens a SECOND list node. Numbers that
-      continue the same series across such a break still make two runs — the
-      block between them belongs to neither, so it cannot be inside either.
-      Never absorb an unnumbered sentence into a list node. The commonest
-      form of this is a lead-in that introduces the items after it — "In the
-      following exercises, simplify each expression." between item 1022 and
-      item 1023. It is unnumbered, so it ends the first run and is its own
-      paragraph node; it is not a list item and never belongs in the list's
-      content. Swallowing it deletes it as a block: a later stage recognises
-      shared instructions only as whole nodes, so a lead-in buried inside a
-      list is a directive that never reaches the exercises it governs.
-      Do not break a run into per-item nodes. Doing so changes how many nodes
-      the page has and every node id downstream with it, and the splitter —
-      the stage whose job is separating packed exercises into one node each —
-      only sees a run it can separate if the run reaches it whole.
-    - table: Markdown table body only (grid rows). Do not put standalone caption
-      or title lines inside table — those belong in caption when they appear as
-      separate blocks.
-    - image: Indexed placeholder only: `![N]()` where `N` matches the OCR
-      picture index for that slot. A placeholder that carries a leading
-      sub-part marker or list bullet — "a) ![1]()", "* a) ![1]()" — is
-      STILL an image node: the marker is a label, not text. Drop the marker
-      and emit the bare `![N]()` as the node's content. A run of such
-      placeholders is NOT a list: emit EACH placeholder as its OWN image
-      node, never merged into one list node. Do not put caption prose in
-      image — use caption node(s) for any labels or explanatory text. Never
-      embed file paths in image content; paths live on the node's `src` field
-      after merging.
-    - caption: Figure captions, table titles, notes, or labels when shown as
-      separate prose blocks from the picture placeholder or table grid. Include
-      identifiers (e.g. "Figure 3.2", "Table 4.") and all descriptive text for
-      that asset. Emit one caption per distinct block.
-    - header: A heading/title for a section/chapter/exercise set/etc. Emit
-      exactly one header node per heading; do not split a heading into multiple
-      nodes. A short label that opens a labelled block (e.g. "Example 6.7",
-      "Theorem 2.1", "Exercise 12") is a header — but ONLY when it stands
-      alone on its line. A label that runs into its block's own text on the
-      same line ("**Exercise 1.2.1:** Sketch the slope field …", "**Theorem
-      2.1** A set is …") is NOT a header: the label and its text are one
-      PARAGRAPH.
-      Copy the heading line EXACTLY as the markdown has it, keeping its leading
-      `#` markers and any bold or italic markup: the node for "## 1.5 Project"
-      has content "## 1.5 Project", never "1.5 Project". The markers are what
-      set the heading's level, and no later stage can recover a level that was
-      stripped here.
-      A RUN-IN HEADING — a label followed by body text on the SAME line, e.g.
-      "**Steps** We recommend proceeding in the following order:" — is TWO
-      nodes: the label as a header, and the text after it as its own node of
-      whatever type that text is. Emitting only the label deletes the rest of
-      the line. Never do that.
-      This is about a NAMED label, never about numbering. A numbered or
-      lettered item — "282. $$9d^2 - 12d = -4$$", "3. Read appendix A" —
-      keeps its number in the content exactly as written: never split the
-      number onto a node of its own, never promote it to a header, and never
-      drop it. The number is that item's identity and later stages match on
-      it.
-      That rule says where the NUMBER goes, not how many nodes a run of
-      numbered items makes. A numbered item standing on its own is one node;
-      a RUN of consecutive numbered items is one list node (see list above).
-      Neither reading ever puts a number on a node by itself.
-    - bibliographic: A reference to an external work — a published paper, book,
-      chapter, report, or web resource. It cites a work rather than saying
-      something: authors and a year with a title, and usually a venue,
-      publisher, page range, DOI, or URL. It appears either as an entry in a
-      reference list ("References", "Bibliography", "Works Cited") or as a
-      footnote whose body is a citation.
-      EMIT ONE NODE PER CITED WORK. This is the one place you split a block:
-      where a run of entries arrives as a single paragraph or list — with no
-      blank line between them, or several packed onto one line — emit each
-      work as its own node, cutting where one work's citation ends and the
-      next author's name begins. Never merge two works into one node.
-      Give each node that work's entry text as written, including its
-      leading marker if it has one. Prose that merely mentions a work in
-      passing ("as Pólya showed") is a paragraph, not a bibliographic node.
-    - note: An authorial note bound to the body by a reference marker and
-      printed outside the running text — a footnote at the foot of the page,
-      an endnote, a margin note. It carries a marker (a superscript number, or
-      a symbol such as *, †, ‡) that matches one in the body, and it says
-      something about the SUBJECT: an aside, a caveat, a definition of a term
-      used above, a remark on who a result is named after.
-      Keep the marker in the content as written. Emit one note per marker.
-      Bibliographic wins over note: a footnote whose body is a citation of an
-      external work is bibliographic, not note.
-      A "Note:", "Tip:", or "Warning:" callout sitting IN the running text is
-      a paragraph, not a note — the test is the marker and the placement
-      outside the body flow, not the word.
-    - furniture: Page apparatus — text that belongs to the artifact rather
-      than to what the document says. Running heads and running feet, folios
-      (bare page numbers), the book or chapter title repeated at the top or
-      bottom of the page, a colophon, a publisher or licence line, a "printed
-      from" or "access this book at" line, marginal labels.
-      The test is what the text is ABOUT: furniture describes the book as an
-      object — its title, section, page, publisher, licence, URL — and would
-      be equally true printed on any page. Everything that says something
-      about the subject matter is not furniture. It usually sits at the very
-      top or the very bottom of the page and repeats on every page.
-      A furniture block is emitted as its own node, never folded into a
-      neighbouring block. A run of apparatus is ONE furniture block even when a
-      LINE of it mixes text with a logo, badge, or image placeholder — a
-      licence line like "Free PDF version ![Creative Commons License]() CC
-      BY-NC-SA" is a single furniture node. Do not split it into pieces and do
-      not re-type a piece by its shape: a placeholder sitting INLINE in
-      apparatus text is furniture, not an image.
-      The one exception is a placeholder that is its OWN block, with blank
-      lines above and below. The OCR emits one of those for a figure it pulled
-      off the page, so it is a real extracted picture rather than apparatus:
-      emit it as an image node and KEEP it, even when every block above and
-      below it is apparatus and gets dropped. Ask only how the placeholder
-      sits — inline in a line of apparatus text, or alone as its own block —
-      and never which page it is on.
-      Markers do not decide this either. A line keeps its `#` markers whether
-      or not it is apparatus, so a book title set as a heading on a title page
-      is still furniture.
+    SCAN THEN CLASSIFY
 
-      NOT furniture, whatever their position on the page:
-      * A footnote. Its marker makes it look like apparatus, but it says
-        something about the subject and the body refers to it. Type it as
-        note, or as bibliographic when it cites a work.
-      * A real heading. A heading that introduces content ON THIS PAGE is a
-        header, even when it reads exactly like the running head — a page
-        may show the same words twice, once as apparatus and once as the
-        genuine section title. If only one such line is present and you
-        cannot tell which it is, treat it as a header.
-      * Captions, figure labels, table titles, and reference-list entries.
-      * A fragment at the very start or end of the page. A bare number there
-        looks exactly like a folio and is not one — it is the tail of
-        something the previous page began. See the boundary rule above: it is
-        content and must be emitted.
+    First mark every nonblank line as owned. Group owned lines into contiguous
+    blocks. Then assign each block one type. Before answering, verify that no
+    nonblank line was skipped or assigned twice.
 
-      WHEN IN DOUBT, DO NOT USE THIS TYPE. Give the block its ordinary type
-      instead. Furniture is the one type that is discarded rather than kept,
-      so a wrong call here deletes real content, while a missed one merely
-      leaves a tidy line in the document."""
+    TYPES
 
-    segment_markdown: str = dspy.InputField(
-        description='The raw markdown content of one textbook segment. Emit nodes for this content only.'
-    )
+    - `paragraph`: ordinary prose, definitions, proofs, examples, solutions,
+      exercises, fragments, or uncertain content.
+    - `caption`: a figure caption, table title, or asset label in its own
+      block.
+    - `header`: a Markdown heading or standalone section label.
+    - `math`: standalone display mathematics.
+    - `code`: a fenced or clearly delimited code block, including its internal
+      blank lines.
+    - `list`: a bullet list, numbered list, or consecutive numbered exercises.
+    - `table`: a Markdown table, including its header and rows.
+    - `image`: a standalone image placeholder such as `![1]()`, including a
+      bullet or part marker immediately before it.
+    - `note`: a marked footnote, endnote, or marginal note.
+    - `bibliographic`: a clearly separate citation or reference.
+    - `furniture`: repeated page apparatus such as folios, running heads,
+      licence text, access URLs, or colophons.
 
-    nodes: list[DSPyModel] = dspy.OutputField(
+    When uncertain between content and furniture, use `paragraph`. Keep
+    fragments at segment boundaries as content. Return the ordered list of
+    spans and nothing else. Return the ordered list of spans and nothing else.
+    """
+
+    lines: str = dspy.InputField(
         description=(
-            'Flat list of top-level nodes extracted from segment_markdown. Follow the class docstring for taxonomy and extraction rules.'
+            'The original markdown as a list of source lines. DSPy displays '
+            '1-based line numbers; return only span boundaries and types.'
+        )
+    )
+    spans: list[LineSpan] = dspy.OutputField(
+        description=(
+            'The ordered line spans and structural types for the source '
+            'blocks. Do not return block text.'
         )
     )
 
@@ -306,52 +221,87 @@ class Extractor(module.Module):
         super().__init__(language_model, recorder)
         self.predictor.demos = [
             dspy.Example(
-                segment_markdown=(
-                    '**Exercise 2.4:** Match each equation to its slope '
-                    'field.\n\n'
-                    'a) ![1]()\n\nb) ![2]()\n\nc) ![3]()'
-                ),
-                nodes=[
-                    DSPyModel(
-                        type='paragraph',
-                        content=(
-                            '**Exercise 2.4:** Match each equation to its '
-                            'slope field.'
-                        ),
-                    ),
-                    DSPyModel(type='image', content='![1]()'),
-                    DSPyModel(type='image', content='![2]()'),
-                    DSPyModel(type='image', content='![3]()'),
+                lines=[
+                    '**Exercise 2.4:** Match each equation to its slope field.',
+                    '',
+                    'a) ![1]()',
+                    '',
+                    'b) ![2]()',
                 ],
-            ).with_inputs('segment_markdown'),
+                spans=[
+                    LineSpan(start=1, end=1, type='paragraph'),
+                    LineSpan(start=3, end=3, type='image'),
+                    LineSpan(start=5, end=5, type='image'),
+                ],
+            ).with_inputs('lines'),
             dspy.Example(
-                segment_markdown=(
-                    '**Exercise 2.4:** Match each equation to its slope '
-                    'field.\n\n'
-                    '* a) ![1]()\n* b) ![2]()\n* c) ![3]()'
-                ),
-                nodes=[
-                    DSPyModel(
-                        type='paragraph',
-                        content=(
-                            '**Exercise 2.4:** Match each equation to its '
-                            'slope field.'
-                        ),
-                    ),
-                    DSPyModel(type='image', content='![1]()'),
-                    DSPyModel(type='image', content='![2]()'),
-                    DSPyModel(type='image', content='![3]()'),
+                lines=[
+                    '#### Definition 2.1.6 Subgraphs.',
+                    '',
+                    'We say that $G$ is a subgraph of $H$.',
+                    '',
+                    '$$G \\subseteq H.$$',
                 ],
-            ).with_inputs('segment_markdown'),
+                spans=[
+                    LineSpan(start=1, end=1, type='header'),
+                    LineSpan(start=3, end=3, type='paragraph'),
+                    LineSpan(start=5, end=5, type='math'),
+                ],
+            ).with_inputs('lines'),
+            dspy.Example(
+                lines=[
+                    'First paragraph.',
+                    '',
+                    'Second paragraph.',
+                    '',
+                    'Third paragraph.',
+                    '',
+                    'Fourth paragraph.',
+                    '',
+                    '#### Lemma 2.1.8.',
+                    '',
+                    'The sum of the degrees is even.',
+                ],
+                spans=[
+                    LineSpan(start=1, end=1, type='paragraph'),
+                    LineSpan(start=3, end=3, type='paragraph'),
+                    LineSpan(start=5, end=5, type='paragraph'),
+                    LineSpan(start=7, end=7, type='paragraph'),
+                    LineSpan(start=9, end=9, type='header'),
+                    LineSpan(start=11, end=11, type='paragraph'),
+                ],
+            ).with_inputs('lines'),
+            dspy.Example(
+                lines=[
+                    'This paragraph continues',
+                    'across two source lines.',
+                    '',
+                    '$$x + y',
+                    '= 4$$',
+                ],
+                spans=[
+                    LineSpan(start=1, end=2, type='paragraph'),
+                    LineSpan(start=4, end=5, type='math'),
+                ],
+            ).with_inputs('lines'),
         ]
 
     def encode(self, segment_markdown: str) -> dict:
-        """Builds the extractor-signature kwargs for one page."""
-        return {'segment_markdown': segment_markdown}
+        """Builds the numbered-line input for one page."""
+        return {'lines': segment_markdown.split('\n')}
 
     def decode(self, prediction, **inputs) -> list[DSPyModel]:
-        """Returns the typed blocks from the prediction."""
-        return module.as_list(prediction.nodes)
+        """Reconstructs verbatim blocks from the returned line spans."""
+        source_lines = inputs['segment_markdown'].split('\n')
+        spans = module.as_list(prediction.spans)
+        _validate_spans(spans, source_lines)
+        return [
+            DSPyModel(
+                type=span.type,
+                content='\n'.join(source_lines[span.start - 1 : span.end]),
+            )
+            for span in spans
+        ]
 
 
 class ExtractorNode:

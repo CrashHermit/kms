@@ -6,17 +6,22 @@ from typing import TYPE_CHECKING
 from langgraph.graph import END, START, StateGraph
 
 from kms.construction import (
-    canonicalizer,
     corrector,
+    enrichment,
+    entity_enrichment,
+    entity_hubs,
     extractor,
     formatter,
     instruction_finder,
-    name_hubs,
     ocr,
     pedagogical_component_finder,
+    predicate_enrichment,
+    predicate_hubs,
     procedure_creator,
+    procedure_hubs,
     seam_merger,
     splitter,
+    statement_hubs,
     statement_procedure_builder,
     triplet_extractor,
     triplet_hubs,
@@ -28,58 +33,20 @@ if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
 
 
-class CanonicalizerNode:
-    """Runs source-local semantic and lexical canonicalization stages."""
-
+class TripletHubNode:
     def __init__(self, session_factory, language_model) -> None:
         self._session_factory = session_factory
         self._language_model = language_model
 
     async def run(self, current_state: state.State) -> dict:
-        """Canonicalize the current source and rebuild its assertion hubs."""
         if not self._session_factory:
             return {}
-        source = current_state.get('source')
-        if not source:
-            raise ValueError('canonicalization requires the current source')
-        entity_result = await canonicalizer.assign_source(
-            'entity',
-            source,
+        result = await triplet_hubs.rebuild(
             language_model=self._language_model,
             session_factory=self._session_factory,
+            source=current_state.get('source'),
         )
-        predicate_result = await canonicalizer.assign_source(
-            'predicate',
-            source,
-            language_model=self._language_model,
-            session_factory=self._session_factory,
-        )
-        entity_name_result = await name_hubs.rebuild(
-            'entity',
-            source,
-            language_model=self._language_model,
-            session_factory=self._session_factory,
-        )
-        predicate_name_result = await name_hubs.rebuild(
-            'predicate',
-            source,
-            language_model=self._language_model,
-            session_factory=self._session_factory,
-        )
-        triplet_hub_result = await triplet_hubs.rebuild(
-            language_model=self._language_model,
-            session_factory=self._session_factory,
-            source=source,
-        )
-        return {
-            'entity_assigned': entity_result['assigned'],
-            'predicate_assigned': predicate_result['assigned'],
-            'entity_hubs_created': entity_result['new_hubs'],
-            'predicate_hubs_created': predicate_result['new_hubs'],
-            'entity_name_hubs_created': entity_name_result['name_hubs'],
-            'predicate_name_hubs_created': predicate_name_result['name_hubs'],
-            'triplet_hubs_created': triplet_hub_result['triplet_hubs'],
-        }
+        return {'triplet_hubs_created': result['triplet_hubs']}
 
 
 class ProcedureCreatorNode:
@@ -155,10 +122,53 @@ def _build_modules(
             language_model=llm.module_lm('triplet_extractor'),
             recorder=recorder,
         ),
-        'component_enrichment': canonicalizer.ComponentEnricher(
-            language_model=llm.module_lm('component_enrichment'),
+        'entity_enrichment': entity_enrichment.EntityEnricher(
+            language_model=llm.module_lm('entity_enrichment'),
             recorder=recorder,
         ),
+        'predicate_enrichment': predicate_enrichment.PredicateEnricher(
+            language_model=llm.module_lm('predicate_enrichment'),
+            recorder=recorder,
+        ),
+        'statement_enrichment': enrichment.StatementEnricher(
+            language_model=llm.module_lm('statement_enrichment'),
+            recorder=recorder,
+        ),
+        'procedure_enrichment': enrichment.ProcedureEnricher(
+            language_model=llm.module_lm('procedure_enrichment'),
+            recorder=recorder,
+        ),
+        'statement_hub_builder': statement_hubs.StatementHubSynthesizer(
+            language_model=llm.module_lm('statement_hub_builder'),
+            recorder=recorder,
+        ),
+        'statement_hub_adjudicator': statement_hubs.StatementHubAdjudicator(
+            language_model=llm.module_lm('statement_hub_builder'),
+            recorder=recorder,
+        ),
+        'procedure_hub_builder': procedure_hubs.ProcedureHubSynthesizer(
+            language_model=llm.module_lm('procedure_hub_builder'),
+            recorder=recorder,
+        ),
+        'procedure_hub_adjudicator': procedure_hubs.ProcedureHubAdjudicator(
+            language_model=llm.module_lm('procedure_hub_builder'),
+            recorder=recorder,
+        ),
+        'entity_hub_adjudicator': entity_hubs.EntityHubAdjudicator(
+            language_model=llm.module_lm('entity_hub_builder'),
+        ),
+        'entity_name_hub_builder': llm.module_lm('entity_hub_builder'),
+        'entity_hub_builder': entity_hubs.EntityHubSynthesizer(
+            language_model=llm.module_lm('entity_hub_builder'),
+        ),
+        'predicate_hub_adjudicator': predicate_hubs.PredicateHubAdjudicator(
+            language_model=llm.module_lm('predicate_hub_builder'),
+        ),
+        'predicate_name_hub_builder': llm.module_lm('predicate_hub_builder'),
+        'predicate_hub_builder': predicate_hubs.PredicateHubSynthesizer(
+            language_model=llm.module_lm('predicate_hub_builder'),
+        ),
+        'triplet_hub_builder': llm.module_lm('triplet_hub_builder'),
     }
 
 
@@ -194,7 +204,14 @@ def build_workflow(
     procedure_partitioner_module = modules['procedure_partitioner']
     fact_module = modules['fact_extractor']
     triplet_module = modules['triplet_extractor']
-    component_enrichment_module = modules['component_enrichment']
+    entity_enrichment_module = modules['entity_enrichment']
+    predicate_enrichment_module = modules['predicate_enrichment']
+    statement_enrichment_module = modules['statement_enrichment']
+    procedure_enrichment_module = modules['procedure_enrichment']
+    statement_hub_module = modules['statement_hub_builder']
+    statement_hub_adjudicator = modules['statement_hub_adjudicator']
+    procedure_hub_module = modules['procedure_hub_builder']
+    procedure_hub_adjudicator = modules['procedure_hub_adjudicator']
 
     corrector_node = corrector.CorrectorNode(module=corrector_module)
     formatter_node = formatter.FormatterNode(module=formatter_module)
@@ -222,20 +239,52 @@ def build_workflow(
         fact_module=fact_module,
         triplet_module=triplet_module,
     )
-    component_enrichment_node = canonicalizer.ComponentEnrichmentNode(
-        module=component_enrichment_module
+    entity_enrichment_node = entity_enrichment.EntityEnrichmentNode(
+        enricher=entity_enrichment_module
+    )
+    predicate_enrichment_node = predicate_enrichment.PredicateEnrichmentNode(
+        enricher=predicate_enrichment_module
     )
     node_persister_node = persister.IngestionPersisterNode(
         session_factory=neo4j_session_factory,
         neo4j_configured=neo4j_configured,
     )
-    canonicalizer_node = CanonicalizerNode(
-        session_factory=neo4j_session_factory,
-        language_model=llm.module_lm('canonicalizer'),
+    entity_hub_node = entity_hubs.EntityHubNode(
+        neo4j_session_factory,
+        modules['entity_hub_adjudicator'],
+        modules['entity_hub_builder'],
+        modules['entity_name_hub_builder'],
+    )
+    predicate_hub_node = predicate_hubs.PredicateHubNode(
+        neo4j_session_factory,
+        modules['predicate_hub_adjudicator'],
+        modules['predicate_hub_builder'],
+        modules['predicate_name_hub_builder'],
+    )
+    triplet_hub_node = TripletHubNode(
+        neo4j_session_factory, modules['triplet_hub_builder']
     )
     procedure_creator_node = ProcedureCreatorNode(
         session_factory=neo4j_session_factory,
         language_model=llm.module_lm('procedure_creator'),
+    )
+    statement_enrichment_node = enrichment.StatementEnrichmentNode(
+        session_factory=neo4j_session_factory,
+        enricher=statement_enrichment_module,
+    )
+    procedure_enrichment_node = enrichment.ProcedureEnrichmentNode(
+        session_factory=neo4j_session_factory,
+        enricher=procedure_enrichment_module,
+    )
+    statement_hub_node = statement_hubs.StatementHubNode(
+        session_factory=neo4j_session_factory,
+        adjudicator=statement_hub_adjudicator,
+        synthesizer=statement_hub_module,
+    )
+    procedure_hub_node = procedure_hubs.ProcedureHubNode(
+        session_factory=neo4j_session_factory,
+        adjudicator=procedure_hub_adjudicator,
+        synthesizer=procedure_hub_module,
     )
 
     graph = StateGraph(state.State)
@@ -257,13 +306,29 @@ def build_workflow(
         'statement_procedure_builder', statement_procedure_builder_node.run
     )
     graph.add_node('triplet_extraction', triplet_extractor_node.run)
-    graph.add_node('component_enrichment', component_enrichment_node.run)
+    graph.add_node('entity_enrichment', entity_enrichment_node.run)
+    graph.add_node('predicate_enrichment', predicate_enrichment_node.run)
     graph.add_node('ingestion_persister', node_persister_node.run)
-    graph.add_node('canonicalizer', canonicalizer_node.run)
+    graph.add_node('entity_hub_builder', entity_hub_node.run)
+    graph.add_node('predicate_hub_builder', predicate_hub_node.run)
+    graph.add_node('triplet_hub_builder', triplet_hub_node.run)
     graph.add_node('procedure_creator', procedure_creator_node.run)
+    graph.add_node('statement_enrichment', statement_enrichment_node.run)
+    graph.add_node('procedure_enrichment', procedure_enrichment_node.run)
+    graph.add_node('statement_hub_builder', statement_hub_node.run)
+    graph.add_node('procedure_hub_builder', procedure_hub_node.run)
 
     formatter_entry = 'corrector_collect'
-    procedure_creator_entry = 'canonicalizer'
+    entity_enrichment_entry = 'entity_enrichment'
+    predicate_enrichment_entry = 'predicate_enrichment'
+    entity_hub_entry = 'entity_hub_builder'
+    predicate_hub_entry = 'predicate_hub_builder'
+    triplet_hub_entry = 'triplet_hub_builder'
+    statement_enrichment_entry = 'statement_enrichment'
+    procedure_creator_entry = 'procedure_creator'
+    procedure_enrichment_entry = 'procedure_enrichment'
+    statement_hub_entry = 'statement_hub_builder'
+    procedure_hub_entry = 'procedure_hub_builder'
     if model_manager:
         graph.add_node(
             'switch_to_corrector',
@@ -274,15 +339,88 @@ def build_workflow(
             serve.SwitchNode(model_manager, 'formatter').run,
         )
         graph.add_node(
+            'switch_to_entity_enrichment',
+            serve.SwitchNode(model_manager, 'entity_enrichment').run,
+        )
+        graph.add_node(
+            'switch_to_predicate_enrichment',
+            serve.SwitchNode(model_manager, 'predicate_enrichment').run,
+        )
+        graph.add_node(
+            'switch_to_entity_hub_builder',
+            serve.SwitchNode(model_manager, 'entity_hub_builder').run,
+        )
+        graph.add_node(
+            'switch_to_predicate_hub_builder',
+            serve.SwitchNode(model_manager, 'predicate_hub_builder').run,
+        )
+        graph.add_node(
+            'switch_to_triplet_hub_builder',
+            serve.SwitchNode(model_manager, 'triplet_hub_builder').run,
+        )
+        graph.add_node(
+            'switch_to_statement_enrichment',
+            serve.SwitchNode(model_manager, 'statement_enrichment').run,
+        )
+        graph.add_node(
+            'switch_to_procedure_enrichment',
+            serve.SwitchNode(model_manager, 'procedure_enrichment').run,
+        )
+        graph.add_node(
             'switch_to_procedure_creator',
             serve.SwitchNode(model_manager, 'procedure_creator').run,
+        )
+        graph.add_node(
+            'switch_to_statement_hub_builder',
+            serve.SwitchNode(model_manager, 'statement_hub_builder').run,
+        )
+        graph.add_node(
+            'switch_to_procedure_hub_builder',
+            serve.SwitchNode(model_manager, 'procedure_hub_builder').run,
         )
         graph.add_edge(START, 'switch_to_corrector')
         graph.add_edge('switch_to_corrector', 'ocr')
         graph.add_edge('corrector_collect', 'switch_to_modules')
-        graph.add_edge('canonicalizer', 'switch_to_procedure_creator')
+        graph.add_edge('triplet_extraction', 'switch_to_entity_enrichment')
+        graph.add_edge('switch_to_entity_enrichment', 'entity_enrichment')
+        graph.add_edge('entity_enrichment', 'switch_to_predicate_enrichment')
+        graph.add_edge('switch_to_predicate_enrichment', 'predicate_enrichment')
+        graph.add_edge('predicate_enrichment', 'ingestion_persister')
+        graph.add_edge('entity_hub_builder', 'switch_to_predicate_hub_builder')
+        graph.add_edge(
+            'switch_to_predicate_hub_builder', 'predicate_hub_builder'
+        )
+        graph.add_edge('predicate_hub_builder', 'switch_to_triplet_hub_builder')
+        graph.add_edge('switch_to_triplet_hub_builder', 'triplet_hub_builder')
+        graph.add_edge('triplet_hub_builder', 'switch_to_statement_enrichment')
+        graph.add_edge('switch_to_statement_enrichment', 'statement_enrichment')
+        graph.add_edge('statement_enrichment', 'switch_to_procedure_creator')
+        graph.add_edge('switch_to_procedure_creator', 'procedure_creator')
+        graph.add_edge('procedure_creator', 'switch_to_procedure_enrichment')
+        graph.add_edge('switch_to_procedure_enrichment', 'procedure_enrichment')
+        graph.add_edge(
+            'procedure_enrichment', 'switch_to_statement_hub_builder'
+        )
+        graph.add_edge(
+            'switch_to_statement_hub_builder', 'statement_hub_builder'
+        )
+        graph.add_edge(
+            'statement_hub_builder', 'switch_to_procedure_hub_builder'
+        )
+        graph.add_edge(
+            'switch_to_procedure_hub_builder', 'procedure_hub_builder'
+        )
         formatter_entry = 'switch_to_modules'
+        statement_enrichment_entry = 'switch_to_statement_enrichment'
         procedure_creator_entry = 'switch_to_procedure_creator'
+        procedure_enrichment_entry = 'switch_to_procedure_enrichment'
+        entity_enrichment_entry = 'switch_to_entity_enrichment'
+        predicate_enrichment_entry = 'switch_to_predicate_enrichment'
+        entity_hub_entry = 'switch_to_entity_hub_builder'
+        predicate_hub_entry = 'switch_to_predicate_hub_builder'
+        triplet_hub_entry = 'switch_to_triplet_hub_builder'
+        statement_hub_entry = 'switch_to_statement_hub_builder'
+        procedure_hub_entry = 'switch_to_procedure_hub_builder'
 
     if not model_manager:
         graph.add_edge(START, 'ocr')
@@ -323,9 +461,17 @@ def build_workflow(
         'pedagogical_component_finder', 'statement_procedure_builder'
     )
     graph.add_edge('statement_procedure_builder', 'triplet_extraction')
-    graph.add_edge('triplet_extraction', 'component_enrichment')
-    graph.add_edge('component_enrichment', 'ingestion_persister')
-    graph.add_edge('ingestion_persister', 'canonicalizer')
-    graph.add_edge(procedure_creator_entry, 'procedure_creator')
-    graph.add_edge('procedure_creator', END)
+    graph.add_edge('triplet_extraction', entity_enrichment_entry)
+    graph.add_edge('entity_enrichment', predicate_enrichment_entry)
+    graph.add_edge('predicate_enrichment', 'ingestion_persister')
+    graph.add_edge('ingestion_persister', entity_hub_entry)
+    graph.add_edge('entity_hub_builder', predicate_hub_entry)
+    graph.add_edge('predicate_hub_builder', triplet_hub_entry)
+    if not model_manager:
+        graph.add_edge('triplet_hub_builder', statement_enrichment_entry)
+    graph.add_edge('statement_enrichment', procedure_creator_entry)
+    graph.add_edge('procedure_creator', procedure_enrichment_entry)
+    graph.add_edge(procedure_enrichment_entry, statement_hub_entry)
+    graph.add_edge(statement_hub_entry, procedure_hub_entry)
+    graph.add_edge(procedure_hub_entry, END)
     return graph.compile()

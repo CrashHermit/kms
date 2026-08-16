@@ -53,7 +53,7 @@ async def main():
     statements = result.get('statements') or []
     print(f'\n=== statements: {len(statements)} ===')
 
-    print('\n=== canonicalization ===')
+    print('\n=== hub building ===')
     print(f'  entity assigned: {result.get("entity_assigned")}')
     print(f'  predicate assigned: {result.get("predicate_assigned")}')
 

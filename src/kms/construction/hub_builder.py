@@ -1,8 +1,12 @@
-"""Entity and predicate canonicalization.
+"""Build reusable concept and relation abstractions from source evidence.
 
-Clusters triplet spokes into canonical hubs through a recall-precision-
-decision cascade: Voyage embeddings for coarse recall and precision bands,
-and an LLM for the final Merge/Hierarchy/Separate decision.
+Source-level triplet components carry local names and passage-grounded glosses.
+This module builds those mentions into reusable EntityHub and PredicateHub
+concepts, preserving source provenance while synthesizing
+standalone learner-facing descriptions.
+
+The hubs are abstractions, not replacements for the raw evidence: source
+triplets remain the factual record from which the hubs are derived.
 """
 
 import asyncio
@@ -10,14 +14,11 @@ import logging
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal
-
-import dspy
-from pydantic import BaseModel, Field
+from typing import Any, Literal
 
 from kms import config
 from kms.construction import name_hubs, triplet_hubs
-from kms.core import content, embeddings, llm, models, module, state, walker
+from kms.core import content, embeddings, llm
 from kms.graph import hubs, queries, writer
 
 logger = logging.getLogger(__name__)
@@ -28,8 +29,8 @@ SourceResolver = Callable[[list[dict]], str | None]
 
 
 @dataclass(frozen=True)
-class CanonicalizationSpec:
-    """Defines the tier-specific behavior of semantic canonicalization."""
+class HubBuildSpec:
+    """Defines tier-specific behavior for building semantic hubs."""
 
     tier: Literal['source', 'meta']
     hub_id_factory: HubIdFactory
@@ -37,439 +38,6 @@ class CanonicalizationSpec:
     record_adapter: RecordAdapter
     adjudication_context: str
     synthesis_context: str
-
-
-class TermDescription(BaseModel):
-    """One term and the local description written for it."""
-
-    term: str = Field(description='The term exactly as given.')
-    description: str = Field(
-        description='A concise local description of what the term means in '
-        'the given passage.'
-    )
-
-
-class ComponentEnrichmentSignature(dspy.Signature):
-    r"""
-    You are given a passage from a technical document — text with optional
-    figures — and a list of terms drawn from it. For each term, write a
-    concise description of what the term means IN THIS PASSAGE.
-
-    The terms may be entities (noun phrases naming objects or concepts) or
-    relations (verb phrases naming a relationship). Use the surrounding
-    passage to resolve notation, parenthetical role annotations, and
-    pronouns. Each description is a LOCAL gloss of one or two sentences for
-    retrieval — not a full definition. Preserve LaTeX delimiters.
-
-    Return exactly one description per term, in the same order, and do not
-    invent terms that are not in the list.
-    """
-
-    passage: content.ContentParts = dspy.InputField(
-        description='The passage: its text and any figures.'
-    )
-    terms: list[str] = dspy.InputField(
-        description='The terms to describe, each as an exact string.'
-    )
-    descriptions: list[TermDescription] = dspy.OutputField(
-        description='One description per term, in order.'
-    )
-
-
-class ComponentEnricher(module.Module):
-    """Describes each component locally from its source passage."""
-
-    signature = ComponentEnrichmentSignature
-    record_name = 'component_enrichment'
-
-    def encode(self, passage: content.Content, terms: list[str]) -> dict:
-        """Builds the component-enrichment kwargs for one passage."""
-        return {
-            'passage': content.ContentParts(content=passage),
-            'terms': terms,
-        }
-
-    def decode(self, prediction, **inputs) -> list[TermDescription]:
-        """Returns one local description per term, in input order."""
-        return module.as_list(prediction.descriptions)
-
-
-def _window_content(
-    nodes: list[models.ASTNode], node_id: int
-) -> content.Content:
-    """Builds the passage content around one node's window."""
-    parts: list[content.TextPart | content.ImagePart] = []
-    before = walker.content_before(
-        nodes,
-        node_id,
-        config.get_settings().stages.component_enrichment.before_budget,
-    )
-    if before:
-        parts.append(content.TextPart(text=before))
-    node = nodes[node_id]
-    if node.content:
-        parts.append(content.TextPart(text=node.content))
-    after = walker.content_after(
-        nodes,
-        node_id,
-        config.get_settings().stages.component_enrichment.after_budget,
-    )
-    if after:
-        parts.append(content.TextPart(text=after))
-    if node.image_path:
-        image = content.load_image(
-            node.image_path,
-            max_dim=config.get_settings().image.max_dim,
-        )
-        if image:
-            parts.append(content.ImagePart(image=image))
-    return content.Content(parts=parts)
-
-
-async def enrich_components(
-    nodes: list[models.ASTNode],
-    triplets: list[models.Triplet],
-    module: ComponentEnricher,
-    max_concurrency: int | None = None,
-) -> tuple[dict[int, dict[str, str | None]], dict[int, dict[str, str | None]]]:
-    """Derives per-node descriptions for every entity and predicate."""
-    node_entities: dict[int, set[str]] = {}
-    node_predicates: dict[int, set[str]] = {}
-    for triplet in triplets:
-        for node_id in triplet.node_ids:
-            node_entities.setdefault(node_id, set()).add(triplet.subject)
-            node_entities.setdefault(node_id, set()).add(triplet.object)
-            node_predicates.setdefault(node_id, set()).add(triplet.predicate)
-
-    gate = llm.gate(max_concurrency)
-    entity_descriptions: dict[int, dict[str, str | None]] = {}
-    predicate_descriptions: dict[int, dict[str, str | None]] = {}
-
-    async def _enrich_node(
-        node_id: int,
-        entity_terms: set[str],
-        predicate_terms: set[str],
-    ) -> None:
-        """Describes one node's terms from its surrounding window."""
-        terms = sorted(entity_terms | predicate_terms)
-        if not terms:
-            return
-        async with gate:
-            results = await module.aforward(
-                passage=_window_content(nodes, node_id), terms=terms
-            )
-        by_term = {item.term: item.description for item in results}
-        entity_descriptions[node_id] = {
-            term: by_term.get(term) for term in entity_terms
-        }
-        predicate_descriptions[node_id] = {
-            term: by_term.get(term) for term in predicate_terms
-        }
-
-    node_ids = node_entities.keys() | node_predicates.keys()
-    await asyncio.gather(
-        *(
-            _enrich_node(
-                node_id,
-                node_entities.get(node_id, set()),
-                node_predicates.get(node_id, set()),
-            )
-            for node_id in node_ids
-        )
-    )
-    return entity_descriptions, predicate_descriptions
-
-
-def _embedding_text(term: str, description: str | None) -> str:
-    """Renders the text to embed for one term, with its description."""
-    return f'{term} : {description}' if description else term
-
-
-async def embed_components(
-    entity_descriptions: dict[int, dict[str, str | None]],
-    predicate_descriptions: dict[int, dict[str, str | None]],
-    embedder: embeddings.Embedder,
-) -> tuple[
-    dict[int, dict[str, list[float]]],
-    dict[int, dict[str, list[float]]],
-]:
-    """Embeds each component's term and local description."""
-    texts: list[str] = []
-    refs: list[tuple[str, int, str]] = []
-    for node_id, terms in entity_descriptions.items():
-        for term, description in terms.items():
-            refs.append(('entity', node_id, term))
-            texts.append(_embedding_text(term, description))
-    for node_id, terms in predicate_descriptions.items():
-        for term, description in terms.items():
-            refs.append(('predicate', node_id, term))
-            texts.append(_embedding_text(term, description))
-
-    entity_embeddings: dict[int, dict[str, list[float]]] = {}
-    predicate_embeddings: dict[int, dict[str, list[float]]] = {}
-    if not texts:
-        return entity_embeddings, predicate_embeddings
-
-    vectors = await embedder.embed(
-        [content.Content.from_text(text) for text in texts]
-    )
-    for (kind, node_id, term), vector in zip(refs, vectors, strict=True):
-        target = entity_embeddings if kind == 'entity' else predicate_embeddings
-        target.setdefault(node_id, {})[term] = vector
-    return entity_embeddings, predicate_embeddings
-
-
-class ComponentEnrichmentNode:
-    """Graph node that describes and embeds triplet components."""
-
-    def __init__(self, module: ComponentEnricher) -> None:
-        self._module = module
-
-    async def run(self, current_state: state.State) -> dict:
-        """Describes and embeds every entity and predicate in the triplets."""
-        nodes = current_state.get('nodes', [])
-        triplets = current_state.get('triplets', [])
-        if not triplets:
-            return {}
-        entity_descriptions, predicate_descriptions = await enrich_components(
-            nodes, triplets, self._module
-        )
-        entity_embeddings, predicate_embeddings = await embed_components(
-            entity_descriptions,
-            predicate_descriptions,
-            embeddings.embedder(),
-        )
-        return {
-            'entity_descriptions': entity_descriptions,
-            'predicate_descriptions': predicate_descriptions,
-            'entity_embeddings': entity_embeddings,
-            'predicate_embeddings': predicate_embeddings,
-        }
-
-
-class _DefinitionInput(BaseModel):
-    """The synthesized canonical name and description for a cluster."""
-
-    canonical_name: str = Field(
-        description='The canonical name that best represents this entity.'
-    )
-    description: str = Field(
-        description='A concise 1-2 sentence description of what this entity is.'
-    )
-
-
-class _DefinitionSignature(dspy.Signature):
-    r"""
-    You are given several surface forms of the same entity from different
-    contexts in a technical document, together with a local description of
-    each. Write a canonical name and a 1-2 sentence description of what
-    this entity IS.
-
-    The surface forms include parenthetical role annotations added during
-    extraction. The canonical name should be the most informative concept
-    name — prefer general terms over specific notation: "graph" not
-    "$G = (V, E)$ (a graph)", "vertex set" not "$V$ (a vertex set)".
-    If the entity is a specific named object rather than a general
-    concept, keep the most informative surface form. Preserve LaTeX
-    with $ delimiters for mathematical notation.
-
-    The description should be a STANDALONE TEXTBOOK-STYLE DEFINITION:
-    - Write as if for a reference work — the reader has no access to
-      the source document
-    - Strip out all source-specific references: never mention "in the
-      given contexts", "$G_1$", "the document", "the passage", or any
-      example-specific objects that only exist in the source
-    - State only what the entity IS in general — not what it does in a
-      particular passage
-    - Use LaTeX with $ delimiters for any mathematical notation
-    - Be readable standalone — someone reading only the definition
-      should understand the entity completely
-
-    Never invent information not supported by at least one of the input
-    surface forms or their descriptions.
-    """
-
-    surface_forms: list[str] = dspy.InputField(
-        description='Every surface form that belongs to this entity cluster.'
-    )
-    descriptions: list[str] = dspy.InputField(
-        description='A local description of each surface form.'
-    )
-    scope: str = dspy.InputField(
-        description='The canonicalization scope and interpretation target.'
-    )
-    result: _DefinitionInput = dspy.OutputField(
-        description='Canonical name and description for this entity.'
-    )
-
-
-class _DefinitionSynthesizer(module.Module):
-    """Synthesizes a canonical name and definition for a cluster."""
-
-    signature = _DefinitionSignature
-    record_name = 'definition_synthesizer'
-
-    def encode(
-        self,
-        surface_forms: list[str],
-        descriptions: list[str],
-        scope: str,
-    ) -> dict:
-        """Builds the definition-signature kwargs for one cluster."""
-        return {
-            'surface_forms': surface_forms,
-            'descriptions': descriptions,
-            'scope': scope,
-        }
-
-    def decode(self, prediction, **inputs) -> tuple[str, str]:
-        """Returns ``(canonical_name, description)`` for the cluster."""
-        definition = prediction.result
-        return definition.canonical_name, definition.description
-
-
-class _Adjudication(BaseModel):
-    """The LLM's Merge/Hierarchy/Separate verdict on two mentions."""
-
-    decision: str = Field(
-        description="'Merge' when both mentions are the same concept, "
-        "'Hierarchy' when one is a more general form of the other, "
-        "'Separate' when unrelated."
-    )
-    more_general: str = Field(
-        default='none',
-        description="'left' when the left mention is more general, "
-        "'right' when the right mention is, 'none' otherwise.",
-    )
-
-
-class _AdjudicateSignature(dspy.Signature):
-    r"""
-    You are given two concept mentions extracted from a technical document.
-    Each mention carries its name, a triplet assertion it appears in, and
-    optionally a figure. Decide how the two mentions relate.
-
-    - Merge: both are the SAME concept expressed differently. This includes
-      spelling and grammar variants of one term — case ("edge" / "Edge"),
-      singular vs plural ("vertex" / "vertices"), spacing ("edge set" /
-      "edge-set"), and equivalent notation ("$G$" and "graph" when both
-      name the same object). They become one canonical hub.
-    - Hierarchy: distinct concepts where one IS A KIND OF the other
-      ("subgraph" is a kind of "graph", "inner product space" is a kind of
-      "vector space"). They stay separate hubs joined by a subsumption edge.
-    - Separate: everything else, INCLUDING composition and part-whole
-      relations. A graph HAS edges and vertices but an edge is NOT a kind of
-      graph — so "graph" vs "edge" and "graph" vs "vertex" are Separate,
-      never Hierarchy. Subsumption means strictly "is a kind of", never
-      "belongs to" or "is part of".
-
-    If Hierarchy, set more_general to 'left' when the left mention is the
-    more general concept, or 'right' when the right mention is. Otherwise
-    set it to 'none'.
-
-    Prefer Merge for spelling/grammar variants even when the surface strings
-    differ slightly. Reserve Hierarchy for a genuine "is a kind of"
-    relationship. Preserve LaTeX delimiters.
-    """
-
-    left: content.ContentParts = dspy.InputField(
-        description='The left mention: its name, the triplet context it '
-        'appears in, and any figure.'
-    )
-    right: content.ContentParts = dspy.InputField(
-        description='The right mention: its name, the triplet context it '
-        'appears in, and any figure.'
-    )
-    scope: str = dspy.InputField(
-        description='The canonicalization scope and interpretation target.'
-    )
-    result: _Adjudication = dspy.OutputField(
-        description='The relation between the two mentions.'
-    )
-
-
-def _demo_parts(name: str, context: str) -> content.ContentParts:
-    """Builds a simple ContentParts demo from name and context text."""
-    return content.ContentParts(
-        content=content.Content(
-            parts=[
-                content.TextPart(text=f'Name: {name}'),
-                content.TextPart(text=f'Context: {context}'),
-            ]
-        )
-    )
-
-
-class _Adjudicator(module.Module):
-    """Decides Merge/Hierarchy/Separate between two mentions."""
-
-    signature = _AdjudicateSignature
-    record_name = 'adjudicator'
-
-    def __init__(self, language_model: dspy.LM) -> None:
-        super().__init__(language_model)
-        self.predictor.demos = [
-            dspy.Example(
-                left=_demo_parts('edge', 'an edge | connects | two vertices'),
-                right=_demo_parts(
-                    'Edge', 'every Edge | is a pair of | vertices'
-                ),
-                result=_Adjudication(decision='Merge', more_general='none'),
-            ).with_inputs('left', 'right'),
-            dspy.Example(
-                left=_demo_parts(
-                    'vertex', 'a vertex | belongs to | the graph $G$'
-                ),
-                right=_demo_parts('vertices', '$G$ | has | vertices'),
-                result=_Adjudication(decision='Merge', more_general='none'),
-            ).with_inputs('left', 'right'),
-            dspy.Example(
-                left=_demo_parts('subgraph', '$H$ | is a subgraph of | $G$'),
-                right=_demo_parts('graph', '$G$ | is | a graph'),
-                result=_Adjudication(
-                    decision='Hierarchy', more_general='right'
-                ),
-            ).with_inputs('left', 'right'),
-            dspy.Example(
-                left=_demo_parts(
-                    'induced subgraph',
-                    '$H$ | is an induced subgraph of | $G$',
-                ),
-                right=_demo_parts('subgraph', '$H$ | is a subgraph of | $G$'),
-                result=_Adjudication(
-                    decision='Hierarchy', more_general='right'
-                ),
-            ).with_inputs('left', 'right'),
-            dspy.Example(
-                left=_demo_parts('edge', 'an edge | connects | two vertices'),
-                right=_demo_parts('graph', '$G$ | is | a graph'),
-                result=_Adjudication(decision='Separate', more_general='none'),
-            ).with_inputs('left', 'right'),
-            dspy.Example(
-                left=_demo_parts(
-                    'vertex set', '$V$ | is the vertex set of | $G$'
-                ),
-                right=_demo_parts('graph', '$G$ | is | a graph'),
-                result=_Adjudication(decision='Separate', more_general='none'),
-            ).with_inputs('left', 'right'),
-        ]
-
-    def encode(
-        self,
-        left: content.Content,
-        right: content.Content,
-        scope: str,
-    ) -> dict:
-        """Builds the adjudication-signature kwargs for one mention pair."""
-        return {
-            'left': content.ContentParts(content=left),
-            'right': content.ContentParts(content=right),
-            'scope': scope,
-        }
-
-    def decode(self, prediction, **inputs) -> _Adjudication:
-        """Adjudicates the relation between two concept mentions."""
-        return prediction.result
 
 
 def _coarse_clusters(
@@ -531,7 +99,7 @@ def _central_mention(component: list[dict]) -> dict:
 
 
 def _mention_content(mention: dict) -> content.Content:
-    """Builds the adjudicator's content view of one canonicalization record."""
+    """Builds the adjudicator's content view of one hub-building record."""
     parts: list[content.TextPart] = [
         content.TextPart(text=f'Name: {mention["name"]}'),
     ]
@@ -551,7 +119,7 @@ def _mention_content(mention: dict) -> content.Content:
 
 async def _adjudicate_component(
     component: list[dict],
-    adjudicator: _Adjudicator,
+    adjudicator: Any,
     merge_above: float,
     separate_below: float,
     gate: asyncio.Semaphore,
@@ -612,11 +180,11 @@ async def _adjudicate_component(
 
 async def _synthesize_definitions(
     clusters: list[list[dict]],
-    synthesizer: _DefinitionSynthesizer,
+    synthesizer: Any,
     gate: asyncio.Semaphore,
     scope: str,
 ) -> list[dict]:
-    """Synthesizes one canonical definition per cluster, concurrently."""
+    """Synthesizes one hub definition per cluster, concurrently."""
 
     async def _one(cluster: list[dict]) -> dict:
         """Synthesizes the definition for one cluster."""
@@ -648,7 +216,7 @@ async def _synthesize_definitions(
 
 
 def _dominant_source(records: list[dict]) -> str:
-    """Returns the most common source in a group of canonicalization records."""
+    """Returns the most common source represented by a group of records."""
     counts = Counter(
         record['source'] for record in records if record.get('source')
     )
@@ -703,7 +271,7 @@ def _require_meta_sources(kind: str, records: list[dict]) -> set[str]:
     }
     if len(sources) < 2:
         raise RuntimeError(
-            f'canonicalizer (meta/{kind}): requires at least two distinct '
+            f'hub_builder (meta/{kind}): requires at least two distinct '
             f'sources, found {len(sources)}'
         )
     return sources
@@ -744,7 +312,7 @@ def _no_source(records: list[dict]) -> None:
     return None
 
 
-SOURCE_SPEC = CanonicalizationSpec(
+SOURCE_SPEC = HubBuildSpec(
     tier='source',
     hub_id_factory=_source_hub_id,
     source_resolver=_source_scope,
@@ -752,31 +320,32 @@ SOURCE_SPEC = CanonicalizationSpec(
     adjudication_context=(
         'Compare durable component mentions within one source.'
     ),
-    synthesis_context='Synthesize a source-local canonical concept.',
+    synthesis_context='Synthesize a source-local semantic hub.',
 )
 
-META_SPEC = CanonicalizationSpec(
+META_SPEC = HubBuildSpec(
     tier='meta',
     hub_id_factory=_meta_hub_id,
     source_resolver=_no_source,
     record_adapter=_source_hub_records,
     adjudication_context='Compare source-local hubs across different sources.',
-    synthesis_context='Synthesize a cross-source canonical concept.',
+    synthesis_context='Synthesize a cross-source semantic hub.',
 )
 
 
-async def canonicalize_records(
+async def build_hubs(
     kind: str,
     records: list[dict],
     *,
-    language_model: dspy.LM,
-    spec: CanonicalizationSpec,
+    spec: HubBuildSpec,
     recall_threshold: float | None = None,
     merge_above: float | None = None,
     separate_below: float | None = None,
     max_concurrency: int | None = None,
+    adjudicator: Any | None = None,
+    synthesizer: Any | None = None,
 ) -> dict:
-    """Canonicalizes already-loaded records into reusable hub records.
+    """Builds reusable hubs from already-loaded source records.
 
     Records must contain ``uuid``, ``name``, ``description``, ``embedding``,
     and optionally ``source`` and ``aliases``. The spec supplies tier-specific
@@ -786,8 +355,13 @@ async def canonicalize_records(
     use the same clustering and synthesis engine for source hubs and
     hub-over-hubs meta hubs, then persist the result at the appropriate tier.
     """
+    if adjudicator is None or synthesizer is None:
+        raise TypeError('adjudicator and synthesizer are required')
     records = spec.record_adapter(records)
-    stage = config.get_settings().stages.canonicalizer
+    stage = getattr(
+        config.get_settings().stages,
+        f'{kind}_hubs',
+    )
     if recall_threshold is None:
         recall_threshold = stage.recall_threshold
     if merge_above is None:
@@ -807,13 +381,13 @@ async def canonicalize_records(
     if missing:
         names = [record.get('name') for record in missing[:5]]
         raise RuntimeError(
-            f'canonicalizer ({kind}): {len(missing)} record(s) lack an '
+            f'hub_builder ({kind}): {len(missing)} record(s) lack an '
             f'embedding — run the component enrichment pass first: {names}'
         )
 
     components = _coarse_clusters(records, recall_threshold)
     logger.info(
-        'canonicalizer (%s/%s): %d coarse component(s) at recall %.2f',
+        'hub_builder (%s/%s): %d coarse component(s) at recall %.2f',
         spec.tier,
         kind,
         len(components),
@@ -821,7 +395,6 @@ async def canonicalize_records(
     )
 
     gate = llm.gate(max_concurrency)
-    adjudicator = _Adjudicator(language_model)
     clusters: list[list[dict]] = []
     subsumption: list[tuple[int, int]] = []
     for component in components:
@@ -840,7 +413,6 @@ async def canonicalize_records(
             for general, specific in local_subsumption
         )
 
-    synthesizer = _DefinitionSynthesizer(language_model)
     definitions = await _synthesize_definitions(
         clusters, synthesizer, gate, spec.synthesis_context
     )
@@ -935,13 +507,14 @@ def _candidate_record(candidate: dict, source: str | None) -> dict:
 
 
 async def _choose_hub(
+    kind: str,
     record: dict,
     candidates: list[dict],
-    adjudicator: _Adjudicator,
+    adjudicator: Any,
     gate: asyncio.Semaphore,
     scope: str,
 ) -> tuple[str | None, list[tuple[str, str]], float, str]:
-    stage = config.get_settings().stages.canonicalizer
+    stage = getattr(config.get_settings().stages, f'{kind}_hubs')
     hierarchy: list[tuple[str, str]] = []
     for candidate in candidates:
         score = candidate['score']
@@ -965,9 +538,9 @@ async def _choose_hub(
 async def _new_hub(
     kind: str,
     record: dict,
-    synthesizer: _DefinitionSynthesizer,
+    synthesizer: Any,
     gate: asyncio.Semaphore,
-    spec: CanonicalizationSpec,
+    spec: HubBuildSpec,
 ) -> dict:
     definition = (
         await _synthesize_definitions(
@@ -1002,7 +575,7 @@ async def _refresh_source_hubs(
     kind: str,
     records_by_hub: dict[str, list[dict]],
     new_hub_ids: set[str],
-    synthesizer: _DefinitionSynthesizer,
+    synthesizer: Any,
     gate: asyncio.Semaphore,
 ) -> list[dict]:
     refreshed: list[dict] = []
@@ -1039,20 +612,20 @@ async def _refresh_source_hubs(
     return refreshed
 
 
-async def assign_source(
+async def assign_source_hubs(
     kind: str,
     source: str,
     *,
-    language_model: dspy.LM,
     session_factory: Callable,
     max_concurrency: int | None = None,
+    adjudicator: Any,
+    synthesizer: Any,
 ) -> dict:
-    """Assign uncanonicalized components to source-local semantic hubs.
+    """Assign unassigned components to source-local semantic hubs.
 
     Args:
         kind: The component kind, either ``entity`` or ``predicate``.
         source: The source key whose components should be assigned.
-        language_model: The model used for adjudication and synthesis.
         session_factory: Creates async Neo4j sessions.
         max_concurrency: Optional limit for concurrent model calls.
 
@@ -1075,14 +648,12 @@ async def assign_source(
             record['name'] for record in records if not record.get('embedding')
         ][:5]
         raise RuntimeError(
-            f'canonicalizer ({kind}): unassigned record(s) lack an embedding '
+            f'hub_builder ({kind}): unassigned record(s) lack an embedding '
             f'— run the component enrichment pass first: {names}'
         )
 
     top_k = config.get_settings().stages.search.top_k
     gate = llm.gate(max_concurrency)
-    adjudicator = _Adjudicator(language_model)
-    synthesizer = _DefinitionSynthesizer(language_model)
     new_hubs: dict[str, dict] = {}
     assignments: list[dict] = []
     aliases: dict[str, set[str]] = {}
@@ -1114,6 +685,7 @@ async def assign_source(
         )
         candidates.sort(key=lambda candidate: candidate['score'], reverse=True)
         merged_hub, hierarchy, _, _ = await _choose_hub(
+            kind,
             record,
             candidates,
             adjudicator,
@@ -1186,13 +758,15 @@ async def assign_source(
     }
 
 
-async def align_meta(
+async def align_meta_hubs(
     kind: str,
     source_hub_uuids: list[str],
     *,
-    language_model: dspy.LM,
     session_factory: Callable,
     max_concurrency: int | None = None,
+    language_model: Any,
+    adjudicator: Any | None = None,
+    synthesizer: Any | None = None,
 ) -> dict:
     """Align selected source-local hubs to qualified meta hubs.
 
@@ -1220,7 +794,7 @@ async def align_meta(
         found = {record['uuid'] for record in records}
         missing = sorted(set(source_hub_uuids) - found)
         raise RuntimeError(
-            f'canonicalizer (meta/{kind}): source hub(s) not found: {missing}'
+            f'hub_builder (meta/{kind}): source hub(s) not found: {missing}'
         )
     _require_meta_sources(kind, records)
     if any(not record.get('embedding') for record in records):
@@ -1228,7 +802,7 @@ async def align_meta(
             record['uuid'] for record in records if not record.get('embedding')
         ]
         raise RuntimeError(
-            f'canonicalizer (meta/{kind}): source hub(s) lack an embedding: '
+            f'hub_builder (meta/{kind}): source hub(s) lack an embedding: '
             f'{missing}'
         )
 
@@ -1237,8 +811,6 @@ async def align_meta(
     )
     top_k = config.get_settings().stages.search.top_k
     gate = llm.gate(max_concurrency)
-    adjudicator = _Adjudicator(language_model)
-    synthesizer = _DefinitionSynthesizer(language_model)
     new_hubs: dict[str, dict] = {}
     assignments: list[dict] = []
     aliases: dict[str, set[str]] = {}
@@ -1268,6 +840,7 @@ async def align_meta(
         )
         candidates.sort(key=lambda candidate: candidate['score'], reverse=True)
         meta_hub, hierarchy, score, decision = await _choose_hub(
+            kind,
             record,
             candidates,
             adjudicator,
@@ -1391,11 +964,13 @@ async def align_meta(
     }
 
 
-async def rebuild_meta(
+async def rebuild_meta_hubs(
     kind: str,
     *,
-    language_model: dspy.LM,
     session_factory: Callable,
+    language_model: Any,
+    adjudicator: Any,
+    synthesizer: Any,
     recall_threshold: float | None = None,
     merge_above: float | None = None,
     separate_below: float | None = None,
@@ -1410,19 +985,20 @@ async def rebuild_meta(
     records = source_hub_rows
     _require_meta_sources(kind, records)
     logger.info(
-        'canonicalizer (meta/%s): %d source hub(s) read',
+        'hub_builder (meta/%s): %d source hub(s) read',
         kind,
         len(records),
     )
-    result = await canonicalize_records(
+    result = await build_hubs(
         kind,
         records,
-        language_model=language_model,
         recall_threshold=recall_threshold,
         merge_above=merge_above,
         separate_below=separate_below,
         max_concurrency=max_concurrency,
         spec=META_SPEC,
+        adjudicator=adjudicator,
+        synthesizer=synthesizer,
     )
     result = _qualify_meta_result(result, records)
     await writer.clear_meta_hubs(kind, session_factory=session_factory)
@@ -1445,7 +1021,7 @@ async def rebuild_meta(
         max_concurrency=max_concurrency,
     )
     logger.info(
-        'canonicalizer (meta/%s): %d hub(s) persisted',
+        'hub_builder (meta/%s): %d hub(s) persisted',
         kind,
         len(result['hubs']),
     )
@@ -1455,40 +1031,43 @@ async def rebuild_meta(
     }
 
 
-async def rebuild(
+async def rebuild_hubs(
     kind: str,
     *,
-    language_model: dspy.LM,
     session_factory: Callable,
     source: str,
+    language_model: Any,
     recall_threshold: float | None = None,
     merge_above: float | None = None,
     separate_below: float | None = None,
     max_concurrency: int | None = None,
+    adjudicator: Any,
+    synthesizer: Any,
 ) -> dict:
     """Explicitly rebuilds source-local hubs for one source and kind.
 
-    Normal ingestion uses :func:`assign_source` so unrelated sources remain
-    untouched.
+    Normal ingestion uses :func:`assign_source_hubs` so unrelated sources
+    remain untouched.
     """
     component_rows = await queries.all_components(
         session_factory, kind, source=source
     )
     logger.info(
-        'canonicalizer (source/%s, %s): %d component(s) read',
+        'hub_builder (source/%s, %s): %d component(s) read',
         kind,
         source,
         len(component_rows),
     )
-    result = await canonicalize_records(
+    result = await build_hubs(
         kind,
         component_rows,
-        language_model=language_model,
         recall_threshold=recall_threshold,
         merge_above=merge_above,
         separate_below=separate_below,
         max_concurrency=max_concurrency,
         spec=SOURCE_SPEC,
+        adjudicator=adjudicator,
+        synthesizer=synthesizer,
     )
     await writer.clear_source_hubs(
         kind,
@@ -1516,7 +1095,7 @@ async def rebuild(
         max_concurrency=max_concurrency,
     )
     logger.info(
-        'canonicalizer (source/%s, %s): %d hub(s) persisted',
+        'hub_builder (source/%s, %s): %d hub(s) persisted',
         kind,
         source,
         len(result['hubs']),

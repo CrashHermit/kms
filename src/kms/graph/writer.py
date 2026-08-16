@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from kms.core import models
-from kms.graph import assertions, names, queries
+from kms.graph import assertions, learning_hubs, names, queries
 from kms.graph.hubs import (
     component_label,
     hub_label,
@@ -25,7 +25,11 @@ from kms.graph.nodes import (
     source_uuid,
 )
 from kms.graph.procedures import (
+    existing_first_pairs,
+    existing_step_rows,
+    existing_then_pairs,
     first_pairs,
+    procedure_enrichment_properties,
     procedure_member_pairs,
     procedure_rows,
     step_rows,
@@ -33,6 +37,7 @@ from kms.graph.procedures import (
 )
 from kms.graph.statements import (
     has_procedure_pairs,
+    statement_enrichment_properties,
     statement_member_pairs,
     statement_properties,
 )
@@ -179,6 +184,169 @@ async def persist_statements(
             )
 
 
+async def persist_learning_hubs(
+    kind: str,
+    hubs: list[dict],
+    *,
+    session_factory: Callable,
+) -> None:
+    if not hubs:
+        return
+    rows = [
+        learning_hubs.hub_properties(
+            kind,
+            hub['source'],
+            hub['canonical_name'],
+            hub['description'],
+            hub['embedding'],
+            hub['members'],
+        )
+        for hub in hubs
+    ]
+    pairs = [
+        {'base': member, 'hub': hub['uuid']}
+        for hub in hubs
+        for member in hub['members']
+    ]
+    async with session_factory() as session:
+        await session.run(
+            queries.merge_learning_hubs_query(kind),
+            rows=rows,
+            now=utcnow_iso(),
+        )
+        await session.run(
+            queries.merge_learning_hub_memberships_query(kind),
+            pairs=pairs,
+            now=utcnow_iso(),
+        )
+
+
+async def clear_learning_hubs(
+    kind: str,
+    source: str,
+    *,
+    session_factory: Callable,
+) -> None:
+    async with session_factory() as session:
+        await session.run(
+            queries.delete_learning_hubs_query(kind),
+            source=source,
+        )
+
+
+async def persist_meta_learning_hubs(
+    kind: str,
+    hubs: list[dict],
+    *,
+    session_factory: Callable,
+) -> None:
+    if not hubs:
+        return
+    source_by_hub = await queries.all_source_learning_hubs(
+        session_factory, kind
+    )
+    known_sources = {
+        record['uuid']: record['source'] for record in source_by_hub
+    }
+    for hub in hubs:
+        members = hub.get('members', [])
+        sources = {
+            known_sources[member]
+            for member in members
+            if member in known_sources
+        }
+        if len(sources) < 2:
+            raise ValueError(
+                'meta learning hubs require two distinct source supports: '
+                f'{hub.get("uuid")}'
+            )
+    rows = [
+        learning_hubs.meta_hub_properties(
+            kind,
+            hub['canonical_name'],
+            hub['description'],
+            hub['embedding'],
+            hub['members'],
+        )
+        | {'uuid': hub['uuid']}
+        for hub in hubs
+    ]
+    pairs = [
+        {'source_hub': member, 'meta_hub': hub['uuid']}
+        for hub in hubs
+        for member in hub.get('members', [])
+    ]
+    async with session_factory() as session:
+        await session.run(
+            queries.merge_meta_learning_hubs_query(kind),
+            rows=rows,
+            now=utcnow_iso(),
+        )
+        if pairs:
+            await session.run(
+                queries.merge_meta_learning_alignments_query(kind),
+                pairs=pairs,
+                now=utcnow_iso(),
+            )
+
+
+async def clear_meta_learning_hubs(
+    kind: str,
+    *,
+    session_factory: Callable,
+) -> None:
+    async with session_factory() as session:
+        await session.run(queries.delete_meta_learning_hubs_query(kind))
+
+
+async def persist_statement_enrichment(
+    enrichments: list[dict],
+    *,
+    session_factory: Callable,
+) -> None:
+    """Persists derived descriptions and embeddings for Statements."""
+    if not enrichments:
+        return
+    rows = [
+        statement_enrichment_properties(
+            enrichment['uuid'],
+            enrichment['description'],
+            enrichment['embedding'],
+        )
+        for enrichment in enrichments
+    ]
+    async with session_factory() as session:
+        await session.run(
+            queries.MERGE_STATEMENT_ENRICHMENT,
+            rows=rows,
+            now=utcnow_iso(),
+        )
+
+
+async def persist_procedure_enrichment(
+    enrichments: list[dict],
+    *,
+    session_factory: Callable,
+) -> None:
+    """Persists derived descriptions and embeddings for Procedures."""
+    if not enrichments:
+        return
+    rows = [
+        procedure_enrichment_properties(
+            enrichment['uuid'],
+            enrichment['description'],
+            enrichment['embedding'],
+        )
+        for enrichment in enrichments
+    ]
+    async with session_factory() as session:
+        await session.run(
+            queries.MERGE_PROCEDURE_ENRICHMENT,
+            rows=rows,
+            now=utcnow_iso(),
+        )
+
+
 async def persist_instructions(
     instructions: list[models.Instruction],
     source: str,
@@ -238,6 +406,35 @@ async def persist_procedures(
             await session.run(
                 queries.MERGE_PROCEDURE_MEMBERS, pairs=members, now=now
             )
+        if firsts:
+            await session.run(queries.MERGE_FIRST, pairs=firsts, now=now)
+        if thens:
+            await session.run(queries.MERGE_THEN, pairs=thens, now=now)
+
+
+async def persist_procedure_steps(
+    procedure_uuid: str,
+    steps: list[models.Step],
+    source: str,
+    *,
+    session_factory: Callable,
+) -> None:
+    """Persists steps and ordering edges for an existing procedure.
+
+    Args:
+        procedure_uuid: UUID of the existing Procedure node.
+        steps: Ordered learnable steps to persist.
+        source: The source key.
+        session_factory: Async callable returning a Neo4j session.
+    """
+    rows = existing_step_rows(source, procedure_uuid, steps)
+    firsts = existing_first_pairs(source, procedure_uuid, steps)
+    thens = existing_then_pairs(source, procedure_uuid, steps)
+    now = utcnow_iso()
+
+    async with session_factory() as session:
+        if rows:
+            await session.run(queries.MERGE_STEPS, rows=rows, now=now)
         if firsts:
             await session.run(queries.MERGE_FIRST, pairs=firsts, now=now)
         if thens:

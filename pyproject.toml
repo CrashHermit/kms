@@ -20,6 +20,7 @@ dependencies = [
 
 [project.scripts]
 kms = "kms.tui:run"
+kms-maintenance = "kms.maintenance:run"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.9"]

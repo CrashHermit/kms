@@ -6,7 +6,7 @@ from pathlib import Path
 import dspy
 from PIL import Image
 
-from kms.construction import canonicalizer, corrector, triplet_extractor
+from kms.construction import corrector, entity_enrichment, triplet_extractor
 from kms.core import content, loading, recording, walker
 
 
@@ -75,7 +75,7 @@ def test_loads_a_content_parts_input(tmp_path):
     )
     recorder.record(
         'component_enrichment',
-        canonicalizer.ComponentEnrichmentSignature,
+        entity_enrichment.EntityEnrichmentSignature,
         {'passage': passage, 'terms': ['vector space']},
         dspy.Prediction(descriptions=[]),
     )

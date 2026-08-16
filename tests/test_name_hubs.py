@@ -230,6 +230,41 @@ def test_schema_contains_lexical_constraints_and_text_indexes():
     assert 'meta_predicate_name_hub_normalized' in combined
 
 
+def test_exact_lexical_duplicates_merge_without_judgment(monkeypatch):
+    rows = [
+        _row('a', 'means that'),
+        _row('b', 'means that'),
+        _row('c', 'colour'),
+    ]
+    calls = []
+
+    class _Judge:
+        async def aforward(self, **kwargs):
+            calls.append(kwargs)
+            return 'Separate'
+
+    monkeypatch.setattr(
+        name_hubs, '_LexicalMembershipJudge', lambda lm: _Judge()
+    )
+
+    async def scenario():
+        return await name_hubs._judged_groups(
+            rows,
+            'predicate',
+            language_model=object(),
+            similarity_threshold=0.8,
+            gate=asyncio.Semaphore(1),
+        )
+
+    groups = asyncio.run(scenario())
+
+    assert {frozenset(row['uuid'] for row in group) for group in groups} == {
+        frozenset({'a', 'b'}),
+        frozenset({'c'}),
+    }
+    assert calls == []
+
+
 def test_lexical_judge_rejects_a_deterministic_candidate_before_naming(
     monkeypatch,
 ):
