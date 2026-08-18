@@ -11,7 +11,8 @@ class State(TypedDict, total=False):
 
     All keys are optional; worker results are merged in via the
     Annotated reducer fields. ``source`` and ``source_metadata`` name
-    the document being ingested, ``segments`` and ``nodes`` carry the
+    the document being ingested, ``document`` carries the mutable source
+    document through early ingestion, ``segments`` and ``nodes`` carry the
     parsed document, and the remaining keys accumulate the extracted
     knowledge before persistence.
     """
@@ -19,6 +20,7 @@ class State(TypedDict, total=False):
     pdf_path: str
     output_dir: str
     pages: list[int] | None
+    document: models.Document
     segments: list[models.Segment]
     nodes: list[models.ASTNode]
     source: str

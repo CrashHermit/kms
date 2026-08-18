@@ -21,8 +21,8 @@
 
 [models.modules.corrector]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3-vl-4b"
-max_tokens = 4096
+model = "openai/gemma-4-e4b-it"
+max_tokens = 8192
 
 [models.modules.procedure_creator]
 base_url = "http://127.0.0.1:8080/v1"
@@ -162,7 +162,7 @@ request_timeout = 30.0
 terminate_timeout = 15.0
 
 [serving.module_models]
-corrector = "qwen3-vl-4b"
+corrector = "gemma-4-e4b-it"
 procedure_creator = "qwen3.5-9b"
 formatter = "qwen3.5-9b"
 extractor = "qwen3.5-9b"
@@ -188,6 +188,14 @@ triplet_hub_builder = "qwen3.5-9b"
 search_judge = "qwen3.5-9b"
 decompose_judge = "qwen3.5-9b"
 query_decomposer = "qwen3.5-9b"
+
+[serving.presets."glm-ocr"]
+model = "~/models/glm-ocr/GLM-OCR-Q8_0.gguf"
+mmproj = "~/models/glm-ocr/mmproj-GLM-OCR-Q8_0.gguf"
+ctx_size = 32768
+n_gpu_layers = 999
+no_warmup = true
+parallel = 1
 
 [serving.presets."qwen3.5-9b"]
 model = "~/models/qwen3.5-9b/Qwen3.5-9B-Q4_K_M.gguf"
@@ -238,6 +246,7 @@ timeout_seconds = 60.0
 model = "mistral-ocr-latest"
 url = "https://api.mistral.ai/v1/ocr"
 render_scale = 3.0
+block_crop_scale = 1.0
 
 [database]
 database = "neo4j"

@@ -6,7 +6,11 @@ from pathlib import Path
 import dspy
 from PIL import Image
 
-from kms.construction import corrector, entity_enrichment, triplet_extractor
+from kms.construction import (
+    block_corrector,
+    entity_enrichment,
+    triplet_extractor,
+)
 from kms.core import content, loading, recording, walker
 
 
@@ -29,36 +33,45 @@ def _by_stage(output_dir: Path) -> dict[str, loading.Dataset]:
 def test_loads_a_dspy_image_input(tmp_path):
     recorder = recording.Recorder('src', output_dir=str(tmp_path / 'ex'))
     recorder.record(
-        'corrector_math',
-        corrector.MathSignature,
+        'corrector_block',
+        block_corrector.BlockCorrectionSignature,
         {
-            'page_image': dspy.Image(url=_data_url(_png_bytes())),
-            'lines': '[1] hi',
+            'block_crop': dspy.Image(url=_data_url(_png_bytes())),
+            'block_type': 'text',
+            'original_text': 'hi',
         },
-        dspy.Prediction(edits=[]),
+        dspy.Prediction(corrected_text='hi', changes=[]),
     )
 
-    dataset = _by_stage(tmp_path / 'ex')['corrector_math']
-    assert dataset.signature is corrector.MathSignature
+    dataset = _by_stage(tmp_path / 'ex')['corrector_block']
+    assert dataset.signature is block_corrector.BlockCorrectionSignature
     example = dataset.examples[0]
-    assert set(example.inputs().keys()) == {'page_image', 'lines'}
-    assert isinstance(example.page_image, dspy.Image)
-    assert 'base64' in example.page_image.url
+    assert set(example.inputs().keys()) == {
+        'block_crop',
+        'block_type',
+        'original_text',
+    }
+    assert isinstance(example.block_crop, dspy.Image)
+    assert 'base64' in example.block_crop.url
 
 
 def test_loads_auxiliary_prediction_fields(tmp_path):
     recorder = recording.Recorder('src', output_dir=str(tmp_path / 'ex'))
     recorder.record(
-        'corrector_prose',
-        corrector.ProseSignature,
-        {'page_image': None, 'lines': 'hi'},
+        'corrector_block',
+        block_corrector.BlockCorrectionSignature,
+        {
+            'block_crop': None,
+            'block_type': 'text',
+            'original_text': 'hi',
+        },
         dspy.Prediction(
-            edits=[], analysis='I checked the transcription before editing.'
+            corrected_text='hi', changes=['No visual changes were needed.']
         ),
     )
 
-    example = _by_stage(tmp_path / 'ex')['corrector_prose'].examples[0]
-    assert example.analysis == ('I checked the transcription before editing.')
+    example = _by_stage(tmp_path / 'ex')['corrector_block'].examples[0]
+    assert example.changes == ['No visual changes were needed.']
 
 
 def test_loads_a_content_parts_input(tmp_path):
@@ -118,19 +131,31 @@ def test_round_trip_through_a_module(tmp_path):
 
     class _Fake:
         async def acall(self, **kwargs):
-            assert 'lines' in kwargs and 'transcription' not in kwargs
-            return dspy.Prediction(edits=[])
+            assert kwargs['original_text'] == 'hi'
+            return dspy.Prediction(corrected_text='hi', changes=[])
 
-    module = corrector.Corrector(
+    module = block_corrector.BlockCorrector(
         language_model=dspy.LM('openai/dummy', api_key='x'),
         recorder=recorder,
     )
-    module.math.predictor = _Fake()
-    module.prose.predictor = _Fake()
-    module.layout.predictor = _Fake()
-    page = dspy.Image(url=_data_url(_png_bytes()))
-    asyncio.run(module.aforward(page_image=page, transcription='hi'))
+    module.predictor = _Fake()
+    image_path = tmp_path / 'block.png'
+    image_path.write_bytes(_png_bytes())
+    asyncio.run(
+        module.acorrect(
+            type(
+                'Region',
+                (),
+                {
+                    'crop_path': str(image_path),
+                    'block': type(
+                        'Block', (), {'type': 'text', 'content': 'hi'}
+                    )(),
+                },
+            )()
+        )
+    )
 
-    example = _by_stage(tmp_path / 'ex')['corrector_math'].examples[0]
-    assert isinstance(example.page_image, dspy.Image)
-    assert 'hi' in example.lines
+    example = _by_stage(tmp_path / 'ex')['corrector_block'].examples[0]
+    assert isinstance(example.block_crop, dspy.Image)
+    assert 'hi' in example.original_text

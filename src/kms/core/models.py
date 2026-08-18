@@ -78,6 +78,19 @@ class Segment:
 
 
 @dataclass(slots=True)
+class Document:
+    """One mutable document passed through the ingestion pipeline."""
+
+    response: Any
+    pages: list[Any] = field(default_factory=list)
+    raw_response_path: str | None = None
+
+    def to_segments(self) -> list[Segment]:
+        """Converts materialized pages to pipeline segments."""
+        return [page.to_segment() for page in self.pages]
+
+
+@dataclass(slots=True)
 class Triplet:
     """A subject-predicate-object fact extracted from the source."""
 

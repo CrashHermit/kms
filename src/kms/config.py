@@ -125,6 +125,7 @@ class OCRConfig(_ConfigModel):
     model: str = 'mistral-ocr-latest'
     url: str = 'https://api.mistral.ai/v1/ocr'
     render_scale: float = Field(default=3.0, gt=0.0)
+    block_crop_scale: float = Field(default=2.0, gt=0.0)
 
 
 class DatabaseConfig(_ConfigModel):

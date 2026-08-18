@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 from langgraph.graph import END, START, StateGraph
 
 from kms.construction import (
-    corrector,
     enrichment,
     entity_enrichment,
     entity_hubs,
@@ -71,9 +70,6 @@ def _build_modules(
     recorder: recording.Recorder | None,
 ) -> dict[str, object]:
     return {
-        'corrector': corrector.Corrector(
-            language_model=llm.module_lm('corrector'), recorder=recorder
-        ),
         'formatter': formatter.Formatter(
             language_model=llm.module_lm('formatter'), recorder=recorder
         ),
@@ -191,7 +187,6 @@ def build_workflow(
         The compiled LangGraph workflow.
     """
     modules = _build_modules(recorder)
-    corrector_module = modules['corrector']
     formatter_module = modules['formatter']
     extractor_module = modules['extractor']
     seam_module = modules['seam_merger']
@@ -213,7 +208,6 @@ def build_workflow(
     procedure_hub_module = modules['procedure_hub_builder']
     procedure_hub_adjudicator = modules['procedure_hub_adjudicator']
 
-    corrector_node = corrector.CorrectorNode(module=corrector_module)
     formatter_node = formatter.FormatterNode(module=formatter_module)
     extractor_node = extractor.ExtractorNode(module=extractor_module)
     seam_node = seam_merger.SeamMergerNode(
@@ -289,8 +283,6 @@ def build_workflow(
 
     graph = StateGraph(state.State)
     graph.add_node('ocr', ocr.OCRNode().run)
-    graph.add_node('corrector_worker', corrector_node.worker)
-    graph.add_node('corrector_collect', corrector_node.collect)
     graph.add_node('formatter_worker', formatter_node.worker)
     graph.add_node('formatter_collect', formatter_node.collect)
     graph.add_node('extractor_worker', extractor_node.worker)
@@ -318,7 +310,7 @@ def build_workflow(
     graph.add_node('statement_hub_builder', statement_hub_node.run)
     graph.add_node('procedure_hub_builder', procedure_hub_node.run)
 
-    formatter_entry = 'corrector_collect'
+    formatter_entry = 'ocr'
     entity_enrichment_entry = 'entity_enrichment'
     predicate_enrichment_entry = 'predicate_enrichment'
     entity_hub_entry = 'entity_hub_builder'
@@ -330,10 +322,6 @@ def build_workflow(
     statement_hub_entry = 'statement_hub_builder'
     procedure_hub_entry = 'procedure_hub_builder'
     if model_manager:
-        graph.add_node(
-            'switch_to_corrector',
-            serve.SwitchNode(model_manager, 'corrector').run,
-        )
         graph.add_node(
             'switch_to_modules',
             serve.SwitchNode(model_manager, 'formatter').run,
@@ -378,9 +366,8 @@ def build_workflow(
             'switch_to_procedure_hub_builder',
             serve.SwitchNode(model_manager, 'procedure_hub_builder').run,
         )
-        graph.add_edge(START, 'switch_to_corrector')
-        graph.add_edge('switch_to_corrector', 'ocr')
-        graph.add_edge('corrector_collect', 'switch_to_modules')
+        graph.add_edge(START, 'ocr')
+        graph.add_edge('ocr', 'switch_to_modules')
         graph.add_edge('triplet_extraction', 'switch_to_entity_enrichment')
         graph.add_edge('switch_to_entity_enrichment', 'entity_enrichment')
         graph.add_edge('entity_enrichment', 'switch_to_predicate_enrichment')
@@ -424,12 +411,6 @@ def build_workflow(
 
     if not model_manager:
         graph.add_edge(START, 'ocr')
-    graph.add_conditional_edges(
-        'ocr',
-        corrector_node.dispatch,
-        ['corrector_worker', 'corrector_collect'],
-    )
-    graph.add_edge('corrector_worker', 'corrector_collect')
     graph.add_conditional_edges(
         formatter_entry,
         formatter_node.dispatch,

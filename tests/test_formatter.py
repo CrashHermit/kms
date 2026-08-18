@@ -117,6 +117,31 @@ def test_apply_line_edits_expands_a_line_on_multiline_replacement():
     assert formatter.apply_line_edits('a\nb\nc', edits) == 'a\nB1\nB2\nc'
 
 
+def test_apply_line_edits_inserts_before_an_anchor():
+    edits = [
+        formatter.LineEdit(
+            index=2, operation='insert_before', replacement='before'
+        )
+    ]
+    assert formatter.apply_line_edits('a\nb\nc', edits) == 'a\nbefore\nb\nc'
+
+
+def test_apply_line_edits_inserts_after_an_anchor():
+    edits = [
+        formatter.LineEdit(
+            index=2, operation='insert_after', replacement='after'
+        )
+    ]
+    assert formatter.apply_line_edits('a\nb\nc', edits) == 'a\nb\nafter\nc'
+
+
+def test_apply_line_edits_deletes_with_explicit_operation():
+    edits = [
+        formatter.LineEdit(index=2, operation='delete', replacement='ignored')
+    ]
+    assert formatter.apply_line_edits('a\nb\nc', edits) == 'a\nc'
+
+
 def test_apply_line_edits_applies_multiple_edits():
     edits = [
         formatter.LineEdit(index=1, replacement='A'),
