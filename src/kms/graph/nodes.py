@@ -1,9 +1,8 @@
 """Deterministic uuid and property builders for node vertices."""
 
 from typing import Any
-from uuid import NAMESPACE_URL, uuid5
 
-from kms.core import models
+from kms.core import identity, models
 
 NODE_LABEL = 'Node'
 SOURCE_LABEL = 'Source'
@@ -11,12 +10,12 @@ SOURCE_LABEL = 'Source'
 
 def node_uuid(source: str, index: int) -> str:
     """Returns the deterministic uuid for one AST node."""
-    return uuid5(NAMESPACE_URL, f'{source}#{index}').hex
+    return identity.node_uuid(source, index)
 
 
 def source_uuid(source: str) -> str:
     """Returns the deterministic uuid for a source document."""
-    return uuid5(NAMESPACE_URL, source).hex
+    return identity.source_uuid(source)
 
 
 def source_properties(
@@ -41,14 +40,14 @@ def source_properties(
     }
 
 
-def node_label(node: models.ASTNode) -> str | None:
+def node_label(node: models.Node) -> str | None:
     """Returns the Neo4j label for a node's type, title-cased."""
     ntype = node.type
     return ntype.title() if ntype else None
 
 
 def node_properties(
-    node: models.ASTNode, source: str, embedding: list[float] | None = None
+    node: models.Node, source: str, embedding: list[float] | None = None
 ) -> dict:
     """Builds the property dict used to persist one AST node.
 
@@ -66,7 +65,7 @@ def node_properties(
         'type': node.type,
         'content': node.content,
         'index': node.id,
-        'segment_index': node.segment_index,
+        'document_index': node.document_index,
         'image_path': node.image_path,
         'embedding': embedding,
     }

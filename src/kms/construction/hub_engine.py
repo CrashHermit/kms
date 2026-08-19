@@ -18,26 +18,89 @@ from typing import Any, Literal
 
 from kms import config
 from kms.construction import name_hubs, triplet_hubs
-from kms.core import content, embeddings, llm
-from kms.graph import hubs, queries, writer
+from kms.core import content, embeddings, llm, models
+from kms.core.vector_index import ExactCosineIndex
+from kms.graph import queries
 
 logger = logging.getLogger(__name__)
 
-HubIdFactory = Callable[[str, list[dict], dict], str]
+HubIdFactory = Callable[[list[dict], dict], str]
 RecordAdapter = Callable[[list[dict]], list[dict]]
 SourceResolver = Callable[[list[dict]], str | None]
 
 
+def _rebuild_names_callback(domain: str) -> Callable:
+    async def rebuild(
+        source, *, language_model, session_factory, max_concurrency=None
+    ):
+        return await name_hubs.rebuild(
+            domain,
+            source,
+            language_model=language_model,
+            session_factory=session_factory,
+            max_concurrency=max_concurrency,
+        )
+
+    return rebuild
+
+
+def _rebuild_meta_names_callback(domain: str) -> Callable:
+    async def rebuild(*, language_model, session_factory, max_concurrency=None):
+        return await name_hubs.rebuild_meta(
+            domain,
+            language_model=language_model,
+            session_factory=session_factory,
+            max_concurrency=max_concurrency,
+        )
+
+    return rebuild
+
+
+def _rebuild_triplets_callback() -> Callable:
+    async def rebuild(
+        *,
+        language_model,
+        source=None,
+        session_factory=None,
+        max_concurrency=None,
+    ):
+        kwargs = {
+            'language_model': language_model,
+            'session_factory': session_factory,
+            'max_concurrency': max_concurrency,
+        }
+        if source is not None:
+            kwargs['source'] = source
+            return await triplet_hubs.rebuild(**kwargs)
+        return await triplet_hubs.rebuild_meta(**kwargs)
+
+    return rebuild
+
+
 @dataclass(frozen=True)
 class HubBuildSpec:
-    """Defines tier-specific behavior for building semantic hubs."""
+    """Fixed domain and tier metadata consumed by the neutral hub engine."""
 
+    domain: str
     tier: Literal['source', 'meta']
+    graph: Any
+    stage_name: str
     hub_id_factory: HubIdFactory
     source_resolver: SourceResolver
     record_adapter: RecordAdapter
     adjudication_context: str
     synthesis_context: str
+    all_components: Callable | None = None
+    all_source_hubs: Callable | None = None
+    qualified_meta_hub_uuids: Callable | None = None
+    index_name: str | None = None
+    clear_hubs: Callable | None = None
+    persist_hubs: Callable | None = None
+    attach_meta_hubs: Callable | None = None
+    clear_invalid_meta_hubs: Callable | None = None
+    rebuild_names: Callable | None = None
+    rebuild_meta_names: Callable | None = None
+    rebuild_triplets: Callable | None = None
 
 
 def _coarse_clusters(
@@ -223,21 +286,29 @@ def _dominant_source(records: list[dict]) -> str:
     return counts.most_common(1)[0][0] if counts else 'unknown'
 
 
-def _source_hub_id(kind: str, records: list[dict], definition: dict) -> str:
-    """Returns the deterministic id for a source-local hub."""
-    identity = '|'.join(sorted(record['uuid'] for record in records))
-    return hubs.hub_uuid(kind, _dominant_source(records), identity)
+def source_hub_id_factory(graph: Any) -> HubIdFactory:
+    """Creates a deterministic source-hub id function for one domain."""
+
+    def make_id(records: list[dict], definition: dict) -> str:
+        identity = '|'.join(sorted(record['uuid'] for record in records))
+        return graph.hub_uuid(_dominant_source(records), identity)
+
+    return make_id
 
 
-def _meta_hub_id(kind: str, records: list[dict], definition: dict) -> str:
-    """Returns an id derived from the stable source-hub membership set."""
-    member_ids = sorted(record['uuid'] for record in records)
-    if not member_ids:
-        raise ValueError('meta hub clusters must contain source hubs')
-    return hubs.meta_hub_uuid(kind, '|'.join(member_ids))
+def meta_hub_id_factory(graph: Any) -> HubIdFactory:
+    """Creates a deterministic meta-hub id function for one domain."""
+
+    def make_id(records: list[dict], definition: dict) -> str:
+        member_ids = sorted(record['uuid'] for record in records)
+        if not member_ids:
+            raise ValueError('meta hub clusters must contain source hubs')
+        return graph.meta_hub_uuid('|'.join(member_ids))
+
+    return make_id
 
 
-def _component_records(rows: list[dict]) -> list[dict]:
+def component_records(rows: list[dict]) -> list[dict]:
     return [
         {
             'uuid': row['uuid'],
@@ -251,7 +322,7 @@ def _component_records(rows: list[dict]) -> list[dict]:
     ]
 
 
-def _source_hub_records(rows: list[dict]) -> list[dict]:
+def source_hub_records(rows: list[dict]) -> list[dict]:
     return [
         {
             'uuid': row['uuid'],
@@ -265,13 +336,13 @@ def _source_hub_records(rows: list[dict]) -> list[dict]:
     ]
 
 
-def _require_meta_sources(kind: str, records: list[dict]) -> set[str]:
+def require_meta_sources(spec: HubBuildSpec, records: list[dict]) -> set[str]:
     sources = {
         record.get('source') for record in records if record.get('source')
     }
     if len(sources) < 2:
         raise RuntimeError(
-            f'hub_builder (meta/{kind}): requires at least two distinct '
+            f'hub_engine (meta/{spec.domain}): requires at least two distinct '
             f'sources, found {len(sources)}'
         )
     return sources
@@ -312,29 +383,7 @@ def _no_source(records: list[dict]) -> None:
     return None
 
 
-SOURCE_SPEC = HubBuildSpec(
-    tier='source',
-    hub_id_factory=_source_hub_id,
-    source_resolver=_source_scope,
-    record_adapter=_component_records,
-    adjudication_context=(
-        'Compare durable component mentions within one source.'
-    ),
-    synthesis_context='Synthesize a source-local semantic hub.',
-)
-
-META_SPEC = HubBuildSpec(
-    tier='meta',
-    hub_id_factory=_meta_hub_id,
-    source_resolver=_no_source,
-    record_adapter=_source_hub_records,
-    adjudication_context='Compare source-local hubs across different sources.',
-    synthesis_context='Synthesize a cross-source semantic hub.',
-)
-
-
 async def build_hubs(
-    kind: str,
     records: list[dict],
     *,
     spec: HubBuildSpec,
@@ -358,10 +407,7 @@ async def build_hubs(
     if adjudicator is None or synthesizer is None:
         raise TypeError('adjudicator and synthesizer are required')
     records = spec.record_adapter(records)
-    stage = getattr(
-        config.get_settings().stages,
-        f'{kind}_hubs',
-    )
+    stage = getattr(config.get_settings().stages, spec.stage_name)
     if recall_threshold is None:
         recall_threshold = stage.recall_threshold
     if merge_above is None:
@@ -381,15 +427,15 @@ async def build_hubs(
     if missing:
         names = [record.get('name') for record in missing[:5]]
         raise RuntimeError(
-            f'hub_builder ({kind}): {len(missing)} record(s) lack an '
+            f'hub_engine ({spec.domain}): {len(missing)} record(s) lack an '
             f'embedding — run the component enrichment pass first: {names}'
         )
 
     components = _coarse_clusters(records, recall_threshold)
     logger.info(
-        'hub_builder (%s/%s): %d coarse component(s) at recall %.2f',
+        'hub_engine (%s/%s): %d coarse component(s) at recall %.2f',
+        spec.domain,
         spec.tier,
-        kind,
         len(components),
         recall_threshold,
     )
@@ -426,7 +472,7 @@ async def build_hubs(
 
     make_hub_id = spec.hub_id_factory
     cluster_uuids = [
-        make_hub_id(kind, cluster, definition)
+        make_hub_id(cluster, definition)
         for cluster, definition in zip(clusters, definitions, strict=True)
     ]
     by_uuid: dict[str, list[int]] = {}
@@ -489,14 +535,6 @@ async def build_hubs(
     }
 
 
-def _hub_index(kind: str, tier: str) -> str:
-    return (
-        f'{tier}_{kind}_hub_embedding'
-        if tier == 'meta'
-        else (f'{kind}_hub_embedding')
-    )
-
-
 def _candidate_record(candidate: dict, source: str | None) -> dict:
     return {
         **candidate,
@@ -507,14 +545,14 @@ def _candidate_record(candidate: dict, source: str | None) -> dict:
 
 
 async def _choose_hub(
-    kind: str,
+    spec: HubBuildSpec,
     record: dict,
     candidates: list[dict],
     adjudicator: Any,
     gate: asyncio.Semaphore,
     scope: str,
 ) -> tuple[str | None, list[tuple[str, str]], float, str]:
-    stage = getattr(config.get_settings().stages, f'{kind}_hubs')
+    stage = getattr(config.get_settings().stages, spec.stage_name)
     hierarchy: list[tuple[str, str]] = []
     for candidate in candidates:
         score = candidate['score']
@@ -536,7 +574,6 @@ async def _choose_hub(
 
 
 async def _new_hub(
-    kind: str,
     record: dict,
     synthesizer: Any,
     gate: asyncio.Semaphore,
@@ -555,7 +592,7 @@ async def _new_hub(
         ]
     )
     return {
-        'uuid': spec.hub_id_factory(kind, [record], definition),
+        'uuid': spec.hub_id_factory([record], definition),
         'source': spec.source_resolver([record]),
         'canonical_name': definition['canonical_name'],
         'aliases': sorted(_aliases(record)),
@@ -566,13 +603,12 @@ async def _new_hub(
 
 
 def _aliases(record: dict) -> set[str]:
-    return {
-        value for value in [record['name'], *record.get('aliases', [])] if value
-    }
+    name = record.get('name') or record.get('canonical_name')
+    return {value for value in [name, *record.get('aliases', [])] if value}
 
 
 async def _refresh_source_hubs(
-    kind: str,
+    spec: HubBuildSpec,
     records_by_hub: dict[str, list[dict]],
     new_hub_ids: set[str],
     synthesizer: Any,
@@ -585,7 +621,7 @@ async def _refresh_source_hubs(
                 [records],
                 synthesizer,
                 gate,
-                SOURCE_SPEC.synthesis_context,
+                spec.synthesis_context,
             )
         )[0]
         vector = await embeddings.embedder().embed(
@@ -598,7 +634,7 @@ async def _refresh_source_hubs(
         )
         hub = {
             'uuid': hub_uuid,
-            'source': SOURCE_SPEC.source_resolver(records),
+            'source': spec.source_resolver(records),
             'canonical_name': definition['canonical_name'],
             'aliases': sorted(
                 {alias for record in records for alias in _aliases(record)}
@@ -613,10 +649,10 @@ async def _refresh_source_hubs(
 
 
 async def assign_source_hubs(
-    kind: str,
-    source: str,
+    bundle: models.HubBuildBundle,
     *,
-    session_factory: Callable,
+    spec: HubBuildSpec,
+    include_outputs: bool = False,
     max_concurrency: int | None = None,
     adjudicator: Any,
     synthesizer: Any,
@@ -624,9 +660,7 @@ async def assign_source_hubs(
     """Assign unassigned components to source-local semantic hubs.
 
     Args:
-        kind: The component kind, either ``entity`` or ``predicate``.
-        source: The source key whose components should be assigned.
-        session_factory: Creates async Neo4j sessions.
+        spec: Fixed domain and source-tier metadata for this assignment.
         max_concurrency: Optional limit for concurrent model calls.
 
     Returns:
@@ -635,7 +669,48 @@ async def assign_source_hubs(
     Raises:
         RuntimeError: If a component is missing its required embedding.
     """
-    records = await queries.unassigned_components(session_factory, kind, source)
+    source = bundle.source
+    if any(record.source != source for record in bundle.components):
+        raise ValueError(
+            f'{spec.domain} component is outside source {source!r}'
+        )
+    if any(record.source != source for record in bundle.candidate_hubs):
+        raise ValueError(
+            f'{spec.domain} candidate hub is outside source {source!r}'
+        )
+    records = [
+        {
+            'uuid': record.uuid,
+            'name': record.name,
+            'aliases': list(record.aliases),
+            'description': record.description,
+            'embedding': record.embedding,
+            'source': record.source,
+        }
+        for record in bundle.components
+    ]
+    candidate_by_uuid = {
+        record.uuid: {
+            'uuid': record.uuid,
+            'name': record.name,
+            'aliases': list(record.aliases),
+            'description': record.description,
+            'embedding': record.embedding,
+            'source': source,
+        }
+        for record in bundle.candidate_hubs
+    }
+    dimension = (
+        len(bundle.candidate_hubs[0].embedding)
+        if bundle.candidate_hubs
+        else len(records[0]['embedding'])
+        if records
+        else 1
+    )
+    candidate_index = ExactCosineIndex(dimension)
+    candidate_index.add(
+        [(record.uuid, record.embedding) for record in bundle.candidate_hubs]
+    )
     if not records:
         return {
             'assigned': 0,
@@ -648,7 +723,8 @@ async def assign_source_hubs(
             record['name'] for record in records if not record.get('embedding')
         ][:5]
         raise RuntimeError(
-            f'hub_builder ({kind}): unassigned record(s) lack an embedding '
+            f'hub_engine ({spec.domain}): unassigned record(s) lack an '
+            'embedding '
             f'— run the component enrichment pass first: {names}'
         )
 
@@ -662,13 +738,12 @@ async def assign_source_hubs(
 
     for record in records:
         candidates = [
-            _candidate_record(candidate, source)
-            for candidate in await queries.vector_search(
-                session_factory,
-                index_name=_hub_index(kind, 'source'),
-                query_embedding=record['embedding'],
-                top_k=top_k,
-                source=source,
+            {
+                **candidate_by_uuid[match.key],
+                'score': match.score,
+            }
+            for match in candidate_index.search(
+                record['embedding'], top_k=top_k
             )
         ]
         candidates.extend(
@@ -685,16 +760,16 @@ async def assign_source_hubs(
         )
         candidates.sort(key=lambda candidate: candidate['score'], reverse=True)
         merged_hub, hierarchy, _, _ = await _choose_hub(
-            kind,
+            spec,
             record,
             candidates,
             adjudicator,
             gate,
-            SOURCE_SPEC.adjudication_context,
+            spec.adjudication_context,
         )
 
         if merged_hub is None:
-            hub = await _new_hub(kind, record, synthesizer, gate, SOURCE_SPEC)
+            hub = await _new_hub(record, synthesizer, gate, spec)
             merged_hub = hub['uuid']
             existing = new_hubs.setdefault(merged_hub, hub)
             existing['members'] = list(
@@ -703,6 +778,12 @@ async def assign_source_hubs(
             existing['aliases'] = sorted(
                 set(existing['aliases']) | set(hub['aliases'])
             )
+            if merged_hub not in candidate_by_uuid:
+                candidate_by_uuid[merged_hub] = {
+                    **existing,
+                    'name': existing['canonical_name'],
+                }
+                candidate_index.add([(merged_hub, existing['embedding'])])
             for candidate_uuid, more_general in hierarchy:
                 edge = (
                     (merged_hub, candidate_uuid)
@@ -725,90 +806,62 @@ async def assign_source_hubs(
         records_by_hub.setdefault(merged_hub, []).append(record)
 
     refreshed_hubs = await _refresh_source_hubs(
-        kind,
+        spec,
         records_by_hub,
         set(new_hubs),
         synthesizer,
         gate,
     )
-    await writer.persist_hubs(
-        kind,
-        refreshed_hubs,
-        session_factory=session_factory,
-        subsumption_edges=[
-            {'general': general, 'specific': specific}
-            for general, specific in sorted(hierarchy_edges)
-        ],
-        tier='source',
-    )
-    await writer.attach_source_components(
-        kind,
-        assignments,
-        aliases=[
-            {'hub': hub, 'aliases': sorted(values)}
-            for hub, values in aliases.items()
-        ],
-        session_factory=session_factory,
-    )
-    return {
+    result = {
         'assigned': len(assignments),
         'new_hubs': len(new_hubs),
         'hierarchies': len(hierarchy_edges),
         'changed_hubs': sorted(aliases),
     }
+    if include_outputs:
+        result.update(
+            assignments=assignments,
+            hubs=refreshed_hubs,
+        )
+    return result
 
 
 async def align_meta_hubs(
-    kind: str,
     source_hub_uuids: list[str],
     *,
+    spec: HubBuildSpec,
     session_factory: Callable,
     max_concurrency: int | None = None,
     language_model: Any,
     adjudicator: Any | None = None,
     synthesizer: Any | None = None,
 ) -> dict:
-    """Align selected source-local hubs to qualified meta hubs.
-
-    Args:
-        kind: The hub kind, either ``entity`` or ``predicate``.
-        source_hub_uuids: Source-local hub UUIDs to align.
-        language_model: The model used for adjudication and synthesis.
-        session_factory: Creates async Neo4j sessions.
-        max_concurrency: Optional limit for concurrent model calls.
-
-    Returns:
-        Alignment, hub-creation, and hierarchy counts.
-
-    Raises:
-        RuntimeError: If source hubs are missing or lack embeddings.
-    """
+    """Align selected source hubs using one fixed domain specification."""
     if not source_hub_uuids:
         return {'aligned': 0, 'new_hubs': 0, 'hierarchies': 0}
-    all_records = await queries.all_source_hubs(session_factory, kind)
-    _require_meta_sources(kind, all_records)
-    records = await queries.all_source_hubs(
-        session_factory, kind, hub_uuids=source_hub_uuids
+    all_records = await spec.all_source_hubs(session_factory)
+    require_meta_sources(spec, all_records)
+    records = await spec.all_source_hubs(
+        session_factory, hub_uuids=source_hub_uuids
     )
     if len(records) != len(set(source_hub_uuids)):
         found = {record['uuid'] for record in records}
         missing = sorted(set(source_hub_uuids) - found)
         raise RuntimeError(
-            f'hub_builder (meta/{kind}): source hub(s) not found: {missing}'
+            f'hub_engine (meta/{spec.domain}): source hub(s) not found: '
+            f'{missing}'
         )
-    _require_meta_sources(kind, records)
+    require_meta_sources(spec, records)
     if any(not record.get('embedding') for record in records):
         missing = [
             record['uuid'] for record in records if not record.get('embedding')
         ]
         raise RuntimeError(
-            f'hub_builder (meta/{kind}): source hub(s) lack an embedding: '
-            f'{missing}'
+            f'hub_engine (meta/{spec.domain}): source hub(s) lack an '
+            f'embedding: {missing}'
         )
 
-    eligible_meta_hubs = await queries.qualified_meta_hub_uuids(
-        session_factory, kind
-    )
+    eligible_meta_hubs = await spec.qualified_meta_hub_uuids(session_factory)
     top_k = config.get_settings().stages.search.top_k
     gate = llm.gate(max_concurrency)
     new_hubs: dict[str, dict] = {}
@@ -821,7 +874,7 @@ async def align_meta_hubs(
             _candidate_record(candidate, None)
             for candidate in await queries.vector_search(
                 session_factory,
-                index_name=_hub_index(kind, 'meta'),
+                index_name=spec.index_name,
                 query_embedding=record['embedding'],
                 top_k=top_k,
             )
@@ -840,15 +893,15 @@ async def align_meta_hubs(
         )
         candidates.sort(key=lambda candidate: candidate['score'], reverse=True)
         meta_hub, hierarchy, score, decision = await _choose_hub(
-            kind,
+            spec,
             record,
             candidates,
             adjudicator,
             gate,
-            META_SPEC.adjudication_context,
+            spec.adjudication_context,
         )
         if meta_hub is None:
-            hub = await _new_hub(kind, record, synthesizer, gate, META_SPEC)
+            hub = await _new_hub(record, synthesizer, gate, spec)
             meta_hub = hub['uuid']
             existing = new_hubs.setdefault(meta_hub, hub)
             existing['members'] = list(
@@ -865,7 +918,6 @@ async def align_meta_hubs(
                 )
                 hierarchy_edges.add(edge)
             decision = 'Hierarchy' if hierarchy else 'Separate'
-
         if meta_hub in new_hubs:
             new_hubs[meta_hub]['members'] = list(
                 dict.fromkeys(new_hubs[meta_hub]['members'] + [record['uuid']])
@@ -881,8 +933,7 @@ async def align_meta_hubs(
                 'decision': decision,
             }
         )
-        aliases.setdefault(meta_hub, set())
-        aliases[meta_hub].update(_aliases(record))
+        aliases.setdefault(meta_hub, set()).update(_aliases(record))
         for candidate in candidates:
             if candidate['uuid'] == meta_hub:
                 aliases[meta_hub].update(_aliases(candidate))
@@ -897,40 +948,29 @@ async def align_meta_hubs(
                 source
             )
     qualifying_ids = eligible_meta_hubs | {
-        meta_hub
-        for meta_hub, sources in assignment_sources.items()
-        if meta_hub in new_hubs and len(sources) >= 2
+        hub
+        for hub, sources in assignment_sources.items()
+        if hub in new_hubs and len(sources) >= 2
     }
-    assignments = [
-        assignment
-        for assignment in assignments
-        if assignment['meta_hub'] in qualifying_ids
-    ]
+    assignments = [a for a in assignments if a['meta_hub'] in qualifying_ids]
     new_hubs = {
-        hub_uuid: hub
-        for hub_uuid, hub in new_hubs.items()
-        if hub_uuid in qualifying_ids
+        key: value for key, value in new_hubs.items() if key in qualifying_ids
     }
     aliases = {
-        hub_uuid: values
-        for hub_uuid, values in aliases.items()
-        if hub_uuid in qualifying_ids
+        key: value for key, value in aliases.items() if key in qualifying_ids
     }
     hierarchy_edges = {
         edge
         for edge in hierarchy_edges
         if edge[0] in qualifying_ids and edge[1] in qualifying_ids
     }
-
-    await writer.persist_hubs(
-        kind,
+    await spec.persist_hubs(
         list(new_hubs.values()),
         session_factory=session_factory,
         subsumption_edges=[],
         tier='meta',
     )
-    await writer.attach_meta_hubs(
-        kind,
+    await spec.attach_meta_hubs(
         assignments,
         aliases=[
             {'hub': hub, 'aliases': sorted(values)}
@@ -942,17 +982,13 @@ async def align_meta_hubs(
         ],
         session_factory=session_factory,
     )
-    await writer.clear_invalid_meta_hubs(
-        kind,
-        session_factory=session_factory,
-    )
-    await name_hubs.rebuild_meta(
-        kind,
+    await spec.clear_invalid_meta_hubs(session_factory=session_factory)
+    await spec.rebuild_meta_names(
         language_model=language_model,
         session_factory=session_factory,
         max_concurrency=max_concurrency,
     )
-    await triplet_hubs.rebuild_meta(
+    await spec.rebuild_triplets(
         language_model=language_model,
         session_factory=session_factory,
         max_concurrency=max_concurrency,
@@ -965,8 +1001,8 @@ async def align_meta_hubs(
 
 
 async def rebuild_meta_hubs(
-    kind: str,
     *,
+    spec: HubBuildSpec,
     session_factory: Callable,
     language_model: Any,
     adjudicator: Any,
@@ -976,64 +1012,43 @@ async def rebuild_meta_hubs(
     separate_below: float | None = None,
     max_concurrency: int | None = None,
 ) -> dict:
-    """Explicitly rebuilds one disposable meta-hub kind.
-
-    Meta rebuilding is a maintenance operation over persisted source-local
-    hubs and is not part of normal ingestion.
-    """
-    source_hub_rows = await queries.all_source_hubs(session_factory, kind)
-    records = source_hub_rows
-    _require_meta_sources(kind, records)
-    logger.info(
-        'hub_builder (meta/%s): %d source hub(s) read',
-        kind,
-        len(records),
-    )
+    """Rebuild one disposable meta tier using fixed domain metadata."""
+    records = await spec.all_source_hubs(session_factory)
+    require_meta_sources(spec, records)
     result = await build_hubs(
-        kind,
         records,
+        spec=spec,
         recall_threshold=recall_threshold,
         merge_above=merge_above,
         separate_below=separate_below,
         max_concurrency=max_concurrency,
-        spec=META_SPEC,
         adjudicator=adjudicator,
         synthesizer=synthesizer,
     )
     result = _qualify_meta_result(result, records)
-    await writer.clear_meta_hubs(kind, session_factory=session_factory)
-    await writer.persist_hubs(
-        kind,
+    await spec.clear_hubs(session_factory=session_factory)
+    await spec.persist_hubs(
         result['hubs'],
         session_factory=session_factory,
         subsumption_edges=result['subsumption_edges'],
         tier='meta',
     )
-    await name_hubs.rebuild_meta(
-        kind,
+    await spec.rebuild_meta_names(
         language_model=language_model,
         session_factory=session_factory,
         max_concurrency=max_concurrency,
     )
-    await triplet_hubs.rebuild_meta(
+    await spec.rebuild_triplets(
         language_model=language_model,
         session_factory=session_factory,
         max_concurrency=max_concurrency,
     )
-    logger.info(
-        'hub_builder (meta/%s): %d hub(s) persisted',
-        kind,
-        len(result['hubs']),
-    )
-    return {
-        'clusters': result['clusters'],
-        'hubs': len(result['hubs']),
-    }
+    return {'clusters': result['clusters'], 'hubs': len(result['hubs'])}
 
 
 async def rebuild_hubs(
-    kind: str,
     *,
+    spec: HubBuildSpec,
     session_factory: Callable,
     source: str,
     language_model: Any,
@@ -1044,63 +1059,35 @@ async def rebuild_hubs(
     adjudicator: Any,
     synthesizer: Any,
 ) -> dict:
-    """Explicitly rebuilds source-local hubs for one source and kind.
-
-    Normal ingestion uses :func:`assign_source_hubs` so unrelated sources
-    remain untouched.
-    """
-    component_rows = await queries.all_components(
-        session_factory, kind, source=source
-    )
-    logger.info(
-        'hub_builder (source/%s, %s): %d component(s) read',
-        kind,
-        source,
-        len(component_rows),
-    )
+    """Rebuild source-local hubs using fixed domain metadata."""
+    component_rows = await spec.all_components(session_factory, source)
     result = await build_hubs(
-        kind,
         component_rows,
+        spec=spec,
         recall_threshold=recall_threshold,
         merge_above=merge_above,
         separate_below=separate_below,
         max_concurrency=max_concurrency,
-        spec=SOURCE_SPEC,
         adjudicator=adjudicator,
         synthesizer=synthesizer,
     )
-    await writer.clear_source_hubs(
-        kind,
-        source,
-        session_factory=session_factory,
-    )
-    await writer.persist_hubs(
-        kind,
+    await spec.clear_hubs(source, session_factory=session_factory)
+    await spec.persist_hubs(
         result['hubs'],
         session_factory=session_factory,
         subsumption_edges=result['subsumption_edges'],
         tier='source',
     )
-    await name_hubs.rebuild(
-        kind,
+    await spec.rebuild_names(
         source,
         language_model=language_model,
         session_factory=session_factory,
         max_concurrency=max_concurrency,
     )
-    await triplet_hubs.rebuild(
+    await spec.rebuild_triplets(
         language_model=language_model,
-        session_factory=session_factory,
         source=source,
+        session_factory=session_factory,
         max_concurrency=max_concurrency,
     )
-    logger.info(
-        'hub_builder (source/%s, %s): %d hub(s) persisted',
-        kind,
-        source,
-        len(result['hubs']),
-    )
-    return {
-        'clusters': result['clusters'],
-        'records': result['records'],
-    }
+    return {'clusters': result['clusters'], 'records': result['records']}

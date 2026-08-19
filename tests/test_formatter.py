@@ -8,55 +8,67 @@ from kms.core import models
 SENTINEL = object()
 
 
-def _segment(index, content):
-    return models.Segment(index=index, image_path='', content=content)
+def _document(index, content):
+    return models.Document(
+        index=index,
+        image_path='',
+        content=content,
+        nodes=[models.Node(index=0, content=content)] if content else [],
+    )
 
 
 def test_worker_takes_the_result_exactly_as_returned():
-    segment = _segment(0, r'inline \(x\) here')
+    document = _document(0, r'inline \(x\) here')
 
     class _Module:
-        async def aforward(self, markdown):
+        async def aforward(self, node_content):
+            assert node_content == r'inline \(x\) here'
             return 'inline $x$ here'
 
     out = asyncio.run(
-        formatter.FormatterNode(module=_Module()).worker({'segment': segment})
+        formatter.FormatterNode(module=_Module()).worker(
+            {'document': document, 'node': document.nodes[0]}
+        )
     )
-    assert out['format_results'] == [(0, 'inline $x$ here')]
+    assert out['format_results'] == [(0, 0, 'inline $x$ here')]
 
 
-def test_worker_receives_the_page_markdown():
-    segment = _segment(3, '# Heading')
+def test_worker_receives_the_node_content():
+    document = _document(3, '# Heading')
     seen = []
 
     class _Module:
-        async def aforward(self, markdown):
-            seen.append(markdown)
-            return markdown
+        async def aforward(self, node_content):
+            seen.append(node_content)
+            return node_content
 
     asyncio.run(
-        formatter.FormatterNode(module=_Module()).worker({'segment': segment})
+        formatter.FormatterNode(module=_Module()).worker(
+            {'document': document, 'node': document.nodes[0]}
+        )
     )
     assert seen == ['# Heading']
 
 
-def test_dispatch_formats_every_page_with_content():
-    segments = [
-        _segment(0, 'display $$y$$'),
-        _segment(1, 'plain prose'),
-        _segment(2, None),
-        _segment(3, ''),
+def test_dispatch_formats_every_node_with_content():
+    documents = [
+        _document(0, 'display $$y$$'),
+        _document(1, 'plain prose'),
+        _document(2, None),
+        _document(3, ''),
     ]
     sends = formatter.FormatterNode(module=SENTINEL).dispatch(
-        {'segments': segments}
+        {'documents': documents}
     )
-    assert sorted(s.arg['segment'].index for s in sends) == [0, 1]
+    assert sorted(
+        (s.arg['document'].index, s.arg['node'].index) for s in sends
+    ) == [(0, 0), (1, 0)]
 
 
 def test_dispatch_falls_back_to_collect_when_none_eligible():
     node = formatter.FormatterNode(module=SENTINEL)
-    segments = [_segment(0, None), _segment(1, '')]
-    assert node.dispatch({'segments': segments}) == 'formatter_collect'
+    documents = [_document(0, None), _document(1, '')]
+    assert node.dispatch({'documents': documents}) == 'formatter_collect'
 
 
 def test_dispatch_handles_missing_segments():
@@ -65,35 +77,34 @@ def test_dispatch_handles_missing_segments():
 
 
 def test_collect_writes_formatted_back_and_leaves_others_untouched():
-    segments = [_segment(0, 'orig0'), _segment(1, 'orig1')]
+    documents = [_document(0, 'orig0'), _document(1, 'orig1')]
     out = formatter.FormatterNode(module=SENTINEL).collect(
-        {'segments': segments, 'format_results': [(0, 'formatted0')]}
+        {
+            'documents': documents,
+            'format_results': [(0, 0, 'formatted0')],
+        }
     )
-    assert out['segments'][0].content == 'formatted0'
-    assert out['segments'][1].content == 'orig1'
+    assert out['documents'][0].nodes[0].content == 'formatted0'
+    assert out['documents'][1].nodes[0].content == 'orig1'
 
 
 def test_collect_is_a_noop_without_results():
-    segments = [_segment(0, 'orig0')]
+    documents = [_document(0, 'orig0')]
     out = formatter.FormatterNode(module=SENTINEL).collect(
-        {'segments': segments}
+        {'documents': documents}
     )
-    assert out['segments'][0].content == 'orig0'
+    assert out['documents'][0].nodes[0].content == 'orig0'
 
 
-def test_prompt_forbids_touching_figure_placeholders():
+def test_prompt_retains_node_content_rules():
     prompt = formatter.Signature.__doc__
+    assert 'one canonical document node (block)' in prompt
+    assert 'one page of a document' not in prompt
     assert '![N]()' in prompt
-    for forbidden in ('Order.', 'Numbering and labels.', 'Code and verbatim'):
-        assert forbidden in prompt
-
-
-def test_prompt_joins_split_display_equations():
-    prompt = formatter.Signature.__doc__
-    assert 'halves of one equation are joined' in prompt
-    assert 'relational operator' in prompt
-    assert 'binary operator' in prompt
-    assert 'back-to-back equations stay separate' in prompt
+    for retained in ('Order.', 'Numbering and labels.', 'Code and verbatim'):
+        assert retained in prompt
+    assert 'Page furniture.' not in prompt
+    assert 'halves of one equation are joined' not in prompt
 
 
 def test_number_lines_prefixes_each_line_with_its_index():

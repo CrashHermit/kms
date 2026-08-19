@@ -13,13 +13,13 @@ import dspy
 from pydantic import BaseModel, Field
 
 from kms import config
-from kms.core import llm, models, module, state, walker
+from kms.core import identity, llm, models, module, state, walker
 
 logger = logging.getLogger(__name__)
 
 
 class _FactInput(BaseModel):
-    """One explicit source-level fact and its provenance nodes."""
+    """One explicit source-level fact returned by the language model."""
 
     text: str = Field(
         description=(
@@ -28,18 +28,13 @@ class _FactInput(BaseModel):
             'canonical definition, or generalization.'
         )
     )
-    node_ids: list[int] = Field(
-        description=(
-            'The ids of every node in the window the fact is drawn from.'
-        )
-    )
 
 
 class _FactSignature(dspy.Signature):
     r"""
-    You are given a run of nodes from a document, in document order. Each
-    node carries its id, its structural type, and its content. Decompose the
-    window into ATOMIC FACTS.
+    You are given one anchor node from a document, together with surrounding
+    context in document order. The anchor carries its stable id, structural
+    type, and content. Decompose the anchor node into ATOMIC FACTS.
 
     AN ATOMIC FACT is the smallest piece of source content worth preserving
     on its own: an explicit claim, property, relationship, event, definition,
@@ -134,14 +129,15 @@ class _FactSignature(dspy.Signature):
       source fact. When unsure whether an explicit premise is merely exercise
       framing or subject-matter content, preserve the content and omit only
       the instruction wrapper.
-    - Return an empty list if the window contains no explicit facts.
+    - Return an empty list if the anchor contains no explicit facts.
     """
 
     current_nodes: list[walker.WindowNode] = dspy.InputField(
         description=(
-            "The window's nodes, in document order, each with its id, type, "
-            'and content. Use the `id` (not `position`) when attributing '
-            'facts.'
+            'Exactly one anchor node, represented with its position, stable '
+            'id, type, content, and optional image. Extract facts from this '
+            'node only. Surrounding context is supplied separately and is '
+            'never evidence.'
         )
     )
     context_before: str | None = dspy.InputField(
@@ -185,10 +181,9 @@ class _FactExtractor(module.Module):
         }
 
     def decode(self, prediction, **inputs) -> list[dict]:
-        """Returns the atomic facts as text/node_id dicts."""
+        """Returns fact text; provenance is assigned by the caller."""
         return [
-            {'text': fact.text, 'node_ids': module.as_list(fact.node_ids)}
-            for fact in module.as_list(prediction.facts)
+            {'text': fact.text} for fact in module.as_list(prediction.facts)
         ]
 
 
@@ -490,16 +485,17 @@ class _TripletDecomposer(module.Module):
 
 
 async def _extract_triplets(
-    nodes: list[models.ASTNode],
+    nodes: list[models.Node],
     fact_module: _FactExtractor,
     triplet_module: _TripletDecomposer,
     max_concurrency: int | None = None,
+    source: str | None = None,
 ) -> list[models.Triplet]:
-    """Extracts triplets from the node stream via fact windows.
+    """Extracts triplets from deterministic source-node anchors.
 
-    Walks fixed windows with context, extracts atomic facts from each,
-    then decomposes every fact into triplets with the evidence node ids
-    attached.
+    Each eligible source node is sent as the sole fact-extraction anchor.
+    Neighboring text is context only. Facts receive their anchor's stable id
+    in code before triplets are decomposed.
 
     Args:
         nodes: The node stream.
@@ -513,33 +509,46 @@ async def _extract_triplets(
     if not nodes:
         logger.info('triplet extraction: no nodes')
         return []
-
+    source = source or 'unscoped'
     triplet = config.get_settings().stages.triplet
-    windows = walker.fixed_windows_with_context(
-        nodes,
-        triplet.window_budget,
-        triplet.backward_context_budget,
-        triplet.forward_context_budget,
-    )
-    if not windows:
-        logger.info('triplet extraction: no windows')
+    eligible_indices = [
+        index
+        for index, node in enumerate(nodes)
+        if node.type == 'image'
+        or (node.content is not None and node.content.strip())
+    ]
+    if not eligible_indices:
+        logger.info('triplet extraction: no eligible anchors')
         return []
 
     gate = llm.gate(max_concurrency)
 
-    async def _extract_one_window(window: walker.Window) -> list[dict]:
-        """Extracts the atomic facts of one window."""
-        async with gate:
-            return await fact_module.aforward(
-                current_nodes=window.items,
-                context_before=window.before,
-                context_after=window.after,
+    async def _extract_one_anchor(node_index: int) -> list[dict]:
+        """Extracts facts from one node and assigns deterministic provenance."""
+        node = nodes[node_index]
+        if node.id is None:
+            raise ValueError(
+                f'fact anchor at stream position {node_index} has no stable id'
             )
+        current_nodes = walker.node_views([node])
+        context_before = walker.content_before(
+            nodes, node_index, triplet.backward_context_budget
+        )
+        context_after = walker.content_after(
+            nodes, node_index, triplet.forward_context_budget
+        )
+        async with gate:
+            facts = await fact_module.aforward(
+                current_nodes=current_nodes,
+                context_before=context_before,
+                context_after=context_after,
+            )
+        return [{'text': fact['text'], 'node_ids': [node.id]} for fact in facts]
 
-    per_window = await asyncio.gather(
-        *(_extract_one_window(window) for window in windows)
+    per_anchor = await asyncio.gather(
+        *(_extract_one_anchor(index) for index in eligible_indices)
     )
-    facts = [fact for window_facts in per_window for fact in window_facts]
+    facts = [fact for anchor_facts in per_anchor for fact in anchor_facts]
 
     logger.info(
         'triplet extraction: %d node(s) -> %d fact(s)',
@@ -563,6 +572,7 @@ async def _extract_triplets(
         triplet for fact_triplets in per_fact for triplet in fact_triplets
     ]
 
+    identity.assign_triplet_ids(triplets, source)
     logger.info(
         'triplet extraction: %d fact(s) -> %d triplet(s)',
         len(facts),
@@ -597,9 +607,13 @@ class TripletNode:
             A ``triplets`` update for the state.
         """
         nodes = state.get('nodes', [])
+        source = state.get('source_key', '').strip()
+        if not source:
+            source = models.source_key(state.get('source')) or ''
         triplets = await _extract_triplets(
             nodes,
             fact_module=self._fact_module,
             triplet_module=self._triplet_module,
+            source=source,
         )
         return {'triplets': triplets}

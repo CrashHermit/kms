@@ -2,7 +2,8 @@ import dspy
 from pydantic import BaseModel, Field
 
 from kms import config
-from kms.core import content, module, semantic
+from kms.construction import hub_inputs
+from kms.core import content, module, semantic, state
 
 
 class TermDescription(BaseModel):
@@ -71,14 +72,27 @@ class PredicateEnrichmentNode:
         self._enricher = enricher
 
     async def run(self, current_state: dict) -> dict:
-        triplets = current_state.get('triplets', [])
+        bundle = state.to_construction_bundle(current_state)
+        triplets = bundle.triplets
         if not triplets:
-            return {}
-        descriptions = await enrich(
-            current_state.get('nodes', []), triplets, self._enricher
-        )
+            return {'construction_bundle': bundle}
+        descriptions = await enrich(bundle.nodes, triplets, self._enricher)
         vectors = await semantic.embed_descriptions(descriptions)
+        source = bundle.source.key or ''
+        bundle.predicate_descriptions = descriptions
+        bundle.predicate_embeddings = vectors
+        bundle.predicate_hub_components = list(
+            hub_inputs.build_hub_components(
+                kind='predicate',
+                source=source,
+                triplets=triplets,
+                descriptions=descriptions,
+                embeddings=vectors,
+            )
+        )
         return {
             'predicate_descriptions': descriptions,
             'predicate_embeddings': vectors,
+            'predicate_hub_components': bundle.predicate_hub_components,
+            'construction_bundle': bundle,
         }

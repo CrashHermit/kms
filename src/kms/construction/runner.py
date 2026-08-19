@@ -41,7 +41,7 @@ async def ingest(
             'pdf_path': str(pdf_path),
             'output_dir': str(output_dir),
             'pages': pages,
-            'source': source,
+            'source_key': source,
             'source_metadata': {'title': title, 'author': author},
         },
         {'recursion_limit': config.get_settings().concurrency.recursion_limit},

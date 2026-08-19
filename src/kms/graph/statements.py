@@ -1,25 +1,33 @@
 """Row and edge builders for the statement layer."""
 
-from uuid import NAMESPACE_URL, uuid5
-
-from kms.core import models
+from kms.core import identity, models
 from kms.graph import nodes
-from kms.graph.procedures import procedure_uuid
 
 STATEMENT_LABEL = 'Statement'
 
 
 def statement_uuid(source: str, block: list[int]) -> str:
-    """Returns the deterministic uuid for a statement block."""
-    return uuid5(
-        NAMESPACE_URL, f'{source}#statement#{nodes.block_key(block)}'
-    ).hex
+    """Compatibility export for the canonical identity function."""
+    return identity.statement_uuid(source, block)
+
+
+def _statement_id(statement: models.Statement, source: str) -> str:
+    """Returns and verifies the assigned model identity."""
+    expected = identity.statement_uuid(source, statement.block)
+    if statement.uuid is None:
+        raise ValueError('statement is missing its assigned uuid')
+    if statement.uuid != expected:
+        raise ValueError(
+            f'statement uuid {statement.uuid!r} does not match expected '
+            f'{expected!r}'
+        )
+    return statement.uuid
 
 
 def statement_properties(statement: models.Statement, source: str) -> dict:
     """Builds the property dict used to persist a statement."""
     properties = {
-        'uuid': statement_uuid(source, statement.block),
+        'uuid': _statement_id(statement, source),
         'source': nodes.source_uuid(source),
     }
     return {
@@ -47,7 +55,7 @@ def statement_member_pairs(
     return [
         {
             'node': nodes.node_uuid(source, node_id),
-            'statement': statement_uuid(source, statement.block),
+            'statement': _statement_id(statement, source),
         }
         for statement in statements
         for node_id in statement.members
@@ -75,9 +83,12 @@ def has_procedure_pairs(
         if key in proc_by_block:
             pairs.append(
                 {
-                    'statement': statement_uuid(source, statement.block),
-                    'procedure': procedure_uuid(
-                        source, statement.block, proc_by_block[key].index
+                    'statement': _statement_id(statement, source),
+                    'procedure': identity.procedure_uuid(
+                        source,
+                        statement.block,
+                        proc_by_block[key].index,
+                        statement_uuid_value=proc_by_block[key].statement_uuid,
                     ),
                 }
             )

@@ -1,7 +1,6 @@
 """Per-triplet predicate vertices carrying the relation text and description."""
 
-from uuid import NAMESPACE_URL, uuid5
-
+from kms.core import identity
 from kms.graph import nodes
 
 PREDICATE_LABEL = 'Predicate'
@@ -9,7 +8,7 @@ PREDICATE_LABEL = 'Predicate'
 
 def predicate_uuid(triplet_uuid: str) -> str:
     """Returns the deterministic uuid for a per-triplet predicate."""
-    return uuid5(NAMESPACE_URL, f'{triplet_uuid}#predicate').hex
+    return identity.predicate_uuid(triplet_uuid)
 
 
 def predicate_properties(

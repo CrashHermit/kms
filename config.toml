@@ -21,7 +21,7 @@
 
 [models.modules.corrector]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/gemma-4-e4b-it"
+model = "openai/qwen3.5-9b"
 max_tokens = 8192
 
 [models.modules.procedure_creator]
@@ -30,11 +30,6 @@ model = "openai/qwen3.5-9b"
 max_tokens = 8192
 
 [models.modules.formatter]
-base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
-
-[models.modules.extractor]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
 max_tokens = 8192
@@ -54,7 +49,12 @@ base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
 max_tokens = 8192
 
-[models.modules.instruction_finder]
+[models.modules.instruction_router]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+max_tokens = 8192
+
+[models.modules.instruction_grower]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
 max_tokens = 8192
@@ -162,14 +162,14 @@ request_timeout = 30.0
 terminate_timeout = 15.0
 
 [serving.module_models]
-corrector = "gemma-4-e4b-it"
+corrector = "qwen3.5-9b"
 procedure_creator = "qwen3.5-9b"
 formatter = "qwen3.5-9b"
-extractor = "qwen3.5-9b"
 seam_merger = "qwen3.5-9b"
 seam_rewriter = "qwen3.5-9b"
 splitter = "qwen3.5-9b"
-instruction_finder = "qwen3.5-9b"
+instruction_router = "qwen3.5-9b"
+instruction_grower = "qwen3.5-9b"
 pedagogical_component_finder = "qwen3.5-9b"
 role_typer = "qwen3.5-9b"
 statement_partitioner = "qwen3.5-9b"
@@ -276,6 +276,7 @@ lookahead_budget = 2000
 [stages.finders]
 lookahead_budget = 2000
 max_lookahead_budget = 8000
+instruction_context_budget = 300
 
 [stages.entity_enrichment]
 before_budget = 200

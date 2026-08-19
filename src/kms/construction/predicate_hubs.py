@@ -1,8 +1,48 @@
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.construction import hub_builder, name_hubs
+from kms.construction import hub_engine
 from kms.core import content, module
+from kms.graph import predicate_hubs as predicate_graph
+from kms.graph import queries, writer
+
+SOURCE_SPEC = hub_engine.HubBuildSpec(
+    domain='predicate',
+    tier='source',
+    graph=predicate_graph,
+    stage_name='predicate_hubs',
+    hub_id_factory=hub_engine.source_hub_id_factory(predicate_graph),
+    source_resolver=hub_engine._source_scope,
+    record_adapter=hub_engine.component_records,
+    adjudication_context='Compare durable component mentions within one source.',
+    synthesis_context='Synthesize a source-local semantic hub.',
+    all_components=queries.all_predicate_components,
+    clear_hubs=writer.clear_predicate_hubs,
+    persist_hubs=writer.persist_predicate_hubs,
+    rebuild_names=hub_engine._rebuild_names_callback('predicate'),
+    rebuild_triplets=hub_engine._rebuild_triplets_callback(),
+)
+
+META_SPEC = hub_engine.HubBuildSpec(
+    domain='predicate',
+    tier='meta',
+    graph=predicate_graph,
+    stage_name='predicate_hubs',
+    hub_id_factory=hub_engine.meta_hub_id_factory(predicate_graph),
+    source_resolver=hub_engine._no_source,
+    record_adapter=hub_engine.source_hub_records,
+    adjudication_context='Compare source-local hubs across different sources.',
+    synthesis_context='Synthesize a cross-source semantic hub.',
+    all_source_hubs=queries.all_predicate_source_hubs,
+    qualified_meta_hub_uuids=queries.qualified_predicate_meta_hub_uuids,
+    index_name='meta_predicate_hub_embedding',
+    clear_hubs=writer.clear_predicate_meta_hubs,
+    persist_hubs=writer.persist_predicate_hubs,
+    attach_meta_hubs=writer.attach_predicate_meta_hubs,
+    clear_invalid_meta_hubs=writer.clear_invalid_predicate_meta_hubs,
+    rebuild_meta_names=hub_engine._rebuild_meta_names_callback('predicate'),
+    rebuild_triplets=hub_engine._rebuild_triplets_callback(),
+)
 
 
 class PredicateHubDefinition(BaseModel):
@@ -90,56 +130,54 @@ class PredicateHubAdjudicator(module.Module):
         return prediction.result
 
 
+async def assign_source_hubs(
+    bundle,
+    *,
+    max_concurrency: int | None = None,
+    adjudicator,
+    synthesizer,
+) -> dict:
+    """Assign predicate components to source-local PredicateHubs."""
+    return await hub_engine.assign_source_hubs(
+        bundle,
+        spec=SOURCE_SPEC,
+        max_concurrency=max_concurrency,
+        adjudicator=adjudicator,
+        synthesizer=synthesizer,
+        include_outputs=True,
+    )
+
+
 class PredicateHubNode:
     def __init__(
         self,
-        session_factory,
         adjudicator,
         synthesizer,
-        name_language_model,
     ) -> None:
-        self._session_factory = session_factory
         self._adjudicator = adjudicator
         self._synthesizer = synthesizer
-        self._name_language_model = name_language_model
 
     async def run(self, current_state: dict) -> dict:
-        if not self._session_factory:
-            return {}
-        source = current_state.get('source')
-        if not source:
-            return {}
-        result = await hub_builder.assign_source_hubs(
-            'predicate',
-            source,
-            session_factory=self._session_factory,
+        from kms.core import state
+
+        construction_bundle = state.to_construction_bundle(current_state)
+        bundle = construction_bundle.predicate_hub_bundle
+        if bundle is None:
+            return {'construction_bundle': construction_bundle}
+        result = await assign_source_hubs(
+            bundle,
             adjudicator=self._adjudicator,
             synthesizer=self._synthesizer,
         )
-        lexical = await name_hubs.rebuild(
-            'predicate',
-            source,
-            language_model=self._name_language_model,
-            session_factory=self._session_factory,
+        construction_bundle.predicate_hub_assignments = result.get(
+            'assignments', []
         )
+        construction_bundle.predicate_hub_records = result.get('hubs', [])
         return {
-            'predicate_assigned': result['assigned'],
-            'predicate_hubs_created': result['new_hubs'],
-            'predicate_name_hubs_created': lexical['name_hubs'],
+            'predicate_hub_assignments': construction_bundle.predicate_hub_assignments,
+            'predicate_hub_records': construction_bundle.predicate_hub_records,
+            'construction_bundle': construction_bundle,
         }
-
-
-async def rebuild(
-    source: str,
-    *,
-    adjudicator,
-    synthesizer,
-    name_language_model,
-    session_factory,
-) -> dict:
-    return await PredicateHubNode(
-        session_factory, adjudicator, synthesizer, name_language_model
-    ).run({'source': source})
 
 
 async def rebuild_source(
@@ -152,8 +190,8 @@ async def rebuild_source(
     max_concurrency: int | None = None,
 ) -> dict:
     """Rebuild source-local predicate hubs from persisted components."""
-    return await hub_builder.rebuild_hubs(
-        'predicate',
+    return await hub_engine.rebuild_hubs(
+        spec=SOURCE_SPEC,
         session_factory=session_factory,
         source=source,
         language_model=language_model,
@@ -172,8 +210,8 @@ async def rebuild_meta(
     max_concurrency: int | None = None,
 ) -> dict:
     """Rebuild cross-source predicate hubs from source-local hubs."""
-    return await hub_builder.rebuild_meta_hubs(
-        'predicate',
+    return await hub_engine.rebuild_meta_hubs(
+        spec=META_SPEC,
         language_model=language_model,
         adjudicator=adjudicator,
         synthesizer=synthesizer,

@@ -5,19 +5,20 @@ from kms.core import content, embeddings, llm, models, walker
 
 
 def window_content(
-    nodes: list[models.ASTNode],
+    nodes: list[models.Node],
     node_id: int,
     before_budget: int,
     after_budget: int,
 ) -> content.Content:
     parts: list[content.TextPart | content.ImagePart] = []
-    before = walker.content_before(nodes, node_id, before_budget)
+    position = walker.position_for_id(nodes, node_id)
+    before = walker.content_before(nodes, position, before_budget)
     if before:
         parts.append(content.TextPart(text=before))
-    node = nodes[node_id]
+    node = nodes[position]
     if node.content:
         parts.append(content.TextPart(text=node.content))
-    after = walker.content_after(nodes, node_id, after_budget)
+    after = walker.content_after(nodes, position, after_budget)
     if after:
         parts.append(content.TextPart(text=after))
     if node.image_path:
@@ -35,7 +36,7 @@ def embedding_text(term: str, description: str | None) -> str:
 
 
 async def describe_terms(
-    nodes: list[models.ASTNode],
+    nodes: list[models.Node],
     terms_by_node: dict[int, set[str]],
     enricher,
     before_budget: int,

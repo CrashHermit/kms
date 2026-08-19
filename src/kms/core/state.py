@@ -1,5 +1,6 @@
 """Shared langgraph state schema for the ingestion pipeline."""
 
+import copy
 import operator
 from typing import Annotated, TypedDict
 
@@ -10,46 +11,179 @@ class State(TypedDict, total=False):
     """The mutable state threaded through every graph node.
 
     All keys are optional; worker results are merged in via the
-    Annotated reducer fields. ``source`` and ``source_metadata`` name
-    the document being ingested, ``document`` carries the mutable source
-    document through early ingestion, ``segments`` and ``nodes`` carry the
-    parsed document, and the remaining keys accumulate the extracted
-    knowledge before persistence.
+    Annotated reducer fields. ``source_key`` and ``source_metadata`` identify
+    the source being ingested, ``documents`` carries mutable page documents,
+    and ``nodes`` carries the flattened parsed stream before persistence.
     """
 
     pdf_path: str
     output_dir: str
     pages: list[int] | None
-    document: models.Document
-    segments: list[models.Segment]
-    nodes: list[models.ASTNode]
-    source: str
+    source: models.Source
+    source_key: str
     source_metadata: dict[str, str]
+    construction_bundle: models.ConstructionBundle
+    documents: list[models.Document]
+    nodes: list[models.Node]
     spans: list[list[int]]
     instructions: list[models.Instruction]
     statements: list[models.Statement]
     procedures: list[models.Procedure]
     triplets: list[models.Triplet]
+    knowledge_index: models.KnowledgeIndex
+    statement_enrichment_inputs: list[models.StatementEnrichmentInput]
+    procedure_enrichment_inputs: list[models.ProcedureEnrichmentInput]
+    procedure_materialization_inputs: list[models.ProcedureMaterializationInput]
+    statement_hub_records: list[models.StatementHubRecord]
+    procedure_hub_records: list[models.ProcedureHubRecord]
+    entity_hub_bundle: models.HubBuildBundle
+    predicate_hub_bundle: models.HubBuildBundle
+    entity_hub_components: list[models.HubComponent]
+    predicate_hub_components: list[models.HubComponent]
+    triplet_memberships: list[models.TripletMembership]
+    entity_hub_assignments: list[dict]
+    predicate_hub_assignments: list[dict]
+    entity_hub_records: list[dict]
+    predicate_hub_records: list[dict]
+    statement_enrichments: list[dict]
+    procedure_enrichments: list[dict]
+    statement_hubs: list[dict]
+    procedure_hubs: list[dict]
     entity_descriptions: dict[int, dict[str, str | None]]
     predicate_descriptions: dict[int, dict[str, str | None]]
     entity_embeddings: dict[int, dict[str, list[float]]]
     predicate_embeddings: dict[int, dict[str, list[float]]]
-    entity_assigned: int
-    predicate_assigned: int
-    entity_hubs_created: int
-    predicate_hubs_created: int
-    entity_name_hubs_created: int
-    predicate_name_hubs_created: int
-    triplet_hubs_created: int
-    procedures_created: int
-    correction_results: Annotated[list[tuple[int, str]], operator.add]
-    format_results: Annotated[list[tuple[int, str]], operator.add]
+    generated_procedures: list[models.Procedure]
+    procedure_step_updates: list[models.ProcedureStepUpdate]
+    procedure_links: list[models.ProcedureLink]
+    statements_enriched: int
+    procedures_enriched: int
+    statement_hubs_created: int
+    procedure_hubs_created: int
+    projected: bool
+    statements_clustered: int
+    procedures_clustered: int
+    block_correction_results: Annotated[
+        list[tuple[int, list[models.Node]]], operator.add
+    ]
+    format_results: Annotated[list[tuple[int, int, str]], operator.add]
     extract_results: Annotated[
-        list[tuple[int, list[models.ASTNode]]], operator.add
+        list[tuple[int, list[models.Node]]], operator.add
     ]
     seam_even_results: Annotated[
-        list[tuple[int, list[models.ASTNode]]], operator.add
+        list[tuple[int, list[models.Node]]], operator.add
     ]
     seam_odd_results: Annotated[
-        list[tuple[int, list[models.ASTNode]]], operator.add
+        list[tuple[int, list[models.Node]]], operator.add
     ]
+
+
+def to_construction_bundle(current_state: State) -> models.ConstructionBundle:
+    """Projects durable construction data out of workflow state.
+
+    This is a pure boundary conversion. Workflow inputs, reducer scratch
+    fields, and progress counters intentionally remain in ``State``.
+    """
+    existing_bundle = current_state.get('construction_bundle')
+    if existing_bundle is not None:
+        return copy.deepcopy(existing_bundle)
+
+    source = current_state.get('source')
+    if source is None:
+        source_key = current_state.get('source_key', '').strip()
+        if not source_key:
+            raise ValueError('state must contain a non-empty source')
+        source = models.Source(
+            key=source_key,
+            metadata=dict(current_state.get('source_metadata', {})),
+            documents=list(current_state.get('documents', [])),
+        )
+    elif not source.key:
+        source = models.Source(
+            key=current_state.get('source_key', '').strip(),
+            metadata=dict(source.metadata),
+            ocr_response=source.ocr_response,
+            documents=list(source.documents),
+        )
+        if not source.key:
+            raise ValueError('state must contain a non-empty source')
+
+    return models.ConstructionBundle(
+        source=copy.deepcopy(source),
+        nodes=copy.deepcopy(current_state.get('nodes', [])),
+        instructions=copy.deepcopy(current_state.get('instructions', [])),
+        statements=copy.deepcopy(current_state.get('statements', [])),
+        procedures=copy.deepcopy(current_state.get('procedures', [])),
+        triplets=copy.deepcopy(current_state.get('triplets', [])),
+        knowledge_index=copy.deepcopy(current_state.get('knowledge_index')),
+        statement_enrichment_inputs=copy.deepcopy(
+            current_state.get('statement_enrichment_inputs', [])
+        ),
+        procedure_enrichment_inputs=copy.deepcopy(
+            current_state.get('procedure_enrichment_inputs', [])
+        ),
+        procedure_materialization_inputs=copy.deepcopy(
+            current_state.get('procedure_materialization_inputs', [])
+        ),
+        statement_hub_records=copy.deepcopy(
+            current_state.get('statement_hub_records', [])
+        ),
+        procedure_hub_records=copy.deepcopy(
+            current_state.get('procedure_hub_records', [])
+        ),
+        entity_hub_bundle=copy.deepcopy(
+            current_state.get('entity_hub_bundle')
+        ),
+        predicate_hub_bundle=copy.deepcopy(
+            current_state.get('predicate_hub_bundle')
+        ),
+        entity_hub_components=copy.deepcopy(
+            current_state.get('entity_hub_components', [])
+        ),
+        predicate_hub_components=copy.deepcopy(
+            current_state.get('predicate_hub_components', [])
+        ),
+        triplet_memberships=copy.deepcopy(
+            current_state.get('triplet_memberships', [])
+        ),
+        entity_hub_assignments=copy.deepcopy(
+            current_state.get('entity_hub_assignments', [])
+        ),
+        predicate_hub_assignments=copy.deepcopy(
+            current_state.get('predicate_hub_assignments', [])
+        ),
+        entity_hub_records=copy.deepcopy(
+            current_state.get('entity_hub_records', [])
+        ),
+        predicate_hub_records=copy.deepcopy(
+            current_state.get('predicate_hub_records', [])
+        ),
+        triplet_hubs=copy.deepcopy(current_state.get('triplet_hubs', [])),
+        statement_enrichments=copy.deepcopy(
+            current_state.get('statement_enrichments', [])
+        ),
+        procedure_enrichments=copy.deepcopy(
+            current_state.get('procedure_enrichments', [])
+        ),
+        statement_hubs=copy.deepcopy(current_state.get('statement_hubs', [])),
+        procedure_hubs=copy.deepcopy(current_state.get('procedure_hubs', [])),
+        generated_procedures=copy.deepcopy(
+            current_state.get('generated_procedures', [])
+        ),
+        procedure_step_updates=copy.deepcopy(
+            current_state.get('procedure_step_updates', [])
+        ),
+        procedure_links=copy.deepcopy(current_state.get('procedure_links', [])),
+        entity_descriptions=copy.deepcopy(
+            current_state.get('entity_descriptions', {})
+        ),
+        predicate_descriptions=copy.deepcopy(
+            current_state.get('predicate_descriptions', {})
+        ),
+        entity_embeddings=copy.deepcopy(
+            current_state.get('entity_embeddings', {})
+        ),
+        predicate_embeddings=copy.deepcopy(
+            current_state.get('predicate_embeddings', {})
+        ),
+    )

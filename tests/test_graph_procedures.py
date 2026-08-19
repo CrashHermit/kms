@@ -4,8 +4,15 @@ from kms.core import models
 from kms.graph import nodes, procedures, writer
 
 
-def _procedure(block=(1, 2), members=(1, 2)):
-    return models.Procedure(block=list(block), members=list(members))
+def _procedure(block=(1, 2), members=(1, 2), statement_uuid=None):
+    return models.Procedure(
+        block=list(block),
+        members=list(members),
+        statement_uuid=statement_uuid,
+        uuid=procedures.procedure_uuid(
+            'book.pdf', list(block), 0, statement_uuid=statement_uuid
+        ),
+    )
 
 
 def test_procedure_uuid_is_deterministic():
@@ -38,8 +45,7 @@ def test_procedure_uuid_distinguishes_statement_backed_procedures():
 
 
 def test_statement_backed_procedure_persistence_uses_its_disambiguated_uuid():
-    procedure = _procedure()
-    procedure.statement_uuid = 'statement-a'
+    procedure = _procedure(statement_uuid='statement-a')
     expected = procedures.procedure_uuid(
         'book.pdf', [1, 2], 0, statement_uuid='statement-a'
     )

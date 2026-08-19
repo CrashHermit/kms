@@ -1,5 +1,6 @@
 import asyncio
 
+import pytest
 from PIL import Image
 
 from kms.construction import pedagogical_component_finder
@@ -16,10 +17,10 @@ class _ScriptedFinder:
 
 def _nodes():
     return [
-        models.ASTNode(type='paragraph', content='intro prose', id=0),
-        models.ASTNode(type='header', content='Example 1', id=1),
-        models.ASTNode(type='paragraph', content='solve this', id=2),
-        models.ASTNode(type='paragraph', content='more prose', id=3),
+        models.Node(type='paragraph', content='intro prose', id=0),
+        models.Node(type='header', content='Example 1', id=1),
+        models.Node(type='paragraph', content='solve this', id=2),
+        models.Node(type='paragraph', content='more prose', id=3),
     ]
 
 
@@ -56,21 +57,44 @@ def test_on_prose_only_stream_returns_nothing():
     )
 
 
-def test_normalize_spans_clamps_into_the_window():
-    cleaned = walker.normalize_spans([walker.Span(start=-5, end=99)], 2)
-    assert (cleaned[0].start, cleaned[0].end) == (0, 2)
+def test_invalid_span_positions_fail_instead_of_being_clamped():
+    for span in (
+        walker.Span(start=-1, end=0),
+        walker.Span(start=0, end=4),
+        walker.Span(start=2, end=1),
+    ):
+        with pytest.raises(ValueError, match='invalid span'):
+            walker.validate_spans([span], 4)
 
 
-def test_normalize_spans_preserves_overlaps():
-    cleaned = walker.normalize_spans(
-        [
-            walker.Span(start=0, end=2),
-            walker.Span(start=1, end=3),
-            walker.Span(start=3, end=3),
-        ],
-        3,
-    )
-    assert [(s.start, s.end) for s in cleaned] == [(0, 2), (1, 3), (3, 3)]
+def test_overlapping_spans_fail_instead_of_being_repaired():
+    with pytest.raises(ValueError, match='overlapping'):
+        walker.validate_spans(
+            [walker.Span(start=0, end=2), walker.Span(start=1, end=3)], 4
+        )
+
+
+def test_reversed_span_order_fails_instead_of_being_sorted():
+    with pytest.raises(ValueError, match='out-of-order'):
+        walker.validate_spans(
+            [walker.Span(start=2, end=2), walker.Span(start=0, end=0)], 4
+        )
+
+
+def test_missing_node_id_fails_instead_of_being_dropped():
+    nodes = _nodes()
+    nodes[2].id = None
+    module = _ScriptedFinder([[walker.Span(start=1, end=2)]])
+    with pytest.raises(ValueError, match='without a stable id'):
+        asyncio.run(
+            pedagogical_component_finder.find_spans(nodes, module=module)
+        )
+
+
+def test_edge_span_at_lookahead_limit_fails_instead_of_being_banked():
+    module = _ScriptedFinder([[walker.Span(start=0, end=0)]])
+    with pytest.raises(ValueError, match='look-ahead limit'):
+        asyncio.run(walker.find_spans(_nodes(), module, budget=1, max_budget=1))
 
 
 def test_node_run_writes_the_spans_channel():

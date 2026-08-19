@@ -9,6 +9,7 @@ def _instruction(block=None, members=None):
     return models.Instruction(
         block=list(block),
         members=members if members is not None else list(block),
+        uuid=instructions.instruction_uuid('ea2e.pdf', list(block)),
     )
 
 

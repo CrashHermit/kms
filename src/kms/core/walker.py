@@ -15,7 +15,17 @@ def estimate_text_tokens(text: str | None) -> int:
     return len(text or '') // 4 + 1
 
 
-def estimate_tokens(node: models.ASTNode) -> int:
+def position_for_id(nodes: list[models.Node], node_id: int) -> int:
+    """Returns the current list position for a stable node id."""
+    for position, node in enumerate(nodes):
+        if node.id == node_id:
+            return position
+    raise KeyError(
+        f'node id {node_id} is not present in a stream of {len(nodes)} nodes'
+    )
+
+
+def estimate_tokens(node: models.Node) -> int:
     """Rough token estimate for one node's content."""
     return estimate_text_tokens(node.content)
 
@@ -32,6 +42,7 @@ class WindowNode(BaseModel):
     type: str | None = None
     content: str | None = None
     image_path: str | None = None
+    marker: str | None = None
 
 
 class Span(BaseModel):
@@ -51,7 +62,7 @@ class Window(BaseModel):
     after: str | None = None
 
 
-def node_views(nodes: list[models.ASTNode]) -> list[WindowNode]:
+def node_views(nodes: list[models.Node]) -> list[WindowNode]:
     """Projects a run of nodes into window node views."""
     return [
         WindowNode(
@@ -65,18 +76,29 @@ def node_views(nodes: list[models.ASTNode]) -> list[WindowNode]:
     ]
 
 
-def normalize_spans(spans: list[Span], last_local: int) -> list[Span]:
-    """Clamps spans to the window and sorts them in document order."""
-    clamped: list[Span] = []
-    for span in spans:
-        start = min(max(span.start, 0), last_local)
-        end = min(max(span.end, start), last_local)
-        clamped.append(Span(start=start, end=end))
-    clamped.sort(key=lambda span: (span.start, span.end))
-    return clamped
+def validate_spans(spans: list[Span], window_size: int) -> list[Span]:
+    """Validates finder spans without changing the model response.
+
+    Finder output is an ownership contract. Invalid positions, ordering, or
+    overlap are model errors and must be reported rather than repaired.
+    """
+    previous_end = -1
+    for index, span in enumerate(spans):
+        if not 0 <= span.start <= span.end < window_size:
+            raise ValueError(
+                f'invalid span {index} ({span.start}, {span.end}) for '
+                f'window of {window_size} node(s)'
+            )
+        if span.start <= previous_end:
+            raise ValueError(
+                f'overlapping or out-of-order span {index} '
+                f'({span.start}, {span.end}) after end {previous_end}'
+            )
+        previous_end = span.end
+    return spans
 
 
-def window_from(nodes: list[models.ASTNode], cursor: int, budget: int) -> int:
+def window_from(nodes: list[models.Node], cursor: int, budget: int) -> int:
     """Extends a window from cursor until the token budget is filled.
 
     The node at the cursor is always included even if it alone exceeds
@@ -101,8 +123,68 @@ def window_from(nodes: list[models.ASTNode], cursor: int, budget: int) -> int:
     return end
 
 
+def window_around(
+    nodes: list[models.Node], cursor: int, budget: int
+) -> list[models.Node]:
+    """Returns one contiguous token-bounded window centered on a cursor."""
+    if not 0 <= cursor < len(nodes):
+        raise IndexError(f'cursor {cursor} is outside {len(nodes)} nodes')
+    start = end = cursor
+    accumulated = estimate_tokens(nodes[cursor])
+    prefer_left = True
+    while start > 0 or end + 1 < len(nodes):
+        left_size = estimate_tokens(nodes[start - 1]) if start > 0 else None
+        right_size = (
+            estimate_tokens(nodes[end + 1])
+            if end + 1 < len(nodes)
+            else None
+        )
+        choices = (
+            ('left', left_size),
+            ('right', right_size),
+        )
+        if not prefer_left:
+            choices = choices[::-1]
+        added = False
+        for side, size in choices:
+            if size is None or accumulated + size > budget:
+                continue
+            if side == 'left':
+                start -= 1
+            else:
+                end += 1
+            accumulated += size
+            prefer_left = not prefer_left
+            added = True
+            break
+        if not added:
+            break
+    return nodes[start : end + 1]
+
+
+def marked_window_around(
+    nodes: list[models.Node],
+    cursor: int,
+    budget: int,
+    marker: str,
+) -> list[WindowNode]:
+    """Returns a bounded local view with the cursor explicitly marked."""
+    window = window_around(nodes, cursor, budget)
+    return [
+        WindowNode(
+            position=position,
+            id=node.id,
+            type=node.type,
+            content=node.content,
+            image_path=node.image_path,
+            marker=marker if node is nodes[cursor] else None,
+        )
+        for position, node in enumerate(window)
+    ]
+
+
 def fixed_windows_with_context(
-    nodes: list[models.ASTNode],
+    nodes: list[models.Node],
     budget: int,
     backward_budget: int,
     forward_budget: int,
@@ -132,7 +214,7 @@ def fixed_windows_with_context(
     ]
 
     windows: list[Window] = []
-    current: list[tuple[int, models.ASTNode]] = []
+    current: list[tuple[int, models.Node]] = []
     current_size = 0
     for entry in eligible:
         index, node = entry
@@ -153,8 +235,8 @@ def fixed_windows_with_context(
 
 
 def _finish_window(
-    nodes: list[models.ASTNode],
-    entries: list[tuple[int, models.ASTNode]],
+    nodes: list[models.Node],
+    entries: list[tuple[int, models.Node]],
     backward_budget: int,
     forward_budget: int,
 ) -> Window:
@@ -168,7 +250,7 @@ def _finish_window(
 
 
 def content_before(
-    nodes: list[models.ASTNode], cursor: int, budget: int
+    nodes: list[models.Node], cursor: int, budget: int
 ) -> str | None:
     """Collects content immediately before a cursor, within a budget.
 
@@ -199,7 +281,7 @@ def content_before(
 
 
 def content_after(
-    nodes: list[models.ASTNode], cursor: int, budget: int
+    nodes: list[models.Node], cursor: int, budget: int
 ) -> str | None:
     """Collects content immediately after a cursor, within a budget.
 
@@ -274,7 +356,7 @@ def context_around(
 
 
 async def find_spans(
-    nodes: list[models.ASTNode],
+    nodes: list[models.Node],
     module: Any,
     budget: int,
     max_budget: int,
@@ -302,27 +384,23 @@ async def find_spans(
         while True:
             end = window_from(nodes, cursor, size)
             window = nodes[cursor:end]
-            last_local = len(window) - 1
             reached_doc_end = end == node_count
 
             spans = await module.aforward(current_nodes=node_views(window))
-            clean = normalize_spans(spans, last_local)
+            clean = validate_spans(spans, len(window))
 
             if not clean:
                 cursor = end
                 break
-            bounded = [span for span in clean if span.end < last_local]
+            bounded = [span for span in clean if span.end < len(window) - 1]
 
-            if reached_doc_end or size >= max_budget:
-                if not reached_doc_end:
-                    logger.warning(
-                        'window hit the %d-token cap at cursor %d; banking %d '
-                        'span(s) as-is (a span may be truncated)',
-                        max_budget,
-                        cursor,
-                        len(clean),
-                    )
+            if reached_doc_end:
                 to_bank, advance = clean, end
+            elif size >= max_budget:
+                raise ValueError(
+                    f'finder span reaches the window edge at cursor {cursor} '
+                    f'after reaching the {max_budget}-token look-ahead limit'
+                )
             elif bounded:
                 to_bank, advance = bounded, cursor + bounded[-1].end + 1
             else:
@@ -340,10 +418,13 @@ async def find_spans(
                 member_ids = [
                     window[position].id
                     for position in range(span.start, span.end + 1)
-                    if window[position].id is not None
                 ]
-                if member_ids:
-                    spans_out.append(member_ids)
+                if any(node_id is None for node_id in member_ids):
+                    raise ValueError(
+                        f'finder span ({span.start}, {span.end}) references '
+                        f'a node without a stable id at cursor {cursor}'
+                    )
+                spans_out.append(member_ids)
             cursor = advance
             break
 

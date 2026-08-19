@@ -5,13 +5,6 @@ import json
 import os
 from pathlib import Path
 
-os.environ['KMS_MODELS__MODULES__CORRECTOR__BASE_URL'] = (
-    'http://localhost:8080/v1'
-)
-os.environ['KMS_MODELS__MODULES__CORRECTOR__MODEL'] = 'openai/gemma-4-e4b-it'
-os.environ['KMS_MODELS__MODULES__CORRECTOR__API_KEY'] = 'not-needed'
-os.environ['KMS_SERVING__MODULE_MODELS__CORRECTOR'] = 'gemma-4-e4b-it'
-
 from kms.construction import block_corrector, ocr
 from kms.core import llm
 

@@ -9,11 +9,18 @@ from kms.graph.triplets import (
 
 
 def _triplet(subject, predicate, object, node_ids=None):
+    ids = node_ids or []
     return models.Triplet(
         subject=subject,
         predicate=predicate,
         object=object,
-        node_ids=node_ids or [],
+        node_ids=ids,
+        occurrence_uuids={
+            node_id: triplet_uuid(
+                'hefferon.pdf', node_id, subject, predicate, object
+            )
+            for node_id in ids
+        },
     )
 
 

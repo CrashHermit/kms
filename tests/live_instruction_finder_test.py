@@ -1,10 +1,6 @@
 import asyncio
 
-from tests.live_support import configure_local_formatter
-
 from kms import runtime
-
-configure_local_formatter()
 
 
 def _elide(text: str | None, limit: int = 90) -> str:

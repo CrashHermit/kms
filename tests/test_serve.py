@@ -179,7 +179,7 @@ def test_default_router_maps_stages(monkeypatch, tmp_path):
     monkeypatch.setattr(serve.Path, 'home', classmethod(lambda cls: tmp_path))
     config = serve.default_router()
     assert config.models['formatter'] == 'qwen3.5-9b'
-    assert config.models['corrector'] == 'qwen3-vl-4b'
+    assert config.models['corrector'] == 'qwen3.5-9b'
     assert 'pipeline' not in config.models
     assert '--models-preset' in config.start
     assert '--models-max' in config.start

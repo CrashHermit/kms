@@ -13,8 +13,10 @@ from collections.abc import Callable
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import content, embeddings, llm, module
+from kms.construction import hub_inputs
+from kms.core import content, embeddings, llm, models, module
 from kms.graph import hubs, queries, writer
+from kms.graph import triplets as graph_triplets
 
 
 class _TripletDefinition(BaseModel):
@@ -116,6 +118,86 @@ def _evidence_text(group: dict) -> list[str]:
     return sorted(value for value in rendered if value.strip(' |'))
 
 
+def build_source_groups(
+    triplets: list[models.Triplet],
+    *,
+    source: str,
+    entity_assignments: list[dict],
+    predicate_assignments: list[dict],
+    entity_hubs: list[dict] | None = None,
+    predicate_hubs: list[dict] | None = None,
+) -> list[dict]:
+    """Builds exact source-local TripletHub groups without graph reads."""
+    entity_map = hub_inputs.assignment_map(entity_assignments)
+    predicate_map = hub_inputs.assignment_map(predicate_assignments)
+    memberships = hub_inputs.build_triplet_memberships(
+        triplets,
+        source=source,
+        entity_assignments=entity_map,
+        predicate_assignments=predicate_map,
+    )
+    grouped = hub_inputs.exact_tuple_intersections(list(memberships))
+    entity_context = {hub['uuid']: hub for hub in entity_hubs or []}
+    predicate_context = {hub['uuid']: hub for hub in predicate_hubs or []}
+    groups = []
+    for (subject_hub, predicate_hub, object_hub), indexes in sorted(
+        grouped.items()
+    ):
+        evidence = []
+        triplet_ids = []
+        for index in sorted(indexes):
+            triplet = triplets[index]
+            for node_id in triplet.node_ids:
+                triplet_id = graph_triplets.triplet_uuid(
+                    source,
+                    node_id,
+                    triplet.subject,
+                    triplet.predicate,
+                    triplet.object,
+                )
+                triplet_ids.append(triplet_id)
+                evidence.append(
+                    {
+                        'uuid': triplet_id,
+                        'subject': triplet.subject,
+                        'predicate': triplet.predicate,
+                        'object': triplet.object,
+                    }
+                )
+        groups.append(
+            {
+                'uuid': hubs.triplet_hub_uuid(
+                    'source', source, subject_hub, predicate_hub, object_hub
+                ),
+                'source': source,
+                'subject_hub': subject_hub,
+                'predicate_hub': predicate_hub,
+                'object_hub': object_hub,
+                'triplets': triplet_ids,
+                'evidence': evidence,
+                'subject_name': entity_context.get(subject_hub, {}).get(
+                    'canonical_name', subject_hub
+                ),
+                'subject_description': entity_context.get(subject_hub, {}).get(
+                    'description'
+                ),
+                'predicate_name': predicate_context.get(predicate_hub, {}).get(
+                    'canonical_name', predicate_hub
+                ),
+                'predicate_description': predicate_context.get(
+                    predicate_hub, {}
+                ).get('description'),
+                'object_name': entity_context.get(object_hub, {}).get(
+                    'canonical_name', object_hub
+                ),
+                'object_description': entity_context.get(object_hub, {}).get(
+                    'description'
+                ),
+            }
+        )
+    return groups
+
+
 def _prepare_groups(rows: list[dict], tier: str) -> list[dict]:
     groups: list[dict] = []
     for row in rows:
@@ -200,6 +282,39 @@ async def _synthesize_groups(
         {**group, 'embedding': vector}
         for group, vector in zip(synthesized, vectors, strict=True)
     ]
+
+
+async def build_source(
+    *,
+    language_model: dspy.LM,
+    source: str,
+    triplets: list[models.Triplet],
+    entity_assignments: list[dict],
+    predicate_assignments: list[dict],
+    entity_hubs: list[dict] | None = None,
+    predicate_hubs: list[dict] | None = None,
+    max_concurrency: int | None = None,
+) -> dict:
+    """Builds source-local TripletHubs from in-memory memberships."""
+    groups = build_source_groups(
+        triplets,
+        source=source,
+        entity_assignments=entity_assignments,
+        predicate_assignments=predicate_assignments,
+        entity_hubs=entity_hubs,
+        predicate_hubs=predicate_hubs,
+    )
+    groups = await _synthesize_groups(
+        groups,
+        language_model=language_model,
+        max_concurrency=max_concurrency,
+        tier='source',
+    )
+    return {
+        'triplet_hubs': len(groups),
+        'triplets': sum(len(group['triplets']) for group in groups),
+        'hubs': groups,
+    }
 
 
 async def rebuild(

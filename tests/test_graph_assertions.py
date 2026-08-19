@@ -1,13 +1,21 @@
 from kms.core import models
 from kms.graph import assertions, entities, predicates
+from kms.graph.triplets import triplet_uuid
 
 
 def _triplet(subject, predicate, object, node_ids=None):
+    ids = node_ids or []
     return models.Triplet(
         subject=subject,
         predicate=predicate,
         object=object,
-        node_ids=node_ids or [],
+        node_ids=ids,
+        occurrence_uuids={
+            node_id: triplet_uuid(
+                'hefferon.pdf', node_id, subject, predicate, object
+            )
+            for node_id in ids
+        },
     )
 
 

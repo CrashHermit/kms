@@ -303,7 +303,7 @@ def test_lexical_judge_rejects_a_deterministic_candidate_before_naming(
 def test_name_hub_rebuild_uses_no_embedding_search(monkeypatch):
     calls = []
 
-    async def fake_components(session_factory, kind, source):
+    async def fake_components(session_factory, source):
         return [
             {
                 'uuid': 'component-a',
@@ -345,7 +345,9 @@ def test_name_hub_rebuild_uses_no_embedding_search(monkeypatch):
             calls.append(('llm', kwargs['surface_forms']))
             return 0
 
-    monkeypatch.setattr(name_hubs.queries, 'all_components', fake_components)
+    monkeypatch.setattr(
+        name_hubs.queries, 'all_predicate_components', fake_components
+    )
     monkeypatch.setattr(name_hubs.queries, 'all_name_occurrences', fake_names)
     monkeypatch.setattr(
         name_hubs.writer,

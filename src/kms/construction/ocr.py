@@ -248,7 +248,7 @@ class OCRRequestOptions(BaseModel):
     """Represents optional Mistral OCR request parameters."""
 
     include_image_base64: bool = True
-    include_blocks: bool = False
+    include_blocks: bool = True
     extract_header: bool = True
     extract_footer: bool = True
     pages: list[int] | None = None
@@ -290,6 +290,34 @@ class OCRRequest(BaseModel):
         }
 
 
+_MISTRAL_NODE_TYPES = {
+    'text': models.NodeType.PARAGRAPH,
+    'paragraph': models.NodeType.PARAGRAPH,
+    'heading': models.NodeType.HEADER,
+    'header': models.NodeType.HEADER,
+    'title': models.NodeType.HEADER,
+    'footer': models.NodeType.FOOTER,
+    'equation': models.NodeType.MATH,
+    'math': models.NodeType.MATH,
+    'code': models.NodeType.CODE,
+    'list': models.NodeType.LIST,
+    'table': models.NodeType.TABLE,
+    'image': models.NodeType.IMAGE,
+    'caption': models.NodeType.CAPTION,
+}
+
+
+def _canonical_node_type(provider_type: str) -> models.NodeType:
+    """Maps one Mistral block type to a canonical KMS node type."""
+    normalized_type = provider_type.strip().lower()
+    try:
+        return _MISTRAL_NODE_TYPES[normalized_type]
+    except KeyError as exc:
+        raise ValueError(
+            f'Unknown Mistral OCR block type: {provider_type!r}'
+        ) from exc
+
+
 class OCRBlockRegion(BaseModel):
     """Represents one Mistral block prepared for visual correction."""
 
@@ -298,6 +326,11 @@ class OCRBlockRegion(BaseModel):
     crop_path: str | None = None
     crop_bbox: tuple[int, int, int, int] | None = None
 
+    @property
+    def canonical_type(self) -> models.NodeType:
+        """Returns the canonical type for this provider block."""
+        return _canonical_node_type(self.block.type)
+
 
 class OCRPageArtifact(BaseModel):
     """Represents one materialized OCR page and its correction inputs."""
@@ -305,18 +338,82 @@ class OCRPageArtifact(BaseModel):
     index: int
     markdown: str
     image_path: str
+    footer: str | None = None
     pictures: list[models.Picture] = Field(default_factory=list)
     blocks: list[OCRBlockRegion] = Field(default_factory=list)
 
-    def to_segment(self) -> models.Segment:
-        """Converts the page artifact to the pipeline segment model."""
-        return models.Segment(
+    def to_document(self) -> models.Document:
+        """Converts this provider page into the canonical document model."""
+        nodes: list[models.Node] = []
+        picture_cursor = 0
+        for region in self.blocks:
+            block = region.block
+            node = models.Node(
+                type=region.canonical_type,
+                content=block.content or '',
+                index=region.block_index,
+                provenance={
+                    'provider': 'mistral',
+                    'provider_type': block.type,
+                    'provider_index': region.block_index,
+                    'bbox': (
+                        block.top_left_x,
+                        block.top_left_y,
+                        block.bottom_right_x,
+                        block.bottom_right_y,
+                    ),
+                    'confidence': block.confidence,
+                },
+            )
+            if region.crop_bbox is not None:
+                node.provenance['crop_bbox'] = region.crop_bbox
+            if region.crop_path is not None:
+                node.provenance['crop_path'] = region.crop_path
+            if block.type == 'image' and picture_cursor < len(self.pictures):
+                node.image_path = self.pictures[picture_cursor].image_path
+                picture_cursor += 1
+            nodes.append(node)
+        if not nodes and self.markdown.strip():
+            nodes.append(
+                models.Node(
+                    type=models.NodeType.MARKDOWN,
+                    content=self.markdown,
+                    index=0,
+                    provenance={
+                        'provider': 'mistral',
+                        'provider_type': 'markdown',
+                    },
+                )
+            )
+        footer = (self.footer or '').strip()
+        if footer:
+            nodes.append(
+                models.Node(
+                    type=models.NodeType.FOOTER,
+                    content=footer,
+                    index=len(nodes),
+                    provenance={
+                        'provider': 'mistral',
+                        'provider_type': 'footer',
+                    },
+                )
+            )
+        return models.Document(
             index=self.index,
             image_path=self.image_path,
+            content=(
+                self.markdown
+                if not footer
+                else f'{self.markdown.rstrip()}\n\n{footer}'
+            ),
             pictures=self.pictures,
-            content=self.markdown,
+            nodes=nodes,
+            metadata={
+                'provider': 'mistral',
+                'markdown': self.markdown,
+                'footer': footer or None,
+            },
         )
-
 
 def _require_key() -> str:
     """Returns the configured Mistral API key.
@@ -494,10 +591,10 @@ def _block_bbox(
     return left, top, right, bottom
 
 
-def _materialize_block_crops(document: models.Document) -> None:
-    for page_artifact, page in zip(
-        document.pages, document.response.pages, strict=True
-    ):
+def _materialize_block_crops(
+    artifacts: list[OCRPageArtifact], response: OCRResponse
+) -> None:
+    for page_artifact, page in zip(artifacts, response.pages, strict=True):
         image_path = Path(page_artifact.image_path)
         if not image_path.exists():
             continue
@@ -534,8 +631,8 @@ def materialize_document(
     pdf_path: str | Path | None = None,
     pages: list[int] | None = None,
     render_pages: bool = True,
-) -> models.Document:
-    """Materializes validated OCR pages and optional page images.
+) -> models.Source:
+    """Materializes validated OCR pages and canonical document nodes.
 
     Args:
         response: The validated Mistral OCR response.
@@ -550,18 +647,19 @@ def materialize_document(
     output_dir = Path(output_dir)
     artifacts: list[OCRPageArtifact] = []
     for order_index, page in enumerate(response.pages):
-        segment_dir = output_dir / 'Segments' / f'Segment_{order_index:04d}'
+        document_dir = output_dir / 'Documents' / f'Document_{order_index:04d}'
         markdown, pictures = _rewrite_page(
             page.markdown,
             page.images,
-            segment_dir,
+            document_dir,
         )
         artifacts.append(
             OCRPageArtifact(
                 index=order_index,
-                image_path=str(segment_dir / 'Segment.png'),
+                image_path=str(document_dir / 'Document.png'),
                 pictures=pictures,
-                markdown=_with_footer(markdown, page.footer),
+                markdown=markdown,
+                footer=page.footer,
                 blocks=[
                     OCRBlockRegion(block_index=index, block=block)
                     for index, block in enumerate(page.blocks)
@@ -574,41 +672,54 @@ def materialize_document(
         json.dumps(response.raw_response, indent=2, ensure_ascii=False),
         encoding='utf-8',
     )
-    document = models.Document(
-        response=response,
-        pages=artifacts,
-        raw_response_path=str(raw_response_path),
-    )
     if render_pages and pdf_path is not None:
-        _render_page_images(pdf_path, document.to_segments(), pages)
-    _materialize_block_crops(document)
-    return document
+        _render_page_images(
+            pdf_path,
+            [artifact.to_document() for artifact in artifacts],
+            pages,
+        )
+    _materialize_block_crops(artifacts, response)
+    source = models.Source(
+        ocr_response=response,
+        metadata={
+            'provider': 'mistral',
+            'raw_response_path': str(raw_response_path),
+        },
+        documents=[artifact.to_document() for artifact in artifacts],
+    )
+    for document, artifact in zip(source.documents, artifacts, strict=True):
+        for node, region in zip(
+            document.nodes, artifact.blocks, strict=False
+        ):
+            node.provenance['crop_bbox'] = region.crop_bbox
+            node.provenance['crop_path'] = region.crop_path
+    return source
 
 
-def build_segments(
+def build_source(
     response: OCRResponse, output_dir: str | Path
-) -> list[models.Segment]:
-    """Builds pipeline segments from a validated OCR response."""
-    return materialize_document(response, output_dir).to_segments()
+) -> models.Source:
+    """Builds canonical source documents from a validated OCR response."""
+    return materialize_document(response, output_dir)
 
 
 def _render_page_images(
     pdf_path: str | Path,
-    segments: list[models.Segment],
+    documents: list[models.Document],
     pages: list[int] | None,
 ) -> None:
     """Renders each segment's page to PNG at its configured image path."""
     pdf = pdfium.PdfDocument(str(pdf_path))
     try:
-        for i, segment in enumerate(segments):
+        for i, document in enumerate(documents):
             source_page = pages[i] if pages is not None else i
             image = (
                 pdf[source_page]
                 .render(scale=config.get_settings().ocr.render_scale)
                 .to_pil()
             )
-            Path(segment.image_path).parent.mkdir(parents=True, exist_ok=True)
-            image.save(segment.image_path)
+            Path(document.image_path).parent.mkdir(parents=True, exist_ok=True)
+            image.save(document.image_path)
     finally:
         pdf.close()
 
@@ -618,8 +729,8 @@ def extract(
     output_dir: str | Path = 'output',
     pages: list[int] | None = None,
     render_pages: bool = True,
-) -> models.Document:
-    """OCR's a PDF into an ordered document with pictures and page images.
+) -> models.Source:
+    """OCR's a PDF into canonical source documents with ordered nodes.
 
     Args:
         pdf_path: Path to the PDF file.
@@ -628,7 +739,7 @@ def extract(
         render_pages: When True, render each page to PNG.
 
     Returns:
-        The ordered list of segments.
+        The canonical source containing one document per OCR page.
     """
     pdf_bytes = Path(pdf_path).read_bytes()
     response = ocr_pdf(pdf_bytes, pages=pages)
@@ -643,9 +754,17 @@ def extract(
 
 class OCRNode:
     def run(self, current_state: state.State) -> dict:
-        document = extract(
+        source = extract(
             current_state['pdf_path'],
             output_dir=current_state['output_dir'],
             pages=current_state.get('pages'),
         )
-        return {'document': document, 'segments': document.to_segments()}
+        if isinstance(source, models.Source):
+            source.key = current_state['source_key']
+            source.metadata.update(current_state.get('source_metadata', {}))
+        else:
+            raise TypeError('OCR extract did not return a canonical Source')
+        return {
+            'source': source,
+            'documents': source.documents,
+        }

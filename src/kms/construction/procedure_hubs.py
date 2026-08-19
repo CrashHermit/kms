@@ -1,8 +1,11 @@
+import asyncio
+
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.construction import learning_hub_builder
-from kms.core import module
+from kms import config
+from kms.core import clustering, content, embeddings, models, module
+from kms.graph import procedure_hubs as graph_hubs
 from kms.graph import queries, writer
 
 
@@ -76,44 +79,121 @@ class ProcedureHubAdjudicator(module.Module):
         return prediction.should_merge
 
 
+def _records(rows: list[dict]) -> tuple[models.ProcedureHubRecord, ...]:
+    return tuple(
+        models.ProcedureHubRecord(
+            uuid=row['uuid'],
+            source=row['source'],
+            description=row['description'],
+            embedding=list(row['embedding']),
+        )
+        for row in rows
+    )
+
+
+async def _build(
+    source: str,
+    records,
+    *,
+    adjudicator,
+    synthesizer,
+    meta: bool = False,
+) -> dict:
+    stage = config.get_settings().stages.procedure_hubs
+    if not records:
+        return {'hubs': [], 'records': 0}
+    missing = [record.uuid for record in records if not record.embedding]
+    if missing:
+        raise RuntimeError(
+            f'procedure hubs: records lack embeddings: {missing[:5]}'
+        )
+
+    async def adjudicate(left, right):
+        return await adjudicator.aforward(
+            left=left.description, right=right.description
+        )
+
+    groups = await clustering.adjudicated_groups(
+        list(records),
+        recall_threshold=stage.recall_threshold,
+        merge_above=stage.merge_above,
+        separate_below=stage.separate_below,
+        adjudicate=adjudicate,
+        max_concurrency=stage.max_concurrent_calls,
+    )
+    if meta:
+        groups = [
+            group for group in groups if len({r.source for r in group}) >= 2
+        ]
+    gate = asyncio.Semaphore(stage.max_concurrent_calls)
+
+    async def synthesize(group):
+        async with gate:
+            name, description = await synthesizer.aforward(
+                evidence=[record.description for record in group]
+            )
+        members = [record.uuid for record in group]
+        return {
+            'members': members,
+            'canonical_name': name,
+            'description': description,
+            **({'sources': sorted({r.source for r in group})} if meta else {}),
+        }
+
+    synthesized = await asyncio.gather(*(synthesize(group) for group in groups))
+    if not synthesized:
+        return {'hubs': [], 'records': 0}
+    vectors = await embeddings.embedder().embed(
+        [
+            content.Content.from_text(
+                f'{hub["canonical_name"]}: {hub["description"]}'
+            )
+            for hub in synthesized
+        ]
+    )
+    hubs = []
+    for hub, vector in zip(synthesized, vectors, strict=True):
+        hub['embedding'] = vector
+        hub['uuid'] = (
+            graph_hubs.meta_hub_uuid(hub['members'])
+            if meta
+            else graph_hubs.hub_uuid(source, hub['members'])
+        )
+        if not meta:
+            hub['source'] = source
+        hubs.append(hub)
+    return {'hubs': hubs, 'records': sum(len(group) for group in groups)}
+
+
 class ProcedureHubNode:
     def __init__(
         self,
-        session_factory,
         adjudicator: ProcedureHubAdjudicator,
         synthesizer: ProcedureHubSynthesizer,
     ) -> None:
-        self._session_factory = session_factory
         self._adjudicator = adjudicator
         self._synthesizer = synthesizer
 
     async def run(self, current_state: dict) -> dict:
-        if not self._session_factory:
-            return {}
-        source = current_state.get('source')
+        from kms.core import state
+
+        bundle = state.to_construction_bundle(current_state)
+        source = bundle.source.key
         if not source:
-            return {}
-        records = await queries.learning_hub_items(
-            self._session_factory,
-            'procedure',
-            source,
-        )
-        result = await learning_hub_builder.build_source_hubs(
-            'procedure',
+            return {'construction_bundle': bundle}
+        records = tuple(bundle.procedure_hub_records)
+        result = await _build(
             source,
             records,
             adjudicator=self._adjudicator,
             synthesizer=self._synthesizer,
         )
-        await writer.clear_learning_hubs(
-            'procedure', source, session_factory=self._session_factory
-        )
-        await writer.persist_learning_hubs(
-            'procedure', result['hubs'], session_factory=self._session_factory
-        )
+        bundle.procedure_hubs = result['hubs']
         return {
             'procedure_hubs_created': len(result['hubs']),
             'procedures_clustered': result['records'],
+            'procedure_hubs': bundle.procedure_hubs,
+            'construction_bundle': bundle,
         }
 
 
@@ -124,23 +204,15 @@ async def rebuild(
     adjudicator: ProcedureHubAdjudicator,
     synthesizer: ProcedureHubSynthesizer,
 ) -> dict:
-    records = await queries.learning_hub_items(
-        session_factory,
-        'procedure',
-        source,
+    records = _records(
+        await queries.procedure_hub_items(session_factory, source)
     )
-    result = await learning_hub_builder.build_source_hubs(
-        'procedure',
-        source,
-        records,
-        adjudicator=adjudicator,
-        synthesizer=synthesizer,
+    result = await _build(
+        source, records, adjudicator=adjudicator, synthesizer=synthesizer
     )
-    await writer.clear_learning_hubs(
-        'procedure', source, session_factory=session_factory
-    )
-    await writer.persist_learning_hubs(
-        'procedure', result['hubs'], session_factory=session_factory
+    await writer.clear_procedure_hubs(source, session_factory=session_factory)
+    await writer.persist_procedure_hubs(
+        result['hubs'], session_factory=session_factory
     )
     return {
         'procedure_hubs': len(result['hubs']),
@@ -155,9 +227,13 @@ async def rebuild_meta(
     synthesizer: ProcedureHubSynthesizer,
 ) -> dict:
     """Rebuild cross-source MetaProcedureHub records."""
-    return await learning_hub_builder.rebuild_meta_hubs(
-        'procedure',
-        session_factory=session_factory,
-        adjudicator=adjudicator,
-        synthesizer=synthesizer,
+    rows = await queries.all_source_procedure_hubs(session_factory)
+    typed = _records(rows)
+    result = await _build(
+        '', typed, adjudicator=adjudicator, synthesizer=synthesizer, meta=True
     )
+    await writer.clear_meta_procedure_hubs(session_factory=session_factory)
+    await writer.persist_meta_procedure_hubs(
+        result['hubs'], session_factory=session_factory
+    )
+    return {'meta_hubs': len(result['hubs']), 'source_hubs': result['records']}

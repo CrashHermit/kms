@@ -6,9 +6,8 @@ subject and object plus a per-triplet :Predicate vertex, each described
 from the window around its source node.
 """
 
-from kms.core import models
+from kms.core import identity, models
 from kms.graph import entities, names, predicates
-from kms.graph.triplets import triplet_uuid
 
 
 def assertion_rows(
@@ -46,16 +45,45 @@ def assertion_rows(
 
     for triplet in triplets:
         for node_id in triplet.node_ids:
-            triplet_id = triplet_uuid(
+            triplet_id = triplet.occurrence_uuids.get(node_id)
+            expected_triplet_id = identity.triplet_uuid(
                 source,
                 node_id,
                 triplet.subject,
                 triplet.predicate,
                 triplet.object,
             )
-            subject_id = entities.entity_uuid(source, node_id, triplet.subject)
-            object_id = entities.entity_uuid(source, node_id, triplet.object)
-            predicate_id = predicates.predicate_uuid(triplet_id)
+            if triplet_id is None:
+                raise ValueError(
+                    f'triplet occurrence for node {node_id} is missing its uuid'
+                )
+            if triplet_id != expected_triplet_id:
+                raise ValueError(
+                    f'triplet occurrence uuid {triplet_id!r} does not match '
+                    f'expected {expected_triplet_id!r}'
+                )
+            expected_subject_id = entities.entity_uuid(
+                source, node_id, triplet.subject
+            )
+            expected_object_id = entities.entity_uuid(
+                source, node_id, triplet.object
+            )
+            expected_predicate_id = predicates.predicate_uuid(triplet_id)
+            subject_id = triplet.entity_uuids.get(
+                (node_id, triplet.subject), expected_subject_id
+            )
+            object_id = triplet.entity_uuids.get(
+                (node_id, triplet.object), expected_object_id
+            )
+            predicate_id = triplet.predicate_uuids.get(
+                node_id, expected_predicate_id
+            )
+            if subject_id != expected_subject_id:
+                raise ValueError('triplet subject entity uuid does not match')
+            if object_id != expected_object_id:
+                raise ValueError('triplet object entity uuid does not match')
+            if predicate_id != expected_predicate_id:
+                raise ValueError('triplet predicate uuid does not match')
 
             node_descriptions = entity_descriptions.get(node_id, {})
             node_entity_embeddings = (

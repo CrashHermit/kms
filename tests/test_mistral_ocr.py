@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from kms.construction import ocr
 from kms.core import models
 
@@ -33,7 +35,7 @@ def test_ocr_request_options_include_prompts():
     assert metadata_options.bbox_annotation_format is not None
     assert options.model_dump(exclude_none=True) == {
         'include_image_base64': True,
-        'include_blocks': False,
+        'include_blocks': True,
         'extract_header': True,
         'extract_footer': True,
         'table_format': 'html',
@@ -68,7 +70,36 @@ def test_ocr_pdf_requests_blocks_when_enabled(monkeypatch):
     assert calls[0][1]['include_blocks'] is True
 
 
-def test_build_segments_rewrites_refs_and_saves_pictures(tmp_path):
+@pytest.mark.parametrize(
+    ('provider_type', 'canonical_type'),
+    [
+        ('text', models.NodeType.PARAGRAPH),
+        ('heading', models.NodeType.HEADER),
+        ('equation', models.NodeType.MATH),
+        ('code', models.NodeType.CODE),
+        ('list', models.NodeType.LIST),
+        ('table', models.NodeType.TABLE),
+        ('image', models.NodeType.IMAGE),
+    ],
+)
+def test_mistral_block_types_map_to_canonical_types(
+    provider_type, canonical_type
+):
+    block = ocr.OCRBlock(type=provider_type)
+    region = ocr.OCRBlockRegion(block_index=0, block=block)
+    assert region.canonical_type is canonical_type
+
+
+def test_unknown_mistral_block_type_is_rejected():
+    region = ocr.OCRBlockRegion(
+        block_index=0,
+        block=ocr.OCRBlock(type='unknown'),
+    )
+    with pytest.raises(ValueError, match='Unknown Mistral OCR block type'):
+        ocr._canonical_node_type(region.block.type)
+
+
+def test_build_source_converts_blocks_and_saves_pictures(tmp_path):
     resp = {
         'pages': [
             {
@@ -85,17 +116,18 @@ def test_build_segments_rewrites_refs_and_saves_pictures(tmp_path):
         ]
     }
     resp = ocr.OCRResponse.model_validate(resp)
-    segs = ocr.build_segments(resp, tmp_path)
-    assert len(segs) == 1
-    segment = segs[0]
-    assert segment.index == 0
-    assert '![1]()' in segment.content and '![2]()' in segment.content
-    assert (
-        'img-0.jpeg' not in segment.content
-        and 'img-1.jpeg' not in segment.content
+    source = ocr.build_source(resp, tmp_path)
+    assert len(source.documents) == 1
+    document = source.documents[0]
+    assert document.index == 0
+    assert document.content == (
+        '# Title\n\n![1]()\n\nprose $x^2$\n\n![2]()\n'
     )
-    assert [picture.index for picture in segment.pictures] == [1, 2]
-    for picture in segment.pictures:
+    assert [node.content for node in document.nodes] == [
+        '# Title\n\n![1]()\n\nprose $x^2$\n\n![2]()\n'
+    ]
+    assert [picture.index for picture in document.pictures] == [1, 2]
+    for picture in document.pictures:
         assert (
             Path(picture.image_path).exists()
             and Path(picture.image_path).stat().st_size > 0
@@ -127,24 +159,19 @@ def test_materialize_document_crops_blocks(tmp_path):
     from PIL import Image
 
     Image.new('RGB', (100, 100), 'white').save(image_path)
-    document = models.Document(
-        response=response,
-        pages=[
-            ocr.OCRPageArtifact(
-                index=0,
-                markdown='text',
-                image_path=str(image_path),
-                blocks=[
-                    ocr.OCRBlockRegion(
-                        block_index=0,
-                        block=response.pages[0].blocks[0],
-                    )
-                ],
+    artifact = ocr.OCRPageArtifact(
+        index=0,
+        markdown='text',
+        image_path=str(image_path),
+        blocks=[
+            ocr.OCRBlockRegion(
+                block_index=0,
+                block=response.pages[0].blocks[0],
             )
         ],
     )
-    ocr._materialize_block_crops(document)
-    region = document.pages[0].blocks[0]
+    ocr._materialize_block_crops([artifact], response)
+    region = artifact.blocks[0]
     assert region.crop_bbox == (2, 12, 58, 68)
     assert region.crop_path is not None
     assert Path(region.crop_path).exists()
@@ -163,9 +190,9 @@ def test_unreferenced_figure_is_still_saved(tmp_path):
         ]
     }
     resp = ocr.OCRResponse.model_validate(resp)
-    segs = ocr.build_segments(resp, tmp_path)
-    assert len(segs[0].pictures) == 1
-    assert Path(segs[0].pictures[0].image_path).exists()
+    source = ocr.build_source(resp, tmp_path)
+    assert len(source.documents[0].pictures) == 1
+    assert Path(source.documents[0].pictures[0].image_path).exists()
 
 
 def test_non_figure_link_left_untouched(tmp_path):
@@ -190,9 +217,11 @@ def test_footer_is_appended_to_the_page_markdown(tmp_path):
         ]
     }
     resp = ocr.OCRResponse.model_validate(resp)
-    content = ocr.build_segments(resp, tmp_path)[0].content
-    assert content == 'body text\n\n$^1$G. Polya, "Two Incidents," 1970.'
-    assert 'TOPOLOGICAL SPACES' not in content
+    document = ocr.build_source(resp, tmp_path).documents[0]
+    assert document.content == 'body text\n\n$^1$G. Polya, "Two Incidents," 1970.'
+    assert document.nodes[-1].type == 'footer'
+    assert document.nodes[-1].content == '$^1$G. Polya, "Two Incidents," 1970.'
+    assert 'TOPOLOGICAL SPACES' not in document.content
 
 
 def test_page_without_a_footer_is_unchanged(tmp_path):
@@ -202,23 +231,24 @@ def test_page_without_a_footer_is_unchanged(tmp_path):
         ]
     }
     resp = ocr.OCRResponse.model_validate(resp)
-    assert ocr.build_segments(resp, tmp_path)[0].content == 'body text'
+    assert ocr.build_source(resp, tmp_path).documents[0].content == 'body text'
     assert ocr._with_footer('body text', '   ') == 'body text'
 
 
-def test_ocr_node_reads_graph_input_and_emits_segments(monkeypatch, tmp_path):
-    segments = [object()]
+def test_ocr_node_reads_graph_input_and_emits_documents(monkeypatch, tmp_path):
+    document_list = [object()]
     calls = []
 
-    class Document:
-        def to_segments(self):
-            return segments
+    class Source:
+        key = None
+        metadata = {}
 
-    fake_document = Document()
+    fake_source = models.Source(documents=[])
+    fake_source.documents = document_list
 
     def fake_extract(pdf_path, output_dir, pages):
         calls.append((pdf_path, output_dir, pages))
-        return fake_document
+        return fake_source
 
     monkeypatch.setattr(ocr, 'extract', fake_extract)
     result = ocr.OCRNode().run(
@@ -226,11 +256,12 @@ def test_ocr_node_reads_graph_input_and_emits_segments(monkeypatch, tmp_path):
             'pdf_path': 'book.pdf',
             'output_dir': str(tmp_path),
             'pages': [2],
+            'source_key': 'book',
         }
     )
 
     assert calls == [('book.pdf', str(tmp_path), [2])]
-    assert result == {'document': fake_document, 'segments': segments}
+    assert result == {'source': fake_source, 'documents': document_list}
 
 
 def test_pages_are_indexed_densely(tmp_path):
@@ -249,7 +280,7 @@ def test_pages_are_indexed_densely(tmp_path):
         ]
     }
     resp = ocr.OCRResponse.model_validate(resp)
-    segs = ocr.build_segments(resp, tmp_path)
-    assert [s.index for s in segs] == [0, 1]
-    assert all(len(s.pictures) == 1 for s in segs)
-    assert all('![1]()' in s.content for s in segs)
+    source = ocr.build_source(resp, tmp_path)
+    assert [document.index for document in source.documents] == [0, 1]
+    assert all(len(document.pictures) == 1 for document in source.documents)
+    assert all('![1]()' in document.content for document in source.documents)

@@ -22,7 +22,6 @@ def test_toml_provides_the_defaults():
     assert settings.stages.statement_hubs.max_concurrent_calls == 16
     assert settings.stages.statement_hubs.recall_threshold == 0.55
     assert settings.serving.module_models['entity_enrichment'] == 'qwen3.5-9b'
-    assert settings.models.modules['extractor'].max_tokens == 8192
     assert settings.models.modules['statement_enrichment'].model == (
         'openai/qwen3.5-9b'
     )
@@ -52,12 +51,50 @@ def test_presets_are_loaded_from_toml():
     assert presets['qwen3.5-9b'].reasoning == 'off'
 
 
+def test_local_model_must_match_serving_preset():
+    with pytest.raises(ValidationError, match='does not match'):
+        config.Settings(
+            models={
+                'modules': {
+                    'formatter': {
+                        'base_url': 'http://127.0.0.1:8080/v1',
+                        'model': 'openai/model-a',
+                    }
+                }
+            },
+            serving={
+                'manage': True,
+                'module_models': {'formatter': 'model-b'},
+                'presets': {'model-b': {'ctx_size': 32768}},
+            },
+        )
+
+
+def test_managed_local_module_requires_serving_mapping():
+    with pytest.raises(ValidationError, match='no serving model mapping'):
+        config.Settings(
+            models={
+                'modules': {
+                    'custom_stage': {
+                        'base_url': 'http://127.0.0.1:8080/v1',
+                        'model': 'openai/model-a',
+                    }
+                }
+            },
+            serving={
+                'manage': True,
+                'module_models': {},
+                'presets': {},
+            },
+        )
+
+
 def test_local_model_budget_must_fit_server_context():
     with pytest.raises(ValidationError, match='must be less than'):
         config.Settings(
             models={
                 'modules': {
-                    'extractor': {
+                    'formatter': {
                         'base_url': 'http://127.0.0.1:8080/v1',
                         'model': 'openai/qwen3.5-9b',
                         'max_tokens': 32768,
@@ -65,7 +102,7 @@ def test_local_model_budget_must_fit_server_context():
                 }
             },
             serving={
-                'module_models': {'extractor': 'qwen3.5-9b'},
+                'module_models': {'formatter': 'qwen3.5-9b'},
                 'presets': {'qwen3.5-9b': {'ctx_size': 32768}},
             },
         )

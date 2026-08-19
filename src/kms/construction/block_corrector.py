@@ -1,6 +1,9 @@
-import dspy
+from types import SimpleNamespace
 
-from kms.core import content, module
+import dspy
+from langgraph.types import Send
+
+from kms.core import content, models, module, state
 
 
 class BlockReviewSignature(dspy.Signature):
@@ -99,12 +102,14 @@ class BlockReviewer(module.Module):
 
 class BlockCorrectionSignature(dspy.Signature):
     r"""
-    Correct exactly one OCR block using the supplied crop as the authority.
+    Correct exactly one OCR block using the one supplied block crop as the
+    authority.
     Audit every visible character before writing the answer. The task is image
     fidelity, not mathematical correction, formatting cleanup, or rewriting.
 
-    Preserve the original transcription exactly unless the image proves a
-    content error. Make the smallest possible correction for every proven
+    Use LaTeX for all visible mathematical notation and faithfully represent
+    the crop. Preserve the original transcription exactly unless the image
+    proves a content error. Make the smallest possible correction for every proven
     mismatch, including subtle signs and notation: minus/plus, equality and
     inequality symbols, `\Rightarrow` versus `\Leftrightarrow`, `\cap` versus
     `\cup`, letters and digits, superscripts, subscripts, radical indices,
@@ -137,8 +142,10 @@ class BlockCorrectionSignature(dspy.Signature):
     - Original: a mathematically false but clearly visible equation.
       Return it unchanged. OCR correction must not solve or fact-check it.
 
-    Return the complete corrected block in Markdown plus a concise list of only
-    the visual content corrections actually made. Do not return explanations
+    Return the complete corrected block in Markdown plus a concise list of the
+    changes actually made—a concise list of the changes, limited to visual
+    content corrections. Do not return
+    explanations
     outside the corrected_text and changes fields.
     """
 
@@ -198,3 +205,52 @@ class BlockCorrector(module.Module):
             block_type=region.block.type,
             original_text=original_text,
         )
+
+
+class BlockCorrectorNode:
+    """Applies visual block corrections to canonical document Markdown."""
+
+    def __init__(self, corrector: BlockCorrector) -> None:
+        self.corrector = corrector
+
+    def dispatch(self, current_state: state.State) -> list[Send] | str:
+        """Sends one correction worker per document with OCR crops."""
+        sends = [
+            Send('block_corrector_worker', {'document': document})
+            for document in current_state.get('documents', [])
+            if any(
+                node.provenance.get('crop_path')
+                for node in document.nodes
+            )
+        ]
+        return sends or 'block_corrector_collect'
+
+    async def worker(self, current_state: dict) -> dict:
+        """Reviews every cropped OCR block in one document."""
+        document: models.Document = current_state['document']
+        for node in document.nodes:
+            crop_path = node.provenance.get('crop_path')
+            if not crop_path:
+                continue
+            result = await self.corrector.acorrect(
+                SimpleNamespace(
+                    crop_path=crop_path,
+                    block=SimpleNamespace(
+                        type=node.provenance.get('provider_type', node.type),
+                        content=node.content,
+                    ),
+                )
+            )
+            node.content = result['corrected_text']
+        return {
+            'block_correction_results': [(document.index, document.nodes)]
+        }
+
+    def collect(self, current_state: state.State) -> dict:
+        """Writes corrected Markdown back onto canonical documents."""
+        documents = current_state['documents']
+        by_index = dict(current_state.get('block_correction_results', []))
+        for document in documents:
+            if document.index in by_index:
+                document.nodes = by_index[document.index]
+        return {'documents': documents}

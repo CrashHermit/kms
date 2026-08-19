@@ -36,7 +36,7 @@ def test_counts_renders_none_values_and_empty_input():
 
 def _nodes(*contents):
     return [
-        models.ASTNode(type='paragraph', content=text, id=i, segment_index=0)
+        models.Node(type='paragraph', content=text, id=i, document_index=0)
         for i, text in enumerate(contents)
     ]
 
@@ -87,7 +87,13 @@ def test_statement_procedure_builder_logs_composition(caplog):
         logger='kms.construction.statement_procedure_builder',
     )
     out = asyncio.run(
-        node.run({'nodes': _nodes('a', 'b'), 'spans': [[0], [1]]})
+        node.run(
+            {
+                'nodes': _nodes('a', 'b'),
+                'spans': [[0], [1]],
+                'source_key': 'book.pdf',
+            }
+        )
     )
     assert '2 span(s) -> 1 statement(s), 1 procedure(s)' in caplog.text
     assert [p.block for p in out['procedures']] == [[1]]
@@ -101,18 +107,26 @@ def test_statement_procedure_builder_logs_zero_derivations(caplog):
         logging.INFO,
         logger='kms.construction.statement_procedure_builder',
     )
-    asyncio.run(node.run({'nodes': _nodes('a'), 'spans': [[0]]}))
+    asyncio.run(
+        node.run(
+            {
+                'nodes': _nodes('a'),
+                'spans': [[0]],
+                'source_key': 'book.pdf',
+            }
+        )
+    )
     assert '1 statement(s), 0 procedure(s)' in caplog.text
     assert '0 both-block(s)' in caplog.text
 
 
 def test_seam_merger_logs_the_flattened_stream_size(caplog):
-    segment = models.Segment(index=0, image_path='p0.png')
-    segment.nodes = _nodes('a', 'b')
+    document = models.Document(index=0, image_path='p0.png')
+    document.nodes = _nodes('a', 'b')
     node = seam_merger.SeamMergerNode(module=None, rewriter=None)
     with caplog.at_level(logging.INFO, logger='kms.construction.seam_merger'):
         result = node.odd_collect(
-            {'segments': [segment], 'seam_odd_results': []}
+            {'documents': [document], 'seam_odd_results': []}
         )
     assert len(result['nodes']) == 2
-    assert '1 page(s) -> flat stream of 2 node(s)' in caplog.text
+    assert '1 document(s) -> flat stream of 2 node(s)' in caplog.text

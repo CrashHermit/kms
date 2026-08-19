@@ -5,19 +5,19 @@ from kms.core import models
 
 
 def _segment(index, nodes):
-    return models.Segment(index=index, image_path='', nodes=nodes)
+    return models.Document(index=index, image_path='', nodes=nodes)
 
 
 def _para(content):
-    return models.ASTNode(type='paragraph', content=content)
+    return models.Node(type='paragraph', content=content)
 
 
 def _ref(content):
-    return models.ASTNode(type='bibliographic', content=content)
+    return models.Node(type='bibliographic', content=content)
 
 
 def _note(content):
-    return models.ASTNode(type='note', content=content)
+    return models.Node(type='note', content=content)
 
 
 def _shown(
@@ -248,26 +248,26 @@ def test_the_rewriter_sees_the_same_nodes_as_the_judge():
 
 
 def test_pairs_skip_a_page_with_nothing_mergeable():
-    segments = [
+    documents = [
         _segment(0, [_para('body')]),
         _segment(1, [_ref('one'), _ref('two')]),
         _segment(2, [_para('body')]),
     ]
-    assert seam_merger._pairs(segments, parity=0) == []
-    assert seam_merger._pairs(segments, parity=1) == []
+    assert seam_merger._pairs(documents, parity=0) == []
+    assert seam_merger._pairs(documents, parity=1) == []
 
 
 def test_pairs_still_fan_out_over_ordinary_neighbours():
-    segments = [
+    documents = [
         _segment(0, [_para('a')]),
         _segment(1, [_para('b')]),
         _segment(2, [_para('c')]),
     ]
     assert [
         (top.index, bottom.index)
-        for top, bottom in seam_merger._pairs(segments, parity=0)
+        for top, bottom in seam_merger._pairs(documents, parity=0)
     ] == [(0, 1)]
     assert [
         (top.index, bottom.index)
-        for top, bottom in seam_merger._pairs(segments, parity=1)
+        for top, bottom in seam_merger._pairs(documents, parity=1)
     ] == [(1, 2)]

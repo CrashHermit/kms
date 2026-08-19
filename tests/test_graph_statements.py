@@ -1,7 +1,7 @@
 import asyncio
 
 from kms.core import models
-from kms.graph import nodes, statements, writer
+from kms.graph import nodes, procedures, statements, writer
 
 
 def test_statement_uuid_is_deterministic():
@@ -32,19 +32,29 @@ def test_statement_uuids_are_disjoint_from_node_uuids():
 
 
 def test_statement_properties_carry_uuid_and_provenance_only():
-    statement = models.Statement(block=[4, 5], members=[4, 5])
+    statement = models.Statement(
+        block=[4, 5],
+        members=[4, 5],
+        uuid=statements.statement_uuid('book.pdf', [4, 5]),
+    )
     props = statements.statement_properties(statement, 'book.pdf')
     assert props['uuid'] == statements.statement_uuid('book.pdf', [4, 5])
     assert props['source'] == nodes.source_uuid('book.pdf')
     assert 'content' not in props
 
 
+def test_statement_properties_preserve_assigned_uuid():
+    assigned = statements.statement_uuid('book.pdf', [4, 5])
+    statement = models.Statement(block=[4, 5], members=[4, 5], uuid=assigned)
+    assert statements.statement_properties(statement, 'book.pdf')['uuid'] == assigned
+
+
 def _stream():
     return [
-        models.ASTNode(type='paragraph', content='prose', id=0),
-        models.ASTNode(type='paragraph', content='Theorem 2.1.', id=1),
-        models.ASTNode(type='paragraph', content='Proof. ...', id=2),
-        models.ASTNode(type='paragraph', content='more prose', id=3),
+        models.Node(type='paragraph', content='prose', id=0),
+        models.Node(type='paragraph', content='Theorem 2.1.', id=1),
+        models.Node(type='paragraph', content='Proof. ...', id=2),
+        models.Node(type='paragraph', content='more prose', id=3),
     ]
 
 
@@ -74,7 +84,11 @@ def test_an_empty_stream_has_no_chain():
 
 
 def test_statement_member_pairs_link_every_member_node():
-    statement = models.Statement(block=[1, 2], members=[1, 2])
+    statement = models.Statement(
+        block=[1, 2],
+        members=[1, 2],
+        uuid=statements.statement_uuid('book.pdf', [1, 2]),
+    )
     pairs = statements.statement_member_pairs([statement], 'book.pdf')
     assert pairs == [
         {
@@ -86,6 +100,13 @@ def test_statement_member_pairs_link_every_member_node():
             'statement': statements.statement_uuid('book.pdf', [1, 2]),
         },
     ]
+
+
+def test_statement_member_pairs_preserve_assigned_uuid():
+    assigned = statements.statement_uuid('book.pdf', [1, 2])
+    statement = models.Statement(block=[1, 2], members=[1, 2], uuid=assigned)
+    pairs = statements.statement_member_pairs([statement], 'book.pdf')
+    assert {pair['statement'] for pair in pairs} == {assigned}
 
 
 def test_statement_member_pairs_are_empty_without_statements():
@@ -141,9 +162,40 @@ def test_persist_chain_writes_head_and_next_over_pure_nodes():
     assert 'MATCH (a {uuid:' not in ' '.join(queries)
 
 
+def test_has_procedure_pairs_use_assigned_statement_identity():
+    assigned = statements.statement_uuid('book.pdf', [1, 2])
+    statement = models.Statement(block=[1, 2], members=[1], uuid=assigned)
+    procedure = models.Procedure(
+        block=[1, 2],
+        members=[2],
+        uuid=procedures.procedure_uuid(
+            'book.pdf', [1, 2], 0, statement_uuid=assigned
+        ),
+        statement_uuid=assigned,
+    )
+    pairs = statements.has_procedure_pairs(
+        [statement], [procedure], 'book.pdf'
+    )
+    assert pairs == [
+        {
+            'statement': assigned,
+            'procedure': procedures.procedure_uuid(
+                'book.pdf',
+                [1, 2],
+                0,
+                statement_uuid=assigned,
+            ),
+        }
+    ]
+
+
 def test_persist_statements_writes_member_edges_from_every_member():
     driver = _FakeDriver()
-    statement = models.Statement(block=[1, 2], members=[1, 2])
+    statement = models.Statement(
+        block=[1, 2],
+        members=[1, 2],
+        uuid=statements.statement_uuid('book.pdf', [1, 2]),
+    )
 
     asyncio.run(
         writer.persist_statements(

@@ -24,7 +24,7 @@ def test_from_text_and_pictures_loads_image_paths(tmp_path):
     Image.new('RGB', (10, 10), (255, 0, 0)).save(image_file)
     content_value = content.Content.from_text_and_pictures(
         'see the figure',
-        [{'index': 0, 'segment_index': 1, 'image_path': str(image_file)}],
+        [{'index': 0, 'document_index': 1, 'image_path': str(image_file)}],
     )
     assert content_value.parts[0] == content.TextPart(text='see the figure')
     assert isinstance(content_value.parts[1], content.ImagePart)

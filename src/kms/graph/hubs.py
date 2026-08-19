@@ -34,18 +34,17 @@ def component_label(kind: str) -> str:
 
 
 def hub_label(kind: str, tier: str) -> str:
-    """Returns the Neo4j label for a hub kind and tier.
-
-    The ``source`` tier contains source-local hubs. The ``meta`` tier is the
-    disposable cross-source hub-over-hubs layer.
-    """
+    """Returns the Neo4j label for a hub kind and tier."""
     if tier == 'source':
         labels = _SOURCE_LABELS
     elif tier == 'meta':
         labels = _META_LABELS
     else:
         raise ValueError(f'unknown hub tier: {tier}')
-    return labels[kind]
+    try:
+        return labels[kind]
+    except KeyError as error:
+        raise ValueError(f'unknown hub kind: {kind}') from error
 
 
 def meta_hub_label(kind: str) -> str:
@@ -106,29 +105,15 @@ def triplet_hub_properties(
         'predicate_hub': predicate_hub,
         'object_hub': object_hub,
     }
-    return {
-        key: value for key, value in properties.items() if value is not None
-    }
+    return {key: value for key, value in properties.items() if value is not None}
 
 
 def hub_uuid(kind: str, source: str, identity: str) -> str:
-    """Returns the deterministic uuid for a source-local hub identity."""
-    return uuid5(
-        NAMESPACE_URL,
-        f'{source}#{kind}_hub#{identity}',
-    ).hex
+    return uuid5(NAMESPACE_URL, f'{source}#{kind}_hub#{identity}').hex
 
 
 def meta_hub_uuid(kind: str, identity: str) -> str:
-    """Returns a stable uuid for a meta hub identity.
-
-    ``identity`` is supplied by the meta hub builder and is based on
-    source-hub membership rather than a mutable synthesized canonical name.
-    """
-    return uuid5(
-        NAMESPACE_URL,
-        f'meta#{kind}_hub#{identity}',
-    ).hex
+    return uuid5(NAMESPACE_URL, f'meta#{kind}_hub#{identity}').hex
 
 
 def hub_properties(
@@ -142,33 +127,22 @@ def hub_properties(
     tier: str,
     hub_id: str | None = None,
 ) -> dict:
-    """Builds a source or meta hub property dict.
-
-    Source hubs derive an id when ``hub_id`` is not supplied. Meta hubs
-    require an explicit stable id because their source membership and
-    synthesized name can change independently.
-    """
     if tier == 'source':
         if source is None:
             raise ValueError('source hubs require a source')
         if hub_id is None:
             raise ValueError('source hubs require an explicit hub_id')
-        uuid = hub_id
     elif tier == 'meta':
         if hub_id is None:
             raise ValueError('meta hubs require an explicit hub_id')
-        uuid = hub_id
     else:
         raise ValueError(f'unknown hub tier: {tier}')
-
     properties = {
-        'uuid': uuid,
+        'uuid': hub_id,
         'source': nodes.source_uuid(source) if source is not None else None,
         'canonical_name': canonical_name,
         'aliases': aliases,
         'description': description,
         'embedding': embedding,
     }
-    return {
-        key: value for key, value in properties.items() if value is not None
-    }
+    return {key: value for key, value in properties.items() if value is not None}

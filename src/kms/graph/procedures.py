@@ -2,7 +2,7 @@
 
 from uuid import NAMESPACE_URL, uuid5
 
-from kms.core import models
+from kms.core import identity, models
 from kms.graph import nodes
 
 PROCEDURE_LABEL = 'Procedure'
@@ -24,10 +24,9 @@ def procedure_uuid(
         statement_uuid: Optional statement uuid to disambiguate a
             procedure that also exists as a statement.
     """
-    key = f'{source}#procedure#{nodes.block_key(block)}#{index}'
-    if statement_uuid is not None:
-        key = f'{key}#{statement_uuid}'
-    return uuid5(NAMESPACE_URL, key).hex
+    return identity.procedure_uuid(
+        source, block, index, statement_uuid_value=statement_uuid
+    )
 
 
 def step_uuid(source: str, procedure_uuid: str, step_index: int) -> str:
@@ -39,13 +38,21 @@ def step_uuid(source: str, procedure_uuid: str, step_index: int) -> str:
 
 
 def _procedure_id(source: str, procedure: models.Procedure) -> str:
-    """Returns the persisted UUID for a procedure model."""
-    return procedure_uuid(
+    """Returns and verifies the persisted UUID for a procedure model."""
+    expected = procedure_uuid(
         source,
         procedure.block,
         procedure.index,
         statement_uuid=procedure.statement_uuid,
     )
+    if procedure.uuid is None:
+        raise ValueError('procedure is missing its assigned uuid')
+    if procedure.uuid != expected:
+        raise ValueError(
+            f'procedure uuid {procedure.uuid!r} does not match expected '
+            f'{expected!r}'
+        )
+    return procedure.uuid
 
 
 def procedure_properties(source: str, procedure: models.Procedure) -> dict:

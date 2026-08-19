@@ -71,7 +71,7 @@ def module_lm(module_name: str) -> dspy.LM:
             api_key=module_config.api_key or 'not-needed',
             temperature=module_config.temperature,
             max_tokens=module_config.max_tokens,
-            cache=False,
+            cache=True,
         )
 
     return dspy.LM(
@@ -89,6 +89,6 @@ def module_lm(module_name: str) -> dspy.LM:
         ),
         temperature=module_config.temperature,
         max_tokens=module_config.max_tokens,
-        cache=False,
+        cache=True,
         **_provider_routing(module_config.provider or None),
     )

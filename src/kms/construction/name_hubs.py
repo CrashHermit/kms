@@ -180,8 +180,8 @@ async def rebuild(
     max_concurrency: int | None = None,
 ) -> dict:
     """Rebuilds source-local lexical hubs for entity or predicate names."""
-    component_rows = await queries.all_components(
-        session_factory, kind, source=source
+    component_rows = await getattr(queries, f'all_{kind}_components')(
+        session_factory, source
     )
     await writer.persist_name_occurrences(
         component_rows,

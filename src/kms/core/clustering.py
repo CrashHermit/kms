@@ -13,7 +13,7 @@ def coarse_groups(
         for right_index in range(left_index + 1, len(records)):
             if (
                 embeddings.cosine_similarity(
-                    left_record['embedding'], records[right_index]['embedding']
+                    left_record.embedding, records[right_index].embedding
                 )
                 >= recall_threshold
             ):
@@ -47,7 +47,7 @@ def central_record(group: list[dict]) -> dict:
         others = [record for record in group if record is not candidate]
         score = sum(
             embeddings.cosine_similarity(
-                candidate['embedding'], other['embedding']
+                candidate.embedding, other.embedding
             )
             for other in others
         ) / len(others)
@@ -79,7 +79,7 @@ async def adjudicated_groups(
             remaining: list[dict] = []
             for record in unassigned:
                 score = embeddings.cosine_similarity(
-                    pivot['embedding'], record['embedding']
+                    pivot.embedding, record.embedding
                 )
                 if score >= merge_above:
                     current_group.append(record)

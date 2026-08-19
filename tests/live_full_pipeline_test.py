@@ -54,7 +54,7 @@ async def main():
         if first_header > 5:
             content = '\n'.join(lines[first_header:])
 
-        node = models.ASTNode(id=node_id, type='paragraph', content=content)
+        node = models.Node(id=node_id, type='paragraph', content=content)
         all_nodes.append(node)
         node_id += 1
 

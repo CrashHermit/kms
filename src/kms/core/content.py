@@ -168,6 +168,8 @@ def labeled_content(nodes: list[Any]) -> Content:
     parts: list[TextPart | ImagePart] = []
     for node in nodes:
         label = f'[{node.position}] ({node.type})'
+        if node.marker:
+            label += f' <{node.marker}>'
         if node.image_path:
             image = load_image(
                 node.image_path,

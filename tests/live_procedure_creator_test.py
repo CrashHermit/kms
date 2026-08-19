@@ -47,7 +47,7 @@ async def main():
 
     language_model = llm.module_lm('procedure_creator')
 
-    nodes = [models.ASTNode(id=0, type='paragraph', content=CONTENT)]
+    nodes = [models.Node(id=0, type='paragraph', content=CONTENT)]
     triplet_node = triplet_extractor.TripletNode(
         fact_module=triplet_extractor._FactExtractor(language_model),
         triplet_module=triplet_extractor._TripletDecomposer(language_model),

@@ -130,15 +130,19 @@ def test_round_trip_through_a_module(tmp_path):
     recorder = recording.Recorder('src', output_dir=str(tmp_path / 'ex'))
 
     class _Fake:
+        def __init__(self, **values):
+            self.values = values
+
         async def acall(self, **kwargs):
             assert kwargs['original_text'] == 'hi'
-            return dspy.Prediction(corrected_text='hi', changes=[])
+            return dspy.Prediction(**self.values)
 
     module = block_corrector.BlockCorrector(
         language_model=dspy.LM('openai/dummy', api_key='x'),
         recorder=recorder,
     )
-    module.predictor = _Fake()
+    module.predictor = _Fake(corrected_text='hi', changes=[])
+    module.reviewer.predictor = _Fake(needs_correction=True)
     image_path = tmp_path / 'block.png'
     image_path.write_bytes(_png_bytes())
     asyncio.run(

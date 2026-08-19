@@ -58,6 +58,46 @@ def test_workflow_configures_new_learning_modules(monkeypatch):
     assert 'procedure_hub_builder' in calls
 
 
+def test_workflow_uses_one_final_projector():
+    source = (MODULE_DIR / 'construction' / 'workflow.py').read_text()
+    assert "graph.add_node('final_projector'" in source
+    assert 'source_projector' not in source
+    assert 'assertion_projector' not in source
+    assert 'procedure_materialization_projector' not in source
+    assert 'ingestion_persister' not in source
+    assert "procedure_hub_exit, 'final_projector'" in source
+    assert "'final_projector', END" in source
+
+
+def test_managed_workflow_has_one_serial_bundle_route(monkeypatch):
+    monkeypatch.setattr(workflow.llm, 'module_lm', lambda name: object())
+
+    class Manager:
+        async def aswitch(self, name):
+            pass
+
+    graph = workflow.build_workflow(model_manager=Manager()).get_graph()
+    edges = {(edge.source, edge.target) for edge in graph.edges}
+
+    assert ('hub_input', 'entity_hub_builder') not in edges
+    assert ('hub_input', 'switch_to_entity_hub_builder') in edges
+    assert (
+        'switch_to_entity_hub_builder',
+        'entity_hub_builder',
+    ) in edges
+    assert (
+        'switch_to_procedure_enrichment',
+        'switch_to_statement_hub_builder',
+    ) not in edges
+    assert (
+        'procedure_enrichment',
+        'switch_to_statement_hub_builder',
+    ) in edges
+    assert ('procedure_hub_builder', 'final_projector') in edges
+    assert ('procedure_hub_builder', '__end__') not in edges
+    assert ('switch_to_entity_hub_builder', '__end__') not in edges
+
+
 def test_workflow_defines_the_langgraph_composition():
     source = (MODULE_DIR / 'construction' / 'workflow.py').read_text()
     assert 'StateGraph' in source

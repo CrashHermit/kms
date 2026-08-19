@@ -157,7 +157,7 @@ class PedagogicalComponentFinder(module.Module):
 
 
 async def find_spans(
-    nodes: list[models.ASTNode],
+    nodes: list[models.Node],
     module: PedagogicalComponentFinder,
     budget: int | None = None,
     max_budget: int | None = None,

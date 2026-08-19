@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from kms.construction import hub_builder
+from kms.construction import entity_hubs, hub_engine, name_hubs, predicate_hubs
 from kms.core import models
 from kms.graph import db, nodes, schema, writer
 
@@ -36,9 +36,9 @@ def test_connectivity_round_trip_and_idempotent_schema():
 def test_persist_nodes_upserts_labels_and_next_chain():
     source = 'integration-test-book'
     stream = [
-        models.ASTNode(type='header', content='§1', id=0, segment_index=0),
-        models.ASTNode(type='paragraph', content='a', id=1, segment_index=0),
-        models.ASTNode(type='math', content='$x$', id=2, segment_index=0),
+        models.Node(type='header', content='§1', id=0, document_index=0),
+        models.Node(type='paragraph', content='a', id=1, document_index=0),
+        models.Node(type='math', content='$x$', id=2, document_index=0),
     ]
 
     async def one(session, query):
@@ -133,7 +133,8 @@ def test_meta_rebuild_preserves_durable_components_and_source_hubs(monkeypatch):
     }
 
     async def fake_build_hubs(*args, **kwargs):
-        kind = args[0]
+        spec = kwargs['spec']
+        kind = spec.domain
         return {
             'clusters': [],
             'hubs': [
@@ -148,9 +149,9 @@ def test_meta_rebuild_preserves_durable_components_and_source_hubs(monkeypatch):
             'subsumption_edges': [],
         }
 
-    monkeypatch.setattr(hub_builder, 'build_hubs', fake_build_hubs)
+    monkeypatch.setattr(hub_engine, 'build_hubs', fake_build_hubs)
     monkeypatch.setattr(
-        hub_builder.name_hubs,
+        name_hubs,
         'rebuild_meta',
         lambda *args, **kwargs: asyncio.sleep(
             0, result={'name_hubs': 0, 'source_name_hubs': 0}
@@ -220,26 +221,34 @@ def test_meta_rebuild_preserves_durable_components_and_source_hubs(monkeypatch):
                     source_hubs[kind],
                     strict=True,
                 ):
-                    await writer.persist_hubs(
-                        kind,
-                        [
-                            {
-                                'uuid': hub_id,
-                                'source': source,
-                                'canonical_name': kind,
-                                'aliases': [kind],
-                                'description': f'{kind} source hub',
-                                'members': [component_id],
-                            }
-                        ],
+                    hub = {
+                        'uuid': hub_id,
+                        'source': source,
+                        'canonical_name': kind,
+                        'aliases': [kind],
+                        'description': f'{kind} source hub',
+                        'members': [component_id],
+                    }
+                    persist = (
+                        writer.persist_entity_hubs
+                        if kind == 'entity'
+                        else writer.persist_predicate_hubs
+                    )
+                    await persist(
+                        [hub],
                         tier='source',
                         session_factory=_session_factory,
                     )
 
             for kind in ('entity', 'predicate'):
-                await hub_builder.rebuild_meta_hubs(
-                    kind,
+                await (
+                    entity_hubs.rebuild_meta
+                    if kind == 'entity'
+                    else predicate_hubs.rebuild_meta
+                )(
                     language_model=object(),
+                    adjudicator=object(),
+                    synthesizer=object(),
                     session_factory=_session_factory,
                 )
 

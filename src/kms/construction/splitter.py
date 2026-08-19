@@ -109,7 +109,7 @@ class Splitter(module.Module):
 
 
 async def _gather_decisions(
-    nodes: list[models.ASTNode], module: Splitter, budget: int
+    nodes: list[models.Node], module: Splitter, budget: int
 ) -> Decision:
     """Walks the node stream in windows, collecting split decisions."""
     decision = Decision()
@@ -126,41 +126,61 @@ async def _gather_decisions(
                 config.get_settings().stages.splitter.backward_context_budget,
             ),
         )
+        seen_positions: set[int] = set()
         for split_result in splits:
-            clamped = min(max(split_result.position, 0), last_local)
-            node_id = window[clamped].id
-            items = [
-                exercise
+            position = split_result.position
+            if not 0 <= position <= last_local:
+                raise ValueError(
+                    f'invalid splitter position {position} for window '
+                    f'of {len(window)} node(s) at cursor {cursor}'
+                )
+            if position in seen_positions:
+                raise ValueError(
+                    f'duplicate splitter position {position} at cursor {cursor}'
+                )
+            seen_positions.add(position)
+            node_id = window[position].id
+            if node_id is None:
+                raise ValueError(
+                    f'splitter position {position} references a node without '
+                    f'a stable id at cursor {cursor}'
+                )
+            if len(split_result.exercises) < 2:
+                raise ValueError(
+                    f'splitter position {position} returned fewer than two '
+                    'exercise items'
+                )
+            if any(
+                not exercise.content and not exercise.number
                 for exercise in split_result.exercises
-                if (exercise.content or '').strip()
-                or (exercise.number or '').strip()
-            ]
-            if node_id is not None and len(items) >= 2:
-                decision.splits[node_id] = items
+            ):
+                raise ValueError(
+                    f'splitter position {position} returned an empty '
+                    'exercise item'
+                )
+            decision.splits[node_id] = split_result.exercises
         cursor = end
     return decision
 
 
-def _rebuild(
-    nodes: list[models.ASTNode], decision: Decision
-) -> list[models.ASTNode]:
+def _rebuild(nodes: list[models.Node], decision: Decision) -> list[models.Node]:
     """Rebuilds the node stream with split nodes expanded in place.
 
     Reassigns stable sequential ids after rebuilding.
     """
-    out: list[models.ASTNode] = []
+    out: list[models.Node] = []
     for node in nodes:
         pieces = decision.splits.get(node.id)
         if pieces:
             for item in pieces:
-                number = (item.number or '').strip()
-                body = (item.content or '').strip()
-                content = f'{number} {body}'.strip() if number else body
+                number = item.number or ''
+                body = item.content or ''
+                content = f'{number} {body}' if number else body
                 out.append(
-                    models.ASTNode(
+                    models.Node(
                         type=node.type,
                         content=content,
-                        segment_index=node.segment_index,
+                        document_index=node.document_index,
                     )
                 )
         else:
@@ -171,10 +191,10 @@ def _rebuild(
 
 
 async def split_exercises(
-    nodes: list[models.ASTNode],
+    nodes: list[models.Node],
     module: Splitter,
     budget: int | None = None,
-) -> list[models.ASTNode]:
+) -> list[models.Node]:
     """Splits packed exercises across the whole node stream.
 
     Args:
@@ -207,8 +227,19 @@ class SplitterNode:
         self.module = module
 
     async def run(self, state: state.State) -> dict:
-        """Splits the state's nodes and returns the rebuilt stream."""
+        """Splits the state's nodes and synchronizes document ownership."""
         nodes = await split_exercises(
             state.get('nodes', []), module=self.module
         )
-        return {'nodes': nodes}
+        documents = state.get('documents', [])
+        if documents:
+            by_document: dict[int, list[models.Node]] = {
+                document.index: [] for document in documents
+            }
+            for node in nodes:
+                if node.document_index in by_document:
+                    by_document[node.document_index].append(node)
+            for document in documents:
+                document.nodes = by_document[document.index]
+            nodes = models.flatten_documents(documents)
+        return {'documents': documents, 'nodes': nodes}

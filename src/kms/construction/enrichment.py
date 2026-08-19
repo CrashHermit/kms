@@ -6,8 +6,72 @@ from collections.abc import Callable
 import dspy
 
 from kms import config
-from kms.core import content, embeddings, llm, module
-from kms.graph import queries, writer
+from kms.construction import composition, knowledge
+from kms.core import content, embeddings, llm, models, module
+
+
+def statement_enrichment_input(
+    bundle: models.ConstructionBundle,
+    statement: models.Statement,
+    index: models.KnowledgeIndex | None = None,
+) -> models.StatementEnrichmentInput:
+    """Builds statement enrichment inputs without external reads."""
+    composed = composition.compose_statement(bundle, statement)
+    if not statement.uuid:
+        raise ValueError('statement enrichment requires an assigned uuid')
+    return models.StatementEnrichmentInput(
+        statement_uuid=statement.uuid,
+        statement=content.Content.from_text(composed.text),
+        canonical_knowledge=knowledge.knowledge_for_statement(
+            bundle, statement, index
+        ).render(),
+    )
+
+
+def procedure_enrichment_input(
+    bundle: models.ConstructionBundle,
+    procedure: models.Procedure,
+    index: models.KnowledgeIndex | None = None,
+) -> models.ProcedureEnrichmentInput:
+    """Builds procedure enrichment inputs without external reads."""
+    composed = composition.compose_procedure(bundle, procedure)
+    selected = knowledge.knowledge_for_procedure(bundle, procedure, index)
+    if composed.statement is not None:
+        statement = next(
+            statement
+            for statement in bundle.statements
+            if (
+                procedure.statement_uuid is not None
+                and statement.uuid == procedure.statement_uuid
+            )
+            or (
+                procedure.statement_uuid is None
+                and statement.block == procedure.block
+            )
+        )
+        selected = selected.union(
+            knowledge.knowledge_for_statement(bundle, statement, index)
+        )
+    statement_content = content.Content.from_text('')
+    if composed.statement is not None:
+        statement_content = content.Content.from_text(composed.statement.text)
+    procedure_parts = list(
+        content.Content.from_text(composed.content.text).parts
+    )
+    if composed.steps:
+        procedure_parts.append(content.TextPart(text='ORDERED STEPS:'))
+        procedure_parts.extend(
+            content.TextPart(text=f'{step.index + 1}. {step.text}')
+            for step in composed.steps
+        )
+    if not procedure.uuid:
+        raise ValueError('procedure enrichment requires an assigned uuid')
+    return models.ProcedureEnrichmentInput(
+        procedure_uuid=procedure.uuid,
+        statement=statement_content,
+        procedure=content.Content(parts=procedure_parts),
+        canonical_knowledge=selected.render(),
+    )
 
 
 class StatementEnrichmentSignature(dspy.Signature):
@@ -140,218 +204,146 @@ def _with_description(
     )
 
 
-def _knowledge_text(groups: list[dict]) -> str:
-    """Formats canonical graph knowledge returned for one source unit."""
-    parts: list[str] = []
-    for group in groups:
-        name = group.get('name') or group.get('canonical_name') or ''
-        description = group.get('description') or ''
-        predicate_name = group.get('predicate_name') or ''
-        predicate_description = group.get('predicate_description') or ''
-        fact_name = group.get('fact_name') or ''
-        fact_description = group.get('fact_description') or ''
-        if name and description:
-            parts.append(f'{name}: {description}')
-        if predicate_name and predicate_description:
-            parts.append(f'{predicate_name}: {predicate_description}')
-        if fact_name and fact_description:
-            parts.append(f'FACT: {fact_name}: {fact_description}')
-    return '\n'.join(dict.fromkeys(parts))
-
-
-async def _statement_items(
-    session_factory: Callable, source: str
-) -> list[dict]:
-    """Loads statement records with their source-local graph context."""
-    rows = await queries.statement_enrichment_items(session_factory, source)
-    for row in rows:
-        composed = await queries.compose_statement(
-            row['statement_uuid'], session_factory
-        )
-        row['content'] = composed
-        row['canonical_knowledge'] = _knowledge_text(
-            await queries.statement_knowledge(
-                row['statement_uuid'], session_factory
-            )
-        )
-    return rows
-
-
-async def _procedure_items(
-    session_factory: Callable, source: str
-) -> list[dict]:
-    """Loads procedure records with their statement and graph context."""
-    rows = await queries.procedure_enrichment_items(session_factory, source)
-    for row in rows:
-        procedure = await queries.compose_procedure(
-            row['procedure_uuid'], session_factory
-        )
-        row['procedure_content'] = procedure
-        if row['statement_uuid']:
-            statement = await queries.compose_statement(
-                row['statement_uuid'], session_factory
-            )
-            row['statement_content'] = statement
-            row['canonical_knowledge'] = _knowledge_text(
-                await queries.statement_knowledge(
-                    row['statement_uuid'], session_factory
-                )
-            )
-        else:
-            row['statement_content'] = {'text': '', 'pictures': []}
-            row['canonical_knowledge'] = ''
-    return rows
-
-
-def _content_from_composed(composed: dict) -> content.Content:
-    """Builds multimodal content from a composed graph record."""
-    return content.Content.from_text_and_pictures(
-        composed.get('text', ''), composed.get('pictures', [])
-    )
-
-
-def _procedure_content(composed: dict) -> content.Content:
-    """Builds procedure content from source members and ordered steps."""
-    parts: list[content.TextPart | content.ImagePart] = []
-    source_content = _content_from_composed(composed)
-    parts.extend(source_content.parts)
-    steps = composed.get('steps') or []
-    if steps:
-        parts.append(content.TextPart(text='ORDERED STEPS:'))
-        for step in steps:
-            parts.append(
-                content.TextPart(text=f'{step["index"] + 1}. {step["text"]}')
-            )
-    return content.Content(parts=parts)
-
-
 class StatementEnrichmentNode:
-    """Enriches and embeds every persisted Statement."""
+    """Enriches typed statement inputs and persists derived values."""
 
-    def __init__(
-        self,
-        session_factory: Callable | None,
-        enricher: StatementEnricher,
-    ) -> None:
-        self._session_factory = session_factory
+    def __init__(self, enricher: StatementEnricher) -> None:
         self._enricher = enricher
 
     async def run(self, current_state: dict) -> dict:
-        """Writes statement descriptions and embeddings to the graph."""
-        if not self._session_factory:
-            return {}
-        rows = await _statement_items(
-            self._session_factory, current_state['source']
-        )
-        if not rows:
-            return {'statements_enriched': 0}
+        """Consumes prepared inputs without performing graph reads."""
+        from kms.core import state
+
+        bundle = state.to_construction_bundle(current_state)
+        inputs = bundle.statement_enrichment_inputs
+        if not inputs:
+            return {
+                'statements_enriched': 0,
+                'statement_enrichments': [],
+                'statement_hub_records': [],
+                'construction_bundle': bundle,
+            }
         gate = llm.gate(
             config.get_settings().stages.statement_enrichment.max_concurrent_calls
         )
 
-        async def enrich(row: dict) -> str:
+        async def enrich(item: models.StatementEnrichmentInput) -> str:
             async with gate:
                 return await self._enricher.aforward(
-                    statement=_content_from_composed(row['content']),
-                    canonical_knowledge=row['canonical_knowledge'],
+                    statement=item.statement,
+                    canonical_knowledge=item.canonical_knowledge,
                 )
 
-        descriptions = await _ordered_results(rows, enrich)
-        embedder = embeddings.embedder()
-        vectors = await embedder.embed(
+        descriptions = await _ordered_results(inputs, enrich)
+        vectors = await embeddings.embedder().embed(
             [
-                _with_description(
-                    _content_from_composed(row['content']), description
-                )
-                for row, description in zip(rows, descriptions, strict=True)
+                _with_description(item.statement, description)
+                for item, description in zip(inputs, descriptions, strict=True)
             ]
         )
-        await writer.persist_statement_enrichment(
-            [
-                {
-                    'uuid': row['statement_uuid'],
-                    'description': description,
-                    'embedding': vector,
-                }
-                for row, description, vector in zip(
-                    rows, descriptions, vectors, strict=True
-                )
-            ],
-            session_factory=self._session_factory,
-        )
-        return {'statements_enriched': len(rows)}
+        enrichments = [
+            {
+                'uuid': item.statement_uuid,
+                'description': description,
+                'embedding': vector,
+            }
+            for item, description, vector in zip(
+                inputs, descriptions, vectors, strict=True
+            )
+        ]
+        records = [
+            models.StatementHubRecord(
+                uuid=item.statement_uuid,
+                source=bundle.source.key or '',
+                description=description,
+                embedding=vector,
+            )
+            for item, description, vector in zip(
+                inputs, descriptions, vectors, strict=True
+            )
+        ]
+        bundle.statement_enrichments = enrichments
+        bundle.statement_hub_records = records
+        return {
+            'statements_enriched': len(inputs),
+            'statement_enrichments': enrichments,
+            'statement_hub_records': records,
+            'construction_bundle': bundle,
+        }
 
 
 class ProcedureEnrichmentNode:
-    """Enriches and embeds every persisted Procedure."""
+    """Enriches typed procedure inputs and persists derived values."""
 
-    def __init__(
-        self,
-        session_factory: Callable | None,
-        enricher: ProcedureEnricher,
-    ) -> None:
-        self._session_factory = session_factory
+    def __init__(self, enricher: ProcedureEnricher) -> None:
         self._enricher = enricher
 
     async def run(self, current_state: dict) -> dict:
-        """Writes procedure descriptions and embeddings to the graph."""
-        if not self._session_factory:
-            return {}
-        rows = await _procedure_items(
-            self._session_factory, current_state['source']
-        )
-        if not rows:
-            return {'procedures_enriched': 0}
+        """Consumes prepared inputs without performing graph reads."""
+        from kms.core import state
+
+        bundle = state.to_construction_bundle(current_state)
+        inputs = bundle.procedure_enrichment_inputs
+        if not inputs:
+            return {
+                'procedures_enriched': 0,
+                'procedure_enrichments': [],
+                'procedure_hub_records': [],
+                'construction_bundle': bundle,
+            }
         gate = llm.gate(
             config.get_settings().stages.procedure_enrichment.max_concurrent_calls
         )
 
-        async def enrich(row: dict) -> str:
+        async def enrich(item: models.ProcedureEnrichmentInput) -> str:
             async with gate:
                 return await self._enricher.aforward(
-                    statement=_content_from_composed(row['statement_content']),
-                    procedure=_procedure_content(row['procedure_content']),
-                    canonical_knowledge=row['canonical_knowledge'],
+                    statement=item.statement,
+                    procedure=item.procedure,
+                    canonical_knowledge=item.canonical_knowledge,
                 )
 
-        descriptions = await asyncio.gather(*(enrich(row) for row in rows))
-        embedder = embeddings.embedder()
-        vectors = await embedder.embed(
+        descriptions = await asyncio.gather(*(enrich(item) for item in inputs))
+        vectors = await embeddings.embedder().embed(
             [
                 _with_description(
                     content.Content(
-                        parts=[
-                            *(
-                                _content_from_composed(
-                                    row['statement_content']
-                                ).parts
-                            ),
-                            *(
-                                _procedure_content(
-                                    row['procedure_content']
-                                ).parts
-                            ),
-                        ]
+                        parts=[*item.statement.parts, *item.procedure.parts]
                     ),
                     description,
                 )
-                for row, description in zip(rows, descriptions, strict=True)
+                for item, description in zip(inputs, descriptions, strict=True)
             ]
         )
-        await writer.persist_procedure_enrichment(
-            [
-                {
-                    'uuid': row['procedure_uuid'],
-                    'description': description,
-                    'embedding': vector,
-                }
-                for row, description, vector in zip(
-                    rows, descriptions, vectors, strict=True
-                )
-            ],
-            session_factory=self._session_factory,
-        )
-        return {'procedures_enriched': len(rows)}
+        enrichments = [
+            {
+                'uuid': item.procedure_uuid,
+                'description': description,
+                'embedding': vector,
+            }
+            for item, description, vector in zip(
+                inputs, descriptions, vectors, strict=True
+            )
+        ]
+        records = [
+            models.ProcedureHubRecord(
+                uuid=item.procedure_uuid,
+                source=bundle.source.key or '',
+                description=description,
+                embedding=vector,
+            )
+            for item, description, vector in zip(
+                inputs, descriptions, vectors, strict=True
+            )
+        ]
+        bundle.procedure_enrichments = enrichments
+        bundle.procedure_hub_records = records
+        return {
+            'procedures_enriched': len(inputs),
+            'procedure_enrichments': enrichments,
+            'procedure_hub_records': records,
+            'construction_bundle': bundle,
+        }
 
 
 async def _ordered_results(rows: list[dict], callback: Callable) -> list:

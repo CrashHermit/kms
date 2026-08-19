@@ -205,7 +205,7 @@ class SeamRewriter(module.Module):
         return prediction.merged
 
 
-def _to_seam_node_dto(node: models.ASTNode | None) -> SeamNodeDTO:
+def _to_seam_node_dto(node: models.Node | None) -> SeamNodeDTO:
     """Wraps a node as a SeamNodeDTO, or an empty DTO for None."""
     if node is None:
         return SeamNodeDTO(content=None, types=[])
@@ -215,7 +215,7 @@ def _to_seam_node_dto(node: models.ASTNode | None) -> SeamNodeDTO:
 _APPARATUS = {'bibliographic', 'note'}
 
 
-def _mergeable_indices(nodes: list[models.ASTNode]) -> list[int]:
+def _mergeable_indices(nodes: list[models.Node]) -> list[int]:
     """Returns the indices of nodes that can take part in a seam merge."""
     return [
         index for index, node in enumerate(nodes) if node.type not in _APPARATUS
@@ -223,24 +223,24 @@ def _mergeable_indices(nodes: list[models.ASTNode]) -> list[int]:
 
 
 def _pairs(
-    segments: list[models.Segment], parity: int
-) -> list[tuple[models.Segment, models.Segment]]:
+    documents: list[models.Document], parity: int
+) -> list[tuple[models.Document, models.Document]]:
     """Returns adjacent segment pairs of the given index parity."""
     return [
-        (segments[i], segments[i + 1])
-        for i in range(len(segments) - 1)
-        if segments[i].index % 2 == parity
-        and _mergeable_indices(segments[i].nodes)
-        and _mergeable_indices(segments[i + 1].nodes)
+        (documents[i], documents[i + 1])
+        for i in range(len(documents) - 1)
+        if documents[i].index % 2 == parity
+        and _mergeable_indices(documents[i].nodes)
+        and _mergeable_indices(documents[i + 1].nodes)
     ]
 
 
 async def _merge_pair(
     module: SeamMerger,
     rewriter: SeamRewriter,
-    top: models.Segment,
-    bottom: models.Segment,
-) -> list[tuple[int, list[models.ASTNode]]]:
+    top: models.Document,
+    bottom: models.Document,
+) -> list[tuple[int, list[models.Node]]]:
     """Judges and merges one segment pair, returning both node lists.
 
     When the seam is judged split, the tail is rewritten in place with
@@ -304,7 +304,7 @@ class SeamMergerNode:
 
     def dispatch_even(self, state: state.State) -> list[Send] | str:
         """Sends one worker per even-indexed adjacent segment pair."""
-        pairs = _pairs(state.get('segments', []), parity=0)
+        pairs = _pairs(state.get('documents', []), parity=0)
         sends = [
             Send('seam_even_worker', {'top': top, 'bottom': bottom})
             for top, bottom in pairs
@@ -313,7 +313,7 @@ class SeamMergerNode:
 
     def dispatch_odd(self, state: state.State) -> list[Send] | str:
         """Sends one worker per odd-indexed adjacent segment pair."""
-        pairs = _pairs(state.get('segments', []), parity=1)
+        pairs = _pairs(state.get('documents', []), parity=1)
         sends = [
             Send('seam_odd_worker', {'top': top, 'bottom': bottom})
             for top, bottom in pairs
@@ -335,11 +335,13 @@ class SeamMergerNode:
         return {'seam_odd_results': merged}
 
     def _collect(self, state: state.State, channel: str) -> dict:
-        """Merges one channel's worker results back onto the segments."""
-        segments = models.merge_results_into_segments(
-            state['segments'], state.get(channel, []), 'nodes'
-        )
-        return {'segments': segments}
+        """Merges one channel's worker results back onto documents."""
+        documents = state['documents']
+        by_index = dict(state.get(channel, []))
+        for document in documents:
+            if document.index in by_index:
+                document.nodes = by_index[document.index]
+        return {'documents': documents}
 
     def even_collect(self, state: state.State) -> dict:
         """Collects the even-pass results."""
@@ -348,14 +350,14 @@ class SeamMergerNode:
     def odd_collect(self, state: state.State) -> dict:
         """Collects the odd-pass results and flattens the final stream."""
         result = self._collect(state, 'seam_odd_results')
-        segments = result['segments']
-        nodes = models.flatten_segments(segments)
+        documents = result['documents']
+        nodes = models.flatten_documents(documents)
         logger.info(
-            'seam merger: %d page(s) -> flat stream of %d node(s)',
-            len(segments),
+            'seam merger: %d document(s) -> flat stream of %d node(s)',
+            len(documents),
             len(nodes),
         )
         return {
-            'segments': segments,
+            'documents': documents,
             'nodes': nodes,
         }

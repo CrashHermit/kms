@@ -5,10 +5,6 @@ import json
 import os
 from pathlib import Path
 
-os.environ['KMS_MODELS__MODULES__CORRECTOR__BASE_URL'] = 'http://localhost:8080/v1'
-os.environ['KMS_MODELS__MODULES__CORRECTOR__MODEL'] = 'openai/qwen3.5-9b'
-os.environ['KMS_MODELS__MODULES__CORRECTOR__API_KEY'] = 'not-needed'
-
 from kms.construction import block_corrector, ocr
 from kms.core import llm
 

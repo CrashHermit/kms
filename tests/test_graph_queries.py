@@ -25,43 +25,12 @@ def _capturing_session(captured):
     return _Session()
 
 
-def test_statement_procedure_work_items_query_reads_raw_source():
-    captured = {}
-
-    async def scenario():
-        await queries.statement_procedure_work_items(
-            lambda: _capturing_session(captured)
-        )
-
-    asyncio.run(scenario())
-
-    cypher = '\n'.join(captured['queries'])
-    assert 'src.key AS source' in cypher
-    assert 'HAS_PROCEDURE' in cypher
-    assert 'FIRST' in cypher
-
-
-def test_compose_procedure_query_reads_members_in_order():
-    captured = {}
-
-    async def scenario():
-        await queries.compose_procedure(
-            'procedure-a', lambda: _capturing_session(captured)
-        )
-
-    asyncio.run(scenario())
-
-    cypher = '\n'.join(captured['queries'])
-    assert 'MEMBER_OF' in cypher
-    assert 'ORDER BY n.index' in cypher
-
-
 def test_all_components_entity_returns_raw_source_key():
     captured = {}
 
     async def scenario():
-        await queries.all_components(
-            lambda: _capturing_session(captured), 'entity', source='book-a'
+        await queries.all_entity_components(
+            lambda: _capturing_session(captured), source='book-a'
         )
 
     asyncio.run(scenario())
@@ -76,10 +45,8 @@ def test_all_components_predicate_reads_predicate_field():
     captured = {}
 
     async def scenario():
-        await queries.all_components(
-            lambda: _capturing_session(captured),
-            'predicate',
-            source='book-a',
+        await queries.all_predicate_components(
+            lambda: _capturing_session(captured), source='book-a'
         )
 
     asyncio.run(scenario())
@@ -93,8 +60,8 @@ def test_unassigned_components_exclude_canonicalized_records():
     captured = {}
 
     async def scenario():
-        await queries.unassigned_components(
-            lambda: _capturing_session(captured), 'entity', 'book-a'
+        await queries.unassigned_entity_components(
+            lambda: _capturing_session(captured), 'book-a'
         )
 
     asyncio.run(scenario())
@@ -108,8 +75,8 @@ def test_all_source_hubs_reads_canonical_fields_and_can_filter():
     captured = {}
 
     async def scenario():
-        await queries.all_source_hubs(
-            lambda: _capturing_session(captured), 'entity', source='book-a'
+        await queries.all_entity_source_hubs(
+            lambda: _capturing_session(captured), source='book-a'
         )
 
     asyncio.run(scenario())
@@ -126,9 +93,8 @@ def test_all_source_hubs_can_filter_to_changed_hub_ids():
     captured = {}
 
     async def scenario():
-        await queries.all_source_hubs(
+        await queries.all_entity_source_hubs(
             lambda: _capturing_session(captured),
-            'entity',
             hub_uuids=['hub-a', 'hub-b'],
         )
 
@@ -142,8 +108,8 @@ def test_qualified_meta_hub_query_requires_two_source_values():
     captured = {}
 
     async def scenario():
-        await queries.qualified_meta_hub_uuids(
-            lambda: _capturing_session(captured), 'entity'
+        await queries.qualified_entity_meta_hub_uuids(
+            lambda: _capturing_session(captured)
         )
 
     asyncio.run(scenario())
@@ -177,8 +143,8 @@ def test_all_components_can_filter_to_one_source():
             return _Result()
 
     async def scenario():
-        await queries.all_components(
-            lambda: _Session(), 'entity', source='book-a'
+        await queries.all_entity_components(
+            lambda: _Session(), source='book-a'
         )
 
     asyncio.run(scenario())

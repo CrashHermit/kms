@@ -62,7 +62,7 @@ async def main():
     await schema.ensure_schema(_session)
 
     lm = llm.module_lm('entity_enrichment')
-    nodes = [models.ASTNode(id=0, type='paragraph', content=CONTENT)]
+    nodes = [models.Node(id=0, type='paragraph', content=CONTENT)]
     triplet_node = TripletNode(
         fact_module=_FactExtractor(lm), triplet_module=_TripletDecomposer(lm)
     )

@@ -1,11 +1,7 @@
 import asyncio
 from collections import Counter
 
-from tests.live_support import configure_local_formatter
-
 from kms import runtime
-
-configure_local_formatter()
 
 
 def _elide(text, limit=80):

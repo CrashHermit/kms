@@ -8,13 +8,10 @@ coherent learner-facing actions, justifications, and results.
 """
 
 import logging
-from collections.abc import Callable
 
 import dspy
 
-from kms import config
-from kms.core import content, llm, models, module, search
-from kms.graph import procedures, queries, writer
+from kms.core import content, identity, llm, models, module
 
 logger = logging.getLogger(__name__)
 
@@ -260,20 +257,6 @@ class StepSplitter(module.Module):
         return module.as_list(prediction.steps)
 
 
-def _format_entity_definitions(entity_groups: list[search.SearchGroup]) -> str:
-    """Formats search groups into the entity-definition prompt block."""
-    parts: list[str] = []
-    for group in entity_groups:
-        if group.sub_query:
-            parts.append(f'CONCEPT: {group.sub_query}')
-        for result in group.results:
-            name = result.properties.get('canonical_name', '')
-            desc = result.properties.get('description', '')
-            if name and desc:
-                parts.append(f'{name}: {desc}')
-    return '\n'.join(parts)
-
-
 async def _split_procedure(
     splitter: StepSplitter,
     statement_parts: content.Content,
@@ -295,14 +278,13 @@ async def _create_generated_procedure(
     entity_definitions: str,
     writer_module: ProcedureWriter,
     splitter: StepSplitter,
-    session_factory: Callable,
-) -> list[str]:
-    """Writes, splits, persists, and links a missing procedure."""
+) -> tuple[models.Procedure | None, models.ProcedureLink | None]:
+    """Writes and splits a missing procedure without persistence."""
     procedure_text = await writer_module.aforward(
         parts=statement_parts, entity_definitions=entity_definitions
     )
     if not procedure_text.strip():
-        return []
+        return None, None
 
     steps = await _split_procedure(
         splitter,
@@ -311,99 +293,67 @@ async def _create_generated_procedure(
         entity_definitions,
     )
     if not steps:
-        return []
+        return None, None
 
+    procedure_uuid = identity.procedure_uuid(
+        source, [], 0, statement_uuid_value=statement_uuid
+    )
     procedure = models.Procedure(
         block=[],
         index=0,
         statement_uuid=statement_uuid,
+        uuid=procedure_uuid,
         steps=[
             models.Step(text=text, index=index)
             for index, text in enumerate(steps)
         ],
     )
-    await writer.persist_procedures(
-        [procedure], source, session_factory=session_factory
+    return procedure, models.ProcedureLink(
+        source=source,
+        statement_uuid=statement_uuid,
+        procedure_uuid=procedure_uuid,
     )
-
-    procedure_uuid_value = procedures.procedure_uuid(
-        source,
-        procedure.block,
-        procedure.index,
-        statement_uuid=procedure.statement_uuid,
-    )
-    now = writer.utcnow_iso()
-    async with session_factory() as session:
-        await session.run(
-            queries.MERGE_HAS_PROCEDURE,
-            pairs=[
-                {
-                    'statement': statement_uuid,
-                    'procedure': procedure_uuid_value,
-                }
-            ],
-            now=now,
-        )
-    return steps
 
 
 async def create_procedures(
-    session_factory: Callable,
+    inputs: list[models.ProcedureMaterializationInput],
     *,
     language_model: dspy.LM | None = None,
-    top_k: int | None = None,
-) -> int:
-    """Materializes attached procedures and creates missing procedures.
+) -> dict[str, object]:
+    """Materializes procedure inputs and returns graph-neutral updates."""
+    if not inputs:
+        logger.info('No procedure inputs found.')
+        return {
+            'procedures_created': 0,
+            'generated_procedures': [],
+            'procedure_step_updates': [],
+            'procedure_links': [],
+        }
 
-    Existing procedures with source members are split into learnable steps.
-    Canonical hub descriptions supply reusable background knowledge; the
-    procedure and its steps supply task-specific application and reasoning.
-    Statements without a procedure are judged, enriched with canonical search
-    results, and given a newly written procedure when they need one.
-
-    Args:
-        session_factory: Async callable returning a Neo4j session.
-        language_model: LM for judging, writing, and splitting.
-        top_k: Number of entity definitions to retrieve per statement.
-
-    Returns:
-        The number of procedures materialized or created.
-    """
-    if top_k is None:
-        top_k = config.get_settings().stages.procedure.entity_definition_top_k
-    work_items = await queries.statement_procedure_work_items(session_factory)
-    if not work_items:
-        logger.info('No statements found.')
-        return 0
-
-    statements: dict[str, dict] = {}
-    for work_item in work_items:
-        statement = statements.setdefault(
-            work_item['statement_uuid'],
-            {'source': work_item['source'], 'procedures': []},
-        )
-        if work_item['procedure_uuid'] is not None:
-            statement['procedures'].append(work_item)
+    statements: dict[str, list[models.ProcedureMaterializationInput]] = {}
+    for item in inputs:
+        statements.setdefault(item.statement_uuid, []).append(item)
 
     judge = NeedsJudge(language_model)
     writer_module = ProcedureWriter(language_model)
     splitter = StepSplitter(language_model)
     processed = 0
+    generated_procedures: list[models.Procedure] = []
+    procedure_step_updates: list[models.ProcedureStepUpdate] = []
+    procedure_links: list[models.ProcedureLink] = []
 
-    for statement_uuid, statement_data in statements.items():
-        source = statement_data['source']
-        composed_statement = await queries.compose_statement(
-            statement_uuid, session_factory
-        )
-        statement_text = composed_statement['text']
+    for statement_uuid, statement_inputs in statements.items():
+        statement_input = statement_inputs[0]
+        source = statement_input.source
+        statement_parts = statement_input.statement
+        statement_text = statement_parts.render()
         if not statement_text.strip():
             logger.debug('Skipping empty statement %s', statement_uuid)
             continue
 
-        statement_parts = content.Content.from_text_and_pictures(
-            statement_text, composed_statement.get('pictures', [])
-        )
-        attached_procedures = statement_data['procedures']
+        attached_procedures = [
+            item for item in statement_inputs if item.procedure_uuid is not None
+        ]
         if not attached_procedures:
             needs_procedure = await judge.aforward(parts=statement_parts)
             if not needs_procedure:
@@ -413,79 +363,73 @@ async def create_procedures(
                 )
                 continue
 
-        entity_groups = await search.search(
-            query=statement_text,
-            index_name='entity_hub_embedding',
-            text_field='description',
-            session_factory=session_factory,
-            source=source,
-            top_k=top_k,
-            language_model=language_model,
-        )
-        entity_definitions = _format_entity_definitions(entity_groups)
+        entity_definitions = statement_input.entity_definitions
 
         if not attached_procedures:
-            steps = await _create_generated_procedure(
+            procedure, link = await _create_generated_procedure(
                 statement_uuid,
                 source,
                 statement_parts,
                 entity_definitions,
                 writer_module,
                 splitter,
-                session_factory,
             )
-            if steps:
+            if procedure is not None and link is not None:
+                generated_procedures.append(procedure)
+                procedure_links.append(link)
                 processed += 1
                 logger.info(
                     'Created procedure for statement %s with %d steps.',
                     statement_uuid,
-                    len(steps),
+                    len(procedure.steps),
                 )
             continue
 
-        for procedure_data in attached_procedures:
-            if procedure_data['has_steps']:
+        for procedure_input in attached_procedures:
+            if procedure_input.has_steps:
                 continue
-            composed_procedure = await queries.compose_procedure(
-                procedure_data['procedure_uuid'], session_factory
-            )
-            if not composed_procedure['member_count']:
+            if (
+                not procedure_input.member_count
+                or procedure_input.procedure is None
+            ):
                 logger.warning(
                     'Procedure %s has neither steps nor members.',
-                    procedure_data['procedure_uuid'],
+                    procedure_input.procedure_uuid,
                 )
                 continue
 
-            procedure_parts = content.Content.from_text_and_pictures(
-                composed_procedure['text'],
-                composed_procedure.get('pictures', []),
-            )
             steps = await _split_procedure(
                 splitter,
                 statement_parts,
-                procedure_parts,
+                procedure_input.procedure,
                 entity_definitions,
             )
             if not steps:
                 logger.warning(
                     'Procedure %s produced no steps.',
-                    procedure_data['procedure_uuid'],
+                    procedure_input.procedure_uuid,
                 )
                 continue
-            await writer.persist_procedure_steps(
-                procedure_data['procedure_uuid'],
-                [
-                    models.Step(text=text, index=index)
-                    for index, text in enumerate(steps)
-                ],
-                source,
-                session_factory=session_factory,
+            procedure_step_updates.append(
+                models.ProcedureStepUpdate(
+                    source=source,
+                    procedure_uuid=procedure_input.procedure_uuid,
+                    steps=tuple(
+                        models.Step(text=text, index=index)
+                        for index, text in enumerate(steps)
+                    ),
+                )
             )
             processed += 1
             logger.info(
                 'Materialized procedure %s with %d steps.',
-                procedure_data['procedure_uuid'],
+                procedure_input.procedure_uuid,
                 len(steps),
             )
 
-    return processed
+    return {
+        'procedures_created': processed,
+        'generated_procedures': generated_procedures,
+        'procedure_step_updates': procedure_step_updates,
+        'procedure_links': procedure_links,
+    }

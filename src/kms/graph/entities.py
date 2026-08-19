@@ -1,7 +1,6 @@
 """Node-local entity vertices that hang off each triplet occurrence."""
 
-from uuid import NAMESPACE_URL, uuid5
-
+from kms.core import identity
 from kms.graph import nodes
 
 ENTITY_LABEL = 'Entity'
@@ -13,7 +12,7 @@ def entity_uuid(source: str, node_id: int, name: str) -> str:
     Identity is local per node: the same surface form at a different
     node is a separate vertex, so re-derivation is idempotent.
     """
-    return uuid5(NAMESPACE_URL, f'{source}#entity#{node_id}#{name}').hex
+    return identity.entity_uuid(source, node_id, name)
 
 
 def entity_properties(

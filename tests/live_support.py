@@ -1,18 +1,15 @@
-"""Shared configuration for manually run live tests."""
+"""Shared helpers for manually run live tests."""
 
-import os
+from kms import config
+from kms.core import llm
 
 
-def configure_local_formatter() -> None:
-    """Configures the local formatter model used by live tests."""
-    os.environ.update(
-        {
-            'KMS_MODELS__MODULES__FORMATTER__BASE_URL': (
-                'http://localhost:8080/v1'
-            ),
-            'KMS_MODELS__MODULES__FORMATTER__MODEL': (
-                'openai/unsloth/gemma-4-e4b-it-GGUF'
-            ),
-            'KMS_MODELS__MODULES__FORMATTER__API_KEY': 'not-needed',
-        }
-    )
+def configured_module_model(module_name: str) -> str:
+    """Returns the configured model for a live-test module."""
+    module = config.load_settings().models.modules[module_name]
+    return module.model
+
+
+def clear_cached_models() -> None:
+    """Clears cached LMs after an external environment change."""
+    llm.module_lm.cache_clear()

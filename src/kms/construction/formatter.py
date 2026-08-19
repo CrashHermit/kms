@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 class Signature(dspy.Signature):
     r"""
     You are a meticulous formatter of document transcriptions. You are given
-    one page of a document as numbered lines of markdown. For each line that
+    one canonical document node (block) as numbered lines of markdown. For each line that
     needs a formatting change, emit an edit describing exactly that change. A
     line you do not mention is left exactly as it is.
 
@@ -48,27 +48,20 @@ class Signature(dspy.Signature):
     REQUIRED — MATH DELIMITERS
 
     This is the one change you must always make, and the reason this pass
-    exists. Work through the page and convert every occurrence, wherever math
+    exists. Work through the node and convert every occurrence, wherever math
     appears — in prose, in a heading, in a list item, in a table cell:
 
     - `\( … \)` becomes `$ … $`
     - `\[ … \]` becomes `$$ … $$`
     - a display equation left bare — a standalone equation line, or an `array`
       / `aligned` / `cases` / `equation` environment — is wrapped in `$$ … $$`
-    - consecutive display-math blocks that are halves of one equation are joined
-      into a single `$$ … $$` block. Judge the second block: if it opens with a
-      relational operator (`=`, `<`, `>`, `\leq`, `\geq`, `\neq`,
-      `\equiv`), a binary operator (`+`, `-`, `\times`, `\cdot`, `\pm`),
-      or a term that obviously continues the first expression, the two are one
-      equation — remove the delimiter pair between them and join the content
-      with a line break. Two independent back-to-back equations stay separate.
 
-    Convert all of them, not the first few, and do this even when the page has
+    Convert all of them, not the first few, and do this even when the node has
     other things wrong with it.
 
     REQUIRED — MATH THAT ARRIVED WITH NO DELIMITERS AT ALL
 
-    Some pages come through with their mathematics as plain text: "969. x⁴ when
+    Some nodes come through with their mathematics as plain text: "969. x⁴ when
     x = 3", "1011. -200 + 65". Nothing above catches these, because there are
     no delimiters to convert. Wrap each such expression in `$ … $`.
 
@@ -94,7 +87,7 @@ class Signature(dspy.Signature):
     two spans, with the prose between them untouched.
 
     WHEN YOU ARE NOT SURE, LEAVE IT BARE. The two mistakes are not equal: a
-    span wrongly left alone is the page as it already stands and any later pass
+    span wrongly left alone is the node as it already stands and any later pass
     can still find it, while a number wrongly wrapped is an identifier
     corrupted — and an exercise stripped of the number the rest of the book
     cites it by cannot be recovered downstream.
@@ -104,20 +97,20 @@ class Signature(dspy.Signature):
     `$` also means money, and word problems are full of it: "The skirt cost
     $15 more than the blouse." Escape every such dollar sign as `\$`.
 
-    This matters most on the lines you have just edited. A page that mentions
+    This matters most on the lines you have just edited. A node that mentions
     a price and says nothing in mathematics survives its stray `$`, but as
     soon as this pass writes real delimiters nearby, a reader counting from
     the left pairs the money sign with one of them and takes the prose
     between for an expression — "$15 more than the blouse. Let $" becomes
     mathematics. Escape the currency whenever a line carries both, and escape
     it on sight even when it does not: the delimiters that collide with it may
-    be written later, on a page you no longer have in front of you.
+    be written later, later in another node.
 
     A dollar sign that opens or closes real mathematics is never escaped.
 
     REQUIRED — NO MATHEMATICAL NOTATION IN UNICODE, ANYWHERE
 
-    Every piece of mathematical notation on the page is written in LaTeX. NOT
+    Every piece of mathematical notation in the node is written in LaTeX. NOT
     ONE Unicode mathematical character survives this pass — not in prose, not
     in a heading, not in a list item, not in a table cell, not in a caption:
 
@@ -161,16 +154,16 @@ class Signature(dspy.Signature):
 
     ALSO STANDARDISE
 
-    - Headings. Mark every heading with `#`s, one level per structural level,
-      deepening consistently down the page. A heading written as a line of text
-      underlined by `===` or `---` on the next line is a heading: replace both
+    - Headings. Mark a heading with `#`s when the node itself identifies it
+      as a heading. A heading written as a line of text underlined by `===` or
+      `---` on the next line is a heading: replace both
       lines with a single `#`-marked one. Do not invent a heading, remove one,
       or promote a line that is not one.
     - Lists. `-` for bullets and `1.` numbering for ordered lists, with nesting
       shown by indentation. Keep every item, its position, and any label the
       document gives it.
     - Part markers. Textbooks letter an exercise's parts in whatever glyph the
-      typesetter had — `ⓐ`, `(a)`, `a)`, `a.` — and one page often mixes
+      typesetter had — `ⓐ`, `(a)`, `a)`, `a.` — and one node may mix
       several. Write them all one way: `(a)`, `(b)`, `(c)`.
       Standardise the DECORATION only. The letter itself is the part's
       identity, referred to elsewhere as "by part (b)", so `ⓑ` becomes `(b)`
@@ -179,16 +172,13 @@ class Signature(dspy.Signature):
     - Emphasis. Write italics as `*italic*` and bold as `**bold**`. Normalise
       the emphasis that is there; do not add emphasis to text that has none.
     - Tables. Pipe tables with a header separator row, one row per line.
-    - Blank lines. One blank line between top-level blocks, none inside a
-      block.
 
     WHAT NOT TO TOUCH
 
     - Figure placeholders. A placeholder of the form `![N]()` must survive
       exactly, digit for digit, with its empty parentheses. It is a positional
-      reference resolved later against that page's extracted figures; rewriting
-      it, renumbering it, giving it a caption, or filling in a path loses the
-      figure.
+      reference resolved later; rewriting it, renumbering it, giving it a
+      caption, or filling in a path loses the figure.
     - Code and verbatim content. Leave fenced blocks and inline code alone,
       including their indentation and internal spacing — there, whitespace is
       structure, not presentation.
@@ -206,22 +196,15 @@ class Signature(dspy.Signature):
       the identifier: `ⓑ` and `(b)` are both part b. Never renumber, never
       re-letter, never drop a label.
     - Order. Return the content in the order it arrives.
-    - Page furniture. Leave running heads, folios, and marginal labels where
-      they are; neither delete them nor add ones that are absent. A footnote
-      is not furniture, and neither is an entry in a reference list: both are
-      content, including the block of them that may sit at the foot of the
-      page. Keep every citation, with its authors, title, year, page range,
-      and identifiers exactly as written — a reference is a run of proper
-      nouns and numbers where a "tidied" character is a changed fact.
-    - Content. Add nothing and remove nothing, including anything that starts
-      or ends abruptly at the edge of the page.
+    - Content. Add nothing and remove nothing from the node, including
+      anything that starts or ends abruptly at the node boundary.
 
-    Return only the list of edits. If the page already follows the conventions
+    Return only the list of edits. If the node already follows the conventions
     above, return an empty list.
     """
 
     lines: str = dspy.InputField(
-        description='The page as numbered lines of markdown, one line per '
+        description='The node as numbered lines of markdown, one line per '
         'row, each prefixed with its 1-based line number in square brackets.'
     )
     edits: list[LineEdit] = dspy.OutputField(
@@ -231,49 +214,57 @@ class Signature(dspy.Signature):
 
 
 class Formatter(module.Module):
-    """Applies the document's markdown conventions to one page."""
+    """Applies the document's markdown conventions to one node."""
 
     signature = Signature
     record_name = 'formatter'
 
-    def encode(self, markdown: str) -> dict:
-        """Builds the formatter-signature kwargs for one page."""
-        return {'lines': number_lines(markdown)}
+    def encode(self, node_content: str) -> dict:
+        """Builds the formatter-signature kwargs for one node."""
+        return {'lines': number_lines(node_content)}
 
     def decode(self, prediction, **inputs) -> str:
-        """Returns the page with its formatting edits applied."""
+        """Returns the node with its formatting edits applied."""
         return apply_line_edits(
-            inputs['markdown'], module.as_list(prediction.edits)
+            inputs['node_content'], module.as_list(prediction.edits)
         )
 
 
 class FormatterNode:
-    """Langgraph node dispatching one formatter worker per segment."""
+    """Dispatches formatting over canonical document nodes."""
 
     def __init__(self, module: Formatter) -> None:
         self.module = module
 
     def dispatch(self, state: state.State) -> list[Send] | str:
-        """Sends one worker per segment with content, else the collector."""
-        segments = state.get('segments', [])
+        """Sends one worker per text-bearing node, else the collector."""
         sends = [
-            Send('formatter_worker', {'segment': segment})
-            for segment in segments
-            if segment.content
+            Send('formatter_worker', {'document': document, 'node': node})
+            for document in state.get('documents', [])
+            for node in document.nodes
+            if node.content and node.type != models.NodeType.IMAGE
         ]
         return sends or 'formatter_collect'
 
     async def worker(self, state: dict) -> dict:
-        """Formats one segment's content."""
-        segment: models.Segment = state['segment']
-        formatted = await self.module.aforward(markdown=segment.content)
-        return {'format_results': [(segment.index, formatted)]}
+        """Formats one canonical node's Markdown content."""
+        document: models.Document = state['document']
+        node: models.Node = state['node']
+        formatted = await self.module.aforward(node_content=node.content)
+        return {'format_results': [(document.index, node.index, formatted)]}
 
     def collect(self, state: state.State) -> dict:
-        """Merges per-page format results back onto the segments."""
+        """Applies node-scoped formatting results."""
+        documents = state['documents']
         results = state.get('format_results', [])
-        segments = models.merge_results_into_segments(
-            state['segments'], results, 'content'
-        )
-        logger.info('formatter: %d page(s) formatted', len(results))
-        return {'segments': segments}
+        by_key = {
+            (document_index, node_index): content
+            for document_index, node_index, content in results
+        }
+        for document in documents:
+            for node in document.nodes:
+                key = (document.index, node.index)
+                if key in by_key:
+                    node.content = by_key[key]
+        logger.info('formatter: %d node(s) formatted', len(results))
+        return {'documents': documents}

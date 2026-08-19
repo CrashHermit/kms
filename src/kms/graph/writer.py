@@ -6,13 +6,16 @@ from datetime import UTC, datetime
 from typing import Any
 
 from kms.core import models
-from kms.graph import assertions, learning_hubs, names, queries
-from kms.graph.hubs import (
-    component_label,
-    hub_label,
-    hub_properties,
-    triplet_hub_properties,
+from kms.graph import (
+    assertions,
+    entity_hubs,
+    names,
+    predicate_hubs,
+    procedure_hubs,
+    queries,
+    statement_hubs,
 )
+from kms.graph.hubs import triplet_hub_properties
 from kms.graph.instructions import (
     instruction_member_pairs,
     instruction_rows,
@@ -53,7 +56,7 @@ def utcnow_iso() -> str:
 
 
 def node_batches(
-    nodes: list[models.ASTNode], source: str
+    nodes: list[models.Node], source: str
 ) -> dict[str | None, list[dict]]:
     """Groups node rows by their Neo4j label for batched merges.
 
@@ -71,7 +74,7 @@ def node_batches(
 
 
 async def persist_nodes(
-    nodes: list[models.ASTNode],
+    nodes: list[models.Node],
     source: str,
     *,
     session_factory: Callable,
@@ -87,6 +90,8 @@ async def persist_nodes(
     """
     if not nodes:
         return
+    if any(node.id is None for node in nodes):
+        raise ValueError('cannot persist nodes without stable ids')
     source_props = source_properties(source, metadata)
     batches = node_batches(nodes, source)
     now = utcnow_iso()
@@ -104,9 +109,12 @@ async def persist_nodes(
             )
 
 
-def _chain_nodes(nodes: list[models.ASTNode], source: str) -> list[str]:
+def _chain_nodes(nodes: list[models.Node], source: str) -> list[str]:
     """Returns the uuid of every id-ordered node for the NEXT chain."""
-    return [node_uuid(source, node.id) for node in nodes if node.id is not None]
+    missing = [index for index, node in enumerate(nodes) if node.id is None]
+    if missing:
+        raise ValueError(f'nodes are missing stable ids at positions {missing}')
+    return [node_uuid(source, node.id) for node in nodes]
 
 
 def _chain_pairs(chain: list[str]) -> list[dict]:
@@ -118,7 +126,7 @@ def _chain_pairs(chain: list[str]) -> list[dict]:
 
 
 async def persist_chain(
-    nodes: list[models.ASTNode],
+    nodes: list[models.Node],
     source: str,
     *,
     session_factory: Callable,
@@ -172,6 +180,8 @@ async def persist_statements(
     """
     if not statements:
         return
+    if any(statement.uuid is None for statement in statements):
+        raise ValueError('cannot persist statements without assigned uuids')
     rows = _statement_rows(statements, source)
     pairs = statement_member_pairs(statements, source)
     now = utcnow_iso()
@@ -184,17 +194,18 @@ async def persist_statements(
             )
 
 
-async def persist_learning_hubs(
-    kind: str,
+async def _persist_hubs(
     hubs: list[dict],
     *,
     session_factory: Callable,
+    graph_module,
+    merge_query,
+    membership_query,
 ) -> None:
     if not hubs:
         return
     rows = [
-        learning_hubs.hub_properties(
-            kind,
+        graph_module.hub_properties(
             hub['source'],
             hub['canonical_name'],
             hub['description'],
@@ -209,42 +220,60 @@ async def persist_learning_hubs(
         for member in hub['members']
     ]
     async with session_factory() as session:
-        await session.run(
-            queries.merge_learning_hubs_query(kind),
-            rows=rows,
-            now=utcnow_iso(),
-        )
-        await session.run(
-            queries.merge_learning_hub_memberships_query(kind),
-            pairs=pairs,
-            now=utcnow_iso(),
-        )
+        await session.run(merge_query(), rows=rows, now=utcnow_iso())
+        await session.run(membership_query(), pairs=pairs, now=utcnow_iso())
 
 
-async def clear_learning_hubs(
-    kind: str,
-    source: str,
-    *,
-    session_factory: Callable,
+async def persist_statement_hubs(
+    hubs: list[dict], *, session_factory: Callable
+) -> None:
+    await _persist_hubs(
+        hubs,
+        session_factory=session_factory,
+        graph_module=statement_hubs,
+        merge_query=queries.merge_statement_hubs_query,
+        membership_query=queries.merge_statement_hub_memberships_query,
+    )
+
+
+async def persist_procedure_hubs(
+    hubs: list[dict], *, session_factory: Callable
+) -> None:
+    await _persist_hubs(
+        hubs,
+        session_factory=session_factory,
+        graph_module=procedure_hubs,
+        merge_query=queries.merge_procedure_hubs_query,
+        membership_query=queries.merge_procedure_hub_memberships_query,
+    )
+
+
+async def clear_statement_hubs(
+    source: str, *, session_factory: Callable
 ) -> None:
     async with session_factory() as session:
-        await session.run(
-            queries.delete_learning_hubs_query(kind),
-            source=source,
-        )
+        await session.run(queries.delete_statement_hubs_query(), source=source)
 
 
-async def persist_meta_learning_hubs(
-    kind: str,
+async def clear_procedure_hubs(
+    source: str, *, session_factory: Callable
+) -> None:
+    async with session_factory() as session:
+        await session.run(queries.delete_procedure_hubs_query(), source=source)
+
+
+async def _persist_meta_hubs(
     hubs: list[dict],
     *,
     session_factory: Callable,
+    graph_module,
+    all_source_query,
+    merge_query,
+    alignment_query,
 ) -> None:
     if not hubs:
         return
-    source_by_hub = await queries.all_source_learning_hubs(
-        session_factory, kind
-    )
+    source_by_hub = await all_source_query(session_factory)
     known_sources = {
         record['uuid']: record['source'] for record in source_by_hub
     }
@@ -261,8 +290,7 @@ async def persist_meta_learning_hubs(
                 f'{hub.get("uuid")}'
             )
     rows = [
-        learning_hubs.meta_hub_properties(
-            kind,
+        graph_module.meta_hub_properties(
             hub['canonical_name'],
             hub['description'],
             hub['embedding'],
@@ -278,25 +306,52 @@ async def persist_meta_learning_hubs(
     ]
     async with session_factory() as session:
         await session.run(
-            queries.merge_meta_learning_hubs_query(kind),
+            merge_query(),
             rows=rows,
             now=utcnow_iso(),
         )
         if pairs:
             await session.run(
-                queries.merge_meta_learning_alignments_query(kind),
+                alignment_query(),
                 pairs=pairs,
                 now=utcnow_iso(),
             )
 
 
-async def clear_meta_learning_hubs(
-    kind: str,
-    *,
-    session_factory: Callable,
+async def persist_meta_statement_hubs(
+    hubs: list[dict], *, session_factory: Callable
 ) -> None:
+    await _persist_meta_hubs(
+        hubs,
+        session_factory=session_factory,
+        graph_module=statement_hubs,
+        all_source_query=queries.all_source_statement_hubs,
+        merge_query=queries.merge_meta_statement_hubs_query,
+        alignment_query=queries.merge_meta_statement_alignments_query,
+    )
+
+
+async def persist_meta_procedure_hubs(
+    hubs: list[dict], *, session_factory: Callable
+) -> None:
+    await _persist_meta_hubs(
+        hubs,
+        session_factory=session_factory,
+        graph_module=procedure_hubs,
+        all_source_query=queries.all_source_procedure_hubs,
+        merge_query=queries.merge_meta_procedure_hubs_query,
+        alignment_query=queries.merge_meta_procedure_alignments_query,
+    )
+
+
+async def clear_meta_statement_hubs(*, session_factory: Callable) -> None:
     async with session_factory() as session:
-        await session.run(queries.delete_meta_learning_hubs_query(kind))
+        await session.run(queries.delete_meta_statement_hubs_query())
+
+
+async def clear_meta_procedure_hubs(*, session_factory: Callable) -> None:
+    async with session_factory() as session:
+        await session.run(queries.delete_meta_procedure_hubs_query())
 
 
 async def persist_statement_enrichment(
@@ -387,6 +442,8 @@ async def persist_procedures(
         source: The source key.
         session_factory: Async callable returning a Neo4j session.
     """
+    if any(procedure.uuid is None for procedure in procedures):
+        raise ValueError('cannot persist procedures without assigned uuids')
     procedure_batch = procedure_rows(procedures, source)
     if not procedure_batch:
         return
@@ -482,6 +539,19 @@ async def persist_assertions(
     """
     if not triplets:
         return
+    missing = [
+        index
+        for index, triplet in enumerate(triplets)
+        if any(
+            triplet.occurrence_uuids.get(node_id) is None
+            for node_id in triplet.node_ids
+        )
+    ]
+    if missing:
+        raise ValueError(
+            f'cannot persist triplets without assigned occurrence uuids: '
+            f'{missing}'
+        )
     rows = assertions.assertion_rows(
         triplets,
         source,
@@ -726,16 +796,15 @@ async def persist_meta_name_hubs(
 
 
 async def _validate_meta_hubs(
-    kind: str,
     hubs: list[dict],
     session_factory: Callable,
+    source_hubs_query: Callable,
 ) -> None:
     member_ids = sorted(
         {member for hub in hubs for member in hub.get('members', [])}
     )
-    records = await queries.all_source_hubs(
+    records = await source_hubs_query(
         session_factory,
-        kind,
         hub_uuids=member_ids,
     )
     source_by_hub = {record['uuid']: record.get('source') for record in records}
@@ -754,30 +823,37 @@ async def _validate_meta_hubs(
             )
 
 
-async def persist_hubs(
-    kind: str,
+async def persist_entity_hubs(
+    hubs: list[dict], *, session_factory: Callable,
+    subsumption_edges: list[dict] | None = None, tier: str,
+) -> None:
+    await _persist_semantic_hubs(
+        hubs, session_factory=session_factory, graph_module=entity_hubs,
+        source_hubs_query=queries.all_entity_source_hubs, tier=tier,
+        subsumption_edges=subsumption_edges,
+    )
+
+
+async def persist_predicate_hubs(
+    hubs: list[dict], *, session_factory: Callable,
+    subsumption_edges: list[dict] | None = None, tier: str,
+) -> None:
+    await _persist_semantic_hubs(
+        hubs, session_factory=session_factory, graph_module=predicate_hubs,
+        source_hubs_query=queries.all_predicate_source_hubs, tier=tier,
+        subsumption_edges=subsumption_edges,
+    )
+
+
+async def _persist_semantic_hubs(
     hubs: list[dict],
     *,
     session_factory: Callable,
-    subsumption_edges: list[dict] | None = None,
+    graph_module,
+    source_hubs_query: Callable,
     tier: str,
+    subsumption_edges: list[dict] | None = None,
 ) -> None:
-    """Persists source hubs or meta hubs and their derived relationships.
-
-    Source hubs use ``CANONICAL`` membership from Entity/Predicate nodes.
-    Meta hubs use ``ALIGNS_TO`` membership from source-local hubs. Meta hub
-    rows must provide an explicit stable ``uuid`` and may omit ``source``.
-
-    Args:
-        kind: The hub kind, 'entity' or 'predicate'.
-        hubs: Hub dicts with canonical_name, aliases, description,
-            members, and optional embedding. Meta hubs additionally require
-            ``uuid``.
-        session_factory: Async callable returning a Neo4j session.
-        subsumption_edges: Optional general→specific hub pairs.
-        tier: ``source`` for EntityHub/PredicateHub or ``meta`` for the
-            disposable cross-source layer.
-    """
     if not hubs:
         return
     if tier not in {'source', 'meta'}:
@@ -793,11 +869,10 @@ async def persist_hubs(
                 'meta hubs require at least two source-hub members: '
                 f'{singleton_hubs}'
             )
-        await _validate_meta_hubs(kind, hubs, session_factory)
+        await _validate_meta_hubs(hubs, session_factory, source_hubs_query)
 
     hub_rows = [
-        hub_properties(
-            kind=kind,
+        graph_module.hub_properties(
             source=hub.get('source'),
             canonical_name=hub['canonical_name'],
             aliases=hub['aliases'],
@@ -808,45 +883,36 @@ async def persist_hubs(
         )
         for hub in hubs
     ]
-    label = hub_label(kind, tier=tier)
+    label = graph_module.hub_label(tier)
     now = utcnow_iso()
-
     if tier == 'source':
-        component_node_label = component_label(kind)
-        member_pairs: list[dict] = []
-        for hub, row in zip(hubs, hub_rows, strict=True):
-            for component_uuid in hub.get('members', []):
-                member_pairs.append(
-                    {'component': component_uuid, 'hub': row['uuid']}
-                )
+        member_pairs = [
+            {'component': member, 'hub': row['uuid']}
+            for hub, row in zip(hubs, hub_rows, strict=True)
+            for member in hub.get('members', [])
+        ]
     else:
-        source_hub_label = hub_label(kind, tier='source')
-        member_pairs = []
-        for hub, row in zip(hubs, hub_rows, strict=True):
-            for source_hub_uuid in hub.get('members', []):
-                member_pairs.append(
-                    {
-                        'source_hub': source_hub_uuid,
-                        'meta_hub': row['uuid'],
-                    }
-                )
+        member_pairs = [
+            {'source_hub': member, 'meta_hub': row['uuid']}
+            for hub, row in zip(hubs, hub_rows, strict=True)
+            for member in hub.get('members', [])
+        ]
 
     async with session_factory() as session:
-        await session.run(
-            queries.merge_hubs_query(label), rows=hub_rows, now=now
-        )
+        await session.run(queries.merge_hubs_query(label), rows=hub_rows, now=now)
         if member_pairs:
             if tier == 'source':
                 await session.run(
-                    queries.merge_canonical_query(component_node_label, label),
+                    queries.merge_canonical_query(
+                        graph_module.COMPONENT_LABEL, label
+                    ),
                     pairs=member_pairs,
                     now=now,
                 )
             else:
                 await session.run(
                     queries.merge_alignment_query(
-                        source_hub_label,
-                        label,
+                        graph_module.hub_label(), label
                     ),
                     pairs=member_pairs,
                     now=now,
@@ -857,7 +923,6 @@ async def persist_hubs(
                 pairs=subsumption_edges,
                 now=now,
             )
-
 
 async def persist_triplet_hubs(
     groups: list[dict],
@@ -953,17 +1018,36 @@ async def clear_triplet_hubs(
         )
 
 
-async def attach_source_components(
-    kind: str,
+async def attach_entity_components(
+    assignments: list[dict], *, aliases: list[dict], session_factory: Callable
+) -> None:
+    await _attach_source_components(
+        assignments, aliases=aliases, session_factory=session_factory,
+        component_node_label=entity_hubs.COMPONENT_LABEL,
+        source_hub_label=entity_hubs.hub_label(),
+    )
+
+
+async def attach_predicate_components(
+    assignments: list[dict], *, aliases: list[dict], session_factory: Callable
+) -> None:
+    await _attach_source_components(
+        assignments, aliases=aliases, session_factory=session_factory,
+        component_node_label=predicate_hubs.COMPONENT_LABEL,
+        source_hub_label=predicate_hubs.hub_label(),
+    )
+
+
+async def _attach_source_components(
     assignments: list[dict],
     *,
     aliases: list[dict],
     session_factory: Callable,
+    component_node_label: str,
+    source_hub_label: str,
 ) -> None:
     if not assignments and not aliases:
         return
-    component_node_label = component_label(kind)
-    source_hub_label = hub_label(kind, tier='source')
     now = utcnow_iso()
     async with session_factory() as session:
         if assignments:
@@ -983,17 +1067,16 @@ async def attach_source_components(
 
 
 async def _validate_meta_assignments(
-    kind: str,
     assignments: list[dict],
     session_factory: Callable,
+    source_hubs_query: Callable,
+    qualified_meta_hubs_query: Callable,
 ) -> None:
     source_hub_uuids = sorted(
         {assignment['source_hub'] for assignment in assignments}
     )
-    records = await queries.all_source_hubs(
-        session_factory,
-        kind,
-        hub_uuids=source_hub_uuids,
+    records = await source_hubs_query(
+        session_factory, hub_uuids=source_hub_uuids
     )
     source_by_hub = {record['uuid']: record.get('source') for record in records}
     missing = sorted(set(source_hub_uuids) - set(source_by_hub))
@@ -1008,10 +1091,7 @@ async def _validate_meta_assignments(
                 f'source hub lacks provenance: {assignment["source_hub"]}'
             )
         batch_sources.setdefault(assignment['meta_hub'], set()).add(source)
-    qualified = await queries.qualified_meta_hub_uuids(
-        session_factory,
-        kind,
-    )
+    qualified = await qualified_meta_hubs_query(session_factory)
     invalid = sorted(
         meta_hub
         for meta_hub, sources in batch_sources.items()
@@ -1024,20 +1104,52 @@ async def _validate_meta_assignments(
         )
 
 
-async def attach_meta_hubs(
-    kind: str,
+async def attach_entity_meta_hubs(
+    assignments: list[dict], *, aliases: list[dict],
+    subsumption_edges: list[dict], session_factory: Callable,
+) -> None:
+    await _attach_meta_hubs(
+        assignments, aliases=aliases, subsumption_edges=subsumption_edges,
+        session_factory=session_factory,
+        source_hubs_query=queries.all_entity_source_hubs,
+        qualified_meta_hubs_query=queries.qualified_entity_meta_hub_uuids,
+        source_hub_label=entity_hubs.hub_label(),
+        meta_hub_label=entity_hubs.hub_label('meta'),
+    )
+
+
+async def attach_predicate_meta_hubs(
+    assignments: list[dict], *, aliases: list[dict],
+    subsumption_edges: list[dict], session_factory: Callable,
+) -> None:
+    await _attach_meta_hubs(
+        assignments, aliases=aliases, subsumption_edges=subsumption_edges,
+        session_factory=session_factory,
+        source_hubs_query=queries.all_predicate_source_hubs,
+        qualified_meta_hubs_query=queries.qualified_predicate_meta_hub_uuids,
+        source_hub_label=predicate_hubs.hub_label(),
+        meta_hub_label=predicate_hubs.hub_label('meta'),
+    )
+
+
+async def _attach_meta_hubs(
     assignments: list[dict],
     *,
     aliases: list[dict],
     subsumption_edges: list[dict],
     session_factory: Callable,
+    source_hubs_query: Callable,
+    qualified_meta_hubs_query: Callable,
+    source_hub_label: str,
+    meta_hub_label: str,
 ) -> None:
     if not assignments and not aliases and not subsumption_edges:
         return
     if assignments:
-        await _validate_meta_assignments(kind, assignments, session_factory)
-    source_hub_label = hub_label(kind, tier='source')
-    meta_hub_label = hub_label(kind, tier='meta')
+        await _validate_meta_assignments(
+            assignments, session_factory, source_hubs_query,
+            qualified_meta_hubs_query,
+        )
     now = utcnow_iso()
     async with session_factory() as session:
         source_hubs = sorted(
@@ -1067,11 +1179,23 @@ async def attach_meta_hubs(
             )
 
 
-async def clear_source_hubs(
-    kind: str,
+async def clear_entity_hubs(source: str, *, session_factory: Callable) -> None:
+    await _clear_source_hubs(
+        source, session_factory=session_factory, label=entity_hubs.hub_label()
+    )
+
+
+async def clear_predicate_hubs(source: str, *, session_factory: Callable) -> None:
+    await _clear_source_hubs(
+        source, session_factory=session_factory, label=predicate_hubs.hub_label()
+    )
+
+
+async def _clear_source_hubs(
     source: str,
     *,
     session_factory: Callable,
+    label: str,
 ) -> None:
     """Deletes only source-local hubs belonging to one source.
 
@@ -1079,7 +1203,6 @@ async def clear_source_hubs(
     Detached alignment and canonical relationships are derived and are
     removed along with the rebuilt source hubs.
     """
-    label = hub_label(kind, tier='source')
     async with session_factory() as session:
         await session.run(
             queries.delete_source_hubs_query(label),
@@ -1087,26 +1210,48 @@ async def clear_source_hubs(
         )
 
 
-async def clear_invalid_meta_hubs(
-    kind: str,
+async def clear_invalid_entity_meta_hubs(*, session_factory: Callable) -> None:
+    await _clear_invalid_meta_hubs(
+        session_factory=session_factory, label=entity_hubs.hub_label('meta')
+    )
+
+
+async def clear_invalid_predicate_meta_hubs(*, session_factory: Callable) -> None:
+    await _clear_invalid_meta_hubs(
+        session_factory=session_factory, label=predicate_hubs.hub_label('meta')
+    )
+
+
+async def _clear_invalid_meta_hubs(
     *,
     session_factory: Callable,
+    label: str,
 ) -> None:
     """Deletes meta hubs without support from two distinct sources."""
-    label = hub_label(kind, tier='meta')
     async with session_factory() as session:
         await session.run(queries.delete_invalid_meta_hubs_query(label))
 
 
-async def clear_meta_hubs(
-    kind: str,
+async def clear_entity_meta_hubs(*, session_factory: Callable) -> None:
+    await _clear_meta_hubs(
+        session_factory=session_factory, label=entity_hubs.hub_label('meta')
+    )
+
+
+async def clear_predicate_meta_hubs(*, session_factory: Callable) -> None:
+    await _clear_meta_hubs(
+        session_factory=session_factory, label=predicate_hubs.hub_label('meta')
+    )
+
+
+async def _clear_meta_hubs(
     *,
     session_factory: Callable,
+    label: str,
 ) -> None:
     """Deletes the disposable meta tier for one kind.
 
     Source hubs, components, and durable learning data are not touched.
     """
-    label = hub_label(kind, tier='meta')
     async with session_factory() as session:
         await session.run(queries.delete_hubs_query(label))

@@ -180,6 +180,7 @@ class FindersConfig(_ConfigModel):
 
     lookahead_budget: int = Field(default=2000, gt=0)
     max_lookahead_budget: int = Field(default=8000, gt=0)
+    instruction_context_budget: int = Field(default=300, gt=0)
 
 
 class EnrichmentConfig(_ConfigModel):
@@ -274,17 +275,31 @@ class Settings(BaseSettings):
     stages: StagesConfig = Field(default_factory=StagesConfig)
 
     @model_validator(mode='after')
-    def validate_local_model_budgets(self):
-        """Keeps local completion budgets below router context windows."""
+    def validate_local_model_configuration(self):
+        """Validates local module routing and context budgets."""
         for module_name, module in self.models.modules.items():
             if not module.base_url:
                 continue
             preset_name = self.serving.module_models.get(module_name)
+            if self.serving.manage and not preset_name:
+                raise ValueError(
+                    f'local module {module_name!r} has no serving model '
+                    'mapping'
+                )
             if not preset_name:
                 continue
             preset = self.serving.presets.get(preset_name)
             if preset is None:
-                continue
+                raise ValueError(
+                    f'local module {module_name!r} references missing '
+                    f'serving preset {preset_name!r}'
+                )
+            model_name = module.model.removeprefix('openai/')
+            if model_name != preset_name:
+                raise ValueError(
+                    f'local module {module_name!r} model {model_name!r} '
+                    f'does not match serving preset {preset_name!r}'
+                )
             if module.max_tokens >= preset.ctx_size:
                 raise ValueError(
                     f'local module {module_name!r} max_tokens '

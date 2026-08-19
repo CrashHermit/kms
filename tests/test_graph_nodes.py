@@ -16,24 +16,24 @@ def test_node_uuid_distinguishes_index_and_source():
 
 
 def test_node_properties_maps_kind_content_and_provenance():
-    node = models.ASTNode(type='math', content='$x^2$', id=3, segment_index=2)
+    node = models.Node(type='math', content='$x^2$', id=3, document_index=2)
     props = nodes.node_properties(node, 'book.pdf')
     assert props['type'] == 'math'
     assert props['content'] == '$x^2$'
-    assert props['index'] == 3 and props['segment_index'] == 2
+    assert props['index'] == 3 and props['document_index'] == 2
 
 
 def test_node_properties_keep_index_zero():
-    node = models.ASTNode(
-        type='paragraph', content='text', id=0, segment_index=0
+    node = models.Node(
+        type='paragraph', content='text', id=0, document_index=0
     )
     props = nodes.node_properties(node, 'book.pdf')
     assert props['index'] == 0
 
 
 def test_node_properties_omits_role_field():
-    node = models.ASTNode(
-        type='list', content='1. do it', id=5, segment_index=1
+    node = models.Node(
+        type='list', content='1. do it', id=5, document_index=1
     )
     assert 'role' not in nodes.node_properties(node, 'book.pdf')
 
@@ -41,7 +41,7 @@ def test_node_properties_omits_role_field():
 def test_node_label_derives_from_class_name():
     assert (
         nodes.node_label(
-            models.ASTNode(
+            models.Node(
                 type='math',
             )
         )
@@ -49,7 +49,7 @@ def test_node_label_derives_from_class_name():
     )
     assert (
         nodes.node_label(
-            models.ASTNode(
+            models.Node(
                 type='paragraph',
             )
         )
@@ -57,7 +57,7 @@ def test_node_label_derives_from_class_name():
     )
     assert (
         nodes.node_label(
-            models.ASTNode(
+            models.Node(
                 type='instruction',
             )
         )
@@ -66,11 +66,11 @@ def test_node_label_derives_from_class_name():
 
 
 def test_node_label_for_typeless_node():
-    assert nodes.node_label(models.ASTNode()) is None
+    assert nodes.node_label(models.Node()) is None
 
 
 def test_node_properties_link_back_to_source():
-    node = models.ASTNode(type='math', content='$x$', id=3, segment_index=2)
+    node = models.Node(type='math', content='$x$', id=3, document_index=2)
     assert nodes.node_properties(node, 'book.pdf')[
         'source'
     ] == nodes.source_uuid('book.pdf')
