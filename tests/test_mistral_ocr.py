@@ -99,6 +99,51 @@ def test_unknown_mistral_block_type_is_rejected():
         ocr._canonical_node_type(region.block.type)
 
 
+def test_references_mistral_block_is_bibliographic_content():
+    assert (
+        ocr._canonical_node_type('references') == models.NodeType.BIBLIOGRAPHIC
+    )
+
+
+def test_materialize_document_preserves_references_block(tmp_path):
+    response = ocr.OCRResponse.model_validate(
+        {
+            'pages': [
+                {
+                    'index': 0,
+                    'dimensions': {'width': 100, 'height': 100},
+                    'markdown': 'body\n\nReferences',
+                    'blocks': [
+                        {'type': 'text', 'content': 'body'},
+                        {
+                            'type': 'references',
+                            'content': 'References\n[1] Example',
+                            'top_left_x': 10,
+                            'top_left_y': 10,
+                            'bottom_right_x': 90,
+                            'bottom_right_y': 90,
+                        },
+                    ],
+                }
+            ]
+        }
+    )
+    from PIL import Image
+
+    image_path = tmp_path / 'page.png'
+    Image.new('RGB', (100, 100), 'white').save(image_path)
+    source = ocr.materialize_document(
+        response, tmp_path / 'materialized', pdf_path=None, render_pages=False
+    )
+    document = source.documents[0]
+    assert [node.type for node in document.nodes] == [
+        models.NodeType.PARAGRAPH,
+        models.NodeType.BIBLIOGRAPHIC,
+    ]
+    assert document.nodes[1].provenance['provider_type'] == 'references'
+    assert document.nodes[1].content == 'References\n[1] Example'
+
+
 def test_build_source_converts_blocks_and_saves_pictures(tmp_path):
     resp = {
         'pages': [
@@ -120,9 +165,7 @@ def test_build_source_converts_blocks_and_saves_pictures(tmp_path):
     assert len(source.documents) == 1
     document = source.documents[0]
     assert document.index == 0
-    assert document.content == (
-        '# Title\n\n![1]()\n\nprose $x^2$\n\n![2]()\n'
-    )
+    assert document.content == ('# Title\n\n![1]()\n\nprose $x^2$\n\n![2]()\n')
     assert [node.content for node in document.nodes] == [
         '# Title\n\n![1]()\n\nprose $x^2$\n\n![2]()\n'
     ]
@@ -218,7 +261,9 @@ def test_footer_is_appended_to_the_page_markdown(tmp_path):
     }
     resp = ocr.OCRResponse.model_validate(resp)
     document = ocr.build_source(resp, tmp_path).documents[0]
-    assert document.content == 'body text\n\n$^1$G. Polya, "Two Incidents," 1970.'
+    assert (
+        document.content == 'body text\n\n$^1$G. Polya, "Two Incidents," 1970.'
+    )
     assert document.nodes[-1].type == 'footer'
     assert document.nodes[-1].content == '$^1$G. Polya, "Two Incidents," 1970.'
     assert 'TOPOLOGICAL SPACES' not in document.content

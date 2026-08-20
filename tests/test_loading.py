@@ -33,23 +33,23 @@ def _by_stage(output_dir: Path) -> dict[str, loading.Dataset]:
 def test_loads_a_dspy_image_input(tmp_path):
     recorder = recording.Recorder('src', output_dir=str(tmp_path / 'ex'))
     recorder.record(
-        'corrector_block',
+        'corrector_block_editor',
         block_corrector.BlockCorrectionSignature,
         {
             'block_crop': dspy.Image(url=_data_url(_png_bytes())),
             'block_type': 'text',
-            'original_text': 'hi',
+            'lines': '[1] hi',
         },
-        dspy.Prediction(corrected_text='hi', changes=[]),
+        dspy.Prediction(edits=[]),
     )
 
-    dataset = _by_stage(tmp_path / 'ex')['corrector_block']
+    dataset = _by_stage(tmp_path / 'ex')['corrector_block_editor']
     assert dataset.signature is block_corrector.BlockCorrectionSignature
     example = dataset.examples[0]
     assert set(example.inputs().keys()) == {
         'block_crop',
         'block_type',
-        'original_text',
+        'lines',
     }
     assert isinstance(example.block_crop, dspy.Image)
     assert 'base64' in example.block_crop.url
@@ -58,20 +58,15 @@ def test_loads_a_dspy_image_input(tmp_path):
 def test_loads_auxiliary_prediction_fields(tmp_path):
     recorder = recording.Recorder('src', output_dir=str(tmp_path / 'ex'))
     recorder.record(
-        'corrector_block',
+        'corrector_block_editor',
         block_corrector.BlockCorrectionSignature,
         {
             'block_crop': None,
             'block_type': 'text',
-            'original_text': 'hi',
+            'lines': '[1] hi',
         },
-        dspy.Prediction(
-            corrected_text='hi', changes=['No visual changes were needed.']
-        ),
+        dspy.Prediction(edits=[]),
     )
-
-    example = _by_stage(tmp_path / 'ex')['corrector_block'].examples[0]
-    assert example.changes == ['No visual changes were needed.']
 
 
 def test_loads_a_content_parts_input(tmp_path):
@@ -134,15 +129,15 @@ def test_round_trip_through_a_module(tmp_path):
             self.values = values
 
         async def acall(self, **kwargs):
-            assert kwargs['original_text'] == 'hi'
+            assert kwargs['lines'] == '[1] hi'
             return dspy.Prediction(**self.values)
 
     module = block_corrector.BlockCorrector(
         language_model=dspy.LM('openai/dummy', api_key='x'),
         recorder=recorder,
     )
-    module.predictor = _Fake(corrected_text='hi', changes=[])
-    module.reviewer.predictor = _Fake(needs_correction=True)
+    module.router.predictor = _Fake(needs_correction=True)
+    module.editor.predictor = _Fake(edits=[])
     image_path = tmp_path / 'block.png'
     image_path.write_bytes(_png_bytes())
     asyncio.run(
@@ -160,6 +155,6 @@ def test_round_trip_through_a_module(tmp_path):
         )
     )
 
-    example = _by_stage(tmp_path / 'ex')['corrector_block'].examples[0]
+    example = _by_stage(tmp_path / 'ex')['corrector_block_editor'].examples[0]
     assert isinstance(example.block_crop, dspy.Image)
-    assert 'hi' in example.original_text
+    assert example.lines == '[1] hi'

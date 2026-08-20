@@ -24,6 +24,16 @@ base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
 max_tokens = 8192
 
+[models.modules.formatter_router]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+max_tokens = 8192
+
+[models.modules.formatter_editor]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+max_tokens = 8192
+
 [models.modules.procedure_creator]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
@@ -149,6 +159,21 @@ base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
 max_tokens = 8192
 
+[models.modules.entity_card_router]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/gemma-4-e4b-it"
+max_tokens = 8192
+
+[models.modules.entity_fact_generator]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/gemma-4-e4b-it"
+max_tokens = 8192
+
+[models.modules.entity_card_generator]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/gemma-4-e4b-it"
+max_tokens = 8192
+
 # ── local model serving (router-mode llama-server) ───────────────────
 
 [serving]
@@ -165,6 +190,8 @@ terminate_timeout = 15.0
 corrector = "qwen3.5-9b"
 procedure_creator = "qwen3.5-9b"
 formatter = "qwen3.5-9b"
+formatter_router = "qwen3.5-9b"
+formatter_editor = "qwen3.5-9b"
 seam_merger = "qwen3.5-9b"
 seam_rewriter = "qwen3.5-9b"
 splitter = "qwen3.5-9b"
@@ -188,6 +215,9 @@ triplet_hub_builder = "qwen3.5-9b"
 search_judge = "qwen3.5-9b"
 decompose_judge = "qwen3.5-9b"
 query_decomposer = "qwen3.5-9b"
+entity_card_router = "gemma-4-e4b-it"
+entity_fact_generator = "gemma-4-e4b-it"
+entity_card_generator = "gemma-4-e4b-it"
 
 [serving.presets."glm-ocr"]
 model = "~/models/glm-ocr/GLM-OCR-Q8_0.gguf"
@@ -245,7 +275,7 @@ timeout_seconds = 60.0
 [ocr]
 model = "mistral-ocr-latest"
 url = "https://api.mistral.ai/v1/ocr"
-render_scale = 3.0
+render_scale = 1.0
 block_crop_scale = 1.0
 
 [database]
@@ -276,7 +306,9 @@ lookahead_budget = 2000
 [stages.finders]
 lookahead_budget = 2000
 max_lookahead_budget = 8000
-instruction_context_budget = 300
+
+[stages.finders.instruction_finder]
+context_budget = 300
 
 [stages.entity_enrichment]
 before_budget = 200

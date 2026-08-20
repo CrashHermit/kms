@@ -199,6 +199,14 @@ class Signature(dspy.Signature):
     - Content. Add nothing and remove nothing from the node, including
       anything that starts or ends abruptly at the node boundary.
 
+    This is exactly one canonical node, not a page. Do not join it with
+    neighboring nodes, infer missing text, split or merge the node, or change
+    its content. Apply only representation changes explicitly allowed above.
+    Code and verbatim spans are immutable. Reference markers, identifiers,
+    labels, proper names, and currency signs take precedence over broad
+    Unicode or math-wrapping rules when they are not mathematical notation.
+    When uncertain whether a span is mathematical, leave it unchanged.
+
     Return only the list of edits. If the node already follows the conventions
     above, return an empty list.
     """
@@ -213,21 +221,70 @@ class Signature(dspy.Signature):
     )
 
 
-class Formatter(module.Module):
-    """Applies the document's markdown conventions to one node."""
+class FormatterRouterSignature(dspy.Signature):
+    r"""
+    Decide whether one canonical Markdown content block needs formatting.
 
+    Return TRUE when any representation rule may require an edit, including
+    math delimiters, bare mathematical notation, Unicode mathematical glyphs,
+    headings, lists, emphasis, tables, or blank-line structure. Return FALSE
+    only when the block clearly already follows the conventions. Do not judge
+    the truth, grammar, wording, order, or mathematical content.
+
+    This is exactly one canonical node. Never use neighboring nodes, infer
+    text outside this input, split or merge the node, or change its content.
+    Code and verbatim spans are immutable. Preserve reference markers,
+    identifiers, labels, proper names, and currency signs when they are not
+    mathematical notation. If the classification is uncertain, return FALSE
+    and leave the node unchanged.
+
+    Return only the boolean decision.
+    """
+
+    lines: str = dspy.InputField(
+        description='One canonical content block as 1-based numbered lines.'
+    )
+    needs_formatting: bool = dspy.OutputField(
+        description='True when the block may need representation formatting.'
+    )
+
+
+class FormatterRouter(module.Module):
+    signature = FormatterRouterSignature
+    record_name = 'formatter_router'
+    use_chain_of_thought = False
+
+    def encode(self, lines: str) -> dict:
+        return {'lines': lines}
+
+    def decode(self, prediction, **inputs) -> bool:
+        return bool(prediction.needs_formatting)
+
+
+class FormatterEditor(module.Module):
     signature = Signature
-    record_name = 'formatter'
+    record_name = 'formatter_editor'
 
-    def encode(self, node_content: str) -> dict:
-        """Builds the formatter-signature kwargs for one node."""
-        return {'lines': number_lines(node_content)}
+    def encode(self, lines: str) -> dict:
+        return {'lines': lines}
 
-    def decode(self, prediction, **inputs) -> str:
-        """Returns the node with its formatting edits applied."""
-        return apply_line_edits(
-            inputs['node_content'], module.as_list(prediction.edits)
-        )
+    def decode(self, prediction, **inputs) -> list[LineEdit]:
+        return module.as_list(prediction.edits)
+
+
+class Formatter:
+    """Routes and applies formatting edits to one canonical node."""
+
+    def __init__(self, language_model, recorder=None) -> None:
+        self.router = FormatterRouter(language_model, recorder)
+        self.editor = FormatterEditor(language_model, recorder)
+
+    async def aforward(self, *, node_content: str) -> str:
+        lines = number_lines(node_content)
+        if not await self.router.aforward(lines=lines):
+            return node_content
+        edits = await self.editor.aforward(lines=lines)
+        return apply_line_edits(node_content, edits)
 
 
 class FormatterNode:

@@ -7,7 +7,7 @@ from kms.core import models
 class _Corrector:
     async def acorrect(self, region):
         assert region.block.type == 'text'
-        return {'corrected_text': 'corrected text', 'changes': ['word']}
+        return {'corrected_text': 'corrected text', 'edits': []}
 
 
 def _document():

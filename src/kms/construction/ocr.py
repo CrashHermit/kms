@@ -304,6 +304,11 @@ _MISTRAL_NODE_TYPES = {
     'table': models.NodeType.TABLE,
     'image': models.NodeType.IMAGE,
     'caption': models.NodeType.CAPTION,
+    # Mistral may emit a page-level references block when document
+    # annotations are enabled. Preserve it as bibliographic source content;
+    # it is distinct from OCRResponse.document_annotation.references.
+    'reference': models.NodeType.BIBLIOGRAPHIC,
+    'references': models.NodeType.BIBLIOGRAPHIC,
 }
 
 
@@ -415,6 +420,7 @@ class OCRPageArtifact(BaseModel):
             },
         )
 
+
 def _require_key() -> str:
     """Returns the configured Mistral API key.
 
@@ -429,6 +435,31 @@ def _require_key() -> str:
             'Mistral front-end.'
         )
     return key
+
+
+def _request_ocr(request: OCRRequest) -> OCRResponse:
+    """Sends one validated request to the Mistral OCR endpoint."""
+    payload = request.payload()
+    headers = {
+        'Authorization': f'Bearer {_require_key()}',
+        'Content-Type': 'application/json',
+    }
+    try:
+        response = httpx.post(
+            config.get_settings().ocr.url,
+            json=payload,
+            headers=headers,
+            timeout=_TIMEOUT,
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        body = exc.response.text[:500]
+        raise MistralOCRError(
+            f'Mistral OCR returned HTTP {exc.response.status_code}: {body}'
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise MistralOCRError(f'Mistral OCR request failed: {exc}') from exc
+    return OCRResponse.from_raw(response.json())
 
 
 def ocr_pdf(
@@ -467,27 +498,7 @@ def ocr_pdf(
         document_url=data_url,
         options=request_options,
     )
-    payload = request.payload()
-    headers = {
-        'Authorization': f'Bearer {_require_key()}',
-        'Content-Type': 'application/json',
-    }
-    try:
-        response = httpx.post(
-            config.get_settings().ocr.url,
-            json=payload,
-            headers=headers,
-            timeout=_TIMEOUT,
-        )
-        response.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        body = exc.response.text[:500]
-        raise MistralOCRError(
-            f'Mistral OCR returned HTTP {exc.response.status_code}: {body}'
-        ) from exc
-    except httpx.HTTPError as exc:
-        raise MistralOCRError(f'Mistral OCR request failed: {exc}') from exc
-    return OCRResponse.from_raw(response.json())
+    return _request_ocr(request)
 
 
 _IMG_REF = re.compile(r'!\[[^\]]*\]\(([^)]+)\)')
@@ -688,9 +699,7 @@ def materialize_document(
         documents=[artifact.to_document() for artifact in artifacts],
     )
     for document, artifact in zip(source.documents, artifacts, strict=True):
-        for node, region in zip(
-            document.nodes, artifact.blocks, strict=False
-        ):
+        for node, region in zip(document.nodes, artifact.blocks, strict=False):
             node.provenance['crop_bbox'] = region.crop_bbox
             node.provenance['crop_path'] = region.crop_path
     return source

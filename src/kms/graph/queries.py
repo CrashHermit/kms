@@ -12,6 +12,7 @@ from kms.graph import (
     entity_hubs,
     hubs,
     instructions,
+    learning,
     names,
     nodes,
     predicate_hubs,
@@ -1197,3 +1198,45 @@ async def procedure_hub_items(
     async with session_factory() as session:
         result = await session.run(cypher, source=source)
         return [dict(record) async for record in result]
+
+
+# Card and Review queries
+MERGE_CARDS = (
+    f'UNWIND $rows AS row '
+    f'MERGE (c:{learning.CARD_LABEL} {{uuid: row.uuid}}) '
+    f'ON CREATE SET c.created_at = $now '
+    f'SET c += row, c.modified_at = $now'
+)
+
+MERGE_CARD_HUB_EDGES = (
+    f'UNWIND $pairs AS pair '
+    f'MATCH (h) WHERE h.uuid = pair.hub '
+    f'MATCH (c:{learning.CARD_LABEL} {{uuid: pair.card}}) '
+    f'MERGE (h)-[:HAS_CARD]->(c)'
+)
+
+MERGE_REVIEWS = (
+    f'UNWIND $rows AS row '
+    f'MERGE (r:{learning.REVIEW_LABEL} {{uuid: row.uuid}}) '
+    f'ON CREATE SET r.created_at = $now '
+    f'SET r += row, r.modified_at = $now'
+)
+
+MERGE_CARD_REVIEW_EDGES = (
+    f'UNWIND $pairs AS pair '
+    f'MATCH (c:{learning.CARD_LABEL} {{uuid: pair.card}}) '
+    f'MATCH (r:{learning.REVIEW_LABEL} {{uuid: pair.review}}) '
+    f'MERGE (c)-[:HAS_REVIEW]->(r)'
+)
+
+def merge_cards_query() -> str:
+    return MERGE_CARDS
+
+def merge_card_hub_edges_query() -> str:
+    return MERGE_CARD_HUB_EDGES
+
+def merge_reviews_query() -> str:
+    return MERGE_REVIEWS
+
+def merge_card_review_edges_query() -> str:
+    return MERGE_CARD_REVIEW_EDGES

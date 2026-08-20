@@ -19,6 +19,7 @@ def test_toml_provides_the_defaults():
     assert settings.stages.search.rerank_top_n == 5
     assert settings.stages.procedure.entity_definition_top_k == 10
     assert settings.stages.entity_enrichment.before_budget == 200
+    assert settings.stages.finders.instruction_finder.context_budget == 300
     assert settings.stages.statement_hubs.max_concurrent_calls == 16
     assert settings.stages.statement_hubs.recall_threshold == 0.55
     assert settings.serving.module_models['entity_enrichment'] == 'qwen3.5-9b'
@@ -35,6 +36,16 @@ def test_toml_provides_the_defaults():
         'qwen3.5-9b'
     )
     assert settings.serving.module_models['procedure_creator'] == ('qwen3.5-9b')
+
+
+def test_instruction_finder_context_budget_can_be_overridden(monkeypatch):
+    monkeypatch.setenv(
+        'KMS_STAGES__FINDERS__INSTRUCTION_FINDER__CONTEXT_BUDGET', '450'
+    )
+    assert (
+        config.load_settings().stages.finders.instruction_finder.context_budget
+        == 450
+    )
 
 
 def test_statement_hub_settings_can_be_overridden(monkeypatch):

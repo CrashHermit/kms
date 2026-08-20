@@ -4,6 +4,7 @@ import dspy
 from langgraph.types import Send
 
 from kms.core import content, models, module, state
+from kms.core.edits import LineEdit, apply_line_edits, number_lines
 
 
 class BlockReviewSignature(dspy.Signature):
@@ -32,6 +33,12 @@ class BlockReviewSignature(dspy.Signature):
     vs `\\geq`, `\\Rightarrow` vs `\\Leftrightarrow`, `\\cap` vs `\\cup`,
     and every visible plus or minus sign are distinct glyphs.
 
+    Also inspect parentheses, brackets, and braces as individual glyphs:
+    `(`, `)`, `[`, `]`, `\{`, `\}`. A missing, extra, or moved parenthesis
+    is a visual error even if all other symbols match.
+
+    Example: The crop shows `$f(A_1 \cap A_2)` but the transcription says `$f(A_1) \cap A_2` — the parentheses enclose a different scope. Return TRUE.
+
     Do not use mathematical plausibility, grammar, or formatting preference to
     override the image. Do not solve, simplify, or correct the author's work.
     Markdown syntax alone is not a correction: do not flag a heading level,
@@ -51,6 +58,16 @@ class BlockReviewSignature(dspy.Signature):
       `$x$` markup: return FALSE. Markdown representation is not a visual
       content error.
 
+    `block_type` is provider metadata, not an instruction about how to
+    interpret the content. If the provider label is unfamiliar (for example,
+    `references`), treat the crop as opaque source content and compare only
+    the visible transcription. Do not reclassify, merge, split, omit, or
+    rewrite a block because of its label.
+
+    Return FALSE when the crop is too blurry, clipped, or ambiguous to prove
+    an error. A TRUE decision only authorizes the editor to inspect the block;
+    it does not authorize a speculative correction.
+
     Return only the boolean decision. Do not explain, describe findings, or
     rewrite text.
     """
@@ -61,17 +78,19 @@ class BlockReviewSignature(dspy.Signature):
     block_type: str = dspy.InputField(
         description='The Mistral block type, such as text or equation.'
     )
-    original_text: str = dspy.InputField(
-        description='The original Mistral transcription for this block only.'
+    lines: str = dspy.InputField(
+        description=(
+            'The block transcription as 1-based numbered Markdown lines.'
+        )
     )
     needs_correction: bool = dspy.OutputField(
         description='True only when a visible correction is needed.'
     )
 
 
-class BlockReviewer(module.Module):
+class BlockCorrectionRouter(module.Module):
     signature = BlockReviewSignature
-    record_name = 'corrector_block_review'
+    record_name = 'corrector_block_router'
     use_chain_of_thought = False
 
     def encode(
@@ -86,13 +105,13 @@ class BlockReviewer(module.Module):
         return {
             'block_crop': image,
             'block_type': block_type,
-            'original_text': original_text,
+            'lines': number_lines(original_text),
         }
 
     def decode(self, prediction, **inputs) -> bool:
         return bool(prediction.needs_correction)
 
-    async def areview(self, region) -> bool:
+    async def needs_correction(self, region) -> bool:
         return await self.aforward(
             crop_path=region.crop_path,
             block_type=region.block.type,
@@ -102,51 +121,48 @@ class BlockReviewer(module.Module):
 
 class BlockCorrectionSignature(dspy.Signature):
     r"""
-    Correct exactly one OCR block using the one supplied block crop as the
-    authority.
-    Audit every visible character before writing the answer. The task is image
+    Correct exactly one OCR block using the supplied crop as the authority.
+    The crop and numbered block lines are the complete input unit. Return only
+    replacement edits for changed local lines; never rewrite the complete
+    block in the output.
+
+    Audit every visible character before writing the answer. This is image
     fidelity, not mathematical correction, formatting cleanup, or rewriting.
+    Preserve the supplied Markdown and LaTeX representation everywhere except
+    the smallest spans containing proven visual content errors. Do not infer
+    content outside the crop or copy neighboring blocks. Do not solve an
+    exercise, repair a false statement, improve grammar, or normalize markup.
 
-    Use LaTeX for all visible mathematical notation and faithfully represent
-    the crop. Preserve the original transcription exactly unless the image
-    proves a content error. Make the smallest possible correction for every proven
-    mismatch, including subtle signs and notation: minus/plus, equality and
-    inequality symbols, `\Rightarrow` versus `\Leftrightarrow`, `\cap` versus
-    `\cup`, letters and digits, superscripts, subscripts, radical indices,
-    fraction numerators/denominators, parentheses/brackets/braces, punctuation,
-    table cells, list items, code tokens, and missing or extra visible words or
-    lines. Check the scope and attachment of operators, exponents, radicals,
-    fractions, and function arguments character by character.
+    Each edit must contain a 1-based local line index, operation `replace`, and
+    the complete replacement line. Emit no edit for an unchanged line. Never
+    use delete, insert_before, or insert_after. Preserve the original line
+    structure; only use embedded line breaks when the visible correction
+    unambiguously changes it. If the block is faithful, return `[]`.
 
-    Do not infer content outside the crop or copy neighboring blocks. Do not
-    solve an exercise, repair a false statement, improve grammar, or normalize
-    Markdown/LaTeX. Preserve the supplied Markdown and LaTeX representation
-    byte-for-byte everywhere except the smallest spans containing proven visual
-    content errors. Never add or remove heading markers, emphasis markers,
-    dollar delimiters, braces, or other markup just to make the syntax nicer;
-    these are not OCR corrections. If the supplied transcription is faithful,
-    return it byte-for-byte unchanged and return an empty changes list.
+    Make the smallest possible correction for signs, relation symbols, letters,
+    digits, superscripts, subscripts, radical indices, fraction parts,
+    parentheses, punctuation, table cells, list items, code tokens, and visible
+    missing or extra words. Preserve every other character exactly. Markdown
+    markers and delimiters are not visual corrections. A mathematically false
+    but clearly visible equation remains unchanged.
 
-    Examples:
+    `block_type` is provider metadata, not a semantic editing instruction.
+    Unknown labels such as `references` must be preserved as opaque source
+    content. Never reclassify the block, merge it with neighboring content,
+    or change its boundaries. Require direct visual evidence for every edit;
+    distinguish `\\Rightarrow` from `\\Leftrightarrow`, `=` from `\\neq`, and
+    every plus/minus sign by the glyph itself rather than by plausibility or
+    sentence meaning. If the glyph is not clearly visible, emit no edit.
 
-    - Original: `The forms all mean $P \\Rightarrow Q$:`
-      The crop visibly shows `P \\Leftrightarrow Q`.
-      Return corrected_text with only `\\Rightarrow` changed to
-      `\\Leftrightarrow`, and list that one correction in changes.
-    - Original: `Figure: $y' = y$`
-      The crop visibly shows `Figure: $y' = -y$`.
-      Return the same text with only the missing minus sign inserted.
-    - Original: `### Exercises 1.3`
-      The crop shows the heading text but cannot show Markdown `###`.
-      Return the original unchanged and return `changes: []`.
-    - Original: a mathematically false but clearly visible equation.
-      Return it unchanged. OCR correction must not solve or fact-check it.
+    Also inspect parentheses, brackets, and braces as individual glyphs:
+    `(`, `)`, `[`, `]`, `\{`, `\}`. A missing, extra, or moved parenthesis
+    is a visual error even if all other symbols match. Correct the placement
+    of parentheses when the crop shows a different grouping, such as
+    `f(A) \cap B` versus `f(A \cap B)`.
 
-    Return the complete corrected block in Markdown plus a concise list of the
-    changes actually made—a concise list of the changes, limited to visual
-    content corrections. Do not return
-    explanations
-    outside the corrected_text and changes fields.
+    Example: The crop shows `$f(A_1 \cap A_2)` but the transcription says `$f(A_1) \cap A_2`. Emit a replacement edit for the full line with corrected parentheses scope.
+
+    Return only the replacement edit list.
     """
 
     block_crop: dspy.Image = dspy.InputField(
@@ -155,25 +171,24 @@ class BlockCorrectionSignature(dspy.Signature):
     block_type: str = dspy.InputField(
         description='The Mistral block type, such as text or equation.'
     )
-    original_text: str = dspy.InputField(
-        description='The original Mistral transcription for this block only.'
+    lines: str = dspy.InputField(
+        description=(
+            'The OCR transcription for this block as 1-based numbered '
+            'Markdown lines.'
+        )
     )
-    corrected_text: str = dspy.OutputField(
-        description='The complete corrected Markdown transcription.'
-    )
-    changes: list[str] = dspy.OutputField(
-        description='A concise list of changes made, or an empty list.'
+    edits: list[LineEdit] = dspy.OutputField(
+        description=(
+            'Replacement-only edits for changed local lines. Empty when the '
+            'block is faithful.'
+        )
     )
 
 
-class BlockCorrector(module.Module):
+class BlockCorrectionEditor(module.Module):
     signature = BlockCorrectionSignature
-    record_name = 'corrector_block'
+    record_name = 'corrector_block_editor'
     use_chain_of_thought = False
-
-    def __init__(self, language_model, recorder=None) -> None:
-        super().__init__(language_model, recorder)
-        self.reviewer = BlockReviewer(language_model, recorder)
 
     def encode(
         self,
@@ -187,24 +202,46 @@ class BlockCorrector(module.Module):
         return {
             'block_crop': image,
             'block_type': block_type,
-            'original_text': original_text,
+            'lines': number_lines(original_text),
         }
 
-    def decode(self, prediction, **inputs) -> dict:
-        return {
-            'corrected_text': prediction.corrected_text,
-            'changes': module.as_list(prediction.changes),
-        }
+    def decode(self, prediction, **inputs) -> list[LineEdit]:
+        edits = module.as_list(prediction.edits)
+        if any(edit.operation != 'replace' for edit in edits):
+            raise RuntimeError(
+                'block corrector editor emitted a non-replacement edit'
+            )
+        return edits
+
+
+class BlockCorrector:
+    def __init__(
+        self,
+        language_model=None,
+        recorder=None,
+        router_language_model=None,
+        editor_language_model=None,
+    ) -> None:
+        router_language_model = router_language_model or language_model
+        editor_language_model = editor_language_model or language_model
+        if router_language_model is None or editor_language_model is None:
+            raise ValueError('block corrector language models are required')
+        self.router = BlockCorrectionRouter(router_language_model, recorder)
+        self.editor = BlockCorrectionEditor(editor_language_model, recorder)
 
     async def acorrect(self, region) -> dict:
         original_text = region.block.content or ''
-        if not await self.reviewer.areview(region):
-            return {'corrected_text': original_text, 'changes': []}
-        return await self.aforward(
+        if not await self.router.needs_correction(region):
+            return {'corrected_text': original_text, 'edits': []}
+        edits = await self.editor.aforward(
             crop_path=region.crop_path,
             block_type=region.block.type,
             original_text=original_text,
         )
+        return {
+            'corrected_text': apply_line_edits(original_text, edits),
+            'edits': edits,
+        }
 
 
 class BlockCorrectorNode:
@@ -218,10 +255,7 @@ class BlockCorrectorNode:
         sends = [
             Send('block_corrector_worker', {'document': document})
             for document in current_state.get('documents', [])
-            if any(
-                node.provenance.get('crop_path')
-                for node in document.nodes
-            )
+            if any(node.provenance.get('crop_path') for node in document.nodes)
         ]
         return sends or 'block_corrector_collect'
 
@@ -242,9 +276,7 @@ class BlockCorrectorNode:
                 )
             )
             node.content = result['corrected_text']
-        return {
-            'block_correction_results': [(document.index, document.nodes)]
-        }
+        return {'block_correction_results': [(document.index, document.nodes)]}
 
     def collect(self, current_state: state.State) -> dict:
         """Writes corrected Markdown back onto canonical documents."""

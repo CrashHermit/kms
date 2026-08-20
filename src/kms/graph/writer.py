@@ -9,6 +9,7 @@ from kms.core import models
 from kms.graph import (
     assertions,
     entity_hubs,
+    learning,
     names,
     predicate_hubs,
     procedure_hubs,
@@ -1255,3 +1256,73 @@ async def _clear_meta_hubs(
     """
     async with session_factory() as session:
         await session.run(queries.delete_hubs_query(label))
+
+
+async def persist_cards(
+    cards: list[models.Card],
+    *,
+    session_factory: Callable,
+) -> None:
+    """Persists learning Card nodes."""
+    if not cards:
+        return
+    rows = [learning.card_properties(card) for card in cards]
+    now = utcnow_iso()
+    async with session_factory() as session:
+        await session.run(
+            queries.merge_cards_query(), rows=rows, now=now
+        )
+
+
+async def persist_card_hub_edges(
+    cards: list[models.Card],
+    *,
+    session_factory: Callable,
+) -> None:
+    """Persists HUB->HAS_CARD edges."""
+    if not cards:
+        return
+    pairs = [
+        {'hub': card.hub_uuid, 'card': card.uuid}
+        for card in cards
+    ]
+    now = utcnow_iso()
+    async with session_factory() as session:
+        await session.run(
+            queries.merge_card_hub_edges_query(), pairs=pairs, now=now
+        )
+
+
+async def persist_reviews(
+    reviews: list[models.Review],
+    *,
+    session_factory: Callable,
+) -> None:
+    """Persists Review nodes."""
+    if not reviews:
+        return
+    rows = [learning.review_properties(review) for review in reviews]
+    now = utcnow_iso()
+    async with session_factory() as session:
+        await session.run(
+            queries.merge_reviews_query(), rows=rows, now=now
+        )
+
+
+async def persist_card_review_edges(
+    reviews: list[models.Review],
+    *,
+    session_factory: Callable,
+) -> None:
+    """Persists CARD->HAS_REVIEW edges."""
+    if not reviews:
+        return
+    pairs = [
+        {'card': review.card_uuid, 'review': review.uuid}
+        for review in reviews
+    ]
+    now = utcnow_iso()
+    async with session_factory() as session:
+        await session.run(
+            queries.merge_card_review_edges_query(), pairs=pairs, now=now
+        )

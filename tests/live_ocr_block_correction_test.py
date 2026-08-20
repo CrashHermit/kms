@@ -56,7 +56,9 @@ async def run_case(name: str, pdf_name: str, pages: list[int]) -> None:
                     'crop_bbox': region.crop_bbox,
                     'original_text': region.block.content or '',
                     'corrected_text': correction['corrected_text'],
-                    'changes': correction['changes'],
+                    'edits': [
+                        edit.model_dump() for edit in correction['edits']
+                    ],
                 }
             )
     path = document_dir / 'block_corrections.json'
@@ -65,8 +67,8 @@ async def run_case(name: str, pdf_name: str, pages: list[int]) -> None:
     )
     print(f'{name}: {len(results)} blocks -> {path}')
     for result in results:
-        if result['changes']:
-            print(f'  block {result["block_index"]}: {result["changes"]}')
+        if result['edits']:
+            print(f'  block {result["block_index"]}: {result["edits"]}')
 
 
 async def main() -> None:

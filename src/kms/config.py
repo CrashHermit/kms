@@ -124,8 +124,8 @@ class OCRConfig(_ConfigModel):
     api_key: str = ''
     model: str = 'mistral-ocr-latest'
     url: str = 'https://api.mistral.ai/v1/ocr'
-    render_scale: float = Field(default=3.0, gt=0.0)
-    block_crop_scale: float = Field(default=2.0, gt=0.0)
+    render_scale: float = Field(default=1.0, gt=0.0)
+    block_crop_scale: float = Field(default=1.0, gt=0.0)
 
 
 class DatabaseConfig(_ConfigModel):
@@ -175,12 +175,20 @@ class SplitterConfig(_ConfigModel):
     lookahead_budget: int = Field(default=2000, gt=0)
 
 
+class InstructionFinderConfig(_ConfigModel):
+    """Instruction finder context-window budgets."""
+
+    context_budget: int = Field(default=300, gt=0)
+
+
 class FindersConfig(_ConfigModel):
     """Instruction/component finder lookahead budgets."""
 
     lookahead_budget: int = Field(default=2000, gt=0)
     max_lookahead_budget: int = Field(default=8000, gt=0)
-    instruction_context_budget: int = Field(default=300, gt=0)
+    instruction_finder: InstructionFinderConfig = Field(
+        default_factory=InstructionFinderConfig
+    )
 
 
 class EnrichmentConfig(_ConfigModel):

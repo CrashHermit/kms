@@ -407,7 +407,9 @@ async def find_instruction_spans(
     """
     spans: list[list[int]] = []
     cursor = 0
-    context_budget = config.get_settings().stages.finders.instruction_context_budget
+    context_budget = (
+        config.get_settings().stages.finders.instruction_finder.context_budget
+    )
 
     while cursor < len(nodes):
         start_window = walker.marked_window_around(

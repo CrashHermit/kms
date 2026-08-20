@@ -183,6 +183,24 @@ class Knowledge:
         )
 
 
+class CardStatus(StrEnum):
+    """Lifecycle status of a card."""
+
+    ACTIVE = 'active'
+    SUSPENDED = 'suspended'
+    BURIED = 'buried'
+    DONE = 'done'
+
+
+class Rating(StrEnum):
+    """FSRS rating values (Again, Hard, Good, Easy)."""
+
+    AGAIN = 'again'
+    HARD = 'hard'
+    GOOD = 'good'
+    EASY = 'easy'
+
+
 class NodeType(StrEnum):
     """Canonical structural and semantic types for source nodes."""
 
@@ -250,6 +268,78 @@ class Procedure:
     statement_uuid: str | None = None
     members: list[int] = field(default_factory=list)
     steps: list[Step] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class FSRSState:
+    """Current FSRS algorithm state for a card."""
+
+    stability: float = 0.0
+    difficulty: float = 0.0
+    due: str | None = None  # ISO datetime
+    interval: float = 0.0
+    reps: int = 0
+    lapses: int = 0
+    last_review: str | None = None  # ISO datetime
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            'stability': self.stability,
+            'difficulty': self.difficulty,
+            'due': self.due,
+            'interval': self.interval,
+            'reps': self.reps,
+            'lapses': self.lapses,
+            'last_review': self.last_review,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> 'FSRSState':
+        return cls(
+            stability=data.get('stability', 0.0),
+            difficulty=data.get('difficulty', 0.0),
+            due=data.get('due'),
+            interval=data.get('interval', 0.0),
+            reps=data.get('reps', 0),
+            lapses=data.get('lapses', 0),
+            last_review=data.get('last_review'),
+        )
+
+
+@dataclass(slots=True)
+class Card:
+    """A reviewable learning card attached to a hub.
+
+    Cards are the scheduling units. One hub (EntityHub, StatementHub,
+    ProcedureHub) can have multiple cards. Each card maintains its own
+    FSRS state.
+    """
+
+    uuid: str
+    hub_uuid: str  # The hub this card belongs to
+    hub_kind: str  # 'entity' | 'statement' | 'procedure'
+    prompt: str = ''
+    response: str = ''
+    status: CardStatus = CardStatus.ACTIVE
+    fsrs: FSRSState = field(default_factory=FSRSState)
+    created_at: str | None = None  # ISO datetime
+    source: str | None = None  # Source key this card was generated for
+
+
+@dataclass(frozen=True, slots=True)
+class Review:
+    """One review event for a card."""
+
+    uuid: str
+    card_uuid: str
+    rating: Rating
+    timestamp: str  # ISO datetime
+    response_time_ms: int
+    confidence: float  # 0.0 - 1.0
+    session_id: str
+    session_index: int
+    fsrs_state_after: dict[str, Any]  # FSRSState snapshot after this review
+    source: str | None = None
 
 
 @dataclass(slots=True)
@@ -355,8 +445,8 @@ class ConstructionBundle:
     procedure_enrichment_inputs: list[ProcedureEnrichmentInput] = field(
         default_factory=list
     )
-    procedure_materialization_inputs: list[ProcedureMaterializationInput] = field(
-        default_factory=list
+    procedure_materialization_inputs: list[ProcedureMaterializationInput] = (
+        field(default_factory=list)
     )
     statement_hub_records: list[StatementHubRecord] = field(
         default_factory=list
@@ -379,7 +469,9 @@ class ConstructionBundle:
     statement_hubs: list[dict] = field(default_factory=list)
     procedure_hubs: list[dict] = field(default_factory=list)
     generated_procedures: list[Procedure] = field(default_factory=list)
-    procedure_step_updates: list[ProcedureStepUpdate] = field(default_factory=list)
+    procedure_step_updates: list[ProcedureStepUpdate] = field(
+        default_factory=list
+    )
     procedure_links: list[ProcedureLink] = field(default_factory=list)
     entity_descriptions: dict[int, dict[str, str | None]] = field(
         default_factory=dict
@@ -511,9 +603,7 @@ def validate_bundle(
             if node_id not in node_ids:
                 errors.append(f'{label} references missing node {node_id!r}')
             if require_identities and not triplet.occurrence_uuids.get(node_id):
-                errors.append(
-                    f'{label} occurrence {node_id} is missing a uuid'
-                )
+                errors.append(f'{label} occurrence {node_id} is missing a uuid')
 
     if errors:
         raise BundleValidationError(errors)

@@ -7,6 +7,7 @@ from kms.graph import (
     entities,
     hubs,
     instructions,
+    learning,
     names,
     nodes,
     predicates,
@@ -190,6 +191,20 @@ def schema_statements() -> list[str]:
         f'FOR (h:{procedure_hubs.PROCEDURE_HUB_LABEL}) ON (h.embedding) '
         f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
         f'`vector.similarity_function`: "cosine"}}}}',
+        f'CREATE CONSTRAINT card_uuid IF NOT EXISTS '
+        f'FOR (c:{learning.CARD_LABEL}) REQUIRE c.uuid IS UNIQUE',
+        f'CREATE INDEX card_hub_uuid IF NOT EXISTS '
+        f'FOR (c:{learning.CARD_LABEL}) ON (c.hub_uuid)',
+        f'CREATE INDEX card_due IF NOT EXISTS '
+        f'FOR (c:{learning.CARD_LABEL}) ON (c.fsrs_due)',
+        f'CREATE INDEX card_status IF NOT EXISTS '
+        f'FOR (c:{learning.CARD_LABEL}) ON (c.status)',
+        f'CREATE CONSTRAINT review_uuid IF NOT EXISTS '
+        f'FOR (r:{learning.REVIEW_LABEL}) REQUIRE r.uuid IS UNIQUE',
+        f'CREATE INDEX review_card_uuid IF NOT EXISTS '
+        f'FOR (r:{learning.REVIEW_LABEL}) ON (r.card_uuid)',
+        f'CREATE INDEX review_timestamp IF NOT EXISTS '
+        f'FOR (r:{learning.REVIEW_LABEL}) ON (r.timestamp)',
     ]
 
 

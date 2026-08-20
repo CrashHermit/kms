@@ -196,7 +196,9 @@ def test_context_windows_keep_markers_within_the_configured_token_budget():
     )
 
     router_windows = [call['current_node'] for call in router.calls]
-    context_budget = config.get_settings().stages.finders.instruction_context_budget
+    context_budget = (
+        config.get_settings().stages.finders.instruction_finder.context_budget
+    )
     grower_windows = [call['next_node'] for call in grower.calls]
     for window in router_windows + grower_windows:
         assert sum(walker.estimate_text_tokens(node.content) for node in window) <= (

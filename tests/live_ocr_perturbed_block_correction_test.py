@@ -4,9 +4,11 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 from kms.construction import block_corrector, ocr
 from kms.core import llm
+from kms.core.edits import apply_line_edits
 
 CASES = (
     ('logic_hammack_truthtables_p00_v1', 'logic_hammack_truthtables_p00'),
@@ -43,38 +45,57 @@ async def run_case(record: dict, output_name: str) -> None:
     )
     edits = record['edits']
     injected = []
-    for page in document.pages:
-        for region in page.blocks:
-            if not region.crop_path:
+    for document_page in document.documents:
+        for block_index, node in enumerate(document_page.nodes):
+            crop_path = node.provenance.get('crop_path')
+            if not crop_path:
                 continue
+            region = SimpleNamespace(
+                crop_path=crop_path,
+                block=SimpleNamespace(
+                    type=node.provenance.get('provider_type', node.type),
+                    content=node.content,
+                ),
+            )
             for edit in perturb_region(region, edits):
-                injected.append((region.block_index, edit))
+                node.content = region.block.content
+                injected.append((block_index, edit))
 
     corrector = block_corrector.BlockCorrector(llm.module_lm('corrector'))
     results = []
-    for page in document.pages:
-        for region in page.blocks:
-            if not region.crop_path:
+    for document_page in document.documents:
+        for block_index, node in enumerate(document_page.nodes):
+            crop_path = node.provenance.get('crop_path')
+            if not crop_path:
                 continue
-            original_text = region.block.content or ''
-            reviewed = await corrector.reviewer.areview(region)
-            correction = (
-                await corrector.aforward(
-                    crop_path=region.crop_path,
+            original_text = node.content or ''
+            region = SimpleNamespace(
+                crop_path=crop_path,
+                block=SimpleNamespace(
+                    type=node.provenance.get('provider_type', node.type),
+                    content=original_text,
+                ),
+            )
+            needs_correction = await corrector.router.needs_correction(region)
+            edits_for_block = (
+                await corrector.editor.aforward(
+                    crop_path=crop_path,
                     block_type=region.block.type,
                     original_text=original_text,
                 )
-                if reviewed
-                else {'corrected_text': original_text, 'changes': []}
+                if needs_correction
+                else []
             )
             results.append(
                 {
-                    'block_index': region.block_index,
+                    'block_index': block_index,
                     'block_type': region.block.type,
-                    'reviewed': reviewed,
+                    'reviewed': needs_correction,
                     'original_text': original_text,
-                    'corrected_text': correction['corrected_text'],
-                    'changes': correction['changes'],
+                    'corrected_text': apply_line_edits(
+                        original_text, edits_for_block
+                    ),
+                    'edits': [edit.model_dump() for edit in edits_for_block],
                 }
             )
 
@@ -86,11 +107,11 @@ async def run_case(record: dict, output_name: str) -> None:
         if edit['after'] in result['corrected_text']:
             corrected += 1
         print(
-            f"{output_name} block {block_index}: "
-            f"reviewed={result['reviewed']} "
-            f"expected={edit['before']!r} -> {edit['after']!r}"
+            f'{output_name} block {block_index}: '
+            f'reviewed={result["reviewed"]} '
+            f'expected={edit["before"]!r} -> {edit["after"]!r}'
         )
-        print(f"  output: {result['corrected_text']!r}")
+        print(f'  output: {result["corrected_text"]!r}')
     print(
         f'{output_name}: {len(results)} blocks, '
         f'{sum(x["reviewed"] for x in results)} editor calls, '
