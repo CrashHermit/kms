@@ -32,3 +32,4 @@ scratch_*
 # Old trace stores
 mlruns/
 traces/
+.pi-smart-router/
