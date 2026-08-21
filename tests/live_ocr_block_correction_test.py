@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 from kms.construction import block_corrector, ocr
 from kms.core import llm
@@ -42,19 +43,26 @@ async def run_case(name: str, pdf_name: str, pages: list[int]) -> None:
     )
     corrector = block_corrector.BlockCorrector(llm.module_lm('corrector'))
     results = []
-    for page in document.pages:
-        for region in page.blocks:
-            if not region.crop_path:
+    for doc in document.documents:
+        for region in doc.nodes:
+            if not region.provenance.get('crop_path'):
                 continue
-            correction = await corrector.acorrect(region)
+            region_obj = SimpleNamespace(
+                crop_path=region.provenance['crop_path'],
+                block=SimpleNamespace(
+                    type=region.provenance.get('provider_type', region.type.value if hasattr(region.type, 'value') else region.type),
+                    content=region.content or '',
+                ),
+            )
+            correction = await corrector.acorrect(region_obj)
             results.append(
                 {
-                    'page_index': page.index,
-                    'block_index': region.block_index,
-                    'block_type': region.block.type,
-                    'crop_path': region.crop_path,
-                    'crop_bbox': region.crop_bbox,
-                    'original_text': region.block.content or '',
+                    'page_index': doc.index,
+                    'block_index': region.index,
+                    'block_type': region.type.value if hasattr(region.type, 'value') else region.type,
+                    'crop_path': region.provenance['crop_path'],
+                    'crop_bbox': region.provenance.get('crop_bbox'),
+                    'original_text': region.content or '',
                     'corrected_text': correction['corrected_text'],
                     'edits': [
                         edit.model_dump() for edit in correction['edits']

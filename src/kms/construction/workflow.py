@@ -8,28 +8,27 @@ from langgraph.graph import END, START, StateGraph
 from kms import config
 from kms.construction import (
     block_corrector,
-    enrichment,
-    enrichment_inputs,
     entity_enrichment,
     entity_hubs,
     formatter,
-    hub_inputs,
+    governance_judge,
+    governance_walker,
     instruction_finder,
     ocr,
     pedagogical_component_finder,
     predicate_enrichment,
     predicate_hubs,
-    procedure_creator,
+    procedure_enrichment,
     procedure_hubs,
-    procedure_inputs,
     seam_merger,
     splitter,
+    statement_enrichment,
     statement_hubs,
     statement_procedure_builder,
     triplet_extractor,
     triplet_hubs,
 )
-from kms.core import llm, recording, serve, state
+from kms.core import llm, recording, state
 from kms.graph import projectors
 
 if TYPE_CHECKING:
@@ -57,30 +56,6 @@ class TripletHubNode:
         bundle.triplet_hubs = result.get('hubs', [])
         return {
             'triplet_hubs': bundle.triplet_hubs,
-            'construction_bundle': bundle,
-        }
-
-
-class ProcedureCreatorNode:
-    """Creates learnable procedures from source-scoped inputs."""
-
-    def __init__(self, language_model) -> None:
-        self._language_model = language_model
-
-    async def run(self, current_state: state.State) -> dict:
-        """Creates procedures without graph reads or writes."""
-        bundle = state.to_construction_bundle(current_state)
-        result = await procedure_creator.create_procedures(
-            bundle.procedure_materialization_inputs,
-            language_model=self._language_model,
-        )
-        bundle.generated_procedures = result.get('generated_procedures', [])
-        bundle.procedure_step_updates = result.get('procedure_step_updates', [])
-        bundle.procedure_links = result.get('procedure_links', [])
-        bundle.procedures.extend(bundle.generated_procedures)
-        return {
-            **result,
-            'procedures': bundle.procedures,
             'construction_bundle': bundle,
         }
 
@@ -118,6 +93,10 @@ def _build_modules(
                 recorder=recorder,
             )
         ),
+        'governance_judge': governance_judge.GovernanceJudge(
+            language_model=llm.module_lm('governance_judge'),
+            recorder=recorder,
+        ),
         'role_typer': statement_procedure_builder.RoleTyper(
             language_model=llm.module_lm('role_typer'), recorder=recorder
         ),
@@ -149,11 +128,11 @@ def _build_modules(
             language_model=llm.module_lm('predicate_enrichment'),
             recorder=recorder,
         ),
-        'statement_enrichment': enrichment.StatementEnricher(
+        'statement_enrichment': statement_enrichment.StatementEnricher(
             language_model=llm.module_lm('statement_enrichment'),
             recorder=recorder,
         ),
-        'procedure_enrichment': enrichment.ProcedureEnricher(
+        'procedure_enrichment': procedure_enrichment.ProcedureEnricher(
             language_model=llm.module_lm('procedure_enrichment'),
             recorder=recorder,
         ),
@@ -188,32 +167,12 @@ def _build_modules(
         'triplet_hub_builder': llm.module_lm('triplet_hub_builder'),
     }
 
-_MANAGED_MODEL_GROUPS = (
-    ('seam_merger', 'seam_rewriter'),
-    ('instruction_router', 'instruction_grower'),
-    ('role_typer', 'statement_partitioner', 'procedure_partitioner'),
-    ('atomic_fact_extractor', 'triplet_extractor'),
-)
-
-
-def _validate_managed_model_groups() -> None:
-    """Ensure compound nodes use one resident serving model."""
-    module_models = config.get_settings().serving.module_models
-    for group in _MANAGED_MODEL_GROUPS:
-        configured = {module_models.get(name) for name in group}
-        if None in configured or len(configured) != 1:
-            raise RuntimeError(
-                'Managed compound stage requires one serving model: '
-                f'{group!r} -> {sorted(configured, key=str)!r}'
-            )
-
 
 def build_workflow(
     *,
     recorder: recording.Recorder | None = None,
     neo4j_session_factory: Callable | None = None,
     neo4j_configured: bool = False,
-    model_manager: serve.RouterManager | None = None,
 ) -> 'CompiledStateGraph':
     """Build and compile the document-construction workflow.
 
@@ -221,13 +180,10 @@ def build_workflow(
         recorder: Optional recorder for stage-level LLM examples.
         neo4j_session_factory: Factory for graph database sessions.
         neo4j_configured: Whether graph persistence is enabled.
-        model_manager: Optional manager for stage-specific model switching.
 
     Returns:
         The compiled LangGraph workflow.
     """
-    if model_manager:
-        _validate_managed_model_groups()
     modules = _build_modules(recorder)
     block_corrector_module = modules['block_corrector']
     formatter_module = modules['formatter']
@@ -268,6 +224,13 @@ def build_workflow(
             module=component_finder_module
         )
     )
+    governance_config = config.get_settings().stages.governance
+    governance_walker_node = governance_walker.GovernanceStatementWalkerNode(
+        judge=modules['governance_judge'],
+        backward_budget=governance_config.backward_context_budget,
+        forward_budget=governance_config.forward_context_budget,
+        threshold=governance_config.threshold,
+    )
     statement_procedure_builder_node = (
         statement_procedure_builder.StatementProcedureBuilderNode(
             role_module=role_typer_module,
@@ -298,25 +261,13 @@ def build_workflow(
         modules['predicate_hub_builder'],
     )
     triplet_hub_node = TripletHubNode(modules['triplet_hub_builder'])
-    statement_enrichment_input_node = (
-        enrichment_inputs.StatementEnrichmentInputNode()
-    )
-    procedure_enrichment_input_node = (
-        enrichment_inputs.ProcedureEnrichmentInputNode()
-    )
-    procedure_creator_node = ProcedureCreatorNode(
-        language_model=llm.module_lm('procedure_creator'),
-    )
-    statement_enrichment_node = enrichment.StatementEnrichmentNode(
+    statement_enrichment_node = statement_enrichment.StatementEnrichmentNode(
         enricher=statement_enrichment_module,
     )
-    procedure_enrichment_node = enrichment.ProcedureEnrichmentNode(
+    procedure_enrichment_node = procedure_enrichment.ProcedureEnrichmentNode(
         enricher=procedure_enrichment_module,
     )
-    procedure_materialization_input_node = (
-        procedure_inputs.ProcedureMaterializationInputNode()
-    )
-    hub_input_node = hub_inputs.HubInputNode()
+
     statement_hub_node = statement_hubs.StatementHubNode(
         adjudicator=statement_hub_adjudicator,
         synthesizer=statement_hub_module,
@@ -338,6 +289,7 @@ def build_workflow(
     graph.add_node('seam_odd_collect', seam_node.odd_collect)
     graph.add_node('splitter', splitter_node.run)
     graph.add_node('instruction_finder', instruction_finder_node.run)
+    graph.add_node('governance_walker', governance_walker_node.run)
     graph.add_node('pedagogical_component_finder', component_finder_node.run)
     graph.add_node(
         'statement_procedure_builder', statement_procedure_builder_node.run
@@ -345,40 +297,19 @@ def build_workflow(
     graph.add_node('triplet_extraction', triplet_extractor_node.run)
     graph.add_node('entity_enrichment', entity_enrichment_node.run)
     graph.add_node('predicate_enrichment', predicate_enrichment_node.run)
-    graph.add_node('hub_input', hub_input_node.run)
+
     graph.add_node('entity_hub_builder', entity_hub_node.run)
     graph.add_node('predicate_hub_builder', predicate_hub_node.run)
     graph.add_node('triplet_hub_builder', triplet_hub_node.run)
-    graph.add_node(
-        'statement_enrichment_input', statement_enrichment_input_node.run
-    )
-    graph.add_node(
-        'procedure_enrichment_input', procedure_enrichment_input_node.run
-    )
-    graph.add_node(
-        'procedure_materialization_input',
-        procedure_materialization_input_node.run,
-    )
-    graph.add_node('procedure_creator', procedure_creator_node.run)
     graph.add_node('statement_enrichment', statement_enrichment_node.run)
     graph.add_node('procedure_enrichment', procedure_enrichment_node.run)
     graph.add_node('statement_hub_builder', statement_hub_node.run)
     graph.add_node('procedure_hub_builder', procedure_hub_node.run)
     graph.add_node('final_projector', final_projector_node.run)
 
+    graph.add_edge(START, 'ocr')
     block_corrector_entry = 'ocr'
     formatter_entry = 'block_corrector_collect'
-    entity_enrichment_entry = 'entity_enrichment'
-    predicate_enrichment_entry = 'predicate_enrichment'
-    entity_hub_entry = 'entity_hub_builder'
-    predicate_hub_entry = 'predicate_hub_builder'
-    triplet_hub_entry = 'triplet_hub_builder'
-    statement_enrichment_entry = 'statement_enrichment'
-    procedure_creator_entry = 'procedure_creator'
-    procedure_enrichment_entry = 'procedure_enrichment'
-    statement_hub_entry = 'statement_hub_builder'
-    procedure_hub_entry = 'procedure_hub_builder'
-    procedure_hub_exit = 'procedure_hub_builder'
     seam_even_entry = 'formatter_collect'
     seam_odd_entry = 'seam_even_collect'
     splitter_entry = 'splitter'
@@ -386,152 +317,16 @@ def build_workflow(
     component_entry = 'pedagogical_component_finder'
     statement_builder_entry = 'statement_procedure_builder'
     triplet_entry = 'triplet_extraction'
-    if model_manager:
-        graph.add_node(
-            'switch_to_corrector',
-            serve.SwitchNode(model_manager, 'corrector').run,
-        )
-        graph.add_node(
-            'switch_to_formatter',
-            serve.SwitchNode(model_manager, 'formatter').run,
-        )
-        graph.add_node(
-            'switch_to_seam_merger',
-            serve.SwitchNode(model_manager, 'seam_merger').run,
-        )
-        graph.add_node(
-            'switch_to_splitter',
-            serve.SwitchNode(model_manager, 'splitter').run,
-        )
-        graph.add_node(
-            'switch_to_instruction_finder',
-            serve.SwitchNode(model_manager, 'instruction_router').run,
-        )
-        graph.add_node(
-            'switch_to_component_finder',
-            serve.SwitchNode(
-                model_manager, 'pedagogical_component_finder'
-            ).run,
-        )
-        graph.add_node(
-            'switch_to_statement_builder',
-            serve.SwitchNode(model_manager, 'role_typer').run,
-        )
-        graph.add_node(
-            'switch_to_triplet_extraction',
-            serve.SwitchNode(model_manager, 'atomic_fact_extractor').run,
-        )
-        graph.add_node(
-            'switch_to_entity_enrichment',
-            serve.SwitchNode(model_manager, 'entity_enrichment').run,
-        )
-        graph.add_node(
-            'switch_to_predicate_enrichment',
-            serve.SwitchNode(model_manager, 'predicate_enrichment').run,
-        )
-        graph.add_node(
-            'switch_to_entity_hub_builder',
-            serve.SwitchNode(model_manager, 'entity_hub_builder').run,
-        )
-        graph.add_edge(
-            'switch_to_entity_hub_builder', 'entity_hub_builder'
-        )
-        graph.add_node(
-            'switch_to_predicate_hub_builder',
-            serve.SwitchNode(model_manager, 'predicate_hub_builder').run,
-        )
-        graph.add_node(
-            'switch_to_triplet_hub_builder',
-            serve.SwitchNode(model_manager, 'triplet_hub_builder').run,
-        )
-        graph.add_node(
-            'switch_to_statement_enrichment',
-            serve.SwitchNode(model_manager, 'statement_enrichment').run,
-        )
-        graph.add_node(
-            'switch_to_procedure_enrichment',
-            serve.SwitchNode(model_manager, 'procedure_enrichment').run,
-        )
-        graph.add_node(
-            'switch_to_procedure_creator',
-            serve.SwitchNode(model_manager, 'procedure_creator').run,
-        )
-        graph.add_node(
-            'switch_to_statement_hub_builder',
-            serve.SwitchNode(model_manager, 'statement_hub_builder').run,
-        )
-        graph.add_node(
-            'switch_to_procedure_hub_builder',
-            serve.SwitchNode(model_manager, 'procedure_hub_builder').run,
-        )
-        graph.add_edge(START, 'ocr')
-        graph.add_edge('ocr', 'switch_to_corrector')
-        graph.add_edge('block_corrector_collect', 'switch_to_formatter')
-        graph.add_edge('formatter_collect', 'switch_to_seam_merger')
-        graph.add_edge('seam_even_collect', 'switch_to_seam_merger')
-        graph.add_edge('seam_odd_collect', 'switch_to_splitter')
-        graph.add_edge('splitter', 'switch_to_instruction_finder')
-        graph.add_edge(
-            'instruction_finder', 'switch_to_component_finder'
-        )
-        graph.add_edge(
-            'pedagogical_component_finder', 'switch_to_statement_builder'
-        )
-        graph.add_edge(
-            'statement_procedure_builder', 'switch_to_triplet_extraction'
-        )
-        graph.add_edge(
-            'switch_to_entity_enrichment', 'entity_enrichment'
-        )
-        graph.add_edge(
-            'switch_to_predicate_enrichment', 'predicate_enrichment'
-        )
-        graph.add_edge(
-            'switch_to_entity_hub_builder', 'entity_hub_builder'
-        )
-        graph.add_edge(
-            'switch_to_predicate_hub_builder', 'predicate_hub_builder'
-        )
-        graph.add_edge(
-            'switch_to_triplet_hub_builder', 'triplet_hub_builder'
-        )
-        graph.add_edge(
-            'switch_to_statement_enrichment', 'statement_enrichment'
-        )
-        graph.add_edge(
-            'switch_to_procedure_creator', 'procedure_creator'
-        )
-        graph.add_edge(
-            'switch_to_procedure_enrichment', 'procedure_enrichment'
-        )
-        graph.add_edge(
-            'switch_to_statement_hub_builder', 'statement_hub_builder'
-        )
-        graph.add_edge(
-            'switch_to_procedure_hub_builder', 'procedure_hub_builder'
-        )
-        block_corrector_entry = 'switch_to_corrector'
-        formatter_entry = 'switch_to_formatter'
-        statement_enrichment_entry = 'switch_to_statement_enrichment'
-        procedure_creator_entry = 'switch_to_procedure_creator'
-        procedure_enrichment_entry = 'switch_to_procedure_enrichment'
-        entity_enrichment_entry = 'switch_to_entity_enrichment'
-        predicate_enrichment_entry = 'switch_to_predicate_enrichment'
-        entity_hub_entry = 'switch_to_entity_hub_builder'
-        predicate_hub_entry = 'switch_to_predicate_hub_builder'
-        triplet_hub_entry = 'switch_to_triplet_hub_builder'
-        statement_hub_entry = 'switch_to_statement_hub_builder'
-        procedure_hub_entry = 'switch_to_procedure_hub_builder'
-        procedure_hub_exit = 'procedure_hub_builder'
-        seam_even_entry = 'switch_to_seam_merger'
-        seam_odd_entry = 'switch_to_seam_merger'
-        splitter_entry = 'switch_to_splitter'
-        instruction_entry = 'switch_to_instruction_finder'
-        component_entry = 'switch_to_component_finder'
-        statement_builder_entry = 'switch_to_statement_builder'
-        triplet_entry = 'switch_to_triplet_extraction'
-    if not model_manager:
-        graph.add_edge(START, 'ocr')
+    entity_enrichment_entry = 'entity_enrichment'
+    predicate_enrichment_entry = 'predicate_enrichment'
+    entity_hub_entry = 'entity_hub_builder'
+    predicate_hub_entry = 'predicate_hub_builder'
+    triplet_hub_entry = 'triplet_hub_builder'
+    statement_enrichment_entry = 'statement_enrichment'
+    procedure_enrichment_entry = 'procedure_enrichment'
+    statement_hub_entry = 'statement_hub_builder'
+    procedure_hub_entry = 'procedure_hub_builder'
+    procedure_hub_exit = 'procedure_hub_builder'
     graph.add_conditional_edges(
         block_corrector_entry,
         block_corrector_node.dispatch,
@@ -557,40 +352,18 @@ def build_workflow(
     )
     graph.add_edge('seam_odd_worker', 'seam_odd_collect')
     graph.add_edge('seam_odd_collect', splitter_entry)
-    if model_manager:
-        graph.add_edge('switch_to_splitter', 'splitter')
     graph.add_edge('splitter', instruction_entry)
-    if model_manager:
-        graph.add_edge(
-            'switch_to_instruction_finder', 'instruction_finder'
-        )
     graph.add_edge('instruction_finder', component_entry)
-    if model_manager:
-        graph.add_edge(
-            'switch_to_component_finder', 'pedagogical_component_finder'
-        )
     graph.add_edge('pedagogical_component_finder', statement_builder_entry)
-    if model_manager:
-        graph.add_edge(
-            'switch_to_statement_builder', 'statement_procedure_builder'
-        )
-    graph.add_edge('statement_procedure_builder', triplet_entry)
-    if model_manager:
-        graph.add_edge(
-            'switch_to_triplet_extraction', 'triplet_extraction'
-        )
+    graph.add_edge('statement_procedure_builder', 'governance_walker')
+    graph.add_edge('governance_walker', triplet_entry)
     graph.add_edge('triplet_extraction', entity_enrichment_entry)
     graph.add_edge('entity_enrichment', predicate_enrichment_entry)
-    graph.add_edge('predicate_enrichment', 'hub_input')
-    graph.add_edge('hub_input', entity_hub_entry)
+    graph.add_edge('predicate_enrichment', entity_hub_entry)
     graph.add_edge('entity_hub_builder', predicate_hub_entry)
     graph.add_edge('predicate_hub_builder', triplet_hub_entry)
-    graph.add_edge('triplet_hub_builder', 'statement_enrichment_input')
-    graph.add_edge('statement_enrichment_input', statement_enrichment_entry)
-    graph.add_edge('statement_enrichment', 'procedure_materialization_input')
-    graph.add_edge('procedure_materialization_input', procedure_creator_entry)
-    graph.add_edge('procedure_creator', 'procedure_enrichment_input')
-    graph.add_edge('procedure_enrichment_input', procedure_enrichment_entry)
+    graph.add_edge('triplet_hub_builder', statement_enrichment_entry)
+    graph.add_edge('statement_enrichment', procedure_enrichment_entry)
     graph.add_edge('procedure_enrichment', statement_hub_entry)
     graph.add_edge('statement_hub_builder', procedure_hub_entry)
     graph.add_edge(procedure_hub_exit, 'final_projector')

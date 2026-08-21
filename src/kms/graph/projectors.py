@@ -70,13 +70,6 @@ class FinalProjectorNode:
         await writer.persist_chain(
             nodes, source, session_factory=self._session_factory
         )
-        for update in bundle.procedure_step_updates:
-            await writer.persist_procedure_steps(
-                update.procedure_uuid,
-                list(update.steps),
-                update.source,
-                session_factory=self._session_factory,
-            )
 
     async def _persist_hubs(self, bundle, source: str) -> None:
         entity_records = bundle.entity_hub_records

@@ -13,8 +13,7 @@ from collections.abc import Callable
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.construction import hub_inputs
-from kms.core import content, embeddings, llm, models, module
+from kms.core import content, embeddings, identity, llm, models, module
 from kms.graph import hubs, queries, writer
 from kms.graph import triplets as graph_triplets
 
@@ -128,15 +127,15 @@ def build_source_groups(
     predicate_hubs: list[dict] | None = None,
 ) -> list[dict]:
     """Builds exact source-local TripletHub groups without graph reads."""
-    entity_map = hub_inputs.assignment_map(entity_assignments)
-    predicate_map = hub_inputs.assignment_map(predicate_assignments)
-    memberships = hub_inputs.build_triplet_memberships(
+    entity_map = assignment_map(entity_assignments)
+    predicate_map = assignment_map(predicate_assignments)
+    memberships = build_triplet_memberships(
         triplets,
         source=source,
         entity_assignments=entity_map,
         predicate_assignments=predicate_map,
     )
-    grouped = hub_inputs.exact_tuple_intersections(list(memberships))
+    grouped = exact_tuple_intersections(list(memberships))
     entity_context = {hub['uuid']: hub for hub in entity_hubs or []}
     predicate_context = {hub['uuid']: hub for hub in predicate_hubs or []}
     groups = []
@@ -282,6 +281,75 @@ async def _synthesize_groups(
         {**group, 'embedding': vector}
         for group, vector in zip(synthesized, vectors, strict=True)
     ]
+
+
+def assignment_map(assignments: list[dict]) -> dict[str, tuple[str, ...]]:
+    """Converts writer-shaped component assignments into grouped memberships."""
+    grouped: dict[str, set[str]] = {}
+    for assignment in assignments:
+        grouped.setdefault(assignment['component'], set()).add(
+            assignment['hub']
+        )
+    return {
+        component: tuple(sorted(hubs)) for component, hubs in grouped.items()
+    }
+
+
+def build_triplet_memberships(
+    triplets: list[models.Triplet],
+    *,
+    source: str,
+    entity_assignments: dict[str, tuple[str, ...]],
+    predicate_assignments: dict[str, tuple[str, ...]],
+) -> tuple[models.TripletMembership, ...]:
+    """Builds role-ordered canonical memberships for extracted triplets."""
+    memberships = []
+    for index, triplet in enumerate(triplets):
+        subject_hubs: set[str] = set()
+        object_hubs: set[str] = set()
+        predicate_hubs: set[str] = set()
+        for node_id in triplet.node_ids:
+            subject_hubs.update(
+                entity_assignments.get(
+                    identity.entity_uuid(source, node_id, triplet.subject), ()
+                )
+            )
+            object_hubs.update(
+                entity_assignments.get(
+                    identity.entity_uuid(source, node_id, triplet.object), ()
+                )
+            )
+            predicate_hubs.update(
+                predicate_assignments.get(
+                    triplet.predicate_uuids[node_id],
+                    (),
+                )
+            )
+        memberships.append(
+            models.TripletMembership(
+                triplet_index=index,
+                source=source,
+                subject_hubs=tuple(sorted(subject_hubs)),
+                predicate_hubs=tuple(sorted(predicate_hubs)),
+                object_hubs=tuple(sorted(object_hubs)),
+            )
+        )
+    return tuple(memberships)
+
+
+def exact_tuple_intersections(
+    memberships: list[models.TripletMembership],
+) -> dict[tuple[str, str, str], set[int]]:
+    """Returns triplets having each exact ordered hub tuple membership."""
+    result: dict[tuple[str, str, str], set[int]] = {}
+    for membership in memberships:
+        for subject in membership.subject_hubs:
+            for predicate in membership.predicate_hubs:
+                for object_ in membership.object_hubs:
+                    result.setdefault((subject, predicate, object_), set()).add(
+                        membership.triplet_index
+                    )
+    return result
 
 
 async def build_source(

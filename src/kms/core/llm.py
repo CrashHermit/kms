@@ -8,6 +8,17 @@ import dspy
 from kms import config
 
 
+def configured_serving_model(module_name: str) -> str:
+    """Returns the configured serving preset for one logical module."""
+    module_models = config.get_settings().serving.module_models
+    try:
+        return module_models[module_name]
+    except KeyError as exc:
+        raise RuntimeError(
+            f'No serving model configured for module {module_name!r}.'
+        ) from exc
+
+
 def gate(limit: int | None = None) -> asyncio.Semaphore:
     """Returns a semaphore limiting concurrent LLM calls.
 
@@ -65,7 +76,7 @@ def module_lm(module_name: str) -> dspy.LM:
         )
         if not model.startswith('openai/'):
             model = f'openai/{model}'
-        return dspy.LM(
+        language_model = dspy.LM(
             model,
             api_base=module_config.base_url,
             api_key=module_config.api_key or 'not-needed',
@@ -73,8 +84,10 @@ def module_lm(module_name: str) -> dspy.LM:
             max_tokens=module_config.max_tokens,
             cache=True,
         )
+        language_model._kms_module_name = module_name
+        return language_model
 
-    return dspy.LM(
+    language_model = dspy.LM(
         module_config.model,
         api_key=_require_key(
             settings.models.openrouter_api_key
@@ -92,3 +105,4 @@ def module_lm(module_name: str) -> dspy.LM:
         cache=True,
         **_provider_routing(module_config.provider or None),
     )
+    return language_model

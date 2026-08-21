@@ -69,33 +69,16 @@ def test_workflow_uses_one_final_projector():
     assert "'final_projector', END" in source
 
 
-def test_managed_workflow_has_one_serial_bundle_route(monkeypatch):
+def test_workflow_has_no_model_switch_nodes(monkeypatch):
     monkeypatch.setattr(workflow.llm, 'module_lm', lambda name: object())
-
-    class Manager:
-        async def aswitch(self, name):
-            pass
-
-    graph = workflow.build_workflow(model_manager=Manager()).get_graph()
+    graph = workflow.build_workflow().get_graph()
+    node_names = set(graph.nodes)
     edges = {(edge.source, edge.target) for edge in graph.edges}
 
-    assert ('hub_input', 'entity_hub_builder') not in edges
-    assert ('hub_input', 'switch_to_entity_hub_builder') in edges
-    assert (
-        'switch_to_entity_hub_builder',
-        'entity_hub_builder',
-    ) in edges
-    assert (
-        'switch_to_procedure_enrichment',
-        'switch_to_statement_hub_builder',
-    ) not in edges
-    assert (
-        'procedure_enrichment',
-        'switch_to_statement_hub_builder',
-    ) in edges
+    assert not any(name.startswith('switch_to_') for name in node_names)
+    assert ('statement_procedure_builder', 'governance_walker') in edges
+    assert ('governance_walker', 'triplet_extraction') in edges
     assert ('procedure_hub_builder', 'final_projector') in edges
-    assert ('procedure_hub_builder', '__end__') not in edges
-    assert ('switch_to_entity_hub_builder', '__end__') not in edges
 
 
 def test_workflow_defines_the_langgraph_composition():

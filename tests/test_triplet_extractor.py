@@ -49,10 +49,10 @@ class _TripletModule:
 def test_extract_triplets_assigns_only_anchor_provenance(monkeypatch) -> None:
     nodes = [
         SimpleNamespace(
-            id=10, type='paragraph', content='Anchor A', image_path=None
+            type='paragraph', content='Anchor A', image_path=None
         ),
         SimpleNamespace(
-            id=42, type='paragraph', content='Context B', image_path=None
+            type='paragraph', content='Context B', image_path=None
         ),
     ]
     fact_module = _FactModule()
@@ -72,19 +72,22 @@ def test_extract_triplets_assigns_only_anchor_provenance(monkeypatch) -> None:
         )
     )
 
-    assert [call['current_nodes'][0].id for call in fact_module.calls] == [
-        10,
-        42,
-    ]
-    assert fact_module.calls[0]['context_after'] == 'Context B'
-    assert [triplet.node_ids for triplet in result] == [[10], [42]]
+    # With position-based references, the marked window anchor position
+    # is 0 in each call (the only target in the window)
+    assert [
+        next(
+            node.position for node in call['current_nodes'] if node.marker == 'anchor'
+        )
+        for call in fact_module.calls
+    ] == [0, 1]
+    # node_ids are now positions
+    assert [triplet.node_ids for triplet in result] == [[0], [1]]
     assert all(triplet.occurrence_uuids for triplet in result)
 
 
 def test_extract_triplets_allows_an_image_anchor() -> None:
     nodes = [
         SimpleNamespace(
-            id=7,
             type='image',
             content=None,
             image_path='/tmp/figure.png',
@@ -105,5 +108,5 @@ def test_extract_triplets_allows_an_image_anchor() -> None:
     assert (
         fact_module.calls[0]['current_nodes'][0].image_path == '/tmp/figure.png'
     )
-    assert result[0].node_ids == [7]
+    assert result[0].node_ids == [0]
     assert result[0].occurrence_uuids

@@ -3,37 +3,46 @@ from kms.graph import nodes
 
 
 def test_node_uuid_is_deterministic():
-    assert nodes.node_uuid('hefferon.pdf', 7) == nodes.node_uuid(
-        'hefferon.pdf', 7
+    node = models.Node(uuid='node-7', document_index=0)
+    assert nodes.node_uuid('hefferon.pdf', node) == nodes.node_uuid(
+        'hefferon.pdf', node
     )
 
 
 def test_node_uuid_distinguishes_index_and_source():
-    assert nodes.node_uuid('hefferon.pdf', 7) != nodes.node_uuid(
-        'hefferon.pdf', 8
+    node1 = models.Node(uuid='node-7', document_index=0)
+    node2 = models.Node(uuid='node-8', document_index=0)
+    # When nodes have explicit UUIDs, they use those; test with nodes without UUIDs
+    node_a = models.Node(document_index=0, index=7)
+    node_b = models.Node(document_index=0, index=8)
+    assert nodes.node_uuid('hefferon.pdf', node_a) != nodes.node_uuid(
+        'hefferon.pdf', node_b
     )
-    assert nodes.node_uuid('hefferon.pdf', 7) != nodes.node_uuid('lebl.pdf', 7)
+    node_c = models.Node(document_index=0, index=7)
+    assert nodes.node_uuid('hefferon.pdf', node_a) != nodes.node_uuid(
+        'lebl.pdf', node_c
+    )
 
 
 def test_node_properties_maps_kind_content_and_provenance():
-    node = models.Node(type='math', content='$x^2$', id=3, document_index=2)
+    node = models.Node(uuid='node-3', type='math', content='$x^2$', document_index=2)
     props = nodes.node_properties(node, 'book.pdf')
     assert props['type'] == 'math'
     assert props['content'] == '$x^2$'
-    assert props['index'] == 3 and props['document_index'] == 2
+    assert props['uuid'] == 'node-3' and props['document_index'] == 2
 
 
 def test_node_properties_keep_index_zero():
     node = models.Node(
-        type='paragraph', content='text', id=0, document_index=0
+        uuid='node-0', type='paragraph', content='text', document_index=0
     )
     props = nodes.node_properties(node, 'book.pdf')
-    assert props['index'] == 0
+    assert props['uuid'] == 'node-0'
 
 
 def test_node_properties_omits_role_field():
     node = models.Node(
-        type='list', content='1. do it', id=5, document_index=1
+        uuid='node-5', type='list', content='1. do it', document_index=1
     )
     assert 'role' not in nodes.node_properties(node, 'book.pdf')
 
@@ -70,7 +79,7 @@ def test_node_label_for_typeless_node():
 
 
 def test_node_properties_link_back_to_source():
-    node = models.Node(type='math', content='$x$', id=3, document_index=2)
+    node = models.Node(uuid='node-3', type='math', content='$x$', document_index=2)
     assert nodes.node_properties(node, 'book.pdf')[
         'source'
     ] == nodes.source_uuid('book.pdf')

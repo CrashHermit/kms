@@ -3,8 +3,12 @@ from types import SimpleNamespace
 import dspy
 from langgraph.types import Send
 
+import logging
+
 from kms.core import content, models, module, state
 from kms.core.edits import LineEdit, apply_line_edits, number_lines
+
+logger = logging.getLogger(__name__)
 
 
 class BlockReviewSignature(dspy.Signature):
@@ -211,7 +215,19 @@ class BlockCorrectionEditor(module.Module):
             raise RuntimeError(
                 'block corrector editor emitted a non-replacement edit'
             )
-        return edits
+        original_text = inputs.get('original_text', '')
+        max_line = len(original_text.split('\n'))
+        valid_edits = []
+        for edit in edits:
+            if 1 <= edit.index <= max_line:
+                valid_edits.append(edit)
+            else:
+                logger.warning(
+                    'block corrector editor returned out-of-range edit: '
+                    f'index={edit.index}, max_line={max_line}, '
+                    f'block_type={inputs.get("block_type")}'
+                )
+        return valid_edits
 
 
 class BlockCorrector:

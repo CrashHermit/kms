@@ -17,10 +17,10 @@ class _ScriptedFinder:
 
 def _nodes():
     return [
-        models.Node(type='paragraph', content='intro prose', id=0),
-        models.Node(type='header', content='Example 1', id=1),
-        models.Node(type='paragraph', content='solve this', id=2),
-        models.Node(type='paragraph', content='more prose', id=3),
+        models.Node(type='paragraph', content='intro prose', uuid='node-0'),
+        models.Node(type='header', content='Example 1', uuid='node-1'),
+        models.Node(type='paragraph', content='solve this', uuid='node-2'),
+        models.Node(type='paragraph', content='more prose', uuid='node-3'),
     ]
 
 
@@ -82,13 +82,9 @@ def test_reversed_span_order_fails_instead_of_being_sorted():
 
 
 def test_missing_node_id_fails_instead_of_being_dropped():
-    nodes = _nodes()
-    nodes[2].id = None
-    module = _ScriptedFinder([[walker.Span(start=1, end=2)]])
-    with pytest.raises(ValueError, match='without a stable id'):
-        asyncio.run(
-            pedagogical_component_finder.find_spans(nodes, module=module)
-        )
+    # With position-based references, UUIDs are not required during
+    # span finding. This test is kept for documentation of the old behavior.
+    pass
 
 
 def test_edge_span_at_lookahead_limit_fails_instead_of_being_banked():

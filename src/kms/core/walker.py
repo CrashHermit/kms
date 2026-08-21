@@ -15,16 +15,6 @@ def estimate_text_tokens(text: str | None) -> int:
     return len(text or '') // 4 + 1
 
 
-def position_for_id(nodes: list[models.Node], node_id: int) -> int:
-    """Returns the current list position for a stable node id."""
-    for position, node in enumerate(nodes):
-        if node.id == node_id:
-            return position
-    raise KeyError(
-        f'node id {node_id} is not present in a stream of {len(nodes)} nodes'
-    )
-
-
 def estimate_tokens(node: models.Node) -> int:
     """Rough token estimate for one node's content."""
     return estimate_text_tokens(node.content)
@@ -33,12 +23,10 @@ def estimate_tokens(node: models.Node) -> int:
 class WindowNode(BaseModel):
     """A node's projection within one window.
 
-    ``position`` is the node's 0-based index within the window;
-    ``id`` is its stable global id in the flattened stream.
+    ``position`` is the node's 0-based index within the window.
     """
 
     position: int
-    id: int | None = None
     type: str | None = None
     content: str | None = None
     image_path: str | None = None
@@ -67,7 +55,6 @@ def node_views(nodes: list[models.Node]) -> list[WindowNode]:
     return [
         WindowNode(
             position=position,
-            id=node.id,
             type=node.type,
             content=node.content,
             image_path=node.image_path,
@@ -123,63 +110,59 @@ def window_from(nodes: list[models.Node], cursor: int, budget: int) -> int:
     return end
 
 
-def window_around(
-    nodes: list[models.Node], cursor: int, budget: int
-) -> list[models.Node]:
-    """Returns one contiguous token-bounded window centered on a cursor."""
-    if not 0 <= cursor < len(nodes):
-        raise IndexError(f'cursor {cursor} is outside {len(nodes)} nodes')
-    start = end = cursor
-    accumulated = estimate_tokens(nodes[cursor])
-    prefer_left = True
-    while start > 0 or end + 1 < len(nodes):
-        left_size = estimate_tokens(nodes[start - 1]) if start > 0 else None
-        right_size = (
-            estimate_tokens(nodes[end + 1])
-            if end + 1 < len(nodes)
-            else None
-        )
-        choices = (
-            ('left', left_size),
-            ('right', right_size),
-        )
-        if not prefer_left:
-            choices = choices[::-1]
-        added = False
-        for side, size in choices:
-            if size is None or accumulated + size > budget:
-                continue
-            if side == 'left':
-                start -= 1
-            else:
-                end += 1
-            accumulated += size
-            prefer_left = not prefer_left
-            added = True
-            break
-        if not added:
-            break
-    return nodes[start : end + 1]
-
-
-def marked_window_around(
+def marked_window(
     nodes: list[models.Node],
-    cursor: int,
-    budget: int,
-    marker: str,
+    target_positions: list[int],
+    backward_budget: int = 0,
+    forward_budget: int = 0,
+    marker: str = 'target',
 ) -> list[WindowNode]:
-    """Returns a bounded local view with the cursor explicitly marked."""
-    window = window_around(nodes, cursor, budget)
+    """Builds one static marked window around one or more target nodes.
+
+    The target nodes are always included. Context is added independently from
+    the target span in each direction, so zero disables that side.
+    """
+    if not target_positions:
+        raise ValueError('marked window requires at least one target position')
+    if backward_budget < 0 or forward_budget < 0:
+        raise ValueError('context budgets must be non-negative')
+    if any(not 0 <= position < len(nodes) for position in target_positions):
+        raise IndexError(
+            f'target positions {target_positions} are outside '
+            f'{len(nodes)} nodes'
+        )
+
+    target_set = set(target_positions)
+    window_start = min(target_set)
+    window_end = max(target_set) + 1
+
+    accumulated = 0
+    while window_start > 0:
+        size = estimate_tokens(nodes[window_start - 1])
+        if accumulated + size > backward_budget:
+            break
+        window_start -= 1
+        accumulated += size
+
+    accumulated = 0
+    while window_end < len(nodes):
+        size = estimate_tokens(nodes[window_end])
+        if accumulated + size > forward_budget:
+            break
+        window_end += 1
+        accumulated += size
+
     return [
         WindowNode(
-            position=position,
-            id=node.id,
+            position=local_position,
             type=node.type,
             content=node.content,
             image_path=node.image_path,
-            marker=marker if node is nodes[cursor] else None,
+            marker=(
+                marker if window_start + local_position in target_set else None
+            ),
         )
-        for position, node in enumerate(window)
+        for local_position, node in enumerate(nodes[window_start:window_end])
     ]
 
 
@@ -207,8 +190,7 @@ def fixed_windows_with_context(
     eligible = [
         (index, node)
         for index, node in enumerate(nodes)
-        if node.id is not None
-        and node.content
+        if node.content
         and node.content.strip()
         and node.type != 'image'
     ]
@@ -368,13 +350,13 @@ async def find_spans(
     any finder exposing ``aforward(current_nodes=...) -> list[Span]``.
 
     Args:
-        nodes: The node stream, with ids assigned.
+        nodes: The node stream.
         module: The finder module.
         budget: Initial look-ahead token budget per window.
         max_budget: Cap on window growth before banking as-is.
 
     Returns:
-        A list of member-id lists, one per span.
+        A list of member position lists, one per span.
     """
     spans_out: list[list[int]] = []
     cursor, node_count = 0, len(nodes)
@@ -415,16 +397,16 @@ async def find_spans(
                 continue
 
             for span in to_bank:
-                member_ids = [
-                    window[position].id
+                member_positions = [
+                    cursor + position
                     for position in range(span.start, span.end + 1)
                 ]
-                if any(node_id is None for node_id in member_ids):
+                if any(position >= len(nodes) for position in member_positions):
                     raise ValueError(
                         f'finder span ({span.start}, {span.end}) references '
-                        f'a node without a stable id at cursor {cursor}'
+                        f'a position outside node stream at cursor {cursor}'
                     )
-                spans_out.append(member_ids)
+                spans_out.append(member_positions)
             cursor = advance
             break
 

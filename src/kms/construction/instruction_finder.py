@@ -382,10 +382,9 @@ def _strict_bool(value: object, field_name: str) -> bool:
 def _node_view(
     node: models.Node, position: int, marker: str | None = None
 ) -> walker.WindowNode:
-    """Builds a local view while retaining the stream position and id."""
+    """Builds a local view for the designated or candidate node."""
     return walker.WindowNode(
         position=position,
-        id=node.id,
         type=node.type,
         content=node.content,
         image_path=node.image_path,
@@ -412,8 +411,12 @@ async def find_instruction_spans(
     )
 
     while cursor < len(nodes):
-        start_window = walker.marked_window_around(
-            nodes, cursor, context_budget, 'designated'
+        start_window = walker.marked_window(
+            nodes,
+            [cursor],
+            backward_budget=0,
+            forward_budget=context_budget,
+            marker='designated',
         )
         is_start = _strict_bool(
             await router.aforward(current_node=start_window),
@@ -429,8 +432,12 @@ async def find_instruction_spans(
                 _node_view(nodes[position], position)
                 for position in range(cursor, end)
             ]
-            candidate_window = walker.marked_window_around(
-                nodes, end, context_budget, 'candidate'
+            candidate_window = walker.marked_window(
+                nodes,
+                [end],
+                backward_budget=0,
+                forward_budget=context_budget,
+                marker='candidate',
             )
             include = _strict_bool(
                 await grower.aforward(
@@ -443,13 +450,8 @@ async def find_instruction_spans(
                 break
             end += 1
 
-        member_ids = [nodes[position].id for position in range(cursor, end)]
-        if any(node_id is None for node_id in member_ids):
-            raise ValueError(
-                f'instruction span at positions {cursor}:{end} references '
-                'a node without a stable id'
-            )
-        spans.append([node_id for node_id in member_ids if node_id is not None])
+        member_positions = list(range(cursor, end))
+        spans.append(member_positions)
         cursor = end
 
     logger.info(

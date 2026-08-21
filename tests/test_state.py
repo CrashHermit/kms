@@ -18,15 +18,15 @@ def _state() -> state.State:
         'source_key': 'ignored-after-source-materializes',
         'source_metadata': {'ignored': 'metadata'},
         'documents': source.documents,
-        'nodes': [models.Node(id=10, document_index=0, content='text')],
-        'instructions': [models.Instruction(block=[0], members=[10])],
-        'statements': [models.Statement(block=[1], members=[10])],
-        'procedures': [models.Procedure(block=[2], members=[10])],
-        'triplets': [models.Triplet('subject', 'predicate', 'object', [10])],
-        'entity_descriptions': {10: {'term': None}},
-        'predicate_descriptions': {10: {'term': 'relation'}},
-        'entity_embeddings': {10: {'model': [1.0, 2.0]}},
-        'predicate_embeddings': {10: {'model': [3.0, 4.0]}},
+        'nodes': [models.Node(uuid='node-10', document_index=0, content='text')],
+        'instructions': [models.Instruction(block=[0], members=[0])],
+        'statements': [models.Statement(block=[1], members=[0])],
+        'procedures': [models.Procedure(block=[2], members=[0])],
+        'triplets': [models.Triplet('subject', 'predicate', 'object', [0])],
+        'entity_descriptions': {0: {'term': None}},
+        'predicate_descriptions': {0: {'term': 'relation'}},
+        'entity_embeddings': {0: {'model': [1.0, 2.0]}},
+        'predicate_embeddings': {0: {'model': [3.0, 4.0]}},
         'spans': [[0, 1]],
     }
 
@@ -43,10 +43,10 @@ def test_to_construction_bundle_projects_durable_data_only() -> None:
     assert bundle.statements == current_state['statements']
     assert bundle.procedures == current_state['procedures']
     assert bundle.triplets == current_state['triplets']
-    assert bundle.entity_descriptions == {10: {'term': None}}
-    assert bundle.predicate_descriptions == {10: {'term': 'relation'}}
-    assert bundle.entity_embeddings == {10: {'model': [1.0, 2.0]}}
-    assert bundle.predicate_embeddings == {10: {'model': [3.0, 4.0]}}
+    assert bundle.entity_descriptions == {0: {'term': None}}
+    assert bundle.predicate_descriptions == {0: {'term': 'relation'}}
+    assert bundle.entity_embeddings == {0: {'model': [1.0, 2.0]}}
+    assert bundle.predicate_embeddings == {0: {'model': [3.0, 4.0]}}
     assert bundle.source.key != current_state['source_key']
 
 
@@ -84,9 +84,9 @@ def test_to_construction_bundle_does_not_alias_state_collections() -> None:
     bundle = state.to_construction_bundle(current_state)
 
     bundle.nodes.clear()
-    bundle.entity_descriptions[10]['term'] = 'changed'
-    bundle.entity_embeddings[10]['model'].append(5.0)
+    bundle.entity_descriptions[0]['term'] = 'changed'
+    bundle.entity_embeddings[0]['model'].append(5.0)
 
     assert current_state['nodes']
-    assert current_state['entity_descriptions'] == {10: {'term': None}}
-    assert current_state['entity_embeddings'] == {10: {'model': [1.0, 2.0]}}
+    assert current_state['entity_descriptions'] == {0: {'term': None}}
+    assert current_state['entity_embeddings'] == {0: {'model': [1.0, 2.0]}}

@@ -2,8 +2,7 @@ import dspy
 from pydantic import BaseModel, Field
 
 from kms import config
-from kms.construction import hub_inputs
-from kms.core import content, module, semantic, state
+from kms.core import content, identity, module, semantic, state, models
 
 
 class TermDescription(BaseModel):
@@ -52,14 +51,14 @@ async def enrich(
     triplets,
     enricher: PredicateEnricher,
 ) -> dict[int, dict[str, str | None]]:
-    terms_by_node: dict[int, set[str]] = {}
+    terms_by_position: dict[int, set[str]] = {}
     for triplet in triplets:
-        for node_id in triplet.node_ids:
-            terms_by_node.setdefault(node_id, set()).add(triplet.predicate)
+        for position in triplet.node_ids:
+            terms_by_position.setdefault(position, set()).add(triplet.predicate)
     stage = config.get_settings().stages.predicate_enrichment
     return await semantic.describe_terms(
         nodes,
-        terms_by_node,
+        terms_by_position,
         enricher,
         stage.before_budget,
         stage.after_budget,
@@ -81,15 +80,21 @@ class PredicateEnrichmentNode:
         source = bundle.source.key or ''
         bundle.predicate_descriptions = descriptions
         bundle.predicate_embeddings = vectors
-        bundle.predicate_hub_components = list(
-            hub_inputs.build_hub_components(
-                kind='predicate',
+        bundle.predicate_hub_components = [
+            models.HubComponent(
+                uuid=identity.predicate_uuid(triplet.occurrence_uuids[position]),
                 source=source,
-                triplets=triplets,
-                descriptions=descriptions,
-                embeddings=vectors,
+                node_id=position,
+                name=name,
+                description=descriptions.get(position, {}).get(name),
+                embedding=list(vectors.get(position, {}).get(name, [])),
             )
-        )
+            for triplet in triplets
+            for position in triplet.node_ids
+            for name in (triplet.predicate,)
+            if triplet.occurrence_uuids.get(position) is not None
+            and vectors.get(position, {}).get(name) is not None
+        ]
         return {
             'predicate_descriptions': descriptions,
             'predicate_embeddings': vectors,

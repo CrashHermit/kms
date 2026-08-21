@@ -44,18 +44,18 @@ def assertion_rows(
     predicate_edges: list[dict] = []
 
     for triplet in triplets:
-        for node_id in triplet.node_ids:
-            triplet_id = triplet.occurrence_uuids.get(node_id)
+        for node_position in triplet.node_ids:
+            triplet_id = triplet.occurrence_uuids.get(node_position)
             expected_triplet_id = identity.triplet_uuid(
                 source,
-                node_id,
+                node_position,
                 triplet.subject,
                 triplet.predicate,
                 triplet.object,
             )
             if triplet_id is None:
                 raise ValueError(
-                    f'triplet occurrence for node {node_id} is missing its uuid'
+                    f'triplet occurrence for position {node_position} is missing its uuid'
                 )
             if triplet_id != expected_triplet_id:
                 raise ValueError(
@@ -63,20 +63,20 @@ def assertion_rows(
                     f'expected {expected_triplet_id!r}'
                 )
             expected_subject_id = entities.entity_uuid(
-                source, node_id, triplet.subject
+                source, node_position, triplet.subject
             )
             expected_object_id = entities.entity_uuid(
-                source, node_id, triplet.object
+                source, node_position, triplet.object
             )
             expected_predicate_id = predicates.predicate_uuid(triplet_id)
             subject_id = triplet.entity_uuids.get(
-                (node_id, triplet.subject), expected_subject_id
+                (node_position, triplet.subject), expected_subject_id
             )
             object_id = triplet.entity_uuids.get(
-                (node_id, triplet.object), expected_object_id
+                (node_position, triplet.object), expected_object_id
             )
             predicate_id = triplet.predicate_uuids.get(
-                node_id, expected_predicate_id
+                node_position, expected_predicate_id
             )
             if subject_id != expected_subject_id:
                 raise ValueError('triplet subject entity uuid does not match')
@@ -85,25 +85,25 @@ def assertion_rows(
             if predicate_id != expected_predicate_id:
                 raise ValueError('triplet predicate uuid does not match')
 
-            node_descriptions = entity_descriptions.get(node_id, {})
+            node_descriptions = entity_descriptions.get(node_position, {})
             node_entity_embeddings = (
-                entity_embeddings.get(node_id, {}) if entity_embeddings else {}
+                entity_embeddings.get(node_position, {}) if entity_embeddings else {}
             )
             node_predicate_embeddings = (
-                predicate_embeddings.get(node_id, {})
+                predicate_embeddings.get(node_position, {})
                 if predicate_embeddings
                 else {}
             )
             entity_rows[subject_id] = entities.entity_properties(
                 source,
-                node_id,
+                node_position,
                 triplet.subject,
                 node_descriptions.get(triplet.subject),
                 node_entity_embeddings.get(triplet.subject),
             )
             entity_rows[object_id] = entities.entity_properties(
                 source,
-                node_id,
+                node_position,
                 triplet.object,
                 node_descriptions.get(triplet.object),
                 node_entity_embeddings.get(triplet.object),
@@ -111,10 +111,10 @@ def assertion_rows(
             subject_name_id = names.name_uuid('entity', subject_id)
             object_name_id = names.name_uuid('entity', object_id)
             entity_name_rows[subject_name_id] = names.name_properties(
-                'entity', source, subject_id, triplet.subject, node_id
+                'entity', source, subject_id, triplet.subject, node_position
             )
             entity_name_rows[object_name_id] = names.name_properties(
-                'entity', source, object_id, triplet.object, node_id
+                'entity', source, object_id, triplet.object, node_position
             )
             entity_name_edges.extend(
                 [
@@ -124,17 +124,17 @@ def assertion_rows(
             )
             predicate_name_id = names.name_uuid('predicate', predicate_id)
             predicate_name_rows[predicate_name_id] = names.name_properties(
-                'predicate', source, predicate_id, triplet.predicate, node_id
+                'predicate', source, predicate_id, triplet.predicate, node_position
             )
             predicate_name_edges.append(
                 {'component': predicate_id, 'name': predicate_name_id}
             )
             predicate_rows[predicate_id] = predicates.predicate_properties(
                 source,
-                node_id,
+                node_position,
                 triplet_id,
                 triplet.predicate,
-                predicate_descriptions.get(node_id, {}).get(triplet.predicate),
+                predicate_descriptions.get(node_position, {}).get(triplet.predicate),
                 node_predicate_embeddings.get(triplet.predicate),
             )
 

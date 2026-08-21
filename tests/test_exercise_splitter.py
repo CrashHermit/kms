@@ -19,17 +19,17 @@ def _nodes():
         models.Node(
             type='paragraph',
             content='In Exercises 3-4, compute the determinant.',
-            id=0,
+            uuid='node-0',
             document_index=0,
         ),
         models.Node(
             type='list',
             content='3 matrix A\n4 matrix B',
-            id=1,
+            uuid='node-1',
             document_index=0,
         ),
         models.Node(
-            type='paragraph', content='ordinary prose', id=2, document_index=0
+            type='paragraph', content='ordinary prose', uuid='node-2', document_index=0
         ),
     ]
 
@@ -45,7 +45,6 @@ def test_splits_a_packed_node():
     out = asyncio.run(
         splitter.split_exercises(_nodes(), module=_ScriptedSplitter([[split]]))
     )
-    assert [n.id for n in out] == [0, 1, 2, 3]
     assert [n.content for n in out] == [
         'In Exercises 3-4, compute the determinant.',
         '3 matrix A',
@@ -152,10 +151,10 @@ def test_no_verdict_passes_through():
     out = asyncio.run(
         splitter.split_exercises(_nodes(), module=_ScriptedSplitter([[]]))
     )
-    assert [(n.id, n.content) for n in out] == [
-        (0, 'In Exercises 3-4, compute the determinant.'),
-        (1, '3 matrix A\n4 matrix B'),
-        (2, 'ordinary prose'),
+    assert [(n.content) for n in out] == [
+        'In Exercises 3-4, compute the determinant.',
+        '3 matrix A\n4 matrix B',
+        'ordinary prose',
     ]
 
 
@@ -165,21 +164,21 @@ def test_splitter_preserves_mistral_block_boundaries_while_splitting_packed_list
         models.Node(
             type=models.NodeType.PARAGRAPH,
             content='Solve each problem below.',
-            id=0,
+            uuid='node-0',
             document_index=2,
             provenance={'provider': 'mistral', 'provider_index': 4},
         ),
         models.Node(
             type=models.NodeType.LIST,
             content='1. Solve $x + 1 = 2$.\\n2. Prove that $0 < 1$.',
-            id=1,
+            uuid='node-1',
             document_index=2,
             provenance={'provider': 'mistral', 'provider_index': 5},
         ),
         models.Node(
             type=models.NodeType.MATH,
             content='$$x = 1$$',
-            id=2,
+            uuid='node-2',
             document_index=2,
             provenance={'provider': 'mistral', 'provider_index': 6},
         ),
@@ -207,7 +206,6 @@ def test_splitter_preserves_mistral_block_boundaries_while_splitting_packed_list
         models.NodeType.MATH,
     ]
     assert [node.document_index for node in out] == [2, 2, 2, 2]
-    assert [node.id for node in out] == [0, 1, 2, 3]
 
 
 def test_splitter_leaves_already_separate_mistral_blocks_untouched():
@@ -215,14 +213,14 @@ def test_splitter_leaves_already_separate_mistral_blocks_untouched():
         models.Node(
             type=models.NodeType.LIST,
             content='1. First exercise.',
-            id=0,
+            uuid='node-0',
             document_index=2,
             provenance={'provider': 'mistral', 'provider_index': 5},
         ),
         models.Node(
             type=models.NodeType.LIST,
             content='2. Second exercise.',
-            id=1,
+            uuid='node-1',
             document_index=2,
             provenance={'provider': 'mistral', 'provider_index': 6},
         ),
@@ -230,9 +228,9 @@ def test_splitter_leaves_already_separate_mistral_blocks_untouched():
     out = asyncio.run(
         splitter.split_exercises(nodes, module=_ScriptedSplitter([[]]))
     )
-    assert [(node.id, node.content) for node in out] == [
-        (0, '1. First exercise.'),
-        (1, '2. Second exercise.'),
+    assert [(node.content) for node in out] == [
+        '1. First exercise.',
+        '2. Second exercise.',
     ]
     assert [node.provenance['provider_index'] for node in out] == [5, 6]
 
@@ -253,7 +251,7 @@ def test_splitter_node_synchronizes_documents():
             nodes=_nodes(),
         )
     ]
-    out = asyncio.run(node.run({'nodes': _nodes(), 'documents': documents}))
+    out = asyncio.run(node.run({'nodes': _nodes(), 'documents': documents, 'source_key': 'test_source'}))
     assert set(out) == {'documents', 'nodes'}
     assert len(out['nodes']) == 4
     assert [node.content for node in out['documents'][0].nodes] == [

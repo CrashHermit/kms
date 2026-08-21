@@ -6,7 +6,7 @@ import time
 
 import dspy
 
-from kms.core import logs, recording
+from kms.core import llm, logs, recording, serve
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +64,10 @@ class Module(dspy.Module):
         raise NotImplementedError
 
     async def aforward(self, **inputs: object) -> object:
-        """Encodes, calls the LM, records, and decodes."""
+        """Encodes, ensures the configured model, calls, and decodes."""
         kwargs = self.encode(**inputs)
         start = time.perf_counter()
-        prediction = await self.predictor.acall(**kwargs)
+        prediction = await self._call_predictor(kwargs)
         duration_ms = round((time.perf_counter() - start) * 1000, 2)
         if self._recorder:
             self._recorder.record(
@@ -86,6 +86,21 @@ class Module(dspy.Module):
             logs.elide(str(output)),
         )
         return output
+
+    async def _call_predictor(self, kwargs: dict[str, object]):
+        """Calls the predictor under the configured model lease."""
+        manager = serve.current_model_manager()
+        if manager is None:
+            return await self.predictor.acall(**kwargs)
+
+        module_name = getattr(self._language_model, '_kms_module_name', None)
+        if module_name is None:
+            return await self.predictor.acall(**kwargs)
+        model_id = llm.configured_serving_model(module_name)
+        return await manager.aexecute(
+            model_id,
+            lambda: self.predictor.acall(**kwargs),
+        )
 
     def _model_name(self) -> str | None:
         """Returns the module LM's model name, when known."""

@@ -15,10 +15,36 @@ class _ScriptedRoles:
         return self._roles.pop(0)
 
 
+class _ScriptedPositions:
+    def __init__(self, positions):
+        self._positions = list(positions)
+
+    async def aforward(self, current_nodes):
+        return self._positions.pop(0)
+
+
+def _nodes():
+    return {
+        0: models.Node(
+            type='paragraph', content='Example 4.2. Compute ...', uuid='node-0'
+        ),
+        1: models.Node(type='paragraph', content='Integrate ...', uuid='node-1'),
+        2: models.Node(type='paragraph', content='Hence the value is 4.', uuid='node-2'),
+    }
+
+
+def _both_modules(stmt_positions, proc_positions):
+    return (
+        _ScriptedRoles([(True, True)]),
+        _ScriptedPositions(stmt_positions),
+        _ScriptedPositions(proc_positions),
+    )
+
+
 def test_assigns_statement_ids_and_dual_role_links():
     nodes = {
-        0: models.Node(type='paragraph', content='Example', id=0),
-        1: models.Node(type='paragraph', content='Solution', id=1),
+        0: models.Node(type='paragraph', content='Example', uuid='node-0'),
+        1: models.Node(type='paragraph', content='Solution', uuid='node-1'),
     }
     role_mod = _ScriptedRoles([(True, True)])
     stmt_mod = _ScriptedPositions([[0]])
@@ -42,11 +68,11 @@ def test_assigns_statement_ids_and_dual_role_links():
 
 def test_creates_a_hub_per_role():
     nodes = [
-        models.Node(type='paragraph', content='Theorem 2.1', id=0),
-        models.Node(type='paragraph', content='Proof. ...', id=1),
-        models.Node(type='paragraph', content='Exercise 3', id=2),
+        models.Node(type='paragraph', content='Theorem 2.1', uuid='node-0'),
+        models.Node(type='paragraph', content='Proof. ...', uuid='node-1'),
+        models.Node(type='paragraph', content='Exercise 3', uuid='node-2'),
     ]
-    by_id = {node.id: node for node in nodes}
+    by_id = {i: node for i, node in enumerate(nodes)}
     module = _ScriptedRoles([(True, False), (False, True), (True, False)])
     statements, procedures = asyncio.run(
         statement_procedure_builder.build_statement_procedure_hubs(
@@ -61,14 +87,14 @@ def test_creates_a_hub_per_role():
 
 def test_neither_role_is_skipped():
     nodes = [
-        models.Node(type='header', content='Learning Objectives', id=0),
-        models.Node(type='paragraph', content='Theorem 2.1', id=1),
+        models.Node(type='header', content='Learning Objectives', uuid='node-0'),
+        models.Node(type='paragraph', content='Theorem 2.1', uuid='node-1'),
     ]
     module = _ScriptedRoles([(False, False), (True, False)])
     statements, procedures = asyncio.run(
         statement_procedure_builder.build_statement_procedure_hubs(
             [[0], [1]],
-            {node.id: node for node in nodes},
+            {i: node for i, node in enumerate(nodes)},
             role_module=module,
         )
     )
@@ -78,10 +104,10 @@ def test_neither_role_is_skipped():
 
 def test_a_both_block_creates_both_independent_hubs():
     nodes = [
-        models.Node(type='paragraph', content='Example 4.2. Compute ...', id=0),
-        models.Node(type='paragraph', content='The value is 4.', id=1),
+        models.Node(type='paragraph', content='Example 4.2. Compute ...', uuid='node-0'),
+        models.Node(type='paragraph', content='The value is 4.', uuid='node-1'),
     ]
-    by_id = {node.id: node for node in nodes}
+    by_id = {i: node for i, node in enumerate(nodes)}
     role_mod = _ScriptedRoles([(True, True)])
     stmt_mod = _ScriptedPositions([[0, 1]])
     proc_mod = _ScriptedPositions([[0, 1]])
@@ -106,7 +132,7 @@ def test_a_statement_cannot_be_built_without_a_block():
 
 
 def test_a_statement_is_not_an_ast_node():
-    nodes = [models.Node(type='paragraph', content='Theorem 2.1', id=0)]
+    nodes = [models.Node(type='paragraph', content='Theorem 2.1', uuid='node-0')]
     module = _ScriptedRoles([(True, False)])
     statements, _ = asyncio.run(
         statement_procedure_builder.build_statement_procedure_hubs(
@@ -118,10 +144,10 @@ def test_a_statement_is_not_an_ast_node():
 
 def test_the_node_stream_is_left_alone():
     nodes = [
-        models.Node(type='paragraph', content='Theorem 2.1', id=0),
-        models.Node(type='paragraph', content='Proof. ...', id=1),
+        models.Node(type='paragraph', content='Theorem 2.1', uuid='node-0'),
+        models.Node(type='paragraph', content='Proof. ...', uuid='node-1'),
     ]
-    by_id = {node.id: node for node in nodes}
+    by_id = {i: node for i, node in enumerate(nodes)}
     module = _ScriptedRoles([(True, False)])
     asyncio.run(
         statement_procedure_builder.build_statement_procedure_hubs(
@@ -144,8 +170,8 @@ def test_no_spans_is_a_noop():
 
 def test_node_run_writes_the_hub_channels():
     nodes = [
-        models.Node(type='paragraph', content='Theorem 2.1', id=0),
-        models.Node(type='paragraph', content='Proof. ...', id=1),
+        models.Node(type='paragraph', content='Theorem 2.1', uuid='node-0'),
+        models.Node(type='paragraph', content='Proof. ...', uuid='node-1'),
     ]
     node = statement_procedure_builder.StatementProcedureBuilderNode(
         role_module=_ScriptedRoles([(True, False), (False, True)])
@@ -177,39 +203,13 @@ def test_node_run_on_an_empty_spans_channel_is_a_noop():
     out = asyncio.run(
         node.run(
             {
-                'nodes': [models.Node(type='paragraph', content='x', id=0)],
+                'nodes': [models.Node(type='paragraph', content='x', uuid='node-0')],
                 'spans': [],
             }
         )
     )
     assert out['statements'] == []
     assert out['procedures'] == []
-
-
-class _ScriptedPositions:
-    def __init__(self, positions):
-        self._positions = list(positions)
-
-    async def aforward(self, current_nodes):
-        return self._positions.pop(0)
-
-
-def _nodes():
-    return {
-        0: models.Node(
-            type='paragraph', content='Example 4.2. Compute ...', id=0
-        ),
-        1: models.Node(type='paragraph', content='Integrate ...', id=1),
-        2: models.Node(type='paragraph', content='Hence the value is 4.', id=2),
-    }
-
-
-def _both_modules(stmt_positions, proc_positions):
-    return (
-        _ScriptedRoles([(True, True)]),
-        _ScriptedPositions(stmt_positions),
-        _ScriptedPositions(proc_positions),
-    )
 
 
 def test_both_block_partitions_statement_members():

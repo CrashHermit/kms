@@ -207,6 +207,15 @@ class TripletConfig(_ConfigModel):
     forward_context_budget: int = Field(default=400, ge=0)
 
 
+class GovernanceConfig(_ConfigModel):
+    """Governance static-context settings."""
+
+    backward_context_budget: int = Field(default=200, ge=0)
+    forward_context_budget: int = Field(default=500, ge=0)
+    max_concurrent_calls: int = Field(default=8, gt=0)
+    threshold: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
 class HubConfig(_ConfigModel):
     """Semantic hub clustering thresholds."""
 
@@ -240,6 +249,7 @@ class StagesConfig(_ConfigModel):
 
     splitter: SplitterConfig = Field(default_factory=SplitterConfig)
     finders: FindersConfig = Field(default_factory=FindersConfig)
+    governance: GovernanceConfig = Field(default_factory=GovernanceConfig)
     entity_enrichment: EnrichmentConfig = Field(
         default_factory=EnrichmentConfig
     )
@@ -291,8 +301,7 @@ class Settings(BaseSettings):
             preset_name = self.serving.module_models.get(module_name)
             if self.serving.manage and not preset_name:
                 raise ValueError(
-                    f'local module {module_name!r} has no serving model '
-                    'mapping'
+                    f'local module {module_name!r} has no serving model mapping'
                 )
             if not preset_name:
                 continue

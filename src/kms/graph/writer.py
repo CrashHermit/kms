@@ -91,7 +91,7 @@ async def persist_nodes(
     """
     if not nodes:
         return
-    if any(node.id is None for node in nodes):
+    if any(node.uuid is None for node in nodes):
         raise ValueError('cannot persist nodes without stable ids')
     source_props = source_properties(source, metadata)
     batches = node_batches(nodes, source)
@@ -111,11 +111,11 @@ async def persist_nodes(
 
 
 def _chain_nodes(nodes: list[models.Node], source: str) -> list[str]:
-    """Returns the uuid of every id-ordered node for the NEXT chain."""
-    missing = [index for index, node in enumerate(nodes) if node.id is None]
+    """Returns the uuid of every node in document order for the NEXT chain."""
+    missing = [index for index, node in enumerate(nodes) if node.uuid is None]
     if missing:
-        raise ValueError(f'nodes are missing stable ids at positions {missing}')
-    return [node_uuid(source, node.id) for node in nodes]
+        raise ValueError(f'nodes are missing uuids at positions {missing}')
+    return [node.uuid for node in nodes]
 
 
 def _chain_pairs(chain: list[str]) -> list[dict]:
@@ -360,12 +360,13 @@ async def persist_statement_enrichment(
     *,
     session_factory: Callable,
 ) -> None:
-    """Persists derived descriptions and embeddings for Statements."""
+    """Persists compiled statement content and derived embeddings."""
     if not enrichments:
         return
     rows = [
         statement_enrichment_properties(
             enrichment['uuid'],
+            enrichment.get('statement', enrichment['description']),
             enrichment['description'],
             enrichment['embedding'],
         )
@@ -384,12 +385,13 @@ async def persist_procedure_enrichment(
     *,
     session_factory: Callable,
 ) -> None:
-    """Persists derived descriptions and embeddings for Procedures."""
+    """Persists compiled procedure content and derived embeddings."""
     if not enrichments:
         return
     rows = [
         procedure_enrichment_properties(
             enrichment['uuid'],
+            enrichment.get('procedure', enrichment['description']),
             enrichment['description'],
             enrichment['embedding'],
         )
@@ -544,8 +546,8 @@ async def persist_assertions(
         index
         for index, triplet in enumerate(triplets)
         if any(
-            triplet.occurrence_uuids.get(node_id) is None
-            for node_id in triplet.node_ids
+            triplet.occurrence_uuids.get(node_position) is None
+            for node_position in triplet.node_ids
         )
     ]
     if missing:
@@ -633,7 +635,7 @@ async def persist_name_occurrences(
             component['source'],
             component['uuid'],
             component['name'],
-            component['node_id'],
+            component['node_position'],
         )
         for component in components
     ]

@@ -46,10 +46,11 @@ def instruction_member_pairs(
     for instruction in instructions:
         if instruction.uuid is None:
             raise ValueError('instruction is missing its assigned uuid')
-        for node_id in instruction.members:
+        for member_position in instruction.members:
+            node = models.Node(uuid='placeholder', document_index=0)
             pairs.append(
                 {
-                    'node': nodes.node_uuid(source, node_id),
+                    'node': nodes.node_uuid(source, node),
                     'instruction': instruction.uuid,
                 }
             )

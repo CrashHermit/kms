@@ -22,7 +22,10 @@ class State(TypedDict, total=False):
     source: models.Source
     source_key: str
     source_metadata: dict[str, str]
-    construction_bundle: models.ConstructionBundle
+    construction_bundle: Annotated[
+        models.ConstructionBundle,
+        lambda old, new: new if new is not None else old,
+    ]
     documents: list[models.Document]
     nodes: list[models.Node]
     spans: list[list[int]]
@@ -33,7 +36,6 @@ class State(TypedDict, total=False):
     knowledge_index: models.KnowledgeIndex
     statement_enrichment_inputs: list[models.StatementEnrichmentInput]
     procedure_enrichment_inputs: list[models.ProcedureEnrichmentInput]
-    procedure_materialization_inputs: list[models.ProcedureMaterializationInput]
     statement_hub_records: list[models.StatementHubRecord]
     procedure_hub_records: list[models.ProcedureHubRecord]
     entity_hub_bundle: models.HubBuildBundle
@@ -54,7 +56,6 @@ class State(TypedDict, total=False):
     entity_embeddings: dict[int, dict[str, list[float]]]
     predicate_embeddings: dict[int, dict[str, list[float]]]
     generated_procedures: list[models.Procedure]
-    procedure_step_updates: list[models.ProcedureStepUpdate]
     procedure_links: list[models.ProcedureLink]
     statements_enriched: int
     procedures_enriched: int
@@ -122,18 +123,13 @@ def to_construction_bundle(current_state: State) -> models.ConstructionBundle:
         procedure_enrichment_inputs=copy.deepcopy(
             current_state.get('procedure_enrichment_inputs', [])
         ),
-        procedure_materialization_inputs=copy.deepcopy(
-            current_state.get('procedure_materialization_inputs', [])
-        ),
         statement_hub_records=copy.deepcopy(
             current_state.get('statement_hub_records', [])
         ),
         procedure_hub_records=copy.deepcopy(
             current_state.get('procedure_hub_records', [])
         ),
-        entity_hub_bundle=copy.deepcopy(
-            current_state.get('entity_hub_bundle')
-        ),
+        entity_hub_bundle=copy.deepcopy(current_state.get('entity_hub_bundle')),
         predicate_hub_bundle=copy.deepcopy(
             current_state.get('predicate_hub_bundle')
         ),
@@ -169,9 +165,6 @@ def to_construction_bundle(current_state: State) -> models.ConstructionBundle:
         procedure_hubs=copy.deepcopy(current_state.get('procedure_hubs', [])),
         generated_procedures=copy.deepcopy(
             current_state.get('generated_procedures', [])
-        ),
-        procedure_step_updates=copy.deepcopy(
-            current_state.get('procedure_step_updates', [])
         ),
         procedure_links=copy.deepcopy(current_state.get('procedure_links', [])),
         entity_descriptions=copy.deepcopy(

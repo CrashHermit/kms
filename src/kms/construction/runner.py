@@ -4,7 +4,7 @@ from pathlib import Path
 
 from kms import config, runtime
 from kms.construction import workflow
-from kms.core import recording
+from kms.core import recording, serve
 
 
 async def ingest(
@@ -34,15 +34,19 @@ async def ingest(
         recorder=recorder,
         neo4j_session_factory=application.session_factory(),
         neo4j_configured=application.neo4j_configured,
-        model_manager=application.model_manager,
     )
-    return await graph.ainvoke(
-        {
-            'pdf_path': str(pdf_path),
-            'output_dir': str(output_dir),
-            'pages': pages,
-            'source_key': source,
-            'source_metadata': {'title': title, 'author': author},
-        },
-        {'recursion_limit': config.get_settings().concurrency.recursion_limit},
-    )
+    with serve.model_manager_context(application.model_manager):
+        return await graph.ainvoke(
+            {
+                'pdf_path': str(pdf_path),
+                'output_dir': str(output_dir),
+                'pages': pages,
+                'source_key': source,
+                'source_metadata': {'title': title, 'author': author},
+            },
+            {
+                'recursion_limit': (
+                    config.get_settings().concurrency.recursion_limit
+                )
+            },
+        )

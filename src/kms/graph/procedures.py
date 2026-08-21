@@ -61,6 +61,7 @@ def procedure_properties(source: str, procedure: models.Procedure) -> dict:
         'uuid': _procedure_id(source, procedure),
         'source': nodes.source_uuid(source),
         'index': procedure.index,
+        'procedure': procedure.procedure,
     }
     return {
         key: value for key, value in properties.items() if value is not None
@@ -69,12 +70,14 @@ def procedure_properties(source: str, procedure: models.Procedure) -> dict:
 
 def procedure_enrichment_properties(
     procedure_uuid_value: str,
+    procedure: str,
     description: str,
     embedding: list[float],
 ) -> dict:
-    """Builds derived semantic properties for one Procedure."""
+    """Builds compiled and derived properties for one Procedure."""
     return {
         'uuid': procedure_uuid_value,
+        'procedure': procedure,
         'description': description,
         'embedding': embedding,
     }
@@ -171,11 +174,11 @@ def procedure_member_pairs(
     """Builds procedure→member node edge pairs."""
     return [
         {
-            'node': nodes.node_uuid(source, member_id),
+            'node': nodes.node_uuid(source, models.Node(uuid='placeholder', document_index=0)),
             'procedure': _procedure_id(source, procedure),
         }
         for procedure in procedures
-        for member_id in procedure.members
+        for member_position in procedure.members
     ]
 
 

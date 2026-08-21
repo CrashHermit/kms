@@ -59,16 +59,16 @@ def _complete_bundle() -> models.ConstructionBundle:
         documents=[models.Document(index=3, image_path='page.png')],
     )
     nodes = [
-        models.Node(id=10, document_index=3, content='first'),
-        models.Node(id=42, document_index=3, content='second'),
+        models.Node(uuid='node-0', document_index=3, content='first'),
+        models.Node(uuid='node-1', document_index=3, content='second'),
     ]
     return models.ConstructionBundle(
         source=source,
         nodes=nodes,
-        instructions=[models.Instruction(block=[0], members=[42, 10])],
-        statements=[models.Statement(block=[1], members=[10])],
-        procedures=[models.Procedure(block=[2], members=[42])],
-        triplets=[models.Triplet('first', 'is', 'second', node_ids=[42, 10])],
+        instructions=[models.Instruction(block=[0, 1], members=[1, 0])],
+        statements=[models.Statement(block=[0], members=[0])],
+        procedures=[models.Procedure(block=[1], members=[1])],
+        triplets=[models.Triplet('first', 'is', 'second', node_ids=[1, 0])],
     )
 
 
@@ -78,23 +78,23 @@ def test_validate_bundle_accepts_valid_noncontiguous_ids() -> None:
 
 def test_validate_bundle_rejects_missing_and_duplicate_node_ids() -> None:
     bundle = _complete_bundle()
-    bundle.nodes[0].id = None
-    bundle.nodes[1].id = None
+    # Validation now checks for missing UUIDs
+    bundle.nodes[0].uuid = None
+    bundle.nodes[1].uuid = None
 
     try:
-        models.validate_bundle(bundle)
+        models.validate_bundle(bundle, require_identities=True)
     except models.BundleValidationError as error:
-        assert 'node 0 is missing an id' in error.errors
-        assert 'node 1 is missing an id' in error.errors
+        assert any('missing a uuid' in message for message in error.errors)
     else:
         raise AssertionError('expected BundleValidationError')
 
     bundle = _complete_bundle()
-    bundle.nodes[1].id = 10
+    bundle.nodes[1].uuid = bundle.nodes[0].uuid
     try:
         models.validate_bundle(bundle)
     except models.BundleValidationError as error:
-        assert any('duplicates node id 10' in message for message in error.errors)
+        assert any('nodes contain duplicate uuids' in message for message in error.errors)
     else:
         raise AssertionError('expected BundleValidationError')
 
@@ -130,7 +130,7 @@ def test_validate_bundle_rejects_source_and_page_contracts() -> None:
     )
     bundle = models.ConstructionBundle(
         source=source,
-        nodes=[models.Node(id=1, document_index=1)],
+        nodes=[models.Node(uuid='node-1', document_index=1)],
         triplets=[models.Triplet('a', 'b', 'c')],
     )
 

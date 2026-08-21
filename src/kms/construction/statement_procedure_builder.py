@@ -227,14 +227,12 @@ class ProcedurePartitioner(module.Module):
 
 
 def _span_parts(
-    span: list[int], nodes_by_id: dict[int, models.Node]
+    span: list[int], nodes: list[models.Node]
 ) -> content.ContentParts:
     """Builds the multimodal content of one span for the role typer."""
     parts: list[content.TextPart | content.ImagePart] = []
-    for node_id in span:
-        node = nodes_by_id.get(node_id)
-        if node is None:
-            raise ValueError(f'role span references unknown node id {node_id}')
+    for position in span:
+        node = nodes[position]
         if node.type == 'image' and node.image_path:
             image = content.load_image(
                 node.image_path,
@@ -248,20 +246,15 @@ def _span_parts(
 
 
 def _member_window(
-    members: list[int], nodes_by_id: dict[int, models.Node]
+    members: list[int], nodes: list[models.Node]
 ) -> list[walker.WindowNode]:
     """Builds the ordered walker.WindowNode view of a block's members."""
     window: list[walker.WindowNode] = []
     for position, node_id in enumerate(members):
-        node = nodes_by_id.get(node_id)
-        if node is None:
-            raise ValueError(
-                f'partition span references unknown node id {node_id}'
-            )
+        node = nodes[node_id]
         window.append(
             walker.WindowNode(
                 position=position,
-                id=node.id,
                 type=node.type,
                 content=node.content,
                 image_path=node.image_path,
@@ -271,7 +264,7 @@ def _member_window(
 
 
 def _selected_members(members: list[int], positions: list[int]) -> list[int]:
-    """Picks member ids from a valid partitioner response."""
+    """Picks member positions from a valid partitioner response."""
     if len(set(positions)) != len(positions):
         raise ValueError(
             f'partitioner returned duplicate positions: {positions}'
@@ -298,7 +291,7 @@ def _mark_procedure(span: list[int]) -> models.Procedure:
 async def _partition_both_block(
     statement: models.Statement,
     procedure: models.Procedure,
-    nodes_by_id: dict[int, models.Node],
+    nodes: list[models.Node],
     statement_partitioner: StatementPartitioner,
     procedure_partitioner: ProcedurePartitioner,
     gate: asyncio.Semaphore,
@@ -308,7 +301,7 @@ async def _partition_both_block(
     Runs both partitioners on the same member window and narrows each
     model's members to the positions it selected.
     """
-    window = _member_window(statement.members, nodes_by_id)
+    window = _member_window(statement.members, nodes)
     async with gate:
         stmt_positions, proc_positions = await asyncio.gather(
             statement_partitioner.aforward(current_nodes=window),
@@ -323,7 +316,7 @@ async def _partition_both_block(
 
 async def build_statement_procedure_hubs(
     spans: list[list[int]],
-    nodes_by_id: dict[int, models.Node],
+    nodes: list[models.Node],
     role_module: RoleTyper,
     statement_partitioner: StatementPartitioner | None = None,
     procedure_partitioner: ProcedurePartitioner | None = None,
@@ -336,8 +329,8 @@ async def build_statement_procedure_hubs(
     members partitioned between the statement and procedure portions.
 
     Args:
-        spans: Member-id lists, one per pedagogical unit.
-        nodes_by_id: The node stream keyed by stable id.
+        spans: Member position lists, one per pedagogical unit.
+        nodes: The ordered node stream.
         role_module: The role-typing module.
         statement_partitioner: Optional partitioner for both-role spans.
         procedure_partitioner: Optional partitioner for both-role spans.
@@ -354,7 +347,7 @@ async def build_statement_procedure_hubs(
 
     async def _type_one(span: list[int]) -> tuple[bool, bool]:
         """Types one span, skipping spans with no usable content."""
-        parts = _span_parts(span, nodes_by_id)
+        parts = _span_parts(span, nodes)
         if not parts.content.parts:
             return (False, False)
         async with gate:
@@ -371,10 +364,10 @@ async def build_statement_procedure_hubs(
     ):
         if not span:
             raise ValueError('role typer returned an empty pedagogical span')
-        for member_id in span:
-            if member_id not in nodes_by_id:
+        for position in span:
+            if position >= len(nodes):
                 raise ValueError(
-                    f'role span references unknown node id {member_id}'
+                    f'role span references position {position} outside node stream'
                 )
 
         statement = _mark_statement(span) if has_statement else None
@@ -393,7 +386,7 @@ async def build_statement_procedure_hubs(
                 _partition_both_block(
                     statement,
                     procedure,
-                    nodes_by_id,
+                    nodes,
                     statement_partitioner,
                     procedure_partitioner,
                     gate,
@@ -445,7 +438,6 @@ class StatementProcedureBuilderNode:
             ``statements`` and ``procedures`` updates for the state.
         """
         nodes = state.get('nodes', [])
-        nodes_by_id = {node.id: node for node in nodes if node.id is not None}
         if not state.get('spans', []):
             return {'statements': [], 'procedures': []}
         source = state.get('source_key', '').strip()
@@ -456,7 +448,7 @@ class StatementProcedureBuilderNode:
             raise ValueError('statement/procedure construction requires a source')
         statements, procedures = await build_statement_procedure_hubs(
             state.get('spans', []),
-            nodes_by_id,
+            nodes,
             role_module=self.role_module,
             statement_partitioner=self.statement_partitioner,
             procedure_partitioner=self.procedure_partitioner,

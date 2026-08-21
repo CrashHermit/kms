@@ -36,7 +36,7 @@ def test_counts_renders_none_values_and_empty_input():
 
 def _nodes(*contents):
     return [
-        models.Node(type='paragraph', content=text, id=i, document_index=0)
+        models.Node(type='paragraph', content=text, uuid=f'node-{i}', document_index=0)
         for i, text in enumerate(contents)
     ]
 

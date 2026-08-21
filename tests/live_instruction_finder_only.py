@@ -2,6 +2,7 @@
 
 import asyncio
 
+from kms import config
 from kms.construction import instruction_finder
 from kms.core import llm, models
 
@@ -12,43 +13,36 @@ def _nodes() -> list[models.Node]:
             index=0,
             type='paragraph',
             content='For the following exercises, find the gradient.',
-            id=0,
         ),
         models.Node(
             index=1,
             type='paragraph',
             content='280. Find the gradient of $f(x, y) = x^2 + y^2$.',
-            id=1,
         ),
         models.Node(
             index=2,
             type='paragraph',
             content='281. Find the gradient of $f(x, y) = xy$.',
-            id=2,
         ),
         models.Node(
             index=3,
             type='paragraph',
             content='For the following exercises, find equations of:',
-            id=3,
         ),
         models.Node(
             index=4,
             type='paragraph',
             content='a. the tangent plane and',
-            id=4,
         ),
         models.Node(
             index=5,
             type='paragraph',
             content='b. the normal line to the given surface at the given point.',
-            id=5,
         ),
         models.Node(
             index=6,
             type='paragraph',
             content='302. $z = 4x^2 + y^2$, point $P(2, 1, 8)$',
-            id=6,
         ),
         models.Node(
             index=7,
@@ -57,7 +51,6 @@ def _nodes() -> list[models.Node]:
                 '282. Find the gradient of $f(x, y, z)$ at $P$ and the '
                 'directional derivative in the direction of $\\mathbf{u}$'
             ),
-            id=7,
         ),
     ]
 
@@ -74,9 +67,9 @@ async def main() -> None:
     )
     print(
         f'context budget: '
-        f'{instruction_finder.INSTRUCTION_CONTEXT_BUDGET} tokens'
+        f'{config.get_settings().stages.finders.instruction_finder.context_budget} tokens'
     )
-    print(f'\\n=== {len(spans)} instruction span(s) ===')
+    print(f'\n=== {len(spans)} instruction span(s) ===')
     for span in spans:
         print(f'  {span}')
 

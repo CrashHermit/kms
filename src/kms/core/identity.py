@@ -20,12 +20,20 @@ def _block_key(block: list[int]) -> str:
     return '#'.join(str(node_id) for node_id in block)
 
 
+def _node_provenance_key(node: 'models.Node') -> str:
+    """Build a stable provenance key for a node from its source attributes."""
+    doc_idx = node.document_index if node.document_index is not None else 0
+    prov_idx = node.index
+    return f'{doc_idx}#{prov_idx}'
+
+
 def source_uuid(source: str) -> str:
     return uuid5(NAMESPACE_URL, _source(source)).hex
 
 
-def node_uuid(source: str, node_id: int) -> str:
-    return uuid5(NAMESPACE_URL, f'{_source(source)}#{node_id}').hex
+def node_uuid(source: str, node: 'models.Node') -> str:
+    """Durable UUID for a node from its source provenance, not list position."""
+    return uuid5(NAMESPACE_URL, f'{_source(source)}#node#{_node_provenance_key(node)}').hex
 
 
 def instruction_uuid(source: str, block: list[int]) -> str:
@@ -54,20 +62,20 @@ def procedure_uuid(
 
 def triplet_uuid(
     source: str,
-    node_id: int,
+    node_position: int,
     subject: str,
     predicate: str,
     object: str,
 ) -> str:
     return uuid5(
         NAMESPACE_URL,
-        f'{_source(source)}#triplet#{node_id}#{subject}#{predicate}#{object}',
+        f'{_source(source)}#triplet#{node_position}#{subject}#{predicate}#{object}',
     ).hex
 
 
-def entity_uuid(source: str, node_id: int, name: str) -> str:
+def entity_uuid(source: str, node_position: int, name: str) -> str:
     return uuid5(
-        NAMESPACE_URL, f'{_source(source)}#entity#{node_id}#{name}'
+        NAMESPACE_URL, f'{_source(source)}#entity#{node_position}#{name}'
     ).hex
 
 
@@ -75,6 +83,14 @@ def predicate_uuid(triplet_occurrence_uuid: str) -> str:
     return uuid5(
         NAMESPACE_URL, f'{triplet_occurrence_uuid}#predicate'
     ).hex
+
+
+def assign_node_uuids(nodes: list['models.Node'], source: str) -> None:
+    """Assign durable UUIDs to all nodes from their source provenance."""
+    _source(source)
+    for node in nodes:
+        if node.uuid is None:
+            node.uuid = node_uuid(source, node)
 
 
 def assign_instruction_ids(
@@ -129,22 +145,22 @@ def assign_triplet_ids(
         triplet.occurrence_uuids = {}
         triplet.entity_uuids = {}
         triplet.predicate_uuids = {}
-        for node_id in triplet.node_ids:
+        for node_position in triplet.node_ids:
             occurrence_id = triplet_uuid(
                 source,
-                node_id,
+                node_position,
                 triplet.subject,
                 triplet.predicate,
                 triplet.object,
             )
-            triplet.occurrence_uuids[node_id] = occurrence_id
-            triplet.entity_uuids[(node_id, triplet.subject)] = entity_uuid(
-                source, node_id, triplet.subject
+            triplet.occurrence_uuids[node_position] = occurrence_id
+            triplet.entity_uuids[(node_position, triplet.subject)] = entity_uuid(
+                source, node_position, triplet.subject
             )
-            triplet.entity_uuids[(node_id, triplet.object)] = entity_uuid(
-                source, node_id, triplet.object
+            triplet.entity_uuids[(node_position, triplet.object)] = entity_uuid(
+                source, node_position, triplet.object
             )
-            triplet.predicate_uuids[node_id] = predicate_uuid(occurrence_id)
+            triplet.predicate_uuids[node_position] = predicate_uuid(occurrence_id)
 
 
 def validate_assigned_ids(bundle: models.ConstructionBundle) -> None:
@@ -170,17 +186,17 @@ def validate_assigned_ids(bundle: models.ConstructionBundle) -> None:
         if procedure.uuid != expected:
             errors.append(f'procedure {index} has invalid uuid')
     for index, triplet in enumerate(bundle.triplets):
-        for node_id in triplet.node_ids:
+        for node_position in triplet.node_ids:
             expected = triplet_uuid(
                 bundle.source.key or '',
-                node_id,
+                node_position,
                 triplet.subject,
                 triplet.predicate,
                 triplet.object,
             )
-            if triplet.occurrence_uuids.get(node_id) != expected:
+            if triplet.occurrence_uuids.get(node_position) != expected:
                 errors.append(
-                    f'triplet {index} occurrence {node_id} has invalid uuid'
+                    f'triplet {index} occurrence {node_position} has invalid uuid'
                 )
     if errors:
         raise ValueError('; '.join(errors))

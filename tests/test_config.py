@@ -35,7 +35,6 @@ def test_toml_provides_the_defaults():
     assert settings.serving.module_models['procedure_enrichment'] == (
         'qwen3.5-9b'
     )
-    assert settings.serving.module_models['procedure_creator'] == ('qwen3.5-9b')
 
 
 def test_instruction_finder_context_budget_can_be_overridden(monkeypatch):

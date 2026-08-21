@@ -104,7 +104,6 @@ def test_final_projector_persists_procedure_updates(monkeypatch):
             {
                 'source_key': 'book',
                 'generated_procedures': [],
-                'procedure_step_updates': [],
                 'procedure_links': [],
             }
         )
@@ -129,12 +128,12 @@ def test_final_projector_forwards_assertions(monkeypatch):
     identity.assign_triplet_ids([triplet], 'book')
     state = {
         'source_key': 'book',
-        'nodes': [models.Node(id=0, content='fact')],
+        'nodes': [models.Node(uuid='node-0', content='fact')],
         'triplets': [triplet],
-        'entity_descriptions': {'entity': {'name': 'description'}},
-        'predicate_descriptions': {'predicate': {'name': 'description'}},
-        'entity_embeddings': {'entity': {'name': [1.0]}},
-        'predicate_embeddings': {'predicate': {'name': [1.0]}},
+        'entity_descriptions': {0: {'entity': 'description'}},
+        'predicate_descriptions': {0: {'predicate': 'description'}},
+        'entity_embeddings': {0: {'entity': [1.0]}},
+        'predicate_embeddings': {0: {'predicate': [1.0]}},
     }
     result = asyncio.run(
         projectors.FinalProjectorNode(object(), True).run(state)

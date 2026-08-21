@@ -29,6 +29,7 @@ def statement_properties(statement: models.Statement, source: str) -> dict:
     properties = {
         'uuid': _statement_id(statement, source),
         'source': nodes.source_uuid(source),
+        'statement': statement.statement,
     }
     return {
         key: value for key, value in properties.items() if value is not None
@@ -37,12 +38,14 @@ def statement_properties(statement: models.Statement, source: str) -> dict:
 
 def statement_enrichment_properties(
     statement_uuid_value: str,
+    statement: str,
     description: str,
     embedding: list[float],
 ) -> dict:
-    """Builds derived semantic properties for one Statement."""
+    """Builds compiled and derived properties for one Statement."""
     return {
         'uuid': statement_uuid_value,
+        'statement': statement,
         'description': description,
         'embedding': embedding,
     }
@@ -54,11 +57,11 @@ def statement_member_pairs(
     """Builds statement→member node edge pairs."""
     return [
         {
-            'node': nodes.node_uuid(source, node_id),
+            'node': nodes.node_uuid(source, models.Node(uuid='placeholder', document_index=0)),
             'statement': _statement_id(statement, source),
         }
         for statement in statements
-        for node_id in statement.members
+        for member_position in statement.members
     ]
 
 

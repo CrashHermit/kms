@@ -9,7 +9,7 @@ from kms.core import models
 class ComposedPart:
     """One ordered source node in a composed statement."""
 
-    node_id: int
+    position: int
     type: models.NodeType | None
     content: str | None
     document_index: int | None
@@ -71,25 +71,19 @@ def _compose_content(
 ) -> ComposedContent:
     """Resolves and orders source members into typed content parts."""
     if len(members) != len(set(members)):
-        raise ValueError(f'{label} contains duplicate member ids')
-    nodes_by_id = {
-        node.id: node for node in bundle.nodes if node.id is not None
-    }
-    missing = [node_id for node_id in members if node_id not in nodes_by_id]
+        raise ValueError(f'{label} contains duplicate member positions')
+    missing = [pos for pos in members if pos >= len(bundle.nodes) or pos < 0]
     if missing:
-        raise ValueError(f'{label} references missing node ids: {missing!r}')
+        raise ValueError(f'{label} references missing node positions: {missing!r}')
     parts = tuple(
         ComposedPart(
-            node_id=node.id,
-            type=node.type,
-            content=node.content,
-            document_index=node.document_index,
-            image_path=node.image_path,
+            position=position,
+            type=bundle.nodes[position].type,
+            content=bundle.nodes[position].content,
+            document_index=bundle.nodes[position].document_index,
+            image_path=bundle.nodes[position].image_path,
         )
-        for node in sorted(
-            (nodes_by_id[node_id] for node_id in members),
-            key=lambda node: node.id,
-        )
+        for position in sorted(members)
     )
     return content_type(source=bundle.source.key or '', parts=parts)
 

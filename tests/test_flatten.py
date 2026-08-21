@@ -34,7 +34,8 @@ def _documents():
 
 def test_flatten_assigns_stable_ids_and_document_index_across_pages():
     flat = models.flatten_documents(_documents())
-    assert [n.id for n in flat] == [0, 1, 2, 3]
+    # Flattening no longer assigns node.id; use list positions instead
+    assert len(flat) == 4
     assert [n.document_index for n in flat] == [0, 0, 1, 1]
 
 
@@ -87,21 +88,21 @@ class _AllStatements:
 def test_overlay_leaves_each_block_in_the_stream_exactly_once():
     nodes = [
         models.Node(
-            type='paragraph', content='Theorem 2.1.', id=0, document_index=0
+            type='paragraph', content='Theorem 2.1.', uuid='node-0', document_index=0
         ),
         models.Node(
             type='paragraph',
             content='Proof. Let e be ...',
-            id=1,
+            uuid='node-1',
             document_index=0,
         ),
         models.Node(
             type='paragraph',
             content='Hence e is unique.',
-            id=2,
+            uuid='node-2',
             document_index=0,
         ),
-        models.Node(type='paragraph', content='1.23 Compute it.', id=3, document_index=0),
+        models.Node(type='paragraph', content='1.23 Compute it.', uuid='node-3', document_index=0),
     ]
     state = {
         'nodes': nodes,

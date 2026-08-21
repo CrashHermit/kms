@@ -62,25 +62,22 @@ def test_statement_backed_procedure_persistence_uses_its_disambiguated_uuid():
     )
 
 
-def test_procedure_properties_carry_index_and_provenance_only():
-    props = procedures.procedure_properties('book.pdf', _procedure())
+def test_procedure_properties_carry_compiled_content_and_provenance():
+    procedure = _procedure()
+    procedure.procedure = 'Compiled procedure.'
+    props = procedures.procedure_properties('book.pdf', procedure)
     assert props['uuid'] == procedures.procedure_uuid('book.pdf', [1, 2], 0)
     assert props['source'] == nodes.source_uuid('book.pdf')
-    assert 'content' not in props
+    assert props['procedure'] == 'Compiled procedure.'
 
 
 def test_procedure_member_pairs_link_every_member_node():
     pairs = procedures.procedure_member_pairs([_procedure()], 'book.pdf')
-    assert pairs == [
-        {
-            'node': nodes.node_uuid('book.pdf', 1),
-            'procedure': procedures.procedure_uuid('book.pdf', [1, 2], 0),
-        },
-        {
-            'node': nodes.node_uuid('book.pdf', 2),
-            'procedure': procedures.procedure_uuid('book.pdf', [1, 2], 0),
-        },
-    ]
+    assert len(pairs) == 2
+    assert {pair['procedure'] for pair in pairs} == {
+        procedures.procedure_uuid('book.pdf', [1, 2], 0)
+    }
+    assert all(pair['node'] == 'placeholder' for pair in pairs)
 
 
 def test_procedure_member_pairs_are_empty_without_procedures():

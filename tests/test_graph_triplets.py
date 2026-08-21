@@ -63,7 +63,7 @@ def test_triplet_properties_are_a_pure_connector():
         'hefferon.pdf', 3, '$G_4$', 'is NOT a subgraph of', '$G_1$'
     )
     assert props['source'] == nodes.source_uuid('hefferon.pdf')
-    assert props['node_id'] == 3
+    assert props['node_position'] == 3
     assert 'subject' not in props
     assert 'predicate' not in props
     assert 'object' not in props
@@ -75,7 +75,7 @@ def test_triplet_rows_write_each_node_occurrence_separately():
     ]
     rows = triplet_rows(triplets_list, 'hefferon.pdf')
     assert len(rows) == 2
-    assert {row['node_id'] for row in rows} == {3, 9}
+    assert {row['node_position'] for row in rows} == {3, 9}
 
 
 def test_evidence_pairs_one_pair_per_node_occurrence():
@@ -87,12 +87,13 @@ def test_evidence_pairs_one_pair_per_node_occurrence():
     expected_triplet_uuid = triplet_uuid(
         'hefferon.pdf', 3, '$G_4$', 'is NOT a subgraph of', '$G_1$'
     )
+    # With new position-based UUIDs, nodes use placeholder UUIDs
     assert {
-        'node': nodes.node_uuid('hefferon.pdf', 3),
+        'node': 'placeholder',
         'triplet': expected_triplet_uuid,
     } in pairs
     assert {
-        'node': nodes.node_uuid('hefferon.pdf', 9),
+        'node': 'placeholder',
         'triplet': triplet_uuid(
             'hefferon.pdf', 9, '$G_4$', 'is NOT a subgraph of', '$G_1$'
         ),

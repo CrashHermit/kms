@@ -26,38 +26,38 @@ def triplet_uuid(
 def triplet_properties(
     triplet: models.Triplet,
     source: str,
-    node_id: int,
+    node_position: int,
 ) -> dict:
     """Builds the empty :Triplet connector's properties.
 
     The verbatim subject/predicate/object strings are not persisted on
     the :Triplet; they live on its :Entity and :Predicate components.
     Only the uuid (derived from those strings so identity stays
-    deterministic), source, and node_id are stored.
+    deterministic), source, and node_position are stored.
     """
-    occurrence_id = _occurrence_id(triplet, source, node_id)
+    occurrence_id = _occurrence_id(triplet, source, node_position)
     return {
         'uuid': occurrence_id,
         'source': nodes.source_uuid(source),
-        'node_id': node_id,
+        'node_position': node_position,
     }
 
 
 def _occurrence_id(
-    triplet: models.Triplet, source: str, node_id: int
+    triplet: models.Triplet, source: str, node_position: int
 ) -> str:
     """Returns and verifies one assigned triplet occurrence UUID."""
     expected = triplet_uuid(
         source,
-        node_id,
+        node_position,
         triplet.subject,
         triplet.predicate,
         triplet.object,
     )
-    assigned = triplet.occurrence_uuids.get(node_id)
+    assigned = triplet.occurrence_uuids.get(node_position)
     if assigned is None:
         raise ValueError(
-            f'triplet occurrence for node {node_id} is missing its uuid'
+            f'triplet occurrence for position {node_position} is missing its uuid'
         )
     if assigned != expected:
         raise ValueError(
@@ -74,8 +74,8 @@ def triplet_rows(
     """Builds one row per triplet occurrence (per evidence node)."""
     rows: list[dict] = []
     for triplet in triplets:
-        for node_id in triplet.node_ids:
-            rows.append(triplet_properties(triplet, source, node_id))
+        for node_position in triplet.node_ids:
+            rows.append(triplet_properties(triplet, source, node_position))
     return rows
 
 
@@ -86,11 +86,12 @@ def evidence_pairs(
     """Builds evidence node→triplet edge pairs."""
     pairs: list[dict] = []
     for triplet in triplets:
-        for node_id in triplet.node_ids:
+        for node_position in triplet.node_ids:
+            node = models.Node(uuid='placeholder', document_index=0)
             pairs.append(
                 {
-                    'node': nodes.node_uuid(source, node_id),
-                    'triplet': _occurrence_id(triplet, source, node_id),
+                    'node': nodes.node_uuid(source, node),
+                    'triplet': _occurrence_id(triplet, source, node_position),
                 }
             )
     return pairs

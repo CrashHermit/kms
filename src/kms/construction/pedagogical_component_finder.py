@@ -202,11 +202,15 @@ class PedagogicalComponentFinderNode:
             A ``spans`` update for the state.
         """
         nodes = state.get('nodes', [])
-        excluded = {
+        excluded_positions = {
             member
             for instruction in state.get('instructions', [])
             for member in instruction.members
         }
-        eligible = [node for node in nodes if node.id not in excluded]
+        eligible = [
+            node
+            for position, node in enumerate(nodes)
+            if position not in excluded_positions
+        ]
         spans = await find_spans(eligible, module=self.module)
         return {'spans': spans}

@@ -110,7 +110,7 @@ def test_resolves_image_path_sidecars(tmp_path):
     recorder.record(
         'atomic_fact_extractor',
         triplet_extractor._FactSignature,
-        {'current_nodes': [node], 'context_before': '', 'context_after': ''},
+        {'current_nodes': [node]},
         dspy.Prediction(facts=[]),
     )
 

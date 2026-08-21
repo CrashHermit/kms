@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from kms.construction import entity_hubs, hub_engine, name_hubs, predicate_hubs
+from kms.construction import entity_hubs, name_hubs, predicate_hubs
 from kms.core import models
 from kms.graph import db, nodes, schema, writer
 
@@ -133,23 +133,37 @@ def test_meta_rebuild_preserves_durable_components_and_source_hubs(monkeypatch):
     }
 
     async def fake_build_hubs(*args, **kwargs):
-        spec = kwargs['spec']
-        kind = spec.domain
         return {
             'clusters': [],
             'hubs': [
                 {
-                    'uuid': meta_hubs[kind],
-                    'canonical_name': kind,
-                    'aliases': [kind],
-                    'description': f'{kind} meta hub',
-                    'members': source_hubs[kind],
+                    'uuid': meta_hubs['entity'],
+                    'canonical_name': 'entity',
+                    'aliases': ['entity'],
+                    'description': 'entity meta hub',
+                    'members': source_hubs['entity'],
                 }
             ],
             'subsumption_edges': [],
         }
 
-    monkeypatch.setattr(hub_engine, 'build_hubs', fake_build_hubs)
+    async def fake_build_hubs_predicate(*args, **kwargs):
+        return {
+            'clusters': [],
+            'hubs': [
+                {
+                    'uuid': meta_hubs['predicate'],
+                    'canonical_name': 'predicate',
+                    'aliases': ['predicate'],
+                    'description': 'predicate meta hub',
+                    'members': source_hubs['predicate'],
+                }
+            ],
+            'subsumption_edges': [],
+        }
+
+    monkeypatch.setattr(entity_hubs, 'build_hubs', fake_build_hubs)
+    monkeypatch.setattr(predicate_hubs, 'build_hubs', fake_build_hubs_predicate)
     monkeypatch.setattr(
         name_hubs,
         'rebuild_meta',

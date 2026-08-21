@@ -1,11 +1,15 @@
 """Lifecycle management for the local model router."""
 
 import asyncio
+import contextlib
+import contextvars
 import json
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,13 +21,11 @@ class RouterConfig:
     """Configuration for a single router-mode llama-server.
 
     ``start`` launches the router without a model argument so it serves
-    the preset models on demand, ``endpoint`` is the base URL, and
-    ``models`` maps logical stage names to router model IDs.
+    preset models on demand, and ``endpoint`` is the base URL.
     """
 
     start: list[str]
     endpoint: str
-    models: dict[str, str]
     ready_timeout: float
     poll_interval: float
     request_timeout: float
@@ -34,28 +36,87 @@ class RouterConfig:
 class RouterManager:
     """Switches models on one router-mode server via its HTTP API.
 
-    Exactly one model is resident at a time: ``switch`` unloads every
-    loaded model that is not the target, then loads the target and
-    waits until it reports ``loaded``.
+    The manager only performs load and unload operations. Logical module
+    names are resolved by configuration before callers invoke
+    :meth:`ensure_model`.
     """
 
     def __init__(self, config: RouterConfig) -> None:
         self._config = config
         self._proc: subprocess.Popen | None = None
+        self._lock = threading.Lock()
+        self._condition = asyncio.Condition()
+        self._active_operations = 0
+        self._switching = False
+        self._resident: str | None = None
 
-    def switch(self, name: str) -> None:
-        """Makes ``name`` the sole loaded model.
+    @property
+    def resident(self) -> str | None:
+        """Returns the model most recently confirmed as resident."""
+        return self._resident
+
+    def ensure_model(self, model_id: str) -> None:
+        """Makes ``model_id`` the sole resident model.
 
         Args:
-            name: A logical model key from ``config.models``.
+            model_id: The concrete router model or preset identifier.
 
         Raises:
-            RuntimeError: If the name is unknown, the router cannot be
-                started, or the model fails to load.
+            RuntimeError: If the router cannot expose or load the model.
         """
-        model_id = self._config.models.get(name)
-        if model_id is None:
-            raise RuntimeError(f'unknown model: {name}')
+        with self._lock:
+            if self._resident == model_id:
+                return
+            self._ensure_model_locked(model_id)
+
+    async def aensure_model(self, model_id: str) -> None:
+        """Ensures a concrete model is resident without blocking the loop."""
+        await asyncio.to_thread(self.ensure_model, model_id)
+
+    async def aexecute(
+        self,
+        model_id: str,
+        operation: Callable[[], Awaitable[object]],
+    ) -> object:
+        """Runs an operation while its model remains resident.
+
+        Operations targeting the current model run concurrently. A different
+        target waits for current operations to finish, switches once, and
+        then obtains the new model lease.
+        """
+        async with self._condition:
+            while self._switching or (
+                self._active_operations and self._resident != model_id
+            ):
+                await self._condition.wait()
+            if self._resident != model_id:
+                self._switching = True
+            else:
+                self._active_operations += 1
+
+        if self._switching:
+            try:
+                await self.aensure_model(model_id)
+            except BaseException:
+                async with self._condition:
+                    self._switching = False
+                    self._condition.notify_all()
+                raise
+            async with self._condition:
+                self._resident = model_id
+                self._switching = False
+                self._active_operations += 1
+                self._condition.notify_all()
+
+        try:
+            return await operation()
+        finally:
+            async with self._condition:
+                self._active_operations -= 1
+                self._condition.notify_all()
+
+    def _ensure_model_locked(self, model_id: str) -> None:
+        """Loads one concrete model while the manager lock is held."""
         self._ensure_router()
         statuses = self._statuses()
         if model_id not in statuses:
@@ -63,22 +124,21 @@ class RouterManager:
                 f'router at {self._config.endpoint} does not expose '
                 f'model {model_id!r}'
             )
-        for mid, status in statuses.items():
-            if mid != model_id and status in ('loaded', 'loading'):
-                self._unload(mid)
+        for loaded_model, status in statuses.items():
+            if loaded_model != model_id and status in ('loaded', 'loading'):
+                self._unload(loaded_model)
         if statuses.get(model_id) not in ('loaded', 'loading'):
             self._load(model_id)
         self._wait_loaded(model_id)
-
-    async def aswitch(self, name: str) -> None:
-        """Switches models without blocking the event loop."""
-        await asyncio.to_thread(self.switch, name)
+        self._resident = model_id
 
     def shutdown(self) -> None:
         """Stops the router server."""
-        if self._proc is not None:
-            _terminate(self._proc, self._config.terminate_timeout)
-            self._proc = None
+        with self._lock:
+            if self._proc is not None:
+                _terminate(self._proc, self._config.terminate_timeout)
+                self._proc = None
+            self._resident = None
 
     def _ensure_router(self) -> None:
         """Starts the router if its endpoint is not already answering."""
@@ -162,17 +222,24 @@ class RouterManager:
         )
 
 
-class SwitchNode:
-    """A graph node that switches the active model by name."""
+_CURRENT_MANAGER: contextvars.ContextVar[RouterManager | None] = (
+    contextvars.ContextVar('kms_model_manager', default=None)
+)
 
-    def __init__(self, manager: RouterManager, name: str) -> None:
-        self._manager = manager
-        self._name = name
 
-    async def run(self, state) -> dict:
-        """Switches to the managed model and leaves state unchanged."""
-        await self._manager.aswitch(self._name)
-        return {}
+@contextlib.contextmanager
+def model_manager_context(manager: RouterManager | None):
+    """Binds a model manager to LLM calls in the current context."""
+    token = _CURRENT_MANAGER.set(manager)
+    try:
+        yield
+    finally:
+        _CURRENT_MANAGER.reset(token)
+
+
+def current_model_manager() -> RouterManager | None:
+    """Returns the model manager bound to the current execution context."""
+    return _CURRENT_MANAGER.get()
 
 
 def default_router() -> RouterConfig:
@@ -201,7 +268,6 @@ def default_router() -> RouterConfig:
             '--no-models-autoload',
         ],
         endpoint=f'http://{serving.host}:{serving.port}',
-        models=dict(serving.module_models),
         ready_timeout=serving.ready_timeout,
         poll_interval=serving.poll_interval,
         request_timeout=serving.request_timeout,

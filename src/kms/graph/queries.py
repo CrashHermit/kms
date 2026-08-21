@@ -985,7 +985,7 @@ async def triplet_hub_groups(
             f'MATCH (src:{nodes.SOURCE_LABEL} {{uuid: t.source}})\n'
             f'WITH msh, mph, moh, sh, ph, oh, src.key AS source, '
             f't, s, p, o\n'
-            f'WITH msh, mph, moh, source, '
+            f'WITH msh, mph, moh, '
             f'collect(DISTINCT t.uuid) AS triplets, '
             f'collect(DISTINCT {{uuid: t.uuid, subject: s.name, '
             f'predicate: p.predicate, object: o.name}}) AS evidence, '

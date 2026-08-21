@@ -13,7 +13,7 @@ def predicate_uuid(triplet_uuid: str) -> str:
 
 def predicate_properties(
     source: str,
-    node_id: int,
+    node_position: int,
     triplet_uuid: str,
     predicate: str,
     description: str | None = None,
@@ -23,7 +23,7 @@ def predicate_properties(
     properties = {
         'uuid': predicate_uuid(triplet_uuid),
         'source': nodes.source_uuid(source),
-        'node_id': node_id,
+        'node_position': node_position,
         'predicate': predicate,
         'description': description,
         'embedding': embedding,

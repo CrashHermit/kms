@@ -34,11 +34,6 @@ base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
 max_tokens = 8192
 
-[models.modules.procedure_creator]
-base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
-
 [models.modules.formatter]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
@@ -90,6 +85,11 @@ model = "openai/qwen3.5-9b"
 max_tokens = 8192
 
 [models.modules.atomic_fact_extractor]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+max_tokens = 8192
+
+[models.modules.governance_judge]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
 max_tokens = 8192
@@ -188,7 +188,6 @@ terminate_timeout = 15.0
 
 [serving.module_models]
 corrector = "qwen3.5-9b"
-procedure_creator = "qwen3.5-9b"
 formatter = "qwen3.5-9b"
 formatter_router = "qwen3.5-9b"
 formatter_editor = "qwen3.5-9b"
@@ -215,6 +214,7 @@ triplet_hub_builder = "qwen3.5-9b"
 search_judge = "qwen3.5-9b"
 decompose_judge = "qwen3.5-9b"
 query_decomposer = "qwen3.5-9b"
+governance_judge = "qwen3.5-9b"
 entity_card_router = "gemma-4-e4b-it"
 entity_fact_generator = "gemma-4-e4b-it"
 entity_card_generator = "gemma-4-e4b-it"
@@ -345,6 +345,12 @@ max_concurrent_calls = 16
 
 [stages.procedure_enrichment]
 max_concurrent_calls = 16
+
+[stages.governance]
+backward_context_budget = 200
+forward_context_budget = 500
+max_concurrent_calls = 8
+threshold = 0.5
 
 [stages.search]
 top_k = 20

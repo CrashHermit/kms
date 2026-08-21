@@ -2,8 +2,7 @@ import dspy
 from pydantic import BaseModel, Field
 
 from kms import config
-from kms.construction import hub_inputs
-from kms.core import content, module, semantic, state
+from kms.core import content, identity, module, semantic, state, models
 
 
 class TermDescription(BaseModel):
@@ -49,16 +48,16 @@ async def enrich(
     triplets,
     enricher: EntityEnricher,
 ) -> dict[int, dict[str, str | None]]:
-    terms_by_node: dict[int, set[str]] = {}
+    terms_by_position: dict[int, set[str]] = {}
     for triplet in triplets:
-        for node_id in triplet.node_ids:
-            terms_by_node.setdefault(node_id, set()).update(
+        for position in triplet.node_ids:
+            terms_by_position.setdefault(position, set()).update(
                 (triplet.subject, triplet.object)
             )
     stage = config.get_settings().stages.entity_enrichment
     return await semantic.describe_terms(
         nodes,
-        terms_by_node,
+        terms_by_position,
         enricher,
         stage.before_budget,
         stage.after_budget,
@@ -80,15 +79,20 @@ class EntityEnrichmentNode:
         source = bundle.source.key or ''
         bundle.entity_descriptions = descriptions
         bundle.entity_embeddings = vectors
-        bundle.entity_hub_components = list(
-            hub_inputs.build_hub_components(
-                kind='entity',
+        bundle.entity_hub_components = [
+            models.HubComponent(
+                uuid=identity.entity_uuid(source, position, name),
                 source=source,
-                triplets=triplets,
-                descriptions=descriptions,
-                embeddings=vectors,
+                node_id=position,
+                name=name,
+                description=descriptions.get(position, {}).get(name),
+                embedding=list(vectors.get(position, {}).get(name, [])),
             )
-        )
+            for triplet in triplets
+            for position in triplet.node_ids
+            for name in dict.fromkeys((triplet.subject, triplet.object))
+            if vectors.get(position, {}).get(name) is not None
+        ]
         return {
             'entity_descriptions': descriptions,
             'entity_embeddings': vectors,

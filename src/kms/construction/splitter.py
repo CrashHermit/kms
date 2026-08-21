@@ -6,7 +6,7 @@ import dspy
 from pydantic import BaseModel, Field
 
 from kms import config
-from kms.core import content, models, module, state, walker
+from kms.core import content, identity, models, module, state, walker
 
 logger = logging.getLogger(__name__)
 
@@ -139,11 +139,11 @@ async def _gather_decisions(
                     f'duplicate splitter position {position} at cursor {cursor}'
                 )
             seen_positions.add(position)
-            node_id = window[position].id
-            if node_id is None:
+            stream_position = cursor + position
+            if stream_position >= len(nodes):
                 raise ValueError(
-                    f'splitter position {position} references a node without '
-                    f'a stable id at cursor {cursor}'
+                    f'splitter position {position} references a position '
+                    f'outside node stream at cursor {cursor}'
                 )
             if len(split_result.exercises) < 2:
                 raise ValueError(
@@ -158,7 +158,7 @@ async def _gather_decisions(
                     f'splitter position {position} returned an empty '
                     'exercise item'
                 )
-            decision.splits[node_id] = split_result.exercises
+            decision.splits[stream_position] = split_result.exercises
         cursor = end
     return decision
 
@@ -166,11 +166,11 @@ async def _gather_decisions(
 def _rebuild(nodes: list[models.Node], decision: Decision) -> list[models.Node]:
     """Rebuilds the node stream with split nodes expanded in place.
 
-    Reassigns stable sequential ids after rebuilding.
+    Preserves UUIDs from original nodes.
     """
     out: list[models.Node] = []
-    for node in nodes:
-        pieces = decision.splits.get(node.id)
+    for position, node in enumerate(nodes):
+        pieces = decision.splits.get(position)
         if pieces:
             for item in pieces:
                 number = item.number or ''
@@ -181,12 +181,12 @@ def _rebuild(nodes: list[models.Node], decision: Decision) -> list[models.Node]:
                         type=node.type,
                         content=content,
                         document_index=node.document_index,
+                        uuid=node.uuid,
+                        provenance=node.provenance,
                     )
                 )
         else:
             out.append(node)
-    for i, node in enumerate(out):
-        node.id = i
     return out
 
 
@@ -228,9 +228,11 @@ class SplitterNode:
 
     async def run(self, state: state.State) -> dict:
         """Splits the state's nodes and synchronizes document ownership."""
+        source = state.get('source_key', '')
         nodes = await split_exercises(
             state.get('nodes', []), module=self.module
         )
+        identity.assign_node_uuids(nodes, source)
         documents = state.get('documents', [])
         if documents:
             by_document: dict[int, list[models.Node]] = {

@@ -8,9 +8,12 @@ NODE_LABEL = 'Node'
 SOURCE_LABEL = 'Source'
 
 
-def node_uuid(source: str, index: int) -> str:
+def node_uuid(source: str, node: models.Node) -> str:
     """Returns the deterministic uuid for one AST node."""
-    return identity.node_uuid(source, index)
+    if node.uuid:
+        return node.uuid
+    # Generate deterministic UUID from source and node provenance
+    return identity.node_uuid(source, node)
 
 
 def source_uuid(source: str) -> str:
@@ -60,11 +63,10 @@ def node_properties(
         The node properties with None values dropped.
     """
     properties = {
-        'uuid': node_uuid(source, node.id),
+        'uuid': node.uuid,
         'source': source_uuid(source),
         'type': node.type,
         'content': node.content,
-        'index': node.id,
         'document_index': node.document_index,
         'image_path': node.image_path,
         'embedding': embedding,

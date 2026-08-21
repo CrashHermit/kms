@@ -25,14 +25,14 @@ def _nodes():
         models.Node(
             type='paragraph',
             content='For the following exercises, simplify.',
-            id=10,
+            uuid='node-10',
         ),
-        models.Node(type='image', image_path='a.png', id=20),
-        models.Node(type='list', content='3 matrix A', id=30),
+        models.Node(type='image', image_path='a.png', uuid='node-20'),
+        models.Node(type='list', content='3 matrix A', uuid='node-30'),
         models.Node(
-            type='paragraph', content='For the next exercises, solve.', id=40
+            type='paragraph', content='For the next exercises, solve.', uuid='node-40'
         ),
-        models.Node(type='list', content='4 matrix B', id=50),
+        models.Node(type='list', content='4 matrix B', uuid='node-50'),
     ]
 
 
@@ -52,8 +52,12 @@ def test_specialized_prompts_and_demos_cover_boundary_contract():
     assert 'Answer only the boolean True or False.' in (
         instruction_finder.InstructionRouterSignature.__doc__
     )
-    assert '<designated>' in instruction_finder.InstructionRouterSignature.__doc__
-    assert '<candidate>' in instruction_finder.InstructionGrowerSignature.__doc__
+    assert (
+        '<designated>' in instruction_finder.InstructionRouterSignature.__doc__
+    )
+    assert (
+        '<candidate>' in instruction_finder.InstructionGrowerSignature.__doc__
+    )
     assert 'Answer only the boolean True or False.' in (
         instruction_finder.InstructionGrowerSignature.__doc__
     )
@@ -147,11 +151,11 @@ def test_scan_routes_designated_nodes_and_grows_one_node_at_a_time():
         )
     )
 
-    assert result == [[10, 20]]
+    assert result == [[0, 1]]
     assert [
         [node.position for node in call['current_node']]
         for call in router.calls
-    ] == [[0, 1, 2, 3], [0, 1, 2, 3], [0, 1, 2, 3]]
+    ] == [[0, 1, 2, 3], [0, 1], [0]]
     assert [
         next(
             index
@@ -159,21 +163,19 @@ def test_scan_routes_designated_nodes_and_grows_one_node_at_a_time():
             if node.marker == 'designated'
         )
         for call in router.calls
-    ] == [0, 2, 3]
+    ] == [0, 0, 0]
     assert [
         [node.position for node in call['instruction_nodes']]
         for call in grower.calls
     ] == [[0], [0, 1]]
     assert [
-        [node.position for node in call['next_node']]
-        for call in grower.calls
-    ] == [[0, 1, 2, 3], [0, 1, 2, 3]]
+        [node.position for node in call['next_node']] for call in grower.calls
+    ] == [[0, 1, 2], [0, 1]]
     assert [
-        [node.marker for node in call['next_node']]
-        for call in grower.calls
+        [node.marker for node in call['next_node']] for call in grower.calls
     ] == [
-        [None, 'candidate', None, None],
-        [None, None, 'candidate', None],
+        ['candidate', None, None],
+        ['candidate', None],
     ]
 
 
@@ -182,7 +184,7 @@ def test_context_windows_keep_markers_within_the_configured_token_budget():
         models.Node(
             type='paragraph',
             content='context ' * 30,
-            id=index,
+            uuid=f'node-{index}',
         )
         for index in range(20)
     ]
@@ -201,11 +203,21 @@ def test_context_windows_keep_markers_within_the_configured_token_budget():
     )
     grower_windows = [call['next_node'] for call in grower.calls]
     for window in router_windows + grower_windows:
-        assert sum(walker.estimate_text_tokens(node.content) for node in window) <= (
-            context_budget
+        marker_position = next(
+            index
+            for index, node in enumerate(window)
+            if node.marker is not None
+        )
+        context_after = window[marker_position + 1 :]
+        assert (
+            sum(
+                walker.estimate_text_tokens(node.content)
+                for node in context_after
+            )
+            <= context_budget
         )
         assert sum(node.marker is not None for node in window) == 1
-    assert grower_windows[0][1].marker == 'candidate'
+    assert grower_windows[0][0].marker == 'candidate'
 
 
 def test_scan_finds_multiple_instructions_in_document_order():
@@ -218,7 +230,7 @@ def test_scan_finds_multiple_instructions_in_document_order():
         )
     )
 
-    assert result == [[10], [30]]
+    assert result == [[0], [2]]
 
 
 def test_false_growth_banks_only_the_anchor_and_reconsiders_candidate():
@@ -231,10 +243,13 @@ def test_false_growth_banks_only_the_anchor_and_reconsiders_candidate():
         )
     )
 
-    assert result == [[10]]
-    assert [
-        node.marker for node in grower.calls[0]['next_node']
-    ] == [None, 'candidate', None, None, None]
+    assert result == [[0]]
+    assert [node.marker for node in grower.calls[0]['next_node']] == [
+        'candidate',
+        None,
+        None,
+        None,
+    ]
     assert [
         next(
             node.position
@@ -242,7 +257,7 @@ def test_false_growth_banks_only_the_anchor_and_reconsiders_candidate():
             if node.marker == 'designated'
         )
         for call in router.calls
-    ] == [0, 1, 2, 3, 4]
+    ] == [0, 0, 0, 0, 0]
 
 
 def test_malformed_router_boolean_fails_fast():
@@ -280,6 +295,6 @@ def test_finder_node_emits_instruction_hubs_without_mutating_nodes():
     assert set(out) == {'instructions'}
     assert len(out['instructions']) == 1
     instruction = out['instructions'][0]
-    assert instruction.block == [10, 20]
-    assert instruction.members == [10, 20]
-    assert [item.id for item in nodes] == [10, 20, 30, 40, 50]
+    assert instruction.block == [0, 1]
+    assert instruction.members == [0, 1]
+    assert [item.uuid for item in nodes] == ['node-10', 'node-20', 'node-30', 'node-40', 'node-50']

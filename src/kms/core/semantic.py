@@ -6,12 +6,11 @@ from kms.core import content, embeddings, llm, models, walker
 
 def window_content(
     nodes: list[models.Node],
-    node_id: int,
+    position: int,
     before_budget: int,
     after_budget: int,
 ) -> content.Content:
     parts: list[content.TextPart | content.ImagePart] = []
-    position = walker.position_for_id(nodes, node_id)
     before = walker.content_before(nodes, position, before_budget)
     if before:
         parts.append(content.TextPart(text=before))
@@ -37,7 +36,7 @@ def embedding_text(term: str, description: str | None) -> str:
 
 async def describe_terms(
     nodes: list[models.Node],
-    terms_by_node: dict[int, set[str]],
+    terms_by_position: dict[int, set[str]],
     enricher,
     before_budget: int,
     after_budget: int,
@@ -46,24 +45,24 @@ async def describe_terms(
     gate = llm.gate(max_concurrency)
     descriptions: dict[int, dict[str, str | None]] = {}
 
-    async def describe(node_id: int, terms: set[str]) -> None:
+    async def describe(position: int, terms: set[str]) -> None:
         if not terms:
             return
         ordered_terms = sorted(terms)
         async with gate:
             results = await enricher.aforward(
                 passage=window_content(
-                    nodes, node_id, before_budget, after_budget
+                    nodes, position, before_budget, after_budget
                 ),
                 terms=ordered_terms,
             )
         by_term = {item.term: item.description for item in results}
-        descriptions[node_id] = {
+        descriptions[position] = {
             term: by_term.get(term) for term in ordered_terms
         }
 
     await asyncio.gather(
-        *(describe(node_id, terms) for node_id, terms in terms_by_node.items())
+        *(describe(position, terms) for position, terms in terms_by_position.items())
     )
     return descriptions
 

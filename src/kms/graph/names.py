@@ -66,13 +66,13 @@ def name_properties(
     source: str,
     component_uuid: str,
     text: str,
-    node_id: int,
+    node_position: int,
 ) -> dict:
     """Builds a lexical occurrence row for an Entity or Predicate."""
     return {
         'uuid': name_uuid(kind, component_uuid),
         'source': nodes.source_uuid(source),
-        'node_id': node_id,
+        'node_position': node_position,
         'text': text,
         'normalized_text': normalize_text(text),
         'component_uuid': component_uuid,

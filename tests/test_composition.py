@@ -10,20 +10,20 @@ def _bundle() -> models.ConstructionBundle:
     source = models.Source(key='book')
     nodes = [
         models.Node(
-            id=0,
+            uuid='node-0',
             type=models.NodeType.PARAGRAPH,
             content='first',
             document_index=2,
         ),
         models.Node(
-            id=1,
+            uuid='node-1',
             type=models.NodeType.IMAGE,
             content='![99]()',
             document_index=2,
             image_path='images/actual.png',
         ),
         models.Node(
-            id=2,
+            uuid='node-2',
             type=models.NodeType.PARAGRAPH,
             content=' second ',
             document_index=2,
@@ -38,7 +38,7 @@ def test_compose_statement_uses_members_and_document_order() -> None:
 
     composed = compose_statement(bundle, statement)
 
-    assert [part.node_id for part in composed.parts] == [0, 2]
+    assert [part.position for part in composed.parts] == [0, 2]
     assert composed.text == 'first\n\n second '
 
 
@@ -48,7 +48,7 @@ def test_compose_statement_preserves_interleaved_image_provenance() -> None:
 
     composed = compose_statement(bundle, statement)
 
-    assert [part.node_id for part in composed.parts] == [0, 1, 2]
+    assert [part.position for part in composed.parts] == [0, 1, 2]
     assert composed.parts[1].content == '![99]()'
     assert composed.parts[1].image_path == 'images/actual.png'
     assert composed.parts[1].document_index == 2
@@ -69,8 +69,8 @@ def test_compose_statement_supports_empty_and_image_only_statements() -> None:
     assert len(image_only.pictures) == 1
 
 
-def test_compose_statement_rejects_missing_member_ids() -> None:
-    with pytest.raises(ValueError, match='missing node ids'):
+def test_compose_statement_rejects_missing_member_positions() -> None:
+    with pytest.raises(ValueError, match='missing node positions'):
         compose_statement(
             _bundle(), models.Statement(block=[0], members=[999])
         )

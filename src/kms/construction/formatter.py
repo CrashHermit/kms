@@ -269,7 +269,19 @@ class FormatterEditor(module.Module):
         return {'lines': lines}
 
     def decode(self, prediction, **inputs) -> list[LineEdit]:
-        return module.as_list(prediction.edits)
+        edits = module.as_list(prediction.edits)
+        lines = inputs.get('lines', '')
+        max_line = len(lines.split('\n'))
+        valid_edits = []
+        for edit in edits:
+            if 1 <= edit.index <= max_line:
+                valid_edits.append(edit)
+            else:
+                logger.warning(
+                    'formatter editor returned out-of-range edit: '
+                    f'index={edit.index}, max_line={max_line}'
+                )
+        return valid_edits
 
 
 class Formatter:

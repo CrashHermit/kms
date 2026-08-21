@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from kms import config
@@ -9,7 +11,6 @@ def _config(**kw):
     defaults = dict(
         start=['llama-server', '--port', str(serving.port)],
         endpoint=f'http://{serving.host}:{serving.port}',
-        models={'formatter': 'qwen3.5-9b', 'corrector': 'qwen3-vl-4b'},
         ready_timeout=serving.ready_timeout,
         poll_interval=serving.poll_interval,
         request_timeout=serving.request_timeout,
@@ -35,14 +36,7 @@ class _FakeProc:
         return self.returncode
 
 
-def test_switch_rejects_unknown_model(monkeypatch):
-    monkeypatch.setattr(serve, '_get_json', lambda url, timeout: _statuses())
-    manager = serve.RouterManager(_config())
-    with pytest.raises(RuntimeError, match='unknown model'):
-        manager.switch('nope')
-
-
-def test_switch_rejects_router_without_target_model(monkeypatch):
+def test_ensure_model_rejects_router_without_target_model(monkeypatch):
     monkeypatch.setattr(
         serve,
         '_get_json',
@@ -50,10 +44,10 @@ def test_switch_rejects_router_without_target_model(monkeypatch):
     )
     manager = serve.RouterManager(_config())
     with pytest.raises(RuntimeError, match='does not expose model'):
-        manager.switch('corrector')
+        manager.ensure_model('qwen3-vl-4b')
 
 
-def test_switch_unloads_others_and_loads_target(monkeypatch):
+def test_ensure_model_unloads_others_and_loads_target(monkeypatch):
     calls = []
     loaded = 'qwen3.5-9b'
 
@@ -72,7 +66,7 @@ def test_switch_unloads_others_and_loads_target(monkeypatch):
     monkeypatch.setattr(serve, '_get_json', fake_get)
     monkeypatch.setattr(serve, '_post_json', fake_post)
     manager = serve.RouterManager(_config())
-    manager.switch('corrector')
+    manager.ensure_model('qwen3-vl-4b')
     assert (
         'http://127.0.0.1:8080/models/unload',
         {'model': 'qwen3.5-9b'},
@@ -83,7 +77,7 @@ def test_switch_unloads_others_and_loads_target(monkeypatch):
     ) in calls
 
 
-def test_switch_skips_load_when_already_loaded(monkeypatch):
+def test_ensure_model_skips_load_when_already_loaded(monkeypatch):
     calls = []
     monkeypatch.setattr(
         serve,
@@ -96,8 +90,20 @@ def test_switch_skips_load_when_already_loaded(monkeypatch):
         lambda url, body, timeout: calls.append((url, body)),
     )
     manager = serve.RouterManager(_config())
-    manager.switch('formatter')
+    manager.ensure_model('qwen3.5-9b')
     assert calls == []
+
+
+def test_ensure_model_records_resident_model(monkeypatch):
+    monkeypatch.setattr(
+        serve,
+        '_get_json',
+        lambda url, timeout: _statuses(('model-a', 'loaded')),
+    )
+    manager = serve.RouterManager(_config())
+    manager.ensure_model('model-a')
+    manager.ensure_model('model-a')
+    assert manager.resident == 'model-a'
 
 
 def test_wait_loaded_raises_on_failed(monkeypatch):
@@ -167,6 +173,23 @@ def test_ensure_router_raises_on_timeout(monkeypatch):
         manager._ensure_router()
 
 
+def test_aexecute_uses_operation_lease():
+    manager = serve.RouterManager(_config())
+    calls = []
+
+    async def fake_ensure(model_id):
+        calls.append(('ensure', model_id))
+        manager._resident = model_id
+
+    async def operation():
+        calls.append(('operation', manager.resident))
+        return 'done'
+
+    manager.aensure_model = fake_ensure
+    assert asyncio.run(manager.aexecute('model-a', operation)) == 'done'
+    assert calls == [('ensure', 'model-a'), ('operation', 'model-a')]
+
+
 def test_preset_ini_contains_both_models(tmp_path):
     ini = serve._preset_ini(tmp_path)
     assert '[qwen3.5-9b]' in ini
@@ -175,12 +198,9 @@ def test_preset_ini_contains_both_models(tmp_path):
     assert 'ctx-size = 32768' in ini
 
 
-def test_default_router_maps_stages(monkeypatch, tmp_path):
+def test_default_router_uses_configured_preset_file(monkeypatch, tmp_path):
     monkeypatch.setattr(serve.Path, 'home', classmethod(lambda cls: tmp_path))
     config = serve.default_router()
-    assert config.models['formatter'] == 'qwen3.5-9b'
-    assert config.models['corrector'] == 'qwen3.5-9b'
-    assert 'pipeline' not in config.models
     assert '--models-preset' in config.start
     assert '--models-max' in config.start
     assert (tmp_path / 'models' / 'kms-models.ini').exists()

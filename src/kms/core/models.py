@@ -18,26 +18,14 @@ class StatementEnrichmentInput:
 
 @dataclass(frozen=True, slots=True)
 class ProcedureEnrichmentInput:
-    """Complete typed input for one procedure enrichment operation."""
-
-    procedure_uuid: str
-    statement: content.Content
-    procedure: content.Content
-    canonical_knowledge: str
-
-
-@dataclass(frozen=True, slots=True)
-class ProcedureMaterializationInput:
-    """Source-scoped input for statement-centered procedure materialization."""
+    """Complete typed input for one statement-centered procedure enrichment."""
 
     source: str
     statement_uuid: str
     statement: content.Content
     procedure_uuid: str | None = None
     procedure: content.Content | None = None
-    entity_definitions: str = ''
-    has_steps: bool = False
-    member_count: int = 0
+    canonical_knowledge: str = ''
 
 
 @dataclass(frozen=True, slots=True)
@@ -226,10 +214,11 @@ class Node:
     type: NodeType | None = None
     content: str | None = None
     index: int = 0
-    id: int | None = None
+    uuid: str | None = None
     document_index: int | None = None
     image_path: str | None = None
     provenance: dict[str, Any] = field(default_factory=dict)
+    governing_instruction_uuids: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -260,13 +249,14 @@ class ProcedureLink:
 
 @dataclass(slots=True)
 class Procedure:
-    """A procedure found in the source, with its member node ids."""
+    """A procedure with source provenance and compiled canonical content."""
 
     block: list[int]
     index: int = 0
     uuid: str | None = None
     statement_uuid: str | None = None
     members: list[int] = field(default_factory=list)
+    procedure: str | None = None
     steps: list[Step] = field(default_factory=list)
 
 
@@ -353,11 +343,13 @@ class Instruction:
 
 @dataclass(slots=True)
 class Statement:
-    """A declarative statement found in the source."""
+    """A statement with source provenance and compiled canonical content."""
 
     block: list[int]
     members: list[int] = field(default_factory=list)
     uuid: str | None = None
+    statement: str | None = None
+    instruction_uuids: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -445,9 +437,6 @@ class ConstructionBundle:
     procedure_enrichment_inputs: list[ProcedureEnrichmentInput] = field(
         default_factory=list
     )
-    procedure_materialization_inputs: list[ProcedureMaterializationInput] = (
-        field(default_factory=list)
-    )
     statement_hub_records: list[StatementHubRecord] = field(
         default_factory=list
     )
@@ -469,9 +458,6 @@ class ConstructionBundle:
     statement_hubs: list[dict] = field(default_factory=list)
     procedure_hubs: list[dict] = field(default_factory=list)
     generated_procedures: list[Procedure] = field(default_factory=list)
-    procedure_step_updates: list[ProcedureStepUpdate] = field(
-        default_factory=list
-    )
     procedure_links: list[ProcedureLink] = field(default_factory=list)
     entity_descriptions: dict[int, dict[str, str | None]] = field(
         default_factory=dict
@@ -535,15 +521,10 @@ def validate_bundle(
         errors.append('source documents contain duplicate indexes')
     known_documents = set(document_indexes)
 
-    node_ids: set[int] = set()
+    num_nodes = len(bundle.nodes)
+    valid_positions = set(range(num_nodes))
     for node_index, node in enumerate(bundle.nodes):
         label = f'node {node_index}'
-        if node.id is None:
-            errors.append(f'{label} is missing an id')
-        elif node.id in node_ids:
-            errors.append(f'{label} duplicates node id {node.id}')
-        else:
-            node_ids.add(node.id)
         if (
             node.document_index is not None
             and node.document_index not in known_documents
@@ -567,7 +548,7 @@ def validate_bundle(
             )
             if not generated_procedure:
                 _validate_positions(errors, record_label, value.block)
-            _validate_members(errors, record_label, value.members, node_ids)
+            _validate_members(errors, record_label, value.members, valid_positions)
             if isinstance(value, Instruction) and require_identities:
                 if not value.uuid:
                     errors.append(f'{record_label} is missing a uuid')
@@ -593,6 +574,11 @@ def validate_bundle(
     if len(procedure_uuids) != len(set(procedure_uuids)):
         errors.append('procedures contain duplicate uuids')
 
+    # Check for duplicate node UUIDs
+    node_uuids = [node.uuid for node in bundle.nodes if node.uuid]
+    if len(node_uuids) != len(set(node_uuids)):
+        errors.append('nodes contain duplicate uuids')
+
     for index, triplet in enumerate(bundle.triplets):
         label = f'triplet {index}'
         if not triplet.node_ids:
@@ -600,7 +586,7 @@ def validate_bundle(
         if len(triplet.node_ids) != len(set(triplet.node_ids)):
             errors.append(f'{label} evidence contains duplicates')
         for node_id in triplet.node_ids:
-            if node_id not in node_ids:
+            if node_id not in valid_positions:
                 errors.append(f'{label} references missing node {node_id!r}')
             if require_identities and not triplet.occurrence_uuids.get(node_id):
                 errors.append(f'{label} occurrence {node_id} is missing a uuid')
@@ -610,7 +596,7 @@ def validate_bundle(
 
 
 def flatten_documents(documents: list[Document]) -> list[Node]:
-    """Flattens canonical documents into one id-ordered node stream."""
+    """Flattens canonical documents into one ordered node stream."""
     flat: list[Node] = []
     for document in documents:
         pictures = list(document.pictures or [])
@@ -621,6 +607,4 @@ def flatten_documents(documents: list[Document]) -> list[Node]:
                 node.image_path = pictures[picture_cursor].image_path
                 picture_cursor += 1
             flat.append(node)
-    for index, node in enumerate(flat):
-        node.id = index
     return flat

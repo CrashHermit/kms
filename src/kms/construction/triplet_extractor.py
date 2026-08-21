@@ -120,10 +120,10 @@ class _FactSignature(dspy.Signature):
     - CONTEXT-ONLY NODES. header (a title), bibliographic (a reference
       entry), and caption nodes are context to help you place the facts —
       do NOT extract facts from them.
-    - CONTEXT-ONLY SURROUNDING TEXT. context_before and context_after are
-      the text immediately around the window, included so you can place
-      the facts and resolve referents. They are context only — never
-      extract facts from them, and never attribute a fact to them.
+    - CONTEXT-ONLY SURROUNDING NODES. The marked anchor window includes
+      nearby nodes to help place facts and resolve referents. Extract facts
+      only from the node marked ``anchor`` and never attribute a fact to a
+      surrounding node.
     - FIND EVERYTHING EXPLICIT. A missed stated premise is a lost fact, but
       never invent the answer to an exercise or promote an implied result to a
       source fact. When unsure whether an explicit premise is merely exercise
@@ -134,27 +134,10 @@ class _FactSignature(dspy.Signature):
 
     current_nodes: list[walker.WindowNode] = dspy.InputField(
         description=(
-            'Exactly one anchor node, represented with its position, stable '
-            'id, type, content, and optional image. Extract facts from this '
-            'node only. Surrounding context is supplied separately and is '
-            'never evidence.'
+            'A static node window containing exactly one node marked '
+            '<anchor>. Extract facts only from that marked node; nearby '
+            'nodes are context and are never evidence.'
         )
-    )
-    context_before: str | None = dspy.InputField(
-        default=None,
-        description=(
-            'Optional text immediately before the window, in document '
-            'order. CONTEXT ONLY — use it to place the facts; never '
-            'extract facts from it.'
-        ),
-    )
-    context_after: str | None = dspy.InputField(
-        default=None,
-        description=(
-            'Optional text immediately after the window, in document '
-            'order. CONTEXT ONLY — use it to place the facts; never '
-            'extract facts from it.'
-        ),
     )
     facts: list[_FactInput] = dspy.OutputField(
         description='Every atomic fact found in the window; empty if none.'
@@ -170,15 +153,9 @@ class _FactExtractor(module.Module):
     def encode(
         self,
         current_nodes: list[walker.WindowNode],
-        context_before: str | None = None,
-        context_after: str | None = None,
     ) -> dict:
-        """Builds the fact-signature kwargs for one window."""
-        return {
-            'current_nodes': current_nodes,
-            'context_before': context_before or '',
-            'context_after': context_after or '',
-        }
+        """Builds the fact-signature kwargs for one static window."""
+        return {'current_nodes': current_nodes}
 
     def decode(self, prediction, **inputs) -> list[dict]:
         """Returns fact text; provenance is assigned by the caller."""
@@ -526,24 +503,16 @@ async def _extract_triplets(
     async def _extract_one_anchor(node_index: int) -> list[dict]:
         """Extracts facts from one node and assigns deterministic provenance."""
         node = nodes[node_index]
-        if node.id is None:
-            raise ValueError(
-                f'fact anchor at stream position {node_index} has no stable id'
-            )
-        current_nodes = walker.node_views([node])
-        context_before = walker.content_before(
-            nodes, node_index, triplet.backward_context_budget
-        )
-        context_after = walker.content_after(
-            nodes, node_index, triplet.forward_context_budget
+        current_nodes = walker.marked_window(
+            nodes,
+            [node_index],
+            backward_budget=triplet.backward_context_budget,
+            forward_budget=triplet.forward_context_budget,
+            marker='anchor',
         )
         async with gate:
-            facts = await fact_module.aforward(
-                current_nodes=current_nodes,
-                context_before=context_before,
-                context_after=context_after,
-            )
-        return [{'text': fact['text'], 'node_ids': [node.id]} for fact in facts]
+            facts = await fact_module.aforward(current_nodes=current_nodes)
+        return [{'text': fact['text'], 'node_positions': [node_index]} for fact in facts]
 
     per_anchor = await asyncio.gather(
         *(_extract_one_anchor(index) for index in eligible_indices)
@@ -560,11 +529,11 @@ async def _extract_triplets(
         return []
 
     async def _decompose_one(fact: dict) -> list[models.Triplet]:
-        """Decomposes one fact and attaches its evidence node ids."""
+        """Decomposes one fact and attaches its evidence node positions."""
         async with gate:
             triplets = await triplet_module.aforward(fact_text=fact['text'])
             for triplet in triplets:
-                triplet.node_ids = list(fact['node_ids'])
+                triplet.node_ids = list(fact['node_positions'])
             return triplets
 
     per_fact = await asyncio.gather(*(_decompose_one(fact) for fact in facts))
