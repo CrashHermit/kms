@@ -32,7 +32,7 @@ def test_knowledge_selection_uses_members_not_blocks() -> None:
         source='book',
         assertions=(_assertion('supported', {10}), _assertion('block-only', {99})),
     )
-    statement = models.Statement(block=[99], members=[10])
+    statement = models.Statement(block=[99], member_positions=[10])
 
     result = knowledge_for_statement(_bundle(), statement, index)
 
@@ -41,7 +41,7 @@ def test_knowledge_selection_uses_members_not_blocks() -> None:
 
 def test_procedure_selection_uses_procedure_members() -> None:
     index = models.KnowledgeIndex(source='book', assertions=(_assertion('fact', {20}),))
-    procedure = models.Procedure(block=[20], members=[20])
+    procedure = models.Procedure(block=[20], member_positions=[20])
 
     result = knowledge_for_procedure(_bundle(), procedure, index)
 
@@ -52,7 +52,7 @@ def test_empty_members_return_empty_knowledge() -> None:
     index = models.KnowledgeIndex(source='book', assertions=(_assertion('fact', {1}),))
 
     result = knowledge_for_statement(
-        _bundle(), models.Statement(block=[1], members=[]), index
+        _bundle(), models.Statement(block=[1], member_positions=[]), index
     )
 
     assert result.assertions == ()
@@ -63,7 +63,7 @@ def test_cross_source_selection_is_rejected() -> None:
 
     with pytest.raises(ValueError, match='does not match'):
         knowledge_for_statement(
-            _bundle(), models.Statement(block=[1], members=[1]), index
+            _bundle(), models.Statement(block=[1], member_positions=[1]), index
         )
 
 

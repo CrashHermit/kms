@@ -295,6 +295,8 @@ def _preset_ini(home: Path) -> str:
             lines.append('no-warmup = true')
         if preset.parallel:
             lines.append(f'parallel = {preset.parallel}')
+        if preset.flash_attn:
+            lines.append(f'flash-attn = {preset.flash_attn}')
         if preset.reasoning:
             lines.append(f'reasoning = {preset.reasoning}')
         if preset.temperature is not None:

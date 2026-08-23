@@ -62,11 +62,30 @@ def load_datasets(output_dir: str | Path) -> list[Dataset]:
 
 
 def _read_records(stage_dir: Path) -> list[dict]:
-    """Reads every record line across a stage's run directories."""
+    """Reads records while rejecting mixed schemas within one stage."""
     records: list[dict] = []
+    schemas: set[str] = set()
     for jsonl in sorted(stage_dir.rglob('examples.jsonl')):
         for line in jsonl.read_text().splitlines():
-            records.append(json.loads(line))
+            record = json.loads(line)
+            schema = record.get('schema')
+            if not isinstance(schema, str) or not schema:
+                raise ValueError(f'{jsonl} contains a record without a schema')
+            schemas.add(schema)
+            records.append(record)
+    if len(schemas) > 1:
+        raise ValueError(
+            f'{stage_dir.name} contains mixed recorded schemas: '
+            f'{", ".join(sorted(schemas))}'
+        )
+    for meta_path in sorted(stage_dir.rglob('meta.json')):
+        meta = json.loads(meta_path.read_text())
+        meta_schema = meta.get('schema')
+        if schemas and meta_schema not in schemas:
+            raise ValueError(
+                f'{meta_path} schema {meta_schema!r} does not match '
+                f'recorded schema {next(iter(schemas))!r}'
+            )
     return records
 
 

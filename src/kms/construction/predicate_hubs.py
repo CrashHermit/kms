@@ -170,7 +170,10 @@ class PredicateHubSynthesizer(module.Module):
 
     def decode(self, prediction, **inputs) -> tuple[str, str]:
         result = prediction.result
-        return result.canonical_name, result.description
+        return (
+            module.require_text(result.canonical_name, 'canonical_name'),
+            module.require_text(result.description, 'description'),
+        )
 
 
 class PredicateHubAdjudicator(module.Module):
@@ -190,7 +193,12 @@ class PredicateHubAdjudicator(module.Module):
         }
 
     def decode(self, prediction, **inputs) -> PredicateHubAdjudication:
-        return prediction.result
+        result = prediction.result
+        if not isinstance(result, PredicateHubAdjudication):
+            raise TypeError(
+                'result must be a PredicateHubAdjudication value'
+            )
+        return result
 
 
 def _coarse_clusters(

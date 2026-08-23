@@ -1,14 +1,17 @@
 """Compile canonical statement content for the graph."""
 
 import asyncio
+
 import dspy
 
 from kms import config
 from kms.construction import composition, knowledge
-from kms.core import content, embeddings, llm, models, module, recording
+from kms.core import content, embeddings, llm, models, module
 
 
-def _content_from_composed(composed: composition.ComposedContent) -> content.Content:
+def _content_from_composed(
+    composed: composition.ComposedContent,
+) -> content.Content:
     """Converts ordered source parts into multimodal LLM content."""
     parts: list[content.TextPart | content.ImagePart] = []
     max_dim = config.get_settings().image.max_dim
@@ -85,7 +88,7 @@ class StatementEnricher(module.Module):
         }
 
     def decode(self, prediction, **inputs) -> str:
-        return prediction.statement
+        return module.require_text(prediction.statement, 'statement')
 
 
 class StatementEnrichmentNode:
@@ -111,7 +114,9 @@ class StatementEnrichmentNode:
 
         async def compile_one(statement: models.Statement):
             if not statement.uuid:
-                raise ValueError('statement enrichment requires an assigned uuid')
+                raise ValueError(
+                    'statement enrichment requires an assigned uuid'
+                )
             source_content = _content_from_composed(
                 composition.compose_statement(bundle, statement)
             )
@@ -124,7 +129,9 @@ class StatementEnrichmentNode:
                     canonical_knowledge=canonical_knowledge,
                 )
 
-        compiled = await asyncio.gather(*(compile_one(stmt) for stmt in bundle.statements))
+        compiled = await asyncio.gather(
+            *(compile_one(stmt) for stmt in bundle.statements)
+        )
         statements_by_uuid = {
             statement.uuid: statement
             for statement in bundle.statements
@@ -144,7 +151,9 @@ class StatementEnrichmentNode:
                 'statement': text,
                 'embedding': vector,
             }
-            for stmt, text, vector in zip(bundle.statements, compiled, vectors, strict=True)
+            for stmt, text, vector in zip(
+                bundle.statements, compiled, vectors, strict=True
+            )
             if stmt.uuid
         ]
         records = [
@@ -154,7 +163,9 @@ class StatementEnrichmentNode:
                 description=text,
                 embedding=vector,
             )
-            for stmt, text, vector in zip(bundle.statements, compiled, vectors, strict=True)
+            for stmt, text, vector in zip(
+                bundle.statements, compiled, vectors, strict=True
+            )
             if stmt.uuid
         ]
         bundle.statement_enrichments = enrichments

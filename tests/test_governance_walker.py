@@ -21,9 +21,9 @@ def test_governance_judges_complete_statement_with_static_context():
         models.Node(uuid='node-3', type='paragraph', content='After'),
     ]
     instruction = models.Instruction(
-        block=[0], members=[0], uuid='instruction-uuid'
+        block=[0], member_positions=[0], uuid='instruction-uuid'
     )
-    statement = models.Statement(block=[2], members=[2], uuid='statement-uuid')
+    statement = models.Statement(block=[2], member_positions=[2], uuid='statement-uuid')
     judge = _Judge()
     node = governance_walker.GovernanceStatementWalkerNode(
         judge=judge,

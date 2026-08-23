@@ -175,7 +175,7 @@ def labeled_content(nodes: list[Any]) -> Content:
                 node.image_path,
                 max_dim=config.get_settings().image.max_dim,
             )
-            parts.append(TextPart(text=label))
+            parts.append(TextPart(text=f'{label}:'))
             if image:
                 parts.append(ImagePart(image=image))
         else:

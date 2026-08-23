@@ -52,17 +52,27 @@ def statement_enrichment_properties(
 
 
 def statement_member_pairs(
-    statements: list[models.Statement], source: str
+    statements: list[models.Statement],
+    node_stream: list[models.Node],
+    source: str,
 ) -> list[dict]:
     """Builds statement→member node edge pairs."""
-    return [
-        {
-            'node': nodes.node_uuid(source, models.Node(uuid='placeholder', document_index=0)),
-            'statement': _statement_id(statement, source),
-        }
-        for statement in statements
-        for member_position in statement.members
-    ]
+    pairs: list[dict] = []
+    for statement in statements:
+        for member_position in statement.member_positions:
+            if not 0 <= member_position < len(node_stream):
+                raise ValueError(
+                    f'statement member position {member_position} is outside '
+                    f'the node stream'
+                )
+            node = node_stream[member_position]
+            pairs.append(
+                {
+                    'node': nodes.node_uuid(source, node),
+                    'statement': _statement_id(statement, source),
+                }
+            )
+    return pairs
 
 
 def has_procedure_pairs(

@@ -105,7 +105,9 @@ def triplet_hub_properties(
         'predicate_hub': predicate_hub,
         'object_hub': object_hub,
     }
-    return {key: value for key, value in properties.items() if value is not None}
+    return {
+        key: value for key, value in properties.items() if value is not None
+    }
 
 
 def hub_uuid(kind: str, source: str, identity: str) -> str:
@@ -145,4 +147,6 @@ def hub_properties(
         'description': description,
         'embedding': embedding,
     }
-    return {key: value for key, value in properties.items() if value is not None}
+    return {
+        key: value for key, value in properties.items() if value is not None
+    }

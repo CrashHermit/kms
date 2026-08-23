@@ -18,9 +18,7 @@ def triplet_uuid(
     Identity covers the source, the node the fact was extracted from,
     and the verbatim subject/predicate/object strings.
     """
-    return identity.triplet_uuid(
-        source, node_id, subject, predicate, object
-    )
+    return identity.triplet_uuid(source, node_id, subject, predicate, object)
 
 
 def triplet_properties(
@@ -74,7 +72,7 @@ def triplet_rows(
     """Builds one row per triplet occurrence (per evidence node)."""
     rows: list[dict] = []
     for triplet in triplets:
-        for node_position in triplet.node_ids:
+        for node_position in triplet.evidence_positions:
             rows.append(triplet_properties(triplet, source, node_position))
     return rows
 
@@ -82,12 +80,18 @@ def triplet_rows(
 def evidence_pairs(
     triplets: list[models.Triplet],
     source: str,
+    doc_nodes: list[models.Node],
 ) -> list[dict]:
     """Builds evidence node→triplet edge pairs."""
     pairs: list[dict] = []
     for triplet in triplets:
-        for node_position in triplet.node_ids:
-            node = models.Node(uuid='placeholder', document_index=0)
+        for node_position in triplet.evidence_positions:
+            if not 0 <= node_position < len(doc_nodes):
+                raise ValueError(
+                    f'triplet evidence position {node_position} is outside '
+                    f'the node stream'
+                )
+            node = doc_nodes[node_position]
             pairs.append(
                 {
                     'node': nodes.node_uuid(source, node),

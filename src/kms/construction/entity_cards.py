@@ -62,7 +62,10 @@ class EntityCardRouter(module.Module):
         }
 
     def decode(self, prediction, **inputs) -> bool:
-        return bool(prediction.has_testable_knowledge)
+        """Returns the validated knowledge-routing decision."""
+        return module.require_bool(
+            prediction.has_testable_knowledge, 'has_testable_knowledge'
+        )
 
 
 class EntityFactGeneratorSignature(dspy.Signature):
@@ -121,11 +124,14 @@ class EntityFactGenerator(module.Module):
         }
 
     def decode(self, prediction, **inputs) -> list[str]:
-        return [
-            fact.strip()
-            for fact in module.as_list(prediction.facts)
-            if fact and fact.strip()
-        ]
+        """Returns non-empty fact strings without repairing model output."""
+        facts = module.as_list(prediction.facts)
+        for index, fact in enumerate(facts):
+            if not isinstance(fact, str) or not fact.strip():
+                raise ValueError(
+                    f'facts[{index}] must be a non-empty string'
+                )
+        return facts
 
 
 class EntityCardGeneratorSignature(dspy.Signature):
@@ -241,9 +247,7 @@ async def create_entity_cards(
         for draft in drafts:
             cards.append(
                 models.Card(
-                    uuid=learning.card_uuid(
-                        hub_uuid, content_key=fact
-                    ),
+                    uuid=learning.card_uuid(hub_uuid, content_key=fact),
                     hub_uuid=hub_uuid,
                     hub_kind='entity',
                     prompt=draft.prompt,

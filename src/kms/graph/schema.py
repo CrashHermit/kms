@@ -35,8 +35,6 @@ def schema_statements() -> list[str]:
         f'FOR (s:{statements.STATEMENT_LABEL}) REQUIRE s.uuid IS UNIQUE',
         f'CREATE CONSTRAINT procedure_uuid IF NOT EXISTS '
         f'FOR (p:{procedures.PROCEDURE_LABEL}) REQUIRE p.uuid IS UNIQUE',
-        f'CREATE CONSTRAINT step_uuid IF NOT EXISTS '
-        f'FOR (s:{procedures.STEP_LABEL}) REQUIRE s.uuid IS UNIQUE',
         f'CREATE CONSTRAINT instruction_uuid IF NOT EXISTS '
         f'FOR (i:{instructions.INSTRUCTION_LABEL}) REQUIRE i.uuid IS UNIQUE',
         f'CREATE CONSTRAINT triplet_uuid IF NOT EXISTS '

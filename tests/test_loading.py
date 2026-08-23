@@ -4,6 +4,7 @@ import io
 from pathlib import Path
 
 import dspy
+import pytest
 from PIL import Image
 
 from kms.construction import (
@@ -11,7 +12,7 @@ from kms.construction import (
     entity_enrichment,
     triplet_extractor,
 )
-from kms.core import content, loading, recording, walker
+from kms.core import content, loading, recording
 
 
 def _png_bytes() -> bytes:
@@ -24,10 +25,36 @@ def _data_url(data: bytes) -> str:
     return 'data:image/png;base64,' + base64.b64encode(data).decode()
 
 
+class _OtherSignature(dspy.Signature):
+    text: str = dspy.InputField()
+    answer: str = dspy.OutputField()
+
+
 def _by_stage(output_dir: Path) -> dict[str, loading.Dataset]:
     return {
         dataset.stage: dataset for dataset in loading.load_datasets(output_dir)
     }
+
+
+def test_rejects_mixed_schemas_in_one_stage(tmp_path):
+    output_dir = tmp_path / 'ex'
+    first = recording.Recorder('src-a', output_dir=str(output_dir))
+    second = recording.Recorder('src-b', output_dir=str(output_dir))
+    first.record(
+        'stage',
+        block_corrector.BlockCorrectionSignature,
+        {'block_crop': None, 'block_type': 'text', 'lines': '[1] hi'},
+        dspy.Prediction(edits=[]),
+    )
+    second.record(
+        'stage',
+        _OtherSignature,
+        {'text': 'hi'},
+        dspy.Prediction(answer='ok'),
+    )
+
+    with pytest.raises(ValueError, match='mixed recorded schemas'):
+        loading.load_datasets(output_dir)
 
 
 def test_loads_a_dspy_image_input(tmp_path):
@@ -85,7 +112,7 @@ def test_loads_a_content_parts_input(tmp_path):
         'component_enrichment',
         entity_enrichment.EntityEnrichmentSignature,
         {'passage': passage, 'terms': ['vector space']},
-        dspy.Prediction(descriptions=[]),
+        dspy.Prediction(description='A directed quantity.'),
     )
 
     example = _by_stage(tmp_path / 'ex')['component_enrichment'].examples[0]
@@ -100,25 +127,28 @@ def test_resolves_image_path_sidecars(tmp_path):
     recorder = recording.Recorder('src', output_dir=str(tmp_path / 'ex'))
     image_file = tmp_path / 'fig.png'
     image_file.write_bytes(_png_bytes())
-    node = walker.WindowNode(
-        position=0,
-        id=1,
-        type='image',
-        content='',
-        image_path=str(image_file),
+    passage = content.ContentParts(
+        content=content.Content(
+            parts=[
+                content.TextPart(text='[0] (image):'),
+                content.ImagePart(image=dspy.Image(url=str(image_file))),
+            ]
+        )
     )
     recorder.record(
         'atomic_fact_extractor',
         triplet_extractor._FactSignature,
-        {'current_nodes': [node]},
+        {'current_nodes': passage},
         dspy.Prediction(facts=[]),
     )
 
     example = _by_stage(tmp_path / 'ex')['atomic_fact_extractor'].examples[0]
-    loaded = example.current_nodes[0]
-    assert isinstance(loaded, walker.WindowNode)
-    assert Path(loaded.image_path).exists()
-    assert loaded.image_path != str(image_file)
+    loaded = example.current_nodes.content.parts[1].image
+    assert isinstance(loaded, dspy.Image)
+    assert loaded.url.startswith('data:image/')
+    sidecars = list((tmp_path / 'ex' / 'images').glob('*.png'))
+    assert len(sidecars) == 1
+    assert sidecars[0].read_bytes() == image_file.read_bytes()
 
 
 def test_round_trip_through_a_module(tmp_path):

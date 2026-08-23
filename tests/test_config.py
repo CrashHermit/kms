@@ -57,7 +57,7 @@ def test_statement_hub_settings_can_be_overridden(monkeypatch):
 def test_presets_are_loaded_from_toml():
     presets = config.load_settings().serving.presets
     assert 'qwen3.5-9b' in presets
-    assert presets['qwen3.5-9b'].ctx_size == 32768
+    assert presets['qwen3.5-9b'].ctx_size == 16384
     assert presets['qwen3.5-9b'].reasoning == 'off'
 
 

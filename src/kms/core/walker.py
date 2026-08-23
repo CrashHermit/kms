@@ -46,8 +46,8 @@ class Window(BaseModel):
     """One window of node views plus its surrounding context."""
 
     items: list[WindowNode] = Field(default_factory=list)
-    before: str | None = None
-    after: str | None = None
+    before: list[WindowNode] = Field(default_factory=list)
+    after: list[WindowNode] = Field(default_factory=list)
 
 
 def node_views(nodes: list[models.Node]) -> list[WindowNode]:
@@ -174,45 +174,60 @@ def fixed_windows_with_context(
 ) -> list[Window]:
     """Splits the node stream into token-budgeted content windows.
 
-    Image nodes and empty content nodes are skipped when choosing what
-    counts toward the budget; each finished window carries the preceding
-    and following context strings up to their own budgets.
+    All nodes (text and image) are included in the output windows.
+    Token budget bounds textual node selection for the primary window;
+    image payload size is controlled by the configured image resize cap.
+    Context (before/after) preserves image and empty-content nodes.
 
     Args:
         nodes: The full node stream.
-        budget: Token budget for a window's own content.
+        budget: Token budget for a window's own textual content.
         backward_budget: Token budget for the context before a window.
         forward_budget: Token budget for the context after a window.
 
     Returns:
-        ``Window`` objects covering every eligible node.
+        ``Window`` objects covering every node in the stream, with
+        ``items``, ``before``, and ``after`` as multimodal ``WindowNode``
+        lists preserving document order.
     """
     eligible = [
         (index, node)
         for index, node in enumerate(nodes)
-        if node.content
-        and node.content.strip()
-        and node.type != 'image'
+        if node.content and node.content.strip()
     ]
+    if not eligible:
+        return []
 
     windows: list[Window] = []
+    start = eligible[0][0]
     current: list[tuple[int, models.Node]] = []
     current_size = 0
-    for entry in eligible:
-        index, node = entry
+    for index, node in eligible:
         size = estimate_tokens(node)
         if current and current_size + size > budget:
+            end = current[-1][0]
             windows.append(
-                _finish_window(nodes, current, backward_budget, forward_budget)
+                _finish_window(
+                    nodes,
+                    list(enumerate(nodes[start : end + 1], start)),
+                    backward_budget,
+                    forward_budget,
+                )
             )
+            start = index
             current = []
             current_size = 0
-        current.append(entry)
+        current.append((index, node))
         current_size += size
-    if current:
-        windows.append(
-            _finish_window(nodes, current, backward_budget, forward_budget)
+    end = current[-1][0]
+    windows.append(
+        _finish_window(
+            nodes,
+            list(enumerate(nodes[start : end + 1], start)),
+            backward_budget,
+            forward_budget,
         )
+    )
     return windows
 
 
@@ -226,9 +241,70 @@ def _finish_window(
     window = [node for _, node in entries]
     first_index = entries[0][0]
     last_index = entries[-1][0]
-    before = content_before(nodes, first_index, backward_budget)
-    after = content_after(nodes, last_index, forward_budget)
-    return Window(items=node_views(window), before=before, after=after)
+    before_nodes = nodes_before(nodes, first_index, backward_budget)
+    after_nodes = nodes_after(nodes, last_index, forward_budget)
+    return Window(
+        items=node_views(window),
+        before=node_views(before_nodes),
+        after=node_views(after_nodes),
+    )
+
+
+def nodes_before(
+    nodes: list[models.Node], cursor: int, budget: int
+) -> list[models.Node]:
+    """Collects source nodes immediately before a cursor, within a budget.
+
+    Unlike :func:`content_before`, this preserves image and empty-content
+    nodes so callers can build a multimodal context window.
+
+    Args:
+        nodes: The node stream.
+        cursor: The index to look back from (exclusive).
+        budget: Maximum accumulated token count.
+
+    Returns:
+        Source nodes in document order (oldest first), or an empty list.
+    """
+    accumulated = 0
+    selected: list[models.Node] = []
+    for index in range(cursor - 1, -1, -1):
+        node = nodes[index]
+        token_count = estimate_tokens(node)
+        if accumulated + token_count > budget:
+            break
+        selected.append(node)
+        accumulated += token_count
+    selected.reverse()
+    return selected
+
+
+def nodes_after(
+    nodes: list[models.Node], cursor: int, budget: int
+) -> list[models.Node]:
+    """Collects source nodes immediately after a cursor, within a budget.
+
+    Unlike :func:`content_after`, this preserves image and empty-content
+    nodes so callers can build a multimodal context window.
+
+    Args:
+        nodes: The node stream.
+        cursor: The index to look forward from (exclusive).
+        budget: Maximum accumulated token count.
+
+    Returns:
+        Source nodes in document order, or an empty list.
+    """
+    accumulated = 0
+    selected: list[models.Node] = []
+    for index in range(cursor + 1, len(nodes)):
+        node = nodes[index]
+        token_count = estimate_tokens(node)
+        if accumulated + token_count > budget:
+            break
+        selected.append(node)
+        accumulated += token_count
+    return selected
 
 
 def content_before(

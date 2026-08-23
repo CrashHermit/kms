@@ -1,4 +1,5 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -176,6 +177,19 @@ def test_apply_line_edits_rejects_out_of_range_index():
     edits = [formatter.LineEdit(index=5, replacement='')]
     with pytest.raises(RuntimeError, match='out of range'):
         formatter.apply_line_edits('a\nb', edits)
+
+
+def test_formatter_editor_rejects_duplicate_line_indices():
+    edits = [
+        formatter.LineEdit(index=1, replacement='A'),
+        formatter.LineEdit(index=1, replacement='B'),
+    ]
+    with pytest.raises(ValueError, match='duplicate line indices'):
+        formatter.FormatterEditor.decode(
+            None,
+            SimpleNamespace(edits=edits),
+            lines='a\nb',
+        )
 
 
 def test_apply_line_edits_rejects_zero_index():

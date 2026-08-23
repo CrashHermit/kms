@@ -25,7 +25,7 @@ def _bundle() -> models.ConstructionBundle:
             models.Node(uuid='node-1', content='statement'),
             models.Node(uuid='node-2', content='procedure'),
         ],
-        statements=[models.Statement(block=[1], members=[0], uuid='statement-1')],
+        statements=[models.Statement(block=[1], member_positions=[0], uuid='statement-1')],
         knowledge_index=models.KnowledgeIndex(
             source='book',
             assertions=(_assertion('statement-fact', {0}), _assertion('procedure-fact', {1})),
@@ -49,7 +49,7 @@ def test_procedure_enrichment_input_explicitly_unions_statement_and_procedure_kn
         block=[1],
         statement_uuid='statement-1',
         uuid='procedure-1',
-        members=[1],
+        member_positions=[1],
     )
 
     result = procedure_enrichment.procedure_enrichment_input(

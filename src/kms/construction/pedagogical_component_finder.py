@@ -152,8 +152,11 @@ class PedagogicalComponentFinder(module.Module):
         return {'current_nodes': content.labeled_content_parts(current_nodes)}
 
     def decode(self, prediction, **inputs) -> list[walker.Span]:
-        """Returns the unit spans from the prediction."""
-        return module.as_list(prediction.spans)
+        """Returns validated, non-overlapping local unit spans."""
+        spans = module.as_list(prediction.spans)
+        if any(not isinstance(span, walker.Span) for span in spans):
+            raise TypeError('spans must contain walker.Span values')
+        return walker.validate_spans(spans, len(inputs['current_nodes']))
 
 
 async def find_spans(
@@ -205,12 +208,17 @@ class PedagogicalComponentFinderNode:
         excluded_positions = {
             member
             for instruction in state.get('instructions', [])
-            for member in instruction.members
+            for member in instruction.member_positions
         }
-        eligible = [
-            node
-            for position, node in enumerate(nodes)
+        eligible_positions = [
+            position
+            for position in range(len(nodes))
             if position not in excluded_positions
         ]
-        spans = await find_spans(eligible, module=self.module)
+        eligible = [nodes[position] for position in eligible_positions]
+        local_spans = await find_spans(eligible, module=self.module)
+        spans = [
+            [eligible_positions[position] for position in span]
+            for span in local_spans
+        ]
         return {'spans': spans}

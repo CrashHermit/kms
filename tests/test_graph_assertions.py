@@ -3,13 +3,13 @@ from kms.graph import assertions, entities, predicates
 from kms.graph.triplets import triplet_uuid
 
 
-def _triplet(subject, predicate, object, node_ids=None):
-    ids = node_ids or []
+def _triplet(subject, predicate, object, evidence_positions=None):
+    ids = evidence_positions or []
     return models.Triplet(
         subject=subject,
         predicate=predicate,
         object=object,
-        node_ids=ids,
+        evidence_positions=ids,
         occurrence_uuids={
             node_id: triplet_uuid(
                 'hefferon.pdf', node_id, subject, predicate, object
@@ -37,7 +37,7 @@ def test_assertion_rows_builds_components_and_edges():
         '$G_1$ (a graph)',
         'is a subgraph of',
         '$G_2$ (a graph)',
-        node_ids=[3],
+        evidence_positions=[3],
     )
     rows = assertions.assertion_rows(
         [triplet],
@@ -66,7 +66,7 @@ def test_assertion_rows_builds_components_and_edges():
 
 
 def test_assertion_rows_collapse_shared_subject_and_object():
-    triplet = _triplet('graph', 'equals', 'graph', node_ids=[3])
+    triplet = _triplet('graph', 'equals', 'graph', evidence_positions=[3])
     rows = assertions.assertion_rows([triplet], 'hefferon.pdf', {}, {})
     assert len(rows['entities']) == 1
 
@@ -76,7 +76,7 @@ def test_assertion_rows_include_embeddings_when_provided():
         '$G_1$ (a graph)',
         'is a subgraph of',
         '$G_2$ (a graph)',
-        node_ids=[3],
+        evidence_positions=[3],
     )
     rows = assertions.assertion_rows(
         [triplet],

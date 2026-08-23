@@ -122,4 +122,4 @@ def test_overlay_leaves_each_block_in_the_stream_exactly_once():
         'Hence e is unique.',
     ):
         assert contents.count(content) == 1, f'{content!r} appears twice'
-    assert state['statements'][0].members == [0, 1, 2]
+    assert state['statements'][0].member_positions == [0, 1, 2]

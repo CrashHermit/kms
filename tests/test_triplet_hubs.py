@@ -1,6 +1,7 @@
 import asyncio
 
 from kms.construction import triplet_hubs
+from kms.core import identity, models
 from kms.graph import hubs, queries, schema, writer
 
 
@@ -17,6 +18,30 @@ def test_triplet_hub_ids_are_tuple_stable_and_tier_scoped():
     assert source_id != hubs.triplet_hub_uuid(
         'meta', None, 'subject', 'predicate', 'object'
     )
+
+
+def test_triplet_memberships_use_predicate_occurrence_identity():
+    triplet = models.Triplet(
+        subject='graph', predicate='has', object='vertex', evidence_positions=[0]
+    )
+    identity.assign_triplet_ids([triplet], 'book.pdf')
+    subject_id = identity.entity_uuid('book.pdf', 0, triplet.subject)
+    object_id = identity.entity_uuid('book.pdf', 0, triplet.object)
+    predicate_id = identity.predicate_uuid(triplet.occurrence_uuids[0])
+
+    memberships = triplet_hubs.build_triplet_memberships(
+        [triplet],
+        source='book.pdf',
+        entity_assignments={
+            subject_id: ('entity-hub',),
+            object_id: ('object-hub',),
+        },
+        predicate_assignments={predicate_id: ('predicate-hub',)},
+    )
+
+    assert memberships[0].subject_hubs == ('entity-hub',)
+    assert memberships[0].predicate_hubs == ('predicate-hub',)
+    assert memberships[0].object_hubs == ('object-hub',)
 
 
 def test_schema_contains_triplet_hub_constraints_and_indexes():

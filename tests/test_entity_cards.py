@@ -1,6 +1,8 @@
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+
 from kms.construction import entity_cards
 
 
@@ -44,12 +46,12 @@ def test_entity_card_router_decodes_boolean_prediction():
     assert entity_cards.EntityCardRouter.decode(None, prediction) is True
 
 
-def test_entity_fact_generator_strips_empty_facts():
+def test_entity_fact_generator_rejects_empty_facts():
     prediction = SimpleNamespace(facts=[' Fact one. ', '', 'Fact two. '])
-    facts = entity_cards.EntityFactGenerator.decode(
-        None, prediction, canonical_name='Group', description='description'
-    )
-    assert facts == ['Fact one.', 'Fact two.']
+    with pytest.raises(ValueError, match=r'facts\[1\]'):
+        entity_cards.EntityFactGenerator.decode(
+            None, prediction, canonical_name='Group', description='description'
+        )
 
 
 def test_entity_card_generator_preserves_fact():

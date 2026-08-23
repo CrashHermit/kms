@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from kms import config
+from kms.core import content
 
 
 def _api_key() -> str:
@@ -33,8 +34,32 @@ def is_configured() -> bool:
     return bool(settings.reranker.api_key or settings.models.openrouter_api_key)
 
 
+def _wire_content(value: str | content.Content | dict[str, Any]) -> str | dict[str, Any]:
+    """Serializes canonical content into OpenRouter's rerank shape."""
+    if not isinstance(value, content.Content):
+        return value
+    text = ' '.join(
+        part.text
+        for part in value.parts
+        if isinstance(part, content.TextPart)
+    ).strip()
+    images = [
+        content.image_url(part.image)
+        for part in value.parts
+        if isinstance(part, content.ImagePart)
+    ]
+    if not images:
+        return text
+    if len(images) > 1:
+        raise ValueError(
+            'OpenRouter rerank documents support at most one image; '
+            'compose multiple images before reranking'
+        )
+    return {'text': text, 'image': images[0]}
+
+
 class Reranker:
-    """Reranks document candidates against a query via an HTTP API."""
+    """Reranks a text query against text, image, or mixed candidates."""
 
     def __init__(
         self,
@@ -69,15 +94,14 @@ class Reranker:
     async def rerank(
         self,
         query: str | dict[str, Any],
-        documents: Sequence[str | dict[str, Any]],
+        documents: Sequence[str | content.Content | dict[str, Any]],
         top_n: int | None = None,
     ) -> list[dict[str, Any]]:
         """Reranks the documents and returns the scored results.
 
         Args:
-            query: The query, as text or multimodal content.
-            documents: The candidate documents, as text or multimodal
-                content.
+            query: The text query accepted by the rerank endpoint.
+            documents: Candidate text or canonical multimodal content.
             top_n: Maximum number of reranked results to return.
 
         Returns:
@@ -89,8 +113,8 @@ class Reranker:
         client = await self._client_for()
         payload: dict[str, Any] = {
             'model': self.model,
-            'query': query,
-            'documents': list(documents),
+            'query': _wire_content(query),
+            'documents': [_wire_content(document) for document in documents],
         }
         if top_n is not None:
             payload['top_n'] = top_n

@@ -99,8 +99,14 @@ class _LexicalMembershipJudge(module.Module):
         return {'left': left, 'right': right, 'kind': kind}
 
     def decode(self, prediction, **inputs) -> str:
-        """Return the judge's Merge or Separate decision."""
-        return prediction.result.decision
+        """Return the judge's validated Merge or Separate decision."""
+        decision = prediction.result.decision
+        if decision not in {'Merge', 'Separate'}:
+            raise ValueError(
+                'lexical membership decision must be Merge or Separate, '
+                f'got {decision!r}'
+            )
+        return decision
 
 
 class _LexicalDefinitionSynthesizer(module.Module):
@@ -114,8 +120,14 @@ class _LexicalDefinitionSynthesizer(module.Module):
         return {'surface_forms': surface_forms, 'kind': kind}
 
     def decode(self, prediction, **inputs) -> int:
-        """Return the selected supplied surface-form index."""
-        return prediction.result.canonical_index
+        """Return the validated supplied surface-form index."""
+        index = prediction.result.canonical_index
+        module.require_positions(
+            [index],
+            field_name='canonical_index',
+            upper_bound=len(inputs['surface_forms']),
+        )
+        return index
 
 
 async def _judged_groups(

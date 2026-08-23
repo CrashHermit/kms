@@ -67,12 +67,14 @@ class Signature(dspy.Signature):
             '`[position] (image):` followed by the image itself.'
         )
     )
-    context_before: str | None = dspy.InputField(
-        default=None,
+    context_before: content.ContentParts = dspy.InputField(
         description=(
-            'Optional text immediately before the window, in document '
-            'order. CONTEXT ONLY — use it to place the exercises; never '
-            'split or copy text from it.'
+            'Nodes immediately before the window, in document order, or an '
+            'empty content value when there is no preceding context. CONTEXT '
+            'ONLY — use it to place the exercises; never split or copy text '
+            'from it. Each text node is a line `[position] (type): content`; '
+            'each image node is a line `[position] (image):` followed by the '
+            'image itself.'
         ),
     )
     splits: list[NodeSplit] = dspy.OutputField(
@@ -95,17 +97,40 @@ class Splitter(module.Module):
     def encode(
         self,
         current_nodes: list[walker.WindowNode],
-        context_before: str | None = None,
+        context_before: list[walker.WindowNode] | None = None,
     ) -> dict:
         """Builds the splitter-signature kwargs for one window."""
         return {
             'current_nodes': content.labeled_content_parts(current_nodes),
-            'context_before': context_before or '',
+            'context_before': content.labeled_content_parts(
+                context_before or []
+            ),
         }
 
     def decode(self, prediction, **inputs) -> list[NodeSplit]:
-        """Returns the split decisions from the prediction."""
-        return module.as_list(prediction.splits)
+        """Returns validated split decisions for the current window."""
+        splits = module.as_list(prediction.splits)
+        if any(not isinstance(split, NodeSplit) for split in splits):
+            raise TypeError('splits must contain NodeSplit values')
+        module.require_positions(
+            [split.position for split in splits],
+            field_name='splits.position',
+            upper_bound=len(inputs['current_nodes']),
+            ordered=True,
+        )
+        for split in splits:
+            if len(split.exercises) < 2:
+                raise ValueError(
+                    f'split at position {split.position} has fewer than '
+                    'two exercise items'
+                )
+            for index, exercise in enumerate(split.exercises):
+                if not exercise.number.strip() and not exercise.content.strip():
+                    raise ValueError(
+                        f'split at position {split.position} has empty '
+                        f'exercise item {index}'
+                    )
+        return splits
 
 
 async def _gather_decisions(
@@ -120,10 +145,12 @@ async def _gather_decisions(
         last_local = len(window) - 1
         splits = await module.aforward(
             current_nodes=walker.node_views(window),
-            context_before=walker.content_before(
-                nodes,
-                cursor,
-                config.get_settings().stages.splitter.backward_context_budget,
+            context_before=walker.node_views(
+                walker.nodes_before(
+                    nodes,
+                    cursor,
+                    config.get_settings().stages.splitter.backward_context_budget,
+                )
             ),
         )
         seen_positions: set[int] = set()
@@ -166,13 +193,18 @@ async def _gather_decisions(
 def _rebuild(nodes: list[models.Node], decision: Decision) -> list[models.Node]:
     """Rebuilds the node stream with split nodes expanded in place.
 
-    Preserves UUIDs from original nodes.
+    Split children receive deterministic UUIDs derived from their parent UUID
+    and child ordinal; all other source nodes retain their existing UUID.
     """
     out: list[models.Node] = []
     for position, node in enumerate(nodes):
         pieces = decision.splits.get(position)
         if pieces:
-            for item in pieces:
+            if not node.uuid:
+                raise ValueError(
+                    f'cannot split node at position {position} without a uuid'
+                )
+            for child_index, item in enumerate(pieces):
                 number = item.number or ''
                 body = item.content or ''
                 content = f'{number} {body}' if number else body
@@ -181,8 +213,12 @@ def _rebuild(nodes: list[models.Node], decision: Decision) -> list[models.Node]:
                         type=node.type,
                         content=content,
                         document_index=node.document_index,
-                        uuid=node.uuid,
+                        uuid=identity.split_child_uuid(node.uuid, child_index),
+                        image_path=node.image_path,
                         provenance=node.provenance,
+                        governing_instruction_uuids=(
+                            node.governing_instruction_uuids.copy()
+                        ),
                     )
                 )
         else:
@@ -229,10 +265,9 @@ class SplitterNode:
     async def run(self, state: state.State) -> dict:
         """Splits the state's nodes and synchronizes document ownership."""
         source = state.get('source_key', '')
-        nodes = await split_exercises(
-            state.get('nodes', []), module=self.module
-        )
+        nodes = state.get('nodes', [])
         identity.assign_node_uuids(nodes, source)
+        nodes = await split_exercises(nodes, module=self.module)
         documents = state.get('documents', [])
         if documents:
             by_document: dict[int, list[models.Node]] = {

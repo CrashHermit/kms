@@ -372,11 +372,7 @@ class InstructionGrower(module.Module):
 
 def _strict_bool(value: object, field_name: str) -> bool:
     """Rejects model values that are not actual booleans."""
-    if type(value) is not bool:
-        raise ValueError(
-            f'{field_name} must be a boolean, got {type(value).__name__}'
-        )
-    return value
+    return module.require_bool(value, field_name)
 
 
 def _node_view(
@@ -406,9 +402,9 @@ async def find_instruction_spans(
     """
     spans: list[list[int]] = []
     cursor = 0
-    context_budget = (
-        config.get_settings().stages.finders.instruction_finder.context_budget
-    )
+    finder_settings = config.get_settings().stages.finders
+    context_budget = finder_settings.instruction_finder.context_budget
+    max_span_budget = finder_settings.max_lookahead_budget
 
     while cursor < len(nodes):
         start_window = walker.marked_window(
@@ -427,7 +423,14 @@ async def find_instruction_spans(
             continue
 
         end = cursor + 1
+        accepted_size = walker.estimate_tokens(nodes[cursor])
         while end < len(nodes):
+            next_size = walker.estimate_tokens(nodes[end])
+            if accepted_size + next_size > max_span_budget:
+                raise ValueError(
+                    f'instruction span reaches the {max_span_budget}-token '
+                    f'look-ahead limit at cursor {cursor}'
+                )
             accepted = [
                 _node_view(nodes[position], position)
                 for position in range(cursor, end)
@@ -448,6 +451,7 @@ async def find_instruction_spans(
             )
             if not include:
                 break
+            accepted_size += next_size
             end += 1
 
         member_positions = list(range(cursor, end))
@@ -484,7 +488,7 @@ class InstructionFinderNode:
         if not source:
             raise ValueError('instruction detection requires a source')
         instructions = [
-            models.Instruction(block=list(span), members=list(span))
+            models.Instruction(block=list(span), member_positions=list(span))
             for span in spans
         ]
         identity.assign_instruction_ids(instructions, source)

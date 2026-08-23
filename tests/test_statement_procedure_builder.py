@@ -80,9 +80,9 @@ def test_creates_a_hub_per_role():
         )
     )
     assert [s.block for s in statements] == [[0], [2]]
-    assert [s.members for s in statements] == [[0], [2]]
+    assert [s.member_positions for s in statements] == [[0], [2]]
     assert [p.block for p in procedures] == [[1]]
-    assert procedures[0].members == [1]
+    assert procedures[0].member_positions == [1]
 
 
 def test_neither_role_is_skipped():
@@ -121,9 +121,9 @@ def test_a_both_block_creates_both_independent_hubs():
         )
     )
     assert statements[0].block == [0, 1]
-    assert statements[0].members == [0, 1]
+    assert statements[0].member_positions == [0, 1]
     assert procedures[0].block == [0, 1]
-    assert procedures[0].members == [0, 1]
+    assert procedures[0].member_positions == [0, 1]
 
 
 def test_a_statement_cannot_be_built_without_a_block():
@@ -223,7 +223,7 @@ def test_both_block_partitions_statement_members():
             procedure_partitioner=proc_mod,
         )
     )
-    assert statements[0].members == [0]
+    assert statements[0].member_positions == [0]
     assert statements[0].block == [0, 1, 2]
 
 
@@ -238,7 +238,7 @@ def test_both_block_partitions_procedure_members():
             procedure_partitioner=proc_mod,
         )
     )
-    assert procedures[0].members == [1, 2]
+    assert procedures[0].member_positions == [1, 2]
     assert procedures[0].block == [0, 1, 2]
 
 
@@ -252,7 +252,7 @@ def test_single_role_statement_skips_partitioning():
             role_module=role_mod,
         )
     )
-    assert statements[0].members == [0, 1, 2]
+    assert statements[0].member_positions == [0, 1, 2]
     assert procedures == []
 
 
@@ -267,7 +267,7 @@ def test_single_role_procedure_skips_partitioning():
         )
     )
     assert statements == []
-    assert procedures[0].members == [0, 1, 2]
+    assert procedures[0].member_positions == [0, 1, 2]
 
 
 def test_an_empty_selection_is_applied_as_empty():
@@ -281,8 +281,8 @@ def test_an_empty_selection_is_applied_as_empty():
             procedure_partitioner=proc_mod,
         )
     )
-    assert statements[0].members == []
-    assert procedures[0].members == []
+    assert statements[0].member_positions == []
+    assert procedures[0].member_positions == []
 
 
 def test_out_of_range_positions_fail_instead_of_being_dropped():

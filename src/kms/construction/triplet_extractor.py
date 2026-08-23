@@ -13,7 +13,7 @@ import dspy
 from pydantic import BaseModel, Field
 
 from kms import config
-from kms.core import identity, llm, models, module, state, walker
+from kms.core import content, identity, llm, models, module, state, walker
 
 logger = logging.getLogger(__name__)
 
@@ -132,11 +132,13 @@ class _FactSignature(dspy.Signature):
     - Return an empty list if the anchor contains no explicit facts.
     """
 
-    current_nodes: list[walker.WindowNode] = dspy.InputField(
+    current_nodes: content.ContentParts = dspy.InputField(
         description=(
             'A static node window containing exactly one node marked '
             '<anchor>. Extract facts only from that marked node; nearby '
-            'nodes are context and are never evidence.'
+            'nodes are context and are never evidence. Each text node is a '
+            'line `[position] (type): content`; each image node is a line '
+            '`[position] (image):` followed by the image itself.'
         )
     )
     facts: list[_FactInput] = dspy.OutputField(
@@ -155,13 +157,17 @@ class _FactExtractor(module.Module):
         current_nodes: list[walker.WindowNode],
     ) -> dict:
         """Builds the fact-signature kwargs for one static window."""
-        return {'current_nodes': current_nodes}
+        return {'current_nodes': content.labeled_content_parts(current_nodes)}
 
     def decode(self, prediction, **inputs) -> list[dict]:
-        """Returns fact text; provenance is assigned by the caller."""
-        return [
-            {'text': fact.text} for fact in module.as_list(prediction.facts)
-        ]
+        """Returns validated fact text; provenance is assigned by caller."""
+        facts = module.as_list(prediction.facts)
+        for index, fact in enumerate(facts):
+            if not isinstance(fact, _FactInput):
+                raise TypeError('facts must contain _FactInput values')
+            if not fact.text.strip():
+                raise ValueError(f'facts[{index}].text must be non-empty')
+        return [{'text': fact.text} for fact in facts]
 
 
 class _TripletInput(BaseModel):
@@ -450,14 +456,31 @@ class _TripletDecomposer(module.Module):
         return {'fact_text': fact_text}
 
     def decode(self, prediction, **inputs) -> list[models.Triplet]:
-        """Returns the triplets extracted from one fact."""
+        """Returns validated triplets extracted from one fact."""
+        triplets = module.as_list(prediction.triplets)
+        for index, triplet in enumerate(triplets):
+            if not isinstance(triplet, _TripletInput):
+                raise TypeError(
+                    'triplets must contain _TripletInput values'
+                )
+            if not all(
+                value.strip()
+                for value in (
+                    triplet.subject,
+                    triplet.predicate,
+                    triplet.object,
+                )
+            ):
+                raise ValueError(
+                    f'triplets[{index}] must have non-empty fields'
+                )
         return [
             models.Triplet(
                 subject=triplet.subject,
                 predicate=triplet.predicate,
                 object=triplet.object,
             )
-            for triplet in module.as_list(prediction.triplets)
+            for triplet in triplets
         ]
 
 
@@ -502,7 +525,6 @@ async def _extract_triplets(
 
     async def _extract_one_anchor(node_index: int) -> list[dict]:
         """Extracts facts from one node and assigns deterministic provenance."""
-        node = nodes[node_index]
         current_nodes = walker.marked_window(
             nodes,
             [node_index],
@@ -512,7 +534,10 @@ async def _extract_triplets(
         )
         async with gate:
             facts = await fact_module.aforward(current_nodes=current_nodes)
-        return [{'text': fact['text'], 'node_positions': [node_index]} for fact in facts]
+        return [
+            {'text': fact['text'], 'node_positions': [node_index]}
+            for fact in facts
+        ]
 
     per_anchor = await asyncio.gather(
         *(_extract_one_anchor(index) for index in eligible_indices)
@@ -533,7 +558,7 @@ async def _extract_triplets(
         async with gate:
             triplets = await triplet_module.aforward(fact_text=fact['text'])
             for triplet in triplets:
-                triplet.node_ids = list(fact['node_positions'])
+                triplet.evidence_positions = list(fact['node_positions'])
             return triplets
 
     per_fact = await asyncio.gather(*(_decompose_one(fact) for fact in facts))

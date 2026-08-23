@@ -1,21 +1,16 @@
 """Detects and rejoins blocks split across segment (page) seams."""
 
+import hashlib
 import logging
+from pathlib import Path
 
 import dspy
 from langgraph.types import Send
-from pydantic import BaseModel
+from PIL import Image
 
-from kms.core import logs, models, module, state
+from kms.core import content, logs, models, module, state, walker
 
 logger = logging.getLogger(__name__)
-
-
-class SeamNodeDTO(BaseModel):
-    """The node view passed to seam signatures: content plus type list."""
-
-    content: str | None = None
-    types: list[str] = []
 
 
 class Signature(dspy.Signature):
@@ -41,17 +36,17 @@ class Signature(dspy.Signature):
     your judgment — they are never part of the join.
     """
 
-    top_node_context: SeamNodeDTO | None = dspy.InputField(
-        description='The node immediately before the tail of the top element run. Read-only context — do not include its content in the output.'
+    top_node_context: content.ContentParts = dspy.InputField(
+        description='The node immediately before the tail, as multimodal read-only context.'
     )
-    top_bottom_edge_node: SeamNodeDTO = dspy.InputField(
-        description='The tail node of the top element run — the candidate for merging.'
+    top_bottom_edge_node: content.ContentParts = dspy.InputField(
+        description='The tail node of the top element run, including text and image content.'
     )
-    bottom_top_edge_node: SeamNodeDTO = dspy.InputField(
-        description='The head node of the bottom element run — the other candidate for merging.'
+    bottom_top_edge_node: content.ContentParts = dspy.InputField(
+        description='The head node of the bottom element run, including text and image content.'
     )
-    bottom_node_context: SeamNodeDTO | None = dspy.InputField(
-        description='The node immediately after the head of the bottom element run. Read-only context — do not include its content in the output.'
+    bottom_node_context: content.ContentParts = dspy.InputField(
+        description='The node immediately after the head, as multimodal read-only context.'
     )
 
     is_split: bool = dspy.OutputField(
@@ -121,10 +116,10 @@ class MergeSignature(dspy.Signature):
     in what you return.
     """
 
-    tail: str = dspy.InputField(
+    tail: content.ContentParts = dspy.InputField(
         description='The first half — the block as it was cut off at the foot of the page.'
     )
-    head: str = dspy.InputField(
+    head: content.ContentParts = dspy.InputField(
         description='The second half — the block as it resumes at the top of the next page.'
     )
     tail_kind: str = dspy.InputField(
@@ -133,11 +128,11 @@ class MergeSignature(dspy.Signature):
     head_kind: str = dspy.InputField(
         description="The second half's structural kind."
     )
-    before_tail: str = dspy.InputField(
-        description='The block before the tail on its page. Read-only context — never include it in the output. Empty if there is none.'
+    before_tail: content.ContentParts = dspy.InputField(
+        description='The block before the tail on its page, as read-only multimodal context.'
     )
-    after_head: str = dspy.InputField(
-        description='The block after the head on its page. Read-only context — never include it in the output. Empty if there is none.'
+    after_head: content.ContentParts = dspy.InputField(
+        description='The block after the head on its page, as read-only multimodal context.'
     )
 
     merged: str = dspy.OutputField(
@@ -153,22 +148,22 @@ class SeamMerger(module.Module):
 
     def encode(
         self,
-        top_bottom_edge_node: SeamNodeDTO,
-        bottom_top_edge_node: SeamNodeDTO,
-        top_node_context: SeamNodeDTO | None = None,
-        bottom_node_context: SeamNodeDTO | None = None,
+        top_bottom_edge_node: walker.WindowNode,
+        bottom_top_edge_node: walker.WindowNode,
+        top_node_context: walker.WindowNode | None = None,
+        bottom_node_context: walker.WindowNode | None = None,
     ) -> dict:
-        """Builds the seam-signature kwargs for one edge pair."""
+        """Builds multimodal seam-signature kwargs for one edge pair."""
         return {
-            'top_node_context': top_node_context,
-            'top_bottom_edge_node': top_bottom_edge_node,
-            'bottom_top_edge_node': bottom_top_edge_node,
-            'bottom_node_context': bottom_node_context,
+            'top_node_context': _content_parts(top_node_context),
+            'top_bottom_edge_node': _content_parts(top_bottom_edge_node),
+            'bottom_top_edge_node': _content_parts(bottom_top_edge_node),
+            'bottom_node_context': _content_parts(bottom_node_context),
         }
 
     def decode(self, prediction, **inputs) -> bool:
-        """True when the edge nodes are one interrupted block."""
-        return prediction.is_split
+        """Returns whether the edge nodes are one interrupted block."""
+        return module.require_bool(prediction.is_split, 'is_split')
 
 
 class SeamRewriter(module.Module):
@@ -179,37 +174,78 @@ class SeamRewriter(module.Module):
 
     def encode(
         self,
-        top_bottom_edge_node: SeamNodeDTO,
-        bottom_top_edge_node: SeamNodeDTO,
-        top_node_context: SeamNodeDTO | None = None,
-        bottom_node_context: SeamNodeDTO | None = None,
+        top_bottom_edge_node: walker.WindowNode,
+        bottom_top_edge_node: walker.WindowNode,
+        top_node_context: walker.WindowNode | None = None,
+        bottom_node_context: walker.WindowNode | None = None,
     ) -> dict:
-        """Builds the merge-signature kwargs for one edge pair."""
+        """Builds multimodal merge-signature kwargs for one edge pair."""
         return {
-            'tail': top_bottom_edge_node.content or '',
-            'head': bottom_top_edge_node.content or '',
-            'tail_kind': ' '.join(top_bottom_edge_node.types),
-            'head_kind': ' '.join(bottom_top_edge_node.types),
-            'before_tail': (
-                top_node_context.content if top_node_context else ''
-            )
-            or '',
-            'after_head': (
-                bottom_node_context.content if bottom_node_context else ''
-            )
-            or '',
+            'tail': _content_parts(top_bottom_edge_node),
+            'head': _content_parts(bottom_top_edge_node),
+            'tail_kind': top_bottom_edge_node.type or '',
+            'head_kind': bottom_top_edge_node.type or '',
+            'before_tail': _content_parts(top_node_context),
+            'after_head': _content_parts(bottom_node_context),
         }
 
     def decode(self, prediction, **inputs) -> str:
         """Returns the rejoined block text for the two halves."""
-        return prediction.merged
+        return module.require_text(prediction.merged, 'merged')
 
 
-def _to_seam_node_dto(node: models.Node | None) -> SeamNodeDTO:
-    """Wraps a node as a SeamNodeDTO, or an empty DTO for None."""
+def _to_window_node(node: models.Node | None) -> walker.WindowNode:
+    """Projects a seam node into the shared multimodal window view."""
     if node is None:
-        return SeamNodeDTO(content=None, types=[])
-    return SeamNodeDTO(content=node.content, types=[node.type])
+        return walker.WindowNode(position=0)
+    return walker.WindowNode(
+        position=0,
+        type=node.type,
+        content=node.content,
+        image_path=node.image_path,
+    )
+
+
+def _content_parts(node: walker.WindowNode | None) -> content.ContentParts:
+    """Converts one seam view into the canonical DSPy content boundary."""
+    if node is None:
+        return content.ContentParts(content=content.Content())
+    return content.labeled_content_parts([node])
+
+
+def _image_only_node(node: models.Node) -> bool:
+    """Returns whether an image node has no independent textual payload."""
+    return bool(
+        node.image_path
+        and node.type == models.NodeType.IMAGE
+        and (
+            not node.content
+            or node.content.lstrip().startswith('![')
+        )
+    )
+
+
+def _merge_images(top_path: str, bottom_path: str) -> str:
+    """Stitches two page-seam image assets into one deterministic PNG."""
+    top = Path(top_path)
+    bottom = Path(bottom_path)
+    digest = hashlib.sha256(
+        top.read_bytes() + b'\\0' + bottom.read_bytes()
+    ).hexdigest()[:16]
+    output = top.with_name(f'{top.stem}--seam-{digest}.png')
+    if output.exists():
+        return str(output)
+    with Image.open(top) as first, Image.open(bottom) as second:
+        images = [first.convert('RGBA'), second.convert('RGBA')]
+        width = max(image.width for image in images)
+        height = sum(image.height for image in images)
+        canvas = Image.new('RGBA', (width, height), (255, 255, 255, 0))
+        y = 0
+        for image in images:
+            canvas.paste(image, ((width - image.width) // 2, y), image)
+            y += image.height
+        canvas.save(output, format='PNG')
+    return str(output)
 
 
 _APPARATUS = {'bibliographic', 'note'}
@@ -266,10 +302,10 @@ async def _merge_pair(
     )
 
     edges = {
-        'top_bottom_edge_node': _to_seam_node_dto(tail),
-        'bottom_top_edge_node': _to_seam_node_dto(head),
-        'top_node_context': _to_seam_node_dto(top_context),
-        'bottom_node_context': _to_seam_node_dto(bottom_context),
+        'top_bottom_edge_node': _to_window_node(tail),
+        'bottom_top_edge_node': _to_window_node(head),
+        'top_node_context': _to_window_node(top_context),
+        'bottom_node_context': _to_window_node(bottom_context),
     }
     is_split = await module.aforward(**edges)
     logger.debug(
@@ -281,7 +317,25 @@ async def _merge_pair(
         logs.elide(head.content, 40),
     )
     if is_split:
-        tail.content = await rewriter.aforward(**edges)
+        if _image_only_node(tail) and _image_only_node(head):
+            original_image_paths = [tail.image_path, head.image_path]
+            tail.image_path = _merge_images(
+                tail.image_path, head.image_path
+            )
+            tail.content = None
+            tail.provenance = {
+                **tail.provenance,
+                'seam_merged_from': original_image_paths,
+            }
+        elif tail.content or head.content:
+            tail.content = await rewriter.aforward(**edges)
+        else:
+            logger.warning(
+                'seam %d/%d judged split but has no mergeable text or image pair',
+                top.index,
+                bottom.index,
+            )
+            return [(top.index, top_nodes), (bottom.index, bottom_nodes)]
         del bottom_nodes[head_index]
 
     return [(top.index, top_nodes), (bottom.index, bottom_nodes)]

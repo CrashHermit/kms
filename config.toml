@@ -161,17 +161,17 @@ max_tokens = 8192
 
 [models.modules.entity_card_router]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/gemma-4-e4b-it"
+model = "openai/qwen3.5-9b"
 max_tokens = 8192
 
 [models.modules.entity_fact_generator]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/gemma-4-e4b-it"
+model = "openai/qwen3.5-9b"
 max_tokens = 8192
 
 [models.modules.entity_card_generator]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/gemma-4-e4b-it"
+model = "openai/qwen3.5-9b"
 max_tokens = 8192
 
 # ── local model serving (router-mode llama-server) ───────────────────
@@ -215,9 +215,9 @@ search_judge = "qwen3.5-9b"
 decompose_judge = "qwen3.5-9b"
 query_decomposer = "qwen3.5-9b"
 governance_judge = "qwen3.5-9b"
-entity_card_router = "gemma-4-e4b-it"
-entity_fact_generator = "gemma-4-e4b-it"
-entity_card_generator = "gemma-4-e4b-it"
+entity_card_router = "qwen3.5-9b"
+entity_fact_generator = "qwen3.5-9b"
+entity_card_generator = "qwen3.5-9b"
 
 [serving.presets."glm-ocr"]
 model = "~/models/glm-ocr/GLM-OCR-Q8_0.gguf"
@@ -230,8 +230,9 @@ parallel = 1
 [serving.presets."qwen3.5-9b"]
 model = "~/models/qwen3.5-9b/Qwen3.5-9B-Q4_K_M.gguf"
 mmproj = "~/models/qwen3.5-9b/mmproj-F16.gguf"
-ctx_size = 32768
+ctx_size = 16384
 cache_type_k = "q4_0"
+flash_attn = "on"
 cache_type_v = "q4_0"
 n_gpu_layers = 999
 no_warmup = true
@@ -249,14 +250,17 @@ temperature = 0.0
 threads = 12
 
 [serving.presets."gemma-4-e4b-it"]
-model = "~/models/gemma-4-e4b-it/gemma-4-E4B-it-Q4_K_M.gguf"
-mmproj = "~/models/gemma-4-e4b-it/mmproj-F16.gguf"
-ctx_size = 32768
+model = "~/.local/share/ramalama/store/huggingface/unsloth/gemma-4-e4b-it-GGUF/snapshots/sha256-85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87/gemma-4-E4B-it-Q4_K_M.gguf"
+mmproj = "~/.local/share/ramalama/store/huggingface/unsloth/gemma-4-e4b-it-GGUF/snapshots/sha256-85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87/mmproj-F16.gguf"
+ctx_size = 16384
 cache_type_k = "q4_0"
+flash_attn = "on"
 cache_type_v = "q4_0"
 n_gpu_layers = 999
 no_warmup = true
 parallel = 1
+reasoning = "off"
+temperature = 0.0
 
 # ── external services ────────────────────────────────────────────────
 
@@ -297,7 +301,7 @@ max_concurrent_calls = 16
 recursion_limit = 1000
 
 [recording]
-enabled = false
+enabled = true
 
 [stages.splitter]
 backward_context_budget = 200

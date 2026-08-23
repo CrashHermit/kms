@@ -110,6 +110,26 @@ def test_node_run_writes_the_spans_channel():
     assert out['spans'] == [[1], [2]]
 
 
+def test_node_run_maps_spans_back_after_excluding_instruction_members():
+    node = pedagogical_component_finder.PedagogicalComponentFinderNode(
+        module=_ScriptedFinder(
+            [[walker.Span(start=0, end=1)], []]
+        )
+    )
+    out = asyncio.run(
+        node.run(
+            {
+                'nodes': _nodes(),
+                'instructions': [
+                    models.Instruction(block=[0], member_positions=[0])
+                ],
+            }
+        )
+    )
+
+    assert out['spans'] == [[1, 2]]
+
+
 def test_node_run_on_empty_stream_yields_an_empty_channel():
     node = pedagogical_component_finder.PedagogicalComponentFinderNode(
         module=_ScriptedFinder([])
@@ -127,5 +147,5 @@ def test_window_parts_labels_text_and_loads_images(tmp_path):
     parts = content.labeled_content_parts(nodes).content.parts
     assert len(parts) == 3
     assert parts[0].text == '[0] (paragraph): intro'
-    assert parts[1].text == '[1] (image)'
+    assert parts[1].text == '[1] (image):'
     assert isinstance(parts[2], content.ImagePart)

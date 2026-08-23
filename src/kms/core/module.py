@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import math
+import numbers
 import time
 
 import dspy
@@ -25,6 +27,88 @@ def as_list(value: object) -> list:
     if isinstance(value, tuple):
         return list(value)
     return [value]
+
+
+def require_bool(value: object, field_name: str) -> bool:
+    """Returns an actual boolean prediction or raises a contract error."""
+    if type(value) is not bool:
+        raise ValueError(
+            f'{field_name} must be a boolean, got {type(value).__name__}'
+        )
+    return value
+
+
+def require_text(value: object, field_name: str) -> str:
+    """Returns a non-empty text prediction or raises a contract error."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f'{field_name} must be a non-empty string, '
+            f'got {type(value).__name__}'
+        )
+    return value
+
+
+def require_number(
+    value: object,
+    field_name: str,
+    *,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    """Validates a numeric prediction and optional inclusive bounds."""
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        raise TypeError(
+            f'{field_name} must be a number, got {type(value).__name__}'
+        )
+    result = float(value)
+    if not math.isfinite(result):
+        raise ValueError(f'{field_name} must be finite, got {value}')
+    if minimum is not None and result < minimum:
+        raise ValueError(
+            f'{field_name} must be at least {minimum}, got {value}'
+        )
+    if maximum is not None and result > maximum:
+        raise ValueError(
+            f'{field_name} must be at most {maximum}, got {value}'
+        )
+    return result
+
+
+def require_positions(
+    value: object,
+    *,
+    field_name: str,
+    upper_bound: int,
+    unique: bool = True,
+    ordered: bool = False,
+) -> list[int]:
+    """Validates zero-based local positions without changing their meaning.
+
+    ``upper_bound`` is exclusive. Callers should pass ``as_list`` output so
+    DSPy cardinality normalization remains separate from contract validation.
+    """
+    if not isinstance(value, list):
+        raise TypeError(
+            f'{field_name} must be a list, got {type(value).__name__}'
+        )
+    for index, position in enumerate(value):
+        if type(position) is not int:
+            raise TypeError(
+                f'{field_name}[{index}] must be an int, '
+                f'got {type(position).__name__}'
+            )
+        if not 0 <= position < upper_bound:
+            raise ValueError(
+                f'{field_name}[{index}]={position} is outside '
+                f'0..{upper_bound - 1}'
+            )
+    if unique and len(value) != len(set(value)):
+        raise ValueError(f'{field_name} contains duplicate positions: {value}')
+    if ordered and value != sorted(value):
+        raise ValueError(
+            f'{field_name} must be in document order: {value}'
+        )
+    return value
 
 
 class Module(dspy.Module):
@@ -69,6 +153,7 @@ class Module(dspy.Module):
         start = time.perf_counter()
         prediction = await self._call_predictor(kwargs)
         duration_ms = round((time.perf_counter() - start) * 1000, 2)
+        output = self.decode(prediction, **inputs)
         if self._recorder:
             self._recorder.record(
                 self.record_name,
@@ -78,7 +163,6 @@ class Module(dspy.Module):
                 model=self._model_name(),
                 duration_ms=duration_ms,
             )
-        output = self.decode(prediction, **inputs)
         logger.debug(
             '%s: %d input(s) -> %s',
             self.record_name,

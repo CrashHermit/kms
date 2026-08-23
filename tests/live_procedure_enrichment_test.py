@@ -76,6 +76,7 @@ async def main():
     await writer.persist_assertions(
         triplets,
         SOURCE,
+        nodes,
         session_factory=_session,
         entity_descriptions=entity_descriptions,
         predicate_descriptions=predicate_descriptions,
@@ -113,7 +114,7 @@ async def main():
 
     statement = models.Statement(block=[0], members=[0])
     await writer.persist_statements(
-        [statement], SOURCE, session_factory=_session
+        [statement], nodes, SOURCE, session_factory=_session
     )
     print('\nCreated 1 Statement (orphan).')
 

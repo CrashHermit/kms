@@ -41,7 +41,7 @@ def compose_instruction_content(
     nodes: list[models.Node],
 ) -> content.Content:
     """Composes an instruction's member nodes into multimodal content."""
-    return _compose_nodes(_member_nodes(instruction.members, nodes))
+    return _compose_nodes(_member_nodes(instruction.member_positions, nodes))
 
 
 def compose_statement_content(
@@ -49,7 +49,7 @@ def compose_statement_content(
     nodes: list[models.Node],
 ) -> content.Content:
     """Composes a statement's complete member content."""
-    return _compose_nodes(_member_nodes(statement.members, nodes))
+    return _compose_nodes(_member_nodes(statement.member_positions, nodes))
 
 
 def _positions(
@@ -125,7 +125,7 @@ class GovernanceStatementWalkerNode:
     ) -> tuple[models.Statement, bool, float]:
         """Judges one complete statement with its surrounding context."""
         statement_content = compose_statement_content(statement, nodes)
-        target_positions = _positions(statement.members, nodes)
+        target_positions = _positions(statement.member_positions, nodes)
         context_window = _marked_statement_window(
             nodes,
             target_positions,
@@ -152,7 +152,7 @@ class GovernanceStatementWalkerNode:
         instruction_data = []
         for instruction in instructions:
             span = _span_positions(
-                instruction.members or instruction.block, nodes
+                instruction.member_positions or instruction.block, nodes
             )
             if span is not None:
                 instruction_data.append((span[0], span[1], instruction))
@@ -160,7 +160,9 @@ class GovernanceStatementWalkerNode:
 
         statement_data = []
         for statement in statements:
-            span = _span_positions(statement.members or statement.block, nodes)
+            span = _span_positions(
+                statement.member_positions or statement.block, nodes
+            )
             if span is not None:
                 statement_data.append((span[0], span[1], statement))
         statement_data.sort(key=lambda item: item[0])

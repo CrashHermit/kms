@@ -34,7 +34,7 @@ def test_statement_uuids_are_disjoint_from_node_uuids():
 def test_statement_properties_carry_compiled_content_and_provenance():
     statement = models.Statement(
         block=[4, 5],
-        members=[4, 5],
+        member_positions=[4, 5],
         uuid=statements.statement_uuid('book.pdf', [4, 5]),
         statement='Compiled statement.',
     )
@@ -46,7 +46,7 @@ def test_statement_properties_carry_compiled_content_and_provenance():
 
 def test_statement_properties_preserve_assigned_uuid():
     assigned = statements.statement_uuid('book.pdf', [4, 5])
-    statement = models.Statement(block=[4, 5], members=[4, 5], uuid=assigned)
+    statement = models.Statement(block=[4, 5], member_positions=[4, 5], uuid=assigned)
     assert statements.statement_properties(statement, 'book.pdf')['uuid'] == assigned
 
 
@@ -69,6 +69,10 @@ def test_chain_is_the_pure_node_stream_in_document_order():
     ]
 
 
+def _member_nodes():
+    return [models.Node(uuid=f'node-{index}') for index in range(3)]
+
+
 def test_chain_pairs_thread_every_consecutive_node_pair():
     chain = writer._chain_nodes(_stream(), 'book.pdf')
     pairs = writer._chain_pairs(chain)
@@ -87,24 +91,34 @@ def test_an_empty_stream_has_no_chain():
 def test_statement_member_pairs_link_every_member_node():
     statement = models.Statement(
         block=[1, 2],
-        members=[1, 2],
+        member_positions=[1, 2],
         uuid=statements.statement_uuid('book.pdf', [1, 2]),
     )
-    pairs = statements.statement_member_pairs([statement], 'book.pdf')
+    node_stream = _member_nodes()
+    pairs = statements.statement_member_pairs(
+        [statement], node_stream, 'book.pdf'
+    )
     assert len(pairs) == 2
-    assert {pair['statement'] for pair in pairs} == {statements.statement_uuid('book.pdf', [1, 2])}
-    assert all(pair['node'] == 'placeholder' for pair in pairs)
+    assert {pair['statement'] for pair in pairs} == {
+        statements.statement_uuid('book.pdf', [1, 2])
+    }
+    assert {pair['node'] for pair in pairs} == {
+        nodes.node_uuid('book.pdf', node_stream[index]) for index in [1, 2]
+    }
 
 
 def test_statement_member_pairs_preserve_assigned_uuid():
     assigned = statements.statement_uuid('book.pdf', [1, 2])
-    statement = models.Statement(block=[1, 2], members=[1, 2], uuid=assigned)
-    pairs = statements.statement_member_pairs([statement], 'book.pdf')
+    statement = models.Statement(block=[1, 2], member_positions=[1, 2], uuid=assigned)
+    node_stream = _member_nodes()
+    pairs = statements.statement_member_pairs(
+        [statement], node_stream, 'book.pdf'
+    )
     assert {pair['statement'] for pair in pairs} == {assigned}
 
 
 def test_statement_member_pairs_are_empty_without_statements():
-    assert statements.statement_member_pairs([], 'book.pdf') == []
+    assert statements.statement_member_pairs([], [], 'book.pdf') == []
 
 
 class _FakeSession:
@@ -148,10 +162,10 @@ def test_persist_chain_writes_head_and_next_over_pure_nodes():
 
 def test_has_procedure_pairs_use_assigned_statement_identity():
     assigned = statements.statement_uuid('book.pdf', [1, 2])
-    statement = models.Statement(block=[1, 2], members=[1], uuid=assigned)
+    statement = models.Statement(block=[1, 2], member_positions=[1], uuid=assigned)
     procedure = models.Procedure(
         block=[1, 2],
-        members=[2],
+        member_positions=[2],
         uuid=procedures.procedure_uuid(
             'book.pdf', [1, 2], 0, statement_uuid=assigned
         ),
@@ -177,13 +191,14 @@ def test_persist_statements_writes_member_edges_from_every_member():
     driver = _FakeDriver()
     statement = models.Statement(
         block=[1, 2],
-        members=[1, 2],
+        member_positions=[1, 2],
         uuid=statements.statement_uuid('book.pdf', [1, 2]),
     )
 
     asyncio.run(
         writer.persist_statements(
             [statement],
+            _member_nodes(),
             'book.pdf',
             session_factory=lambda: driver.session(database='neo4j'),
         )

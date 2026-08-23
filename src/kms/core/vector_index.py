@@ -60,13 +60,13 @@ class ExactCosineIndex:
             for score, index in zip(scores[0], indices[0], strict=True)
             if index >= 0
         ]
-        return sorted(matches, key=lambda match: (-match.score, match.key))[:top_k]
+        return sorted(matches, key=lambda match: (-match.score, match.key))[
+            :top_k
+        ]
 
     def _validate_vectors(self, vectors: np.ndarray) -> None:
         if vectors.ndim != 2 or vectors.shape[1] != self.dimension:
-            raise ValueError(
-                f'vectors must have dimension {self.dimension}'
-            )
+            raise ValueError(f'vectors must have dimension {self.dimension}')
         if not np.isfinite(vectors).all():
             raise ValueError('vectors must contain only finite values')
         if np.any(np.linalg.norm(vectors, axis=1) == 0):

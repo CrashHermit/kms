@@ -258,7 +258,10 @@ class FormatterRouter(module.Module):
         return {'lines': lines}
 
     def decode(self, prediction, **inputs) -> bool:
-        return bool(prediction.needs_formatting)
+        """Returns the validated formatting-routing decision."""
+        return module.require_bool(
+            prediction.needs_formatting, 'needs_formatting'
+        )
 
 
 class FormatterEditor(module.Module):
@@ -272,16 +275,19 @@ class FormatterEditor(module.Module):
         edits = module.as_list(prediction.edits)
         lines = inputs.get('lines', '')
         max_line = len(lines.split('\n'))
-        valid_edits = []
+        edit_indices = [edit.index for edit in edits]
+        if len(edit_indices) != len(set(edit_indices)):
+            raise ValueError(
+                'formatter editor returned duplicate line indices: '
+                f'{edit_indices}'
+            )
         for edit in edits:
-            if 1 <= edit.index <= max_line:
-                valid_edits.append(edit)
-            else:
-                logger.warning(
+            if not 1 <= edit.index <= max_line:
+                raise ValueError(
                     'formatter editor returned out-of-range edit: '
                     f'index={edit.index}, max_line={max_line}'
                 )
-        return valid_edits
+        return edits
 
 
 class Formatter:

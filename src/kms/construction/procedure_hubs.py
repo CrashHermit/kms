@@ -65,7 +65,10 @@ class ProcedureHubSynthesizer(module.Module):
 
     def decode(self, prediction, **inputs) -> tuple[str, str]:
         result = prediction.result
-        return result.canonical_name, result.description
+        return (
+            module.require_text(result.canonical_name, 'canonical_name'),
+            module.require_text(result.description, 'description'),
+        )
 
 
 class ProcedureHubAdjudicator(module.Module):
@@ -76,7 +79,8 @@ class ProcedureHubAdjudicator(module.Module):
         return {'left': left, 'right': right}
 
     def decode(self, prediction, **inputs) -> bool:
-        return prediction.should_merge
+        """Returns the validated hub-merge decision."""
+        return module.require_bool(prediction.should_merge, 'should_merge')
 
 
 def _records(rows: list[dict]) -> tuple[models.ProcedureHubRecord, ...]:

@@ -24,20 +24,13 @@ from kms.graph.instructions import (
 from kms.graph.nodes import (
     node_label,
     node_properties,
-    node_uuid,
     source_properties,
     source_uuid,
 )
 from kms.graph.procedures import (
-    existing_first_pairs,
-    existing_step_rows,
-    existing_then_pairs,
-    first_pairs,
     procedure_enrichment_properties,
     procedure_member_pairs,
     procedure_rows,
-    step_rows,
-    then_pairs,
 )
 from kms.graph.statements import (
     has_procedure_pairs,
@@ -168,6 +161,7 @@ def _statement_rows(
 
 async def persist_statements(
     statements: list[models.Statement],
+    nodes: list[models.Node],
     source: str,
     *,
     session_factory: Callable,
@@ -176,6 +170,7 @@ async def persist_statements(
 
     Args:
         statements: The statements to persist.
+        nodes: The node stream for resolving member positions.
         source: The source key.
         session_factory: Async callable returning a Neo4j session.
     """
@@ -184,7 +179,7 @@ async def persist_statements(
     if any(statement.uuid is None for statement in statements):
         raise ValueError('cannot persist statements without assigned uuids')
     rows = _statement_rows(statements, source)
-    pairs = statement_member_pairs(statements, source)
+    pairs = statement_member_pairs(statements, nodes, source)
     now = utcnow_iso()
 
     async with session_factory() as session:
@@ -407,6 +402,7 @@ async def persist_procedure_enrichment(
 
 async def persist_instructions(
     instructions: list[models.Instruction],
+    nodes: list[models.Node],
     source: str,
     *,
     session_factory: Callable,
@@ -415,13 +411,14 @@ async def persist_instructions(
 
     Args:
         instructions: The instructions to persist.
+        nodes: The node stream for resolving member positions.
         source: The source key.
         session_factory: Async callable returning a Neo4j session.
     """
     if not instructions:
         return
     rows = instruction_rows(instructions, source)
-    pairs = instruction_member_pairs(instructions, source)
+    pairs = instruction_member_pairs(instructions, nodes, source)
     now = utcnow_iso()
 
     async with session_factory() as session:
@@ -434,14 +431,16 @@ async def persist_instructions(
 
 async def persist_procedures(
     procedures: list[models.Procedure],
+    doc_nodes: list[models.Node],
     source: str,
     *,
     session_factory: Callable,
 ) -> None:
-    """Persists procedures, their steps, and FIRST/THEN edges.
+    """Persists procedures and their source-node memberships.
 
     Args:
         procedures: The procedures to persist.
+        doc_nodes: The document nodes in order (for member resolution).
         source: The source key.
         session_factory: Async callable returning a Neo4j session.
     """
@@ -450,55 +449,17 @@ async def persist_procedures(
     procedure_batch = procedure_rows(procedures, source)
     if not procedure_batch:
         return
-    steps = step_rows(procedures, source)
-    members = procedure_member_pairs(procedures, source)
-    firsts = first_pairs(procedures, source)
-    thens = then_pairs(procedures, source)
+    members = procedure_member_pairs(procedures, source, doc_nodes)
     now = utcnow_iso()
 
     async with session_factory() as session:
         await session.run(
             queries.MERGE_PROCEDURES, rows=procedure_batch, now=now
         )
-        if steps:
-            await session.run(queries.MERGE_STEPS, rows=steps, now=now)
         if members:
             await session.run(
                 queries.MERGE_PROCEDURE_MEMBERS, pairs=members, now=now
             )
-        if firsts:
-            await session.run(queries.MERGE_FIRST, pairs=firsts, now=now)
-        if thens:
-            await session.run(queries.MERGE_THEN, pairs=thens, now=now)
-
-
-async def persist_procedure_steps(
-    procedure_uuid: str,
-    steps: list[models.Step],
-    source: str,
-    *,
-    session_factory: Callable,
-) -> None:
-    """Persists steps and ordering edges for an existing procedure.
-
-    Args:
-        procedure_uuid: UUID of the existing Procedure node.
-        steps: Ordered learnable steps to persist.
-        source: The source key.
-        session_factory: Async callable returning a Neo4j session.
-    """
-    rows = existing_step_rows(source, procedure_uuid, steps)
-    firsts = existing_first_pairs(source, procedure_uuid, steps)
-    thens = existing_then_pairs(source, procedure_uuid, steps)
-    now = utcnow_iso()
-
-    async with session_factory() as session:
-        if rows:
-            await session.run(queries.MERGE_STEPS, rows=rows, now=now)
-        if firsts:
-            await session.run(queries.MERGE_FIRST, pairs=firsts, now=now)
-        if thens:
-            await session.run(queries.MERGE_THEN, pairs=thens, now=now)
 
 
 async def persist_statement_procedure_links(
@@ -527,6 +488,7 @@ async def persist_statement_procedure_links(
 async def persist_assertions(
     triplets: list[models.Triplet],
     source: str,
+    doc_nodes: list[models.Node],
     *,
     session_factory: Callable,
     entity_descriptions: dict[int, dict[str, str | None]] | None = None,
@@ -547,7 +509,7 @@ async def persist_assertions(
         for index, triplet in enumerate(triplets)
         if any(
             triplet.occurrence_uuids.get(node_position) is None
-            for node_position in triplet.node_ids
+            for node_position in triplet.evidence_positions
         )
     ]
     if missing:
@@ -563,7 +525,7 @@ async def persist_assertions(
         entity_embeddings,
         predicate_embeddings,
     )
-    pairs = evidence_pairs(triplets, source)
+    pairs = evidence_pairs(triplets, source, doc_nodes)
     now = utcnow_iso()
 
     async with session_factory() as session:
@@ -635,7 +597,7 @@ async def persist_name_occurrences(
             component['source'],
             component['uuid'],
             component['name'],
-            component['node_position'],
+            component['node_id'],
         )
         for component in components
     ]
@@ -827,23 +789,35 @@ async def _validate_meta_hubs(
 
 
 async def persist_entity_hubs(
-    hubs: list[dict], *, session_factory: Callable,
-    subsumption_edges: list[dict] | None = None, tier: str,
+    hubs: list[dict],
+    *,
+    session_factory: Callable,
+    subsumption_edges: list[dict] | None = None,
+    tier: str,
 ) -> None:
     await _persist_semantic_hubs(
-        hubs, session_factory=session_factory, graph_module=entity_hubs,
-        source_hubs_query=queries.all_entity_source_hubs, tier=tier,
+        hubs,
+        session_factory=session_factory,
+        graph_module=entity_hubs,
+        source_hubs_query=queries.all_entity_source_hubs,
+        tier=tier,
         subsumption_edges=subsumption_edges,
     )
 
 
 async def persist_predicate_hubs(
-    hubs: list[dict], *, session_factory: Callable,
-    subsumption_edges: list[dict] | None = None, tier: str,
+    hubs: list[dict],
+    *,
+    session_factory: Callable,
+    subsumption_edges: list[dict] | None = None,
+    tier: str,
 ) -> None:
     await _persist_semantic_hubs(
-        hubs, session_factory=session_factory, graph_module=predicate_hubs,
-        source_hubs_query=queries.all_predicate_source_hubs, tier=tier,
+        hubs,
+        session_factory=session_factory,
+        graph_module=predicate_hubs,
+        source_hubs_query=queries.all_predicate_source_hubs,
+        tier=tier,
         subsumption_edges=subsumption_edges,
     )
 
@@ -902,7 +876,9 @@ async def _persist_semantic_hubs(
         ]
 
     async with session_factory() as session:
-        await session.run(queries.merge_hubs_query(label), rows=hub_rows, now=now)
+        await session.run(
+            queries.merge_hubs_query(label), rows=hub_rows, now=now
+        )
         if member_pairs:
             if tier == 'source':
                 await session.run(
@@ -926,6 +902,7 @@ async def _persist_semantic_hubs(
                 pairs=subsumption_edges,
                 now=now,
             )
+
 
 async def persist_triplet_hubs(
     groups: list[dict],
@@ -1025,7 +1002,9 @@ async def attach_entity_components(
     assignments: list[dict], *, aliases: list[dict], session_factory: Callable
 ) -> None:
     await _attach_source_components(
-        assignments, aliases=aliases, session_factory=session_factory,
+        assignments,
+        aliases=aliases,
+        session_factory=session_factory,
         component_node_label=entity_hubs.COMPONENT_LABEL,
         source_hub_label=entity_hubs.hub_label(),
     )
@@ -1035,7 +1014,9 @@ async def attach_predicate_components(
     assignments: list[dict], *, aliases: list[dict], session_factory: Callable
 ) -> None:
     await _attach_source_components(
-        assignments, aliases=aliases, session_factory=session_factory,
+        assignments,
+        aliases=aliases,
+        session_factory=session_factory,
         component_node_label=predicate_hubs.COMPONENT_LABEL,
         source_hub_label=predicate_hubs.hub_label(),
     )
@@ -1108,11 +1089,16 @@ async def _validate_meta_assignments(
 
 
 async def attach_entity_meta_hubs(
-    assignments: list[dict], *, aliases: list[dict],
-    subsumption_edges: list[dict], session_factory: Callable,
+    assignments: list[dict],
+    *,
+    aliases: list[dict],
+    subsumption_edges: list[dict],
+    session_factory: Callable,
 ) -> None:
     await _attach_meta_hubs(
-        assignments, aliases=aliases, subsumption_edges=subsumption_edges,
+        assignments,
+        aliases=aliases,
+        subsumption_edges=subsumption_edges,
         session_factory=session_factory,
         source_hubs_query=queries.all_entity_source_hubs,
         qualified_meta_hubs_query=queries.qualified_entity_meta_hub_uuids,
@@ -1122,11 +1108,16 @@ async def attach_entity_meta_hubs(
 
 
 async def attach_predicate_meta_hubs(
-    assignments: list[dict], *, aliases: list[dict],
-    subsumption_edges: list[dict], session_factory: Callable,
+    assignments: list[dict],
+    *,
+    aliases: list[dict],
+    subsumption_edges: list[dict],
+    session_factory: Callable,
 ) -> None:
     await _attach_meta_hubs(
-        assignments, aliases=aliases, subsumption_edges=subsumption_edges,
+        assignments,
+        aliases=aliases,
+        subsumption_edges=subsumption_edges,
         session_factory=session_factory,
         source_hubs_query=queries.all_predicate_source_hubs,
         qualified_meta_hubs_query=queries.qualified_predicate_meta_hub_uuids,
@@ -1150,7 +1141,9 @@ async def _attach_meta_hubs(
         return
     if assignments:
         await _validate_meta_assignments(
-            assignments, session_factory, source_hubs_query,
+            assignments,
+            session_factory,
+            source_hubs_query,
             qualified_meta_hubs_query,
         )
     now = utcnow_iso()
@@ -1188,9 +1181,13 @@ async def clear_entity_hubs(source: str, *, session_factory: Callable) -> None:
     )
 
 
-async def clear_predicate_hubs(source: str, *, session_factory: Callable) -> None:
+async def clear_predicate_hubs(
+    source: str, *, session_factory: Callable
+) -> None:
     await _clear_source_hubs(
-        source, session_factory=session_factory, label=predicate_hubs.hub_label()
+        source,
+        session_factory=session_factory,
+        label=predicate_hubs.hub_label(),
     )
 
 
@@ -1219,7 +1216,9 @@ async def clear_invalid_entity_meta_hubs(*, session_factory: Callable) -> None:
     )
 
 
-async def clear_invalid_predicate_meta_hubs(*, session_factory: Callable) -> None:
+async def clear_invalid_predicate_meta_hubs(
+    *, session_factory: Callable
+) -> None:
     await _clear_invalid_meta_hubs(
         session_factory=session_factory, label=predicate_hubs.hub_label('meta')
     )
@@ -1271,9 +1270,7 @@ async def persist_cards(
     rows = [learning.card_properties(card) for card in cards]
     now = utcnow_iso()
     async with session_factory() as session:
-        await session.run(
-            queries.merge_cards_query(), rows=rows, now=now
-        )
+        await session.run(queries.merge_cards_query(), rows=rows, now=now)
 
 
 async def persist_card_hub_edges(
@@ -1284,10 +1281,7 @@ async def persist_card_hub_edges(
     """Persists HUB->HAS_CARD edges."""
     if not cards:
         return
-    pairs = [
-        {'hub': card.hub_uuid, 'card': card.uuid}
-        for card in cards
-    ]
+    pairs = [{'hub': card.hub_uuid, 'card': card.uuid} for card in cards]
     now = utcnow_iso()
     async with session_factory() as session:
         await session.run(
@@ -1306,9 +1300,7 @@ async def persist_reviews(
     rows = [learning.review_properties(review) for review in reviews]
     now = utcnow_iso()
     async with session_factory() as session:
-        await session.run(
-            queries.merge_reviews_query(), rows=rows, now=now
-        )
+        await session.run(queries.merge_reviews_query(), rows=rows, now=now)
 
 
 async def persist_card_review_edges(
@@ -1320,8 +1312,7 @@ async def persist_card_review_edges(
     if not reviews:
         return
     pairs = [
-        {'card': review.card_uuid, 'review': review.uuid}
-        for review in reviews
+        {'card': review.card_uuid, 'review': review.uuid} for review in reviews
     ]
     now = utcnow_iso()
     async with session_factory() as session:

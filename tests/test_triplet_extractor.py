@@ -12,7 +12,7 @@ def _fact_module() -> triplet_extractor._FactExtractor:
 
 def test_fact_decode_returns_text_without_model_provenance() -> None:
     prediction = SimpleNamespace(
-        facts=[SimpleNamespace(text='A is related to B')]
+        facts=[triplet_extractor._FactInput(text='A is related to B')]
     )
 
     assert _fact_module().decode(prediction, current_nodes=[]) == [
@@ -80,8 +80,8 @@ def test_extract_triplets_assigns_only_anchor_provenance(monkeypatch) -> None:
         )
         for call in fact_module.calls
     ] == [0, 1]
-    # node_ids are now positions
-    assert [triplet.node_ids for triplet in result] == [[0], [1]]
+    # evidence_positions are now positions
+    assert [triplet.evidence_positions for triplet in result] == [[0], [1]]
     assert all(triplet.occurrence_uuids for triplet in result)
 
 
@@ -108,5 +108,5 @@ def test_extract_triplets_allows_an_image_anchor() -> None:
     assert (
         fact_module.calls[0]['current_nodes'][0].image_path == '/tmp/figure.png'
     )
-    assert result[0].node_ids == [0]
+    assert result[0].evidence_positions == [0]
     assert result[0].occurrence_uuids

@@ -7,14 +7,12 @@ import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import NAMESPACE_URL, uuid5
+from uuid import uuid4
 
 import dspy
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
-
-_NAMESPACE_KMS = uuid5(NAMESPACE_URL, 'kms')
 
 FORMAT_VERSION = 1
 
@@ -25,7 +23,7 @@ class Recorder:
     """Persists LLM inputs and predictions as replayable examples.
 
     Each module gets its own run directory under the output directory,
-    keyed by a stable id derived from the source. Records capture the
+    keyed by a fresh run id. Records capture the
     signature-form inputs the LM actually saw, the model that produced
     them, and per-call timing. Images are written once as
     content-addressed sidecars under a shared ``images/`` directory, so
@@ -40,7 +38,7 @@ class Recorder:
         output_dir: str = 'output/examples',
         **meta: object,
     ) -> None:
-        self._run_id = str(uuid5(_NAMESPACE_KMS, source))
+        self._run_id = uuid4().hex
         self._output_dir = Path(output_dir)
         self._run_meta = dict(meta, source=source)
         self._manifest: dict[str, dict] = {}

@@ -59,19 +59,26 @@ class SearchGroup(BaseModel):
     )
 
 
+def _result_content(result: SearchResult) -> content.Content:
+    """Builds one candidate's ordered text-and-image content."""
+    parts: list[content.TextPart | content.ImagePart] = []
+    if result.text:
+        parts.append(content.TextPart(text=result.text))
+    image = content.load_image(
+        result.image_path,
+        max_dim=config.get_settings().image.max_dim,
+    )
+    if image:
+        parts.append(content.ImagePart(image=image))
+    return content.Content(parts=parts)
+
+
 def _candidate_content(results: list[SearchResult]) -> content.Content:
     """Builds labelled multimodal content for the relevance judge."""
     parts: list[content.TextPart | content.ImagePart] = []
     for index, result in enumerate(results):
         parts.append(content.TextPart(text=f'Candidate {index}:'))
-        if result.text:
-            parts.append(content.TextPart(text=result.text))
-        image = content.load_image(
-            result.image_path,
-            max_dim=config.get_settings().image.max_dim,
-        )
-        if image:
-            parts.append(content.ImagePart(image=image))
+        parts.extend(_result_content(result).parts)
     return content.Content(parts=parts)
 
 
@@ -86,7 +93,7 @@ class SubQueryPlan(BaseModel):
 
 
 async def search(
-    query: str | list[str | dspy.Image],
+    query: str | content.Content | list[str | dspy.Image],
     *,
     index_name: str,
     text_field: str,
@@ -98,16 +105,17 @@ async def search(
 ) -> list[SearchGroup]:
     """Searches a vector index, decomposing the query when warranted.
 
-    A judge always decides whether the query should be decomposed into
-    independent sub-queries.  Each part — the raw query or one
-    sub-query — is embedded and searched separately with the full
-    top_k budget, then optionally reranked and filtered through an
-    LLM relevance judge.
+    A multimodal judge decides whether the query should be decomposed into
+    independent sub-queries. Each Content sub-query is embedded and searched
+    separately with the full top_k budget, then candidate Content values are
+    reranked and filtered through a multimodal LLM relevance judge. OpenRouter's
+    rerank endpoint accepts a text query and multimodal documents, so image
+    query intent is first described by QueryTextifier for that boundary.
 
     Args:
-        query: Natural-language query string, or an ordered list of
-            strings and dspy.Image objects for a multimodal query.
-            A query may be text-only, image-only, or a mix.
+        query: A text string, canonical ``Content`` value, or ordered list
+            of strings and dspy.Image objects. A query may be text-only,
+            image-only, or a mix.
         index_name: Neo4j vector index name (e.g. 'node_content',
             'entity_hub_embedding').
         text_field: Property name on each returned node to use as
@@ -143,10 +151,15 @@ async def search(
     if not embeddings.is_configured():
         raise RuntimeError('Embedding API key not configured.')
 
-    query_parts: list[str | dspy.Image] = (
-        [query] if isinstance(query, str) else query
-    )
-    query_content = content.Content.from_parts(query_parts)
+    if isinstance(query, content.Content):
+        query_content = query
+    else:
+        query_parts: list[str | dspy.Image] = (
+            [query] if isinstance(query, str) else query
+        )
+        query_content = content.Content.from_parts(query_parts)
+    if not query_content.parts:
+        raise ValueError('query must contain at least one content part.')
     rendered = query_content.render()
     language_model = language_model or _get_language_model()
 
@@ -156,11 +169,7 @@ async def search(
         decomposer = QueryDecomposer(language_model)
         plans = await decomposer.aforward(parts=query_content)
         for plan in plans:
-            parts = [
-                query_content.parts[index]
-                for index in plan.part_indices
-                if 0 <= index < len(query_content.parts)
-            ]
+            parts = [query_content.parts[index] for index in plan.part_indices]
             if parts:
                 units.append((plan.label, content.Content(parts=parts)))
     if not units:
@@ -168,6 +177,7 @@ async def search(
 
     embedder = embeddings.embedder()
     relevance_judge = SearchJudge(language_model)
+    query_textifier = QueryTextifier(language_model)
     groups: list[SearchGroup] = []
     for sub_query, part_content in units:
         query_vector = (await embedder.embed([part_content]))[0]
@@ -188,18 +198,17 @@ async def search(
         ]
         if reranker.is_configured():
             reranker_instance = reranker.reranker()
-            docs = [result.text for result in results]
-            query_images = [
-                part
+            rerank_query = sub_query
+            if any(
+                isinstance(part, content.ImagePart)
                 for part in part_content.parts
-                if isinstance(part, content.ImagePart)
-            ]
-            if query_images:
-                image = content.image_url(query_images[0].image)
-                docs = [{'text': doc, 'image': image} for doc in docs]
+            ):
+                rerank_query = await query_textifier.aforward(
+                    parts=part_content
+                )
             reranked = await reranker_instance.rerank(
-                query=sub_query,
-                documents=docs,
+                query=rerank_query,
+                documents=[_result_content(result) for result in results],
                 top_n=rerank_top_n,
             )
             results = [results[item['index']] for item in reranked]
@@ -207,19 +216,39 @@ async def search(
             results = results[:rerank_top_n]
 
         if results:
-            candidates_content = content.ContentParts(
-                content=_candidate_content(results)
-            )
             decisions = await relevance_judge.aforward(
-                parts=part_content, candidates=candidates_content
+                parts=part_content, candidates=results
             )
             for decision in decisions:
-                if decision.index < len(results):
-                    results[decision.index].judge_relevant = decision.relevant
+                results[decision.index].judge_relevant = decision.relevant
 
         groups.append(SearchGroup(sub_query=sub_query, results=results))
 
     return groups
+
+
+class QueryTextifierSignature(dspy.Signature):
+    """Describe multimodal query content for a text-query reranker."""
+
+    parts: content.ContentParts = dspy.InputField(
+        description='The complete text and image query content.'
+    )
+    query: str = dspy.OutputField(
+        description='A concise text query preserving the visual intent.'
+    )
+
+
+class QueryTextifier(module.Module):
+    """Converts visual query intent to text for APIs with text-only queries."""
+
+    signature = QueryTextifierSignature
+    record_name = 'query_textifier'
+
+    def encode(self, parts: content.Content) -> dict:
+        return {'parts': content.ContentParts(content=parts)}
+
+    def decode(self, prediction, **inputs) -> str:
+        return module.require_text(prediction.query, 'query')
 
 
 class SearchJudgeDecision(BaseModel):
@@ -275,17 +304,40 @@ class SearchJudge(module.Module):
     def encode(
         self,
         parts: content.Content,
-        candidates: content.ContentParts,
+        candidates: list[SearchResult],
     ) -> dict:
         """Builds the search-judge signature kwargs."""
         return {
             'parts': content.ContentParts(content=parts),
-            'candidates': candidates,
+            'candidates': content.ContentParts(
+                content=_candidate_content(candidates)
+            ),
         }
 
     def decode(self, prediction, **inputs) -> list[SearchJudgeDecision]:
-        """Returns one relevance decision per retrieved candidate."""
-        return module.as_list(prediction.decisions)
+        """Returns validated relevance decisions for retrieved candidates."""
+        decisions = module.as_list(prediction.decisions)
+        if any(
+            not isinstance(decision, SearchJudgeDecision)
+            for decision in decisions
+        ):
+            raise TypeError(
+                'decisions must contain SearchJudgeDecision values'
+            )
+        candidate_count = len(inputs['candidates'])
+        if len(decisions) != candidate_count:
+            raise ValueError(
+                'decisions must contain exactly one item per candidate'
+            )
+        module.require_positions(
+            [decision.index for decision in decisions],
+            field_name='decisions.index',
+            upper_bound=candidate_count,
+            ordered=True,
+        )
+        for decision in decisions:
+            module.require_bool(decision.relevant, 'decisions.relevant')
+        return decisions
 
 
 class DecomposeJudgeSignature(dspy.Signature):
@@ -330,8 +382,10 @@ class DecomposeJudge(module.Module):
         return {'parts': content.ContentParts(content=parts)}
 
     def decode(self, prediction, **inputs) -> bool:
-        """True when the query should be decomposed before searching."""
-        return prediction.should_decompose
+        """Returns whether the query should be decomposed."""
+        return module.require_bool(
+            prediction.should_decompose, 'should_decompose'
+        )
 
 
 class QueryDecomposerSignature(dspy.Signature):
@@ -375,5 +429,33 @@ class QueryDecomposer(module.Module):
         return {'parts': content.ContentParts(content=parts)}
 
     def decode(self, prediction, **inputs) -> list[SubQueryPlan]:
-        """Returns the planned sub-queries for the query parts."""
-        return module.as_list(prediction.sub_queries)
+        """Returns validated sub-query plans for the query parts."""
+        plans = module.as_list(prediction.sub_queries)
+        if any(not isinstance(plan, SubQueryPlan) for plan in plans):
+            raise TypeError('sub_queries must contain SubQueryPlan values')
+        if len(plans) > 4:
+            raise ValueError('sub_queries must contain at most four plans')
+        part_count = len(inputs['parts'].parts)
+        covered: list[int] = []
+        previous_end = -1
+        for plan_index, plan in enumerate(plans):
+            if not plan.label.strip():
+                raise ValueError(f'sub_queries[{plan_index}] has an empty label')
+            indices = module.require_positions(
+                plan.part_indices,
+                field_name=f'sub_queries[{plan_index}].part_indices',
+                upper_bound=part_count,
+                ordered=True,
+            )
+            if not indices or indices[0] != previous_end + 1:
+                raise ValueError(
+                    'sub-query plans must cover contiguous, non-overlapping '
+                    'query parts in order'
+                )
+            covered.extend(indices)
+            previous_end = indices[-1]
+        if covered != list(range(part_count)):
+            raise ValueError(
+                'sub-query plans must cover every query part exactly once'
+            )
+        return plans

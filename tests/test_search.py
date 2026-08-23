@@ -1,9 +1,11 @@
 import asyncio
+from types import SimpleNamespace
 
 import dspy
+import pytest
 from PIL import Image
 
-from kms.core import content, embeddings
+from kms.core import content, embeddings, reranker
 from kms.core import search as search_module
 from kms.graph import queries
 
@@ -97,6 +99,33 @@ def test_raw_path_returns_single_group(monkeypatch):
         'b',
     ]
     assert fake_embedder.calls == [[content.Content.from_text('subgraph')]]
+
+
+def test_content_query_is_accepted_without_losing_parts(monkeypatch):
+    async def _vector_search(
+        session_factory, *, index_name, query_embedding, top_k, source
+    ):
+        return [_candidate('a')]
+
+    fake_embedder = _install_fakes(monkeypatch, vector_search=_vector_search)
+    monkeypatch.setattr(
+        search_module.DecomposeJudge, 'aforward', _async_return(False)
+    )
+    query = content.Content.from_parts([
+        'What is this?',
+        dspy.Image(url='data:image/png;base64,AAAA'),
+    ])
+
+    async def scenario():
+        return await search_module.search(
+            query,
+            index_name='entity_hub_embedding',
+            text_field='description',
+            session_factory=_session_factory,
+        )
+
+    asyncio.run(scenario())
+    assert fake_embedder.calls == [[query]]
 
 
 def test_source_filter_is_forwarded_to_vector_search(monkeypatch):
@@ -199,11 +228,21 @@ def test_image_query_embeds_multimodal_parts(monkeypatch):
     assert embedding_input.parts[1].image is image
 
 
-def test_image_query_rerank_documents_carry_image(monkeypatch):
+def test_image_query_rerank_documents_carry_candidate_images(
+    monkeypatch, tmp_path
+):
+    first_path = tmp_path / 'first.png'
+    second_path = tmp_path / 'second.png'
+    Image.new('RGB', (4, 4), 'red').save(first_path)
+    Image.new('RGB', (4, 4), 'blue').save(second_path)
+
     async def _vector_search(
         session_factory, *, index_name, query_embedding, top_k, source
     ):
-        return [_candidate('a'), _candidate('b')]
+        return [
+            {**_candidate('a'), 'image_path': str(first_path)},
+            {**_candidate('b'), 'image_path': str(second_path)},
+        ]
 
     _install_fakes(monkeypatch, vector_search=_vector_search)
     monkeypatch.setattr(
@@ -213,6 +252,11 @@ def test_image_query_rerank_documents_carry_image(monkeypatch):
     monkeypatch.setattr(search_module.reranker, 'is_configured', lambda: True)
     monkeypatch.setattr(
         search_module.reranker, 'reranker', lambda: fake_reranker
+    )
+    monkeypatch.setattr(
+        search_module.QueryTextifier,
+        'aforward',
+        _async_return('visual query'),
     )
     image = dspy.Image(url='data:image/png;base64,AAAA')
 
@@ -228,12 +272,17 @@ def test_image_query_rerank_documents_carry_image(monkeypatch):
     asyncio.run(scenario())
     assert len(fake_reranker.calls) == 1
     query_text, documents, top_n = fake_reranker.calls[0]
-    assert query_text == 'What is this? [image]'
+    assert query_text == 'visual query'
     assert top_n == 5
-    assert documents == [
-        {'text': 'desc-a', 'image': 'data:image/png;base64,AAAA'},
-        {'text': 'desc-b', 'image': 'data:image/png;base64,AAAA'},
+    assert [document.parts[0].text for document in documents] == [
+        'desc-a',
+        'desc-b',
     ]
+    assert all(len(document.parts) == 2 for document in documents)
+    assert all(
+        isinstance(document.parts[1], content.ImagePart)
+        for document in documents
+    )
 
 
 def test_image_query_decompose_judge_receives_images(monkeypatch):
@@ -301,6 +350,22 @@ def test_image_query_decomposer_receives_images(monkeypatch):
     )
 
 
+def test_search_judge_requires_one_ordered_decision_per_candidate():
+    decisions = [
+        search_module.SearchJudgeDecision(index=0, relevant=True),
+    ]
+    with pytest.raises(ValueError, match='exactly one item per candidate'):
+        search_module.SearchJudge.decode(
+            None,
+            SimpleNamespace(decisions=decisions),
+            parts=content.Content.from_text('query'),
+            candidates=[
+                search_module.SearchResult(text='a', score=1.0),
+                search_module.SearchResult(text='b', score=0.5),
+            ],
+        )
+
+
 def test_image_query_relevance_judge_receives_images(monkeypatch):
     async def _vector_search(
         session_factory, *, index_name, query_embedding, top_k, source
@@ -334,12 +399,13 @@ def test_image_query_relevance_judge_receives_images(monkeypatch):
     assert calls['parts'] == content.Content.from_parts(
         ['What is this?', image]
     )
-    assert calls['candidates'].content == content.Content(
-        parts=[
-            content.TextPart(text='Candidate 0:'),
-            content.TextPart(text='desc-a'),
-        ]
-    )
+    assert calls['candidates'] == [
+        search_module.SearchResult(
+            text='desc-a',
+            score=0.5,
+            properties={'uuid': 'a', 'description': 'desc-a'},
+        )
+    ]
 
 
 class _FakeClient:
@@ -362,6 +428,28 @@ class _FakeResponse:
                 {'embedding': [0.1, 0.2]},
             ]
         }
+
+
+def test_reranker_serializes_one_multimodal_document():
+    image = dspy.Image(url='data:image/png;base64,AAAA')
+    value = content.Content.from_parts(['query', image])
+
+    payload = reranker._wire_content(value)
+
+    assert payload == {
+        'text': 'query',
+        'image': 'data:image/png;base64,AAAA',
+    }
+
+
+def test_reranker_rejects_multiple_document_images():
+    value = content.Content.from_parts([
+        dspy.Image(url='data:image/png;base64,AAAA'),
+        dspy.Image(url='data:image/png;base64,BBBB'),
+    ])
+
+    with pytest.raises(ValueError, match='at most one image'):
+        reranker._wire_content(value)
 
 
 def test_embed_batch_wraps_content_per_input(monkeypatch):
@@ -420,7 +508,6 @@ def test_image_candidate_reaches_judge_as_image(monkeypatch, tmp_path):
         )
 
     asyncio.run(scenario())
-    parts = calls['candidates'].content.parts
-    assert parts[0] == content.TextPart(text='Candidate 0:')
-    assert parts[1] == content.TextPart(text='desc-a')
-    assert isinstance(parts[2], content.ImagePart)
+    assert len(calls['candidates']) == 1
+    assert calls['candidates'][0].text == 'desc-a'
+    assert calls['candidates'][0].image_path == str(image_file)

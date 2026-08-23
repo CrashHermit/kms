@@ -1,9 +1,8 @@
+import logging
 from types import SimpleNamespace
 
 import dspy
 from langgraph.types import Send
-
-import logging
 
 from kms.core import content, models, module, state
 from kms.core.edits import LineEdit, apply_line_edits, number_lines
@@ -113,7 +112,10 @@ class BlockCorrectionRouter(module.Module):
         }
 
     def decode(self, prediction, **inputs) -> bool:
-        return bool(prediction.needs_correction)
+        """Returns the validated correction-routing decision."""
+        return module.require_bool(
+            prediction.needs_correction, 'needs_correction'
+        )
 
     async def needs_correction(self, region) -> bool:
         return await self.aforward(
@@ -217,17 +219,20 @@ class BlockCorrectionEditor(module.Module):
             )
         original_text = inputs.get('original_text', '')
         max_line = len(original_text.split('\n'))
-        valid_edits = []
+        edit_indices = [edit.index for edit in edits]
+        if len(edit_indices) != len(set(edit_indices)):
+            raise ValueError(
+                'block corrector editor returned duplicate line indices: '
+                f'{edit_indices}'
+            )
         for edit in edits:
-            if 1 <= edit.index <= max_line:
-                valid_edits.append(edit)
-            else:
-                logger.warning(
+            if not 1 <= edit.index <= max_line:
+                raise ValueError(
                     'block corrector editor returned out-of-range edit: '
                     f'index={edit.index}, max_line={max_line}, '
                     f'block_type={inputs.get("block_type")}'
                 )
-        return valid_edits
+        return edits
 
 
 class BlockCorrector:

@@ -1,7 +1,9 @@
 import asyncio
 
+from PIL import Image
+
 from kms.construction import seam_merger
-from kms.core import models
+from kms.core import models, walker
 
 
 def _segment(index, nodes):
@@ -18,6 +20,24 @@ def _ref(content):
 
 def _note(content):
     return models.Node(type='note', content=content)
+
+
+def test_seam_encoder_uses_multimodal_content_parts(tmp_path):
+    image_path = tmp_path / 'figure.png'
+    Image.new('RGB', (4, 3), 'red').save(image_path)
+    node = walker.WindowNode(
+        position=0,
+        type='image',
+        image_path=str(image_path),
+    )
+
+    encoded = seam_merger.SeamMerger.encode(object(), node, node)
+
+    assert all(
+        isinstance(value, seam_merger.content.ContentParts)
+        for value in encoded.values()
+    )
+    assert len(encoded['top_bottom_edge_node'].content.parts) == 2
 
 
 def _shown(
@@ -228,6 +248,41 @@ def test_a_healed_seam_takes_the_rewriter_s_text():
     assert [node.content for node in result[0]] == [
         'a sentence cut off mid-way through it.'
     ]
+    assert result[1] == []
+
+
+def test_a_healed_image_seam_is_stitched_deterministically(tmp_path):
+    top_path = tmp_path / 'top.png'
+    bottom_path = tmp_path / 'bottom.png'
+    Image.new('RGB', (4, 3), 'red').save(top_path)
+    Image.new('RGB', (2, 5), 'blue').save(bottom_path)
+    top = _segment(0, [models.Node(type='image', image_path=str(top_path))])
+    bottom = _segment(
+        1, [models.Node(type='image', image_path=str(bottom_path))]
+    )
+
+    result = _merge(top, bottom, _Merger(), _NeverRewrites())
+    merged_path = result[0][0].image_path
+
+    assert merged_path is not None
+    assert result[0][0].provenance['seam_merged_from'] == [
+        str(top_path),
+        str(bottom_path),
+    ]
+    with Image.open(merged_path) as merged:
+        assert merged.size == (4, 8)
+    assert result[1] == []
+    assert seam_merger._merge_images(str(top_path), str(bottom_path)) == merged_path
+
+
+def test_an_image_seam_with_text_does_not_discard_text():
+    top = _segment(0, [models.Node(type='image', content='caption')])
+    bottom = _segment(1, [models.Node(type='image', content='continuation')])
+
+    rewriter = _Rewriter('caption continuation')
+    result = _merge(top, bottom, _Merger(), rewriter)
+
+    assert result[0][0].content == 'caption continuation'
     assert result[1] == []
 
 

@@ -171,7 +171,10 @@ class EntityHubSynthesizer(module.Module):
 
     def decode(self, prediction, **inputs) -> tuple[str, str]:
         result = prediction.result
-        return result.canonical_name, result.description
+        return (
+            module.require_text(result.canonical_name, 'canonical_name'),
+            module.require_text(result.description, 'description'),
+        )
 
 
 class EntityHubAdjudicator(module.Module):
@@ -191,7 +194,12 @@ class EntityHubAdjudicator(module.Module):
         }
 
     def decode(self, prediction, **inputs) -> EntityHubAdjudication:
-        return prediction.result
+        result = prediction.result
+        if not isinstance(result, EntityHubAdjudication):
+            raise TypeError(
+                'result must be an EntityHubAdjudication value'
+            )
+        return result
 
 
 def _coarse_clusters(

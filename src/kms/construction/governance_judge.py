@@ -3,7 +3,7 @@
 import dspy
 
 from kms import config
-from kms.core import content, module, recording
+from kms.core import content, module, recording, walker
 
 
 class GovernanceJudgeSignature(dspy.Signature):
@@ -58,7 +58,7 @@ class GovernanceJudge(module.Module):
         self,
         instruction_directive: content.Content,
         statement_content: content.Content,
-        context_window: list,
+        context_window: list[walker.WindowNode],
     ) -> dict:
         """Builds the judge signature kwargs."""
         return {
@@ -72,15 +72,23 @@ class GovernanceJudge(module.Module):
         }
 
     def decode(self, prediction, **inputs) -> tuple[bool, float]:
-        """Returns (governs, confidence)."""
-        return prediction.governs, prediction.confidence
+        """Returns validated (governs, confidence)."""
+        return (
+            module.require_bool(prediction.governs, 'governs'),
+            module.require_number(
+                prediction.confidence,
+                'confidence',
+                minimum=0.0,
+                maximum=1.0,
+            ),
+        )
 
 
 async def governs(
     judge: GovernanceJudge,
     instruction_directive: content.Content,
     statement_content: content.Content,
-    context_window: list,
+    context_window: list[walker.WindowNode],
 ) -> tuple[bool, float]:
     """Convenience function to judge one instruction-statement pair."""
     return await judge.acall(

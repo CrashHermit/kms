@@ -8,13 +8,13 @@ from kms.graph.triplets import (
 )
 
 
-def _triplet(subject, predicate, object, node_ids=None):
-    ids = node_ids or []
+def _triplet(subject, predicate, object, evidence_positions=None):
+    ids = evidence_positions or []
     return models.Triplet(
         subject=subject,
         predicate=predicate,
         object=object,
-        node_ids=ids,
+        evidence_positions=ids,
         occurrence_uuids={
             node_id: triplet_uuid(
                 'hefferon.pdf', node_id, subject, predicate, object
@@ -57,7 +57,7 @@ def test_triplet_uuid_changes_when_the_content_changes():
 
 
 def test_triplet_properties_are_a_pure_connector():
-    triplet = _triplet('$G_4$', 'is NOT a subgraph of', '$G_1$', node_ids=[3])
+    triplet = _triplet('$G_4$', 'is NOT a subgraph of', '$G_1$', evidence_positions=[3])
     props = triplet_properties(triplet, 'hefferon.pdf', 3)
     assert props['uuid'] == triplet_uuid(
         'hefferon.pdf', 3, '$G_4$', 'is NOT a subgraph of', '$G_1$'
@@ -71,7 +71,7 @@ def test_triplet_properties_are_a_pure_connector():
 
 def test_triplet_rows_write_each_node_occurrence_separately():
     triplets_list = [
-        _triplet('$G_4$', 'is NOT a subgraph of', '$G_1$', node_ids=[3, 9]),
+        _triplet('$G_4$', 'is NOT a subgraph of', '$G_1$', evidence_positions=[3, 9]),
     ]
     rows = triplet_rows(triplets_list, 'hefferon.pdf')
     assert len(rows) == 2
@@ -80,20 +80,20 @@ def test_triplet_rows_write_each_node_occurrence_separately():
 
 def test_evidence_pairs_one_pair_per_node_occurrence():
     triplets_list = [
-        _triplet('$G_4$', 'is NOT a subgraph of', '$G_1$', node_ids=[3, 9]),
+        _triplet('$G_4$', 'is NOT a subgraph of', '$G_1$', evidence_positions=[3, 9]),
     ]
-    pairs = evidence_pairs(triplets_list, 'hefferon.pdf')
+    doc_nodes = [models.Node(uuid=f'node-{i}') for i in range(10)]
+    pairs = evidence_pairs(triplets_list, 'hefferon.pdf', doc_nodes)
     assert len(pairs) == 2
     expected_triplet_uuid = triplet_uuid(
         'hefferon.pdf', 3, '$G_4$', 'is NOT a subgraph of', '$G_1$'
     )
-    # With new position-based UUIDs, nodes use placeholder UUIDs
     assert {
-        'node': 'placeholder',
+        'node': nodes.node_uuid('hefferon.pdf', doc_nodes[3]),
         'triplet': expected_triplet_uuid,
     } in pairs
     assert {
-        'node': 'placeholder',
+        'node': nodes.node_uuid('hefferon.pdf', doc_nodes[9]),
         'triplet': triplet_uuid(
             'hefferon.pdf', 9, '$G_4$', 'is NOT a subgraph of', '$G_1$'
         ),

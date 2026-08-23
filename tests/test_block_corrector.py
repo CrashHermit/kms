@@ -1,4 +1,7 @@
 import asyncio
+from types import SimpleNamespace
+
+import pytest
 
 from kms.construction import block_corrector
 from kms.core import models
@@ -41,6 +44,20 @@ def test_worker_corrects_canonical_node_content():
     result = asyncio.run(node.worker({'document': _document()}))
     nodes = result['block_correction_results'][0][1]
     assert nodes[0].content == 'corrected text'
+
+
+def test_editor_rejects_duplicate_line_indices():
+    edits = [
+        block_corrector.LineEdit(index=1, replacement='A'),
+        block_corrector.LineEdit(index=1, replacement='B'),
+    ]
+    with pytest.raises(ValueError, match='duplicate line indices'):
+        block_corrector.BlockCorrectionEditor.decode(
+            None,
+            SimpleNamespace(edits=edits),
+            original_text='a\nb',
+            block_type='text',
+        )
 
 
 def test_collect_writes_corrected_nodes_to_documents():

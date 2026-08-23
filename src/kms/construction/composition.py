@@ -42,7 +42,9 @@ class ComposedContent:
                 'image_path': part.image_path,
             }
             for index, part in enumerate(
-                part for part in self.parts if part.type == models.NodeType.IMAGE
+                part
+                for part in self.parts
+                if part.type == models.NodeType.IMAGE
             )
         ]
 
@@ -60,7 +62,6 @@ class ComposedProcedure:
     content: ComposedContent
     statement: ComposedStatement | None
     statement_uuid: str | None
-    steps: tuple[models.Step, ...]
 
 
 def _compose_content(
@@ -74,7 +75,9 @@ def _compose_content(
         raise ValueError(f'{label} contains duplicate member positions')
     missing = [pos for pos in members if pos >= len(bundle.nodes) or pos < 0]
     if missing:
-        raise ValueError(f'{label} references missing node positions: {missing!r}')
+        raise ValueError(
+            f'{label} references missing node positions: {missing!r}'
+        )
     parts = tuple(
         ComposedPart(
             position=position,
@@ -99,7 +102,7 @@ def compose_statement(
     """
     return _compose_content(
         bundle,
-        statement.members,
+        statement.member_positions,
         'statement',
         ComposedStatement,
     )
@@ -110,13 +113,7 @@ def compose_procedure(
     procedure: models.Procedure,
 ) -> ComposedProcedure:
     """Composes one procedure without persistence, lookup, or model calls."""
-    content = _compose_content(bundle, procedure.members, 'procedure')
-    steps = tuple(sorted(procedure.steps, key=lambda step: step.index))
-    step_indexes = [step.index for step in steps]
-    if any(index < 0 for index in step_indexes):
-        raise ValueError('procedure step indexes must not be negative')
-    if len(step_indexes) != len(set(step_indexes)):
-        raise ValueError('procedure steps contain duplicate indexes')
+    content = _compose_content(bundle, procedure.member_positions, 'procedure')
 
     matching_statements = [
         statement
@@ -152,5 +149,4 @@ def compose_procedure(
         content=content,
         statement=composed_statement,
         statement_uuid=procedure.statement_uuid,
-        steps=steps,
     )

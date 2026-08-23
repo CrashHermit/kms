@@ -39,15 +39,22 @@ def instruction_rows(
 
 
 def instruction_member_pairs(
-    instructions: list[models.Instruction], source: str
+    instructions: list[models.Instruction],
+    node_stream: list[models.Node],
+    source: str,
 ) -> list[dict]:
     """Builds instruction→member node edge pairs."""
     pairs: list[dict] = []
     for instruction in instructions:
         if instruction.uuid is None:
             raise ValueError('instruction is missing its assigned uuid')
-        for member_position in instruction.members:
-            node = models.Node(uuid='placeholder', document_index=0)
+        for member_position in instruction.member_positions:
+            if not 0 <= member_position < len(node_stream):
+                raise ValueError(
+                    f'instruction member position {member_position} is outside '
+                    f'the node stream'
+                )
+            node = node_stream[member_position]
             pairs.append(
                 {
                     'node': nodes.node_uuid(source, node),

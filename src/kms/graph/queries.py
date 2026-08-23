@@ -117,36 +117,11 @@ MERGE_PROCEDURE_ENRICHMENT = (
     f'SET p.description = row.description, p.embedding = row.embedding'
 )
 
-MERGE_STEPS = (
-    f'UNWIND $rows AS row '
-    f'MERGE (s:{procedures.STEP_LABEL} {{uuid: row.uuid}}) '
-    f'ON CREATE SET s.created_at = $now '
-    f'SET s += row, s.modified_at = $now'
-)
-
 MERGE_PROCEDURE_MEMBERS = (
     f'UNWIND $pairs AS pair '
     f'MATCH (n:{nodes.NODE_LABEL} {{uuid: pair.node}}), '
     f'(p:{procedures.PROCEDURE_LABEL} {{uuid: pair.procedure}}) '
     f'MERGE (n)-[r:MEMBER_OF]->(p) '
-    f'ON CREATE SET r.created_at = $now '
-    f'SET r.modified_at = $now'
-)
-
-MERGE_FIRST = (
-    f'UNWIND $pairs AS pair '
-    f'MATCH (p:{procedures.PROCEDURE_LABEL} {{uuid: pair.procedure}}), '
-    f'(s:{procedures.STEP_LABEL} {{uuid: pair.step}}) '
-    f'MERGE (p)-[r:FIRST]->(s) '
-    f'ON CREATE SET r.created_at = $now '
-    f'SET r.modified_at = $now'
-)
-
-MERGE_THEN = (
-    f'UNWIND $pairs AS pair '
-    f'MATCH (a:{procedures.STEP_LABEL} {{uuid: pair.from}}), '
-    f'(b:{procedures.STEP_LABEL} {{uuid: pair.to}}) '
-    f'MERGE (a)-[r:THEN]->(b) '
     f'ON CREATE SET r.created_at = $now '
     f'SET r.modified_at = $now'
 )
@@ -1229,14 +1204,18 @@ MERGE_CARD_REVIEW_EDGES = (
     f'MERGE (c)-[:HAS_REVIEW]->(r)'
 )
 
+
 def merge_cards_query() -> str:
     return MERGE_CARDS
+
 
 def merge_card_hub_edges_query() -> str:
     return MERGE_CARD_HUB_EDGES
 
+
 def merge_reviews_query() -> str:
     return MERGE_REVIEWS
+
 
 def merge_card_review_edges_query() -> str:
     return MERGE_CARD_REVIEW_EDGES

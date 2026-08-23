@@ -2,7 +2,7 @@ import dspy
 from pydantic import BaseModel, Field
 
 from kms import config
-from kms.core import content, identity, module, semantic, state, models
+from kms.core import content, identity, models, module, semantic, state
 
 
 class TermDescription(BaseModel):
@@ -27,8 +27,8 @@ class PredicateEnrichmentSignature(dspy.Signature):
         description='The passage with optional figures.'
     )
     terms: list[str] = dspy.InputField(description='Exact predicate terms.')
-    descriptions: list[TermDescription] = dspy.OutputField(
-        description='One local description per term in input order.'
+    description: str = dspy.OutputField(
+        description='One local description for the supplied term.'
     )
 
 
@@ -42,8 +42,17 @@ class PredicateEnricher(module.Module):
             'terms': terms,
         }
 
-    def decode(self, prediction, **inputs):
-        return module.as_list(prediction.descriptions)
+    def decode(self, prediction, **inputs) -> list[TermDescription]:
+        """Returns one validated description for the singleton input term."""
+        description = module.require_text(
+            prediction.description, 'description'
+        )
+        terms = inputs['terms']
+        if len(terms) != 1:
+            raise ValueError(
+                f'predicate enrichment expects one input term, got {len(terms)}'
+            )
+        return [TermDescription(term=terms[0], description=description)]
 
 
 async def enrich(
@@ -53,7 +62,7 @@ async def enrich(
 ) -> dict[int, dict[str, str | None]]:
     terms_by_position: dict[int, set[str]] = {}
     for triplet in triplets:
-        for position in triplet.node_ids:
+        for position in triplet.evidence_positions:
             terms_by_position.setdefault(position, set()).add(triplet.predicate)
     stage = config.get_settings().stages.predicate_enrichment
     return await semantic.describe_terms(
@@ -82,7 +91,9 @@ class PredicateEnrichmentNode:
         bundle.predicate_embeddings = vectors
         bundle.predicate_hub_components = [
             models.HubComponent(
-                uuid=identity.predicate_uuid(triplet.occurrence_uuids[position]),
+                uuid=identity.predicate_uuid(
+                    triplet.occurrence_uuids[position]
+                ),
                 source=source,
                 node_id=position,
                 name=name,
@@ -90,7 +101,7 @@ class PredicateEnrichmentNode:
                 embedding=list(vectors.get(position, {}).get(name, [])),
             )
             for triplet in triplets
-            for position in triplet.node_ids
+            for position in triplet.evidence_positions
             for name in (triplet.predicate,)
             if triplet.occurrence_uuids.get(position) is not None
             and vectors.get(position, {}).get(name) is not None

@@ -32,9 +32,9 @@ async def main():
     for instruction in instructions:
         print(
             f'  instruction block={instruction.block} '
-            f'members={instruction.members}'
+            f'member_positions={instruction.member_positions}'
         )
-        for member_id in instruction.members:
+        for member_id in instruction.member_positions:
             node = by_id.get(member_id)
             if node:
                 print(f'    [{member_id}] ({node.type}) {_elide(node.content)}')
@@ -45,7 +45,7 @@ async def main():
         kinds = [
             f'{member_id}:'
             f'{by_id.get(member_id).type if by_id.get(member_id) else "?"}'
-            for member_id in statement.members
+            for member_id in statement.member_positions
         ]
         print(f'  statement members=[{", ".join(kinds)}]')
 

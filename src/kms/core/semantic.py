@@ -10,24 +10,21 @@ def window_content(
     before_budget: int,
     after_budget: int,
 ) -> content.Content:
-    parts: list[content.TextPart | content.ImagePart] = []
-    before = walker.content_before(nodes, position, before_budget)
-    if before:
-        parts.append(content.TextPart(text=before))
-    node = nodes[position]
-    if node.content:
-        parts.append(content.TextPart(text=node.content))
-    after = walker.content_after(nodes, position, after_budget)
-    if after:
-        parts.append(content.TextPart(text=after))
-    if node.image_path:
-        image = content.load_image(
-            node.image_path,
-            max_dim=config.get_settings().image.max_dim,
-        )
-        if image:
-            parts.append(content.ImagePart(image=image))
-    return content.Content(parts=parts)
+    """Builds multimodal content around a target position.
+
+    Preserves document order: before nodes (with images) -> target node
+    (text then image) -> after nodes (with images).
+    """
+    window = walker.marked_window(
+        nodes,
+        [position],
+        backward_budget=before_budget,
+        forward_budget=after_budget,
+        marker='target',
+    )
+    # The marked-window primitive preserves source order and image paths;
+    # the canonical adapter interleaves each node label with its image.
+    return content.labeled_content(window)
 
 
 def embedding_text(term: str, description: str | None) -> str:
@@ -49,20 +46,39 @@ async def describe_terms(
         if not terms:
             return
         ordered_terms = sorted(terms)
-        async with gate:
-            results = await enricher.aforward(
-                passage=window_content(
-                    nodes, position, before_budget, after_budget
-                ),
-                terms=ordered_terms,
-            )
-        by_term = {item.term: item.description for item in results}
-        descriptions[position] = {
-            term: by_term.get(term) for term in ordered_terms
-        }
+        passage = window_content(
+            nodes, position, before_budget, after_budget
+        )
+
+        async def describe_one(term: str) -> tuple[str, str]:
+            async with gate:
+                results = await enricher.aforward(
+                    passage=passage,
+                    terms=[term],
+                )
+            if len(results) != 1:
+                raise ValueError(
+                    f'position {position} term {term!r} returned '
+                    f'{len(results)} descriptions; expected exactly one'
+                )
+            result = results[0]
+            if result.term != term:
+                raise ValueError(
+                    f'position {position} returned term {result.term!r}; '
+                    f'expected exact term {term!r}'
+                )
+            return term, result.description
+
+        pairs = await asyncio.gather(
+            *(describe_one(term) for term in ordered_terms)
+        )
+        descriptions[position] = dict(pairs)
 
     await asyncio.gather(
-        *(describe(position, terms) for position, terms in terms_by_position.items())
+        *(
+            describe(position, terms)
+            for position, terms in terms_by_position.items()
+        )
     )
     return descriptions
 

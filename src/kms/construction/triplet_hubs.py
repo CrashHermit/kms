@@ -96,7 +96,10 @@ class _TripletDefinitionSynthesizer(module.Module):
 
     def decode(self, prediction, **inputs) -> tuple[str, str]:
         result = prediction.result
-        return result.canonical_name, result.description
+        return (
+            module.require_text(result.canonical_name, 'canonical_name'),
+            module.require_text(result.description, 'description'),
+        )
 
 
 def _hub_context(group: dict, role: str) -> str:
@@ -146,7 +149,7 @@ def build_source_groups(
         triplet_ids = []
         for index in sorted(indexes):
             triplet = triplets[index]
-            for node_id in triplet.node_ids:
+            for node_id in triplet.evidence_positions:
                 triplet_id = graph_triplets.triplet_uuid(
                     source,
                     node_id,
@@ -308,7 +311,7 @@ def build_triplet_memberships(
         subject_hubs: set[str] = set()
         object_hubs: set[str] = set()
         predicate_hubs: set[str] = set()
-        for node_id in triplet.node_ids:
+        for node_id in triplet.evidence_positions:
             subject_hubs.update(
                 entity_assignments.get(
                     identity.entity_uuid(source, node_id, triplet.subject), ()

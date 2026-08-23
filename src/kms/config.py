@@ -78,6 +78,7 @@ class ModelPreset(_ConfigModel):
     n_gpu_layers: int = 999
     no_warmup: bool = True
     parallel: int = 1
+    flash_attn: Literal['on', 'off', 'auto'] = 'auto'
     reasoning: str = ''
     temperature: float | None = None
     threads: int = 0
@@ -126,6 +127,13 @@ class OCRConfig(_ConfigModel):
     url: str = 'https://api.mistral.ai/v1/ocr'
     render_scale: float = Field(default=1.0, gt=0.0)
     block_crop_scale: float = Field(default=1.0, gt=0.0)
+    reference_annotation_prompt: str = Field(
+        default='Scan the entire document for explicit references to figures, equations, '
+        'tables, sections, theorems, definitions, examples, or other numbered '
+        'items. Return each reference exactly as printed, with its surrounding '
+        'sentence and a short description of the referenced target when visible. '
+        'Do not infer references that are not explicitly present.'
+    )
 
 
 class DatabaseConfig(_ConfigModel):

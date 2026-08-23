@@ -1,14 +1,14 @@
 import asyncio
 
-from kms.core import identity, models
+from kms.core import models
 from kms.graph import instructions, nodes, statements, writer
 
 
-def _instruction(block=None, members=None):
+def _instruction(block=None, member_positions=None):
     block = block if block is not None else [0, 1]
     return models.Instruction(
         block=list(block),
-        members=members if members is not None else list(block),
+        member_positions=member_positions if member_positions is not None else list(block),
         uuid=instructions.instruction_uuid('ea2e.pdf', list(block)),
     )
 
@@ -46,12 +46,15 @@ def test_properties_carry_only_identity():
 
 
 def test_instruction_member_pairs_one_per_member():
+    node_stream = [models.Node(uuid=f'node-{index}') for index in range(4)]
     pairs = instructions.instruction_member_pairs(
-        [_instruction(block=[0], members=[1, 2, 3])], 'ea2e.pdf'
+        [_instruction(block=[0], member_positions=[1, 2, 3])], node_stream, 'ea2e.pdf'
     )
     assert len(pairs) == 3
-    # The production code generates placeholder UUIDs; just verify structure
-    assert all(pair['node'] == 'placeholder' for pair in pairs)
+    assert {pair['node'] for pair in pairs} == {
+        nodes.node_uuid('ea2e.pdf', node_stream[index])
+        for index in [1, 2, 3]
+    }
     assert {pair['instruction'] for pair in pairs} == {
         instructions.instruction_uuid('ea2e.pdf', [0])
     }
@@ -59,7 +62,7 @@ def test_instruction_member_pairs_one_per_member():
 
 def test_instruction_member_pairs_empty_without_members():
     pairs = instructions.instruction_member_pairs(
-        [_instruction(block=[0], members=[])], 'ea2e.pdf'
+        [_instruction(block=[0], member_positions=[])], [], 'ea2e.pdf'
     )
     assert pairs == []
 
@@ -87,12 +90,17 @@ class _FakeDriver:
         return _FakeSession(self.queries)
 
 
+def _node_stream():
+    return [models.Node(uuid=f'node-{index}') for index in range(3)]
+
+
 def test_persist_instructions_writes_hubs_then_member_edges():
     fake = _FakeDriver()
 
     asyncio.run(
         writer.persist_instructions(
-            [_instruction(block=[0], members=[1, 2])],
+            [_instruction(block=[0], member_positions=[1, 2])],
+            _node_stream(),
             'ea2e.pdf',
             session_factory=lambda: fake.session(database='neo4j'),
         )
@@ -112,6 +120,7 @@ def test_persist_instructions_is_a_noop_when_empty():
     fake = _FakeDriver()
     asyncio.run(
         writer.persist_instructions(
+            [],
             [],
             'ea2e.pdf',
             session_factory=lambda: fake.session(database='neo4j'),

@@ -32,7 +32,7 @@ async def main():
     print(f'\n=== statements: {len(statements)} ===')
     for statement in statements:
         members = []
-        for member_id in statement.members:
+        for member_id in statement.member_positions:
             node = by_id.get(member_id)
             if node is not None and node.type == 'image':
                 members.append(f'[{member_id}] IMAGE')
@@ -44,7 +44,7 @@ async def main():
     print(f'\n=== instructions: {len(instructions)} ===')
     for instruction in instructions:
         members = []
-        for member_id in instruction.members:
+        for member_id in instruction.member_positions:
             node = by_id.get(member_id)
             if node is not None:
                 members.append(

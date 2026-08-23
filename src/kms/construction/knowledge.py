@@ -18,9 +18,7 @@ def _knowledge_for_members(
     )
 
 
-def _check_source(
-    source: models.Source, index: models.KnowledgeIndex
-) -> None:
+def _check_source(source: models.Source, index: models.KnowledgeIndex) -> None:
     """Rejects accidental cross-source knowledge selection."""
     if source.key != index.source:
         raise ValueError(
@@ -39,7 +37,7 @@ def knowledge_for_statement(
     if index is None:
         return models.Knowledge()
     _check_source(bundle.source, index)
-    return _knowledge_for_members(statement.members, index)
+    return _knowledge_for_members(statement.member_positions, index)
 
 
 def knowledge_for_procedure(
@@ -52,4 +50,4 @@ def knowledge_for_procedure(
     if index is None:
         return models.Knowledge()
     _check_source(bundle.source, index)
-    return _knowledge_for_members(procedure.members, index)
+    return _knowledge_for_members(procedure.member_positions, index)

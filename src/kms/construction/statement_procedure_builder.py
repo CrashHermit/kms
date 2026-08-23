@@ -84,13 +84,18 @@ class RoleTyper(module.Module):
     signature = Classify
     record_name = 'role_typer'
 
-    def encode(self, contents: content.ContentParts) -> dict:
-        """Returns the role-typer signature kwargs."""
-        return {'contents': contents}
+    def encode(self, contents: content.Content) -> dict:
+        """Builds the role-typer signature kwargs."""
+        return {
+            'contents': content.ContentParts(content=contents),
+        }
 
     def decode(self, prediction, **inputs) -> tuple[bool, bool]:
-        """Returns ``(has_statement, has_procedure)`` for one span."""
-        return prediction.has_statement, prediction.has_procedure
+        """Returns validated role decisions for one span."""
+        return (
+            module.require_bool(prediction.has_statement, 'has_statement'),
+            module.require_bool(prediction.has_procedure, 'has_procedure'),
+        )
 
 
 class StatementPartitionSignature(dspy.Signature):
@@ -177,8 +182,14 @@ class StatementPartitioner(module.Module):
         return {'current_nodes': content.labeled_content_parts(current_nodes)}
 
     def decode(self, prediction, **inputs) -> list[int]:
-        """Returns the statement-portion positions from the prediction."""
-        return module.as_list(prediction.statement_positions)
+        """Returns validated statement-portion positions."""
+        positions = module.as_list(prediction.statement_positions)
+        return module.require_positions(
+            positions,
+            field_name='statement_positions',
+            upper_bound=len(inputs['current_nodes']),
+            ordered=True,
+        )
 
 
 class ProcedurePartitionSignature(dspy.Signature):
@@ -222,13 +233,19 @@ class ProcedurePartitioner(module.Module):
         return {'current_nodes': content.labeled_content_parts(current_nodes)}
 
     def decode(self, prediction, **inputs) -> list[int]:
-        """Returns the procedure-portion positions from the prediction."""
-        return module.as_list(prediction.procedure_positions)
+        """Returns validated procedure-portion positions."""
+        positions = module.as_list(prediction.procedure_positions)
+        return module.require_positions(
+            positions,
+            field_name='procedure_positions',
+            upper_bound=len(inputs['current_nodes']),
+            ordered=True,
+        )
 
 
 def _span_parts(
     span: list[int], nodes: list[models.Node]
-) -> content.ContentParts:
+) -> content.Content:
     """Builds the multimodal content of one span for the role typer."""
     parts: list[content.TextPart | content.ImagePart] = []
     for position in span:
@@ -242,7 +259,7 @@ def _span_parts(
                 parts.append(content.ImagePart(image=image))
         elif node.content and node.content.strip():
             parts.append(content.TextPart(text=node.content))
-    return content.ContentParts(content=content.Content(parts=parts))
+    return content.Content(parts=parts)
 
 
 def _member_window(
@@ -280,12 +297,12 @@ def _selected_members(members: list[int], positions: list[int]) -> list[int]:
 
 def _mark_statement(span: list[int]) -> models.Statement:
     """Marks a span as a Statement with all members initially included."""
-    return models.Statement(block=list(span), members=list(span))
+    return models.Statement(block=list(span), member_positions=list(span))
 
 
 def _mark_procedure(span: list[int]) -> models.Procedure:
     """Marks a span as a Procedure with all members initially included."""
-    return models.Procedure(block=list(span), members=list(span))
+    return models.Procedure(block=list(span), member_positions=list(span))
 
 
 async def _partition_both_block(
@@ -301,17 +318,21 @@ async def _partition_both_block(
     Runs both partitioners on the same member window and narrows each
     model's members to the positions it selected.
     """
-    window = _member_window(statement.members, nodes)
+    window = _member_window(statement.member_positions, nodes)
     async with gate:
         stmt_positions, proc_positions = await asyncio.gather(
             statement_partitioner.aforward(current_nodes=window),
             procedure_partitioner.aforward(current_nodes=window),
         )
 
-    stmt_selected = _selected_members(statement.members, stmt_positions)
-    proc_selected = _selected_members(procedure.members, proc_positions)
-    statement.members = stmt_selected
-    procedure.members = proc_selected
+    stmt_selected = _selected_members(
+        statement.member_positions, stmt_positions
+    )
+    proc_selected = _selected_members(
+        procedure.member_positions, proc_positions
+    )
+    statement.member_positions = stmt_selected
+    procedure.member_positions = proc_selected
 
 
 async def build_statement_procedure_hubs(
@@ -348,7 +369,7 @@ async def build_statement_procedure_hubs(
     async def _type_one(span: list[int]) -> tuple[bool, bool]:
         """Types one span, skipping spans with no usable content."""
         parts = _span_parts(span, nodes)
-        if not parts.content.parts:
+        if not parts.parts:
             return (False, False)
         async with gate:
             return await role_module.acall(contents=parts)
@@ -445,7 +466,9 @@ class StatementProcedureBuilderNode:
             source_object = state.get('source')
             source = models.source_key(source_object) or ''
         if not source:
-            raise ValueError('statement/procedure construction requires a source')
+            raise ValueError(
+                'statement/procedure construction requires a source'
+            )
         statements, procedures = await build_statement_procedure_hubs(
             state.get('spans', []),
             nodes,

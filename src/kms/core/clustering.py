@@ -46,9 +46,7 @@ def central_record(group: list[dict]) -> dict:
     for candidate in group:
         others = [record for record in group if record is not candidate]
         score = sum(
-            embeddings.cosine_similarity(
-                candidate.embedding, other.embedding
-            )
+            embeddings.cosine_similarity(candidate.embedding, other.embedding)
             for other in others
         ) / len(others)
         if score > best_score:

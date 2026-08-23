@@ -44,7 +44,7 @@ def assertion_rows(
     predicate_edges: list[dict] = []
 
     for triplet in triplets:
-        for node_position in triplet.node_ids:
+        for node_position in triplet.evidence_positions:
             triplet_id = triplet.occurrence_uuids.get(node_position)
             expected_triplet_id = identity.triplet_uuid(
                 source,
@@ -87,7 +87,9 @@ def assertion_rows(
 
             node_descriptions = entity_descriptions.get(node_position, {})
             node_entity_embeddings = (
-                entity_embeddings.get(node_position, {}) if entity_embeddings else {}
+                entity_embeddings.get(node_position, {})
+                if entity_embeddings
+                else {}
             )
             node_predicate_embeddings = (
                 predicate_embeddings.get(node_position, {})
@@ -124,7 +126,11 @@ def assertion_rows(
             )
             predicate_name_id = names.name_uuid('predicate', predicate_id)
             predicate_name_rows[predicate_name_id] = names.name_properties(
-                'predicate', source, predicate_id, triplet.predicate, node_position
+                'predicate',
+                source,
+                predicate_id,
+                triplet.predicate,
+                node_position,
             )
             predicate_name_edges.append(
                 {'component': predicate_id, 'name': predicate_name_id}
@@ -134,7 +140,9 @@ def assertion_rows(
                 node_position,
                 triplet_id,
                 triplet.predicate,
-                predicate_descriptions.get(node_position, {}).get(triplet.predicate),
+                predicate_descriptions.get(node_position, {}).get(
+                    triplet.predicate
+                ),
                 node_predicate_embeddings.get(triplet.predicate),
             )
 

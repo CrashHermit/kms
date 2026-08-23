@@ -1,8 +1,9 @@
+import asyncio
 from types import SimpleNamespace
 
-import asyncio
+import dspy
 
-from kms.construction import statement_enrichment, procedure_enrichment
+from kms.construction import procedure_enrichment, statement_enrichment
 from kms.core import content, models
 
 
@@ -16,12 +17,33 @@ def test_statement_enricher_emits_the_canonical_statement_field():
 
 
 def test_procedure_need_router_decodes_a_boolean_gate():
+    statement = content.Content.from_text('Solve this.')
     assert procedure_enrichment.ProcedureNeedRouter.decode(
-        None, SimpleNamespace(needs_procedure=True), statement='Solve this.'
+        None,
+        SimpleNamespace(needs_procedure=True),
+        statement=statement,
     ) is True
     assert procedure_enrichment.ProcedureNeedRouter.decode(
-        None, SimpleNamespace(needs_procedure=False), statement='Define this.'
+        None,
+        SimpleNamespace(needs_procedure=False),
+        statement=statement,
     ) is False
+
+
+def test_procedure_router_and_writer_encode_multimodal_statement():
+    image = dspy.Image(url='data:image/png;base64,AAAA')
+    statement = content.Content.from_parts(['Use this diagram.', image])
+
+    router_input = procedure_enrichment.ProcedureNeedRouter.encode(
+        object(), statement
+    )
+    writer_input = procedure_enrichment.ProcedureWriter.encode(
+        object(), statement, None, 'knowledge'
+    )
+
+    assert isinstance(router_input['statement'], content.ContentParts)
+    assert isinstance(writer_input['statement'], content.ContentParts)
+    assert len(writer_input['statement'].content.parts) == 2
 
 
 def test_procedure_enricher_does_not_write_when_router_rejects():

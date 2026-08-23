@@ -198,14 +198,6 @@ REFERENCE_ANNOTATION_FORMAT = {
     },
 }
 
-REFERENCE_ANNOTATION_PROMPT = (
-    'Scan the entire document for explicit references to figures, equations, '
-    'tables, sections, theorems, definitions, examples, or other numbered '
-    'items. Return each reference exactly as printed, with its surrounding '
-    'sentence and a short description of the referenced target when visible. '
-    'Do not infer references that are not explicitly present.'
-)
-
 
 BBOX_ANNOTATION_FORMAT = {
     'type': 'json_schema',
@@ -262,7 +254,7 @@ class OCRRequestOptions(BaseModel):
         """Returns options enabling document reference extraction."""
         return cls(
             document_annotation_format=REFERENCE_ANNOTATION_FORMAT,
-            document_annotation_prompt=REFERENCE_ANNOTATION_PROMPT,
+            document_annotation_prompt=config.OCRConfig.reference_annotation_prompt,
         )
 
     @classmethod

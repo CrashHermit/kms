@@ -92,6 +92,7 @@ async def main():
     await writer.persist_assertions(
         triplets,
         SOURCE,
+        nodes,
         session_factory=_session,
         entity_descriptions=entity_descriptions,
         predicate_descriptions=predicate_descriptions,

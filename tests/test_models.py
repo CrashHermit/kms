@@ -19,10 +19,10 @@ def test_construction_bundle_has_independent_collection_defaults() -> None:
 def test_construction_bundle_retains_typed_source_records() -> None:
     source = models.Source(key='book')
     node = models.Node(type=models.NodeType.PARAGRAPH, content='A fact.')
-    instruction = models.Instruction(block=[0], members=[0])
-    statement = models.Statement(block=[0], members=[0])
-    procedure = models.Procedure(block=[1], members=[1])
-    triplet = models.Triplet('A', 'is', 'fact', node_ids=[0])
+    instruction = models.Instruction(block=[0], member_positions=[0])
+    statement = models.Statement(block=[0], member_positions=[0])
+    procedure = models.Procedure(block=[1], member_positions=[1])
+    triplet = models.Triplet('A', 'is', 'fact', evidence_positions=[0])
 
     bundle = models.ConstructionBundle(
         source=source,
@@ -65,10 +65,10 @@ def _complete_bundle() -> models.ConstructionBundle:
     return models.ConstructionBundle(
         source=source,
         nodes=nodes,
-        instructions=[models.Instruction(block=[0, 1], members=[1, 0])],
-        statements=[models.Statement(block=[0], members=[0])],
-        procedures=[models.Procedure(block=[1], members=[1])],
-        triplets=[models.Triplet('first', 'is', 'second', node_ids=[1, 0])],
+        instructions=[models.Instruction(block=[0, 1], member_positions=[1, 0])],
+        statements=[models.Statement(block=[0], member_positions=[0])],
+        procedures=[models.Procedure(block=[1], member_positions=[1])],
+        triplets=[models.Triplet('first', 'is', 'second', evidence_positions=[1, 0])],
     )
 
 
@@ -102,8 +102,8 @@ def test_validate_bundle_rejects_missing_and_duplicate_node_ids() -> None:
 def test_validate_bundle_rejects_bad_ownership_membership_and_evidence() -> None:
     bundle = _complete_bundle()
     bundle.nodes[0].document_index = 99
-    bundle.instructions[0].members = [42, 42, 999]
-    bundle.triplets[0].node_ids = [42, 999, 42]
+    bundle.instructions[0].member_positions = [42, 42, 999]
+    bundle.triplets[0].evidence_positions = [42, 999, 42]
 
     try:
         models.validate_bundle(bundle)
@@ -112,7 +112,7 @@ def test_validate_bundle_rejects_bad_ownership_membership_and_evidence() -> None
             'references missing document 99' in message
             for message in error.errors
         )
-        assert 'instruction 0 members contain duplicates' in error.errors
+        assert 'instruction 0 member_positions contain duplicates' in error.errors
         assert 'instruction 0 references missing node 999' in error.errors
         assert 'triplet 0 evidence contains duplicates' in error.errors
         assert 'triplet 0 references missing node 999' in error.errors
@@ -139,7 +139,7 @@ def test_validate_bundle_rejects_source_and_page_contracts() -> None:
     except models.BundleValidationError as error:
         assert 'source key must be non-empty' in error.errors
         assert 'source documents contain duplicate indexes' in error.errors
-        assert 'triplet 0 must have evidence node ids' in error.errors
+        assert 'triplet 0 must have evidence node positions' in error.errors
     else:
         raise AssertionError('expected BundleValidationError')
 

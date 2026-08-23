@@ -221,23 +221,6 @@ class Node:
     governing_instruction_uuids: list[str] = field(default_factory=list)
 
 
-@dataclass(slots=True)
-class Step:
-    """One numbered step inside a Procedure."""
-
-    text: str
-    index: int = 0
-
-
-@dataclass(frozen=True, slots=True)
-class ProcedureStepUpdate:
-    """Generated ordered steps for an existing procedure."""
-
-    source: str
-    procedure_uuid: str
-    steps: tuple[Step, ...]
-
-
 @dataclass(frozen=True, slots=True)
 class ProcedureLink:
     """Link between a source statement and procedure."""
@@ -255,9 +238,8 @@ class Procedure:
     index: int = 0
     uuid: str | None = None
     statement_uuid: str | None = None
-    members: list[int] = field(default_factory=list)
+    member_positions: list[int] = field(default_factory=list)
     procedure: str | None = None
-    steps: list[Step] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -337,7 +319,7 @@ class Instruction:
     """An imperative instruction found in the source."""
 
     block: list[int]
-    members: list[int] = field(default_factory=list)
+    member_positions: list[int] = field(default_factory=list)
     uuid: str | None = None
 
 
@@ -346,7 +328,7 @@ class Statement:
     """A statement with source provenance and compiled canonical content."""
 
     block: list[int]
-    members: list[int] = field(default_factory=list)
+    member_positions: list[int] = field(default_factory=list)
     uuid: str | None = None
     statement: str | None = None
     instruction_uuids: list[str] = field(default_factory=list)
@@ -401,7 +383,7 @@ class Triplet:
     subject: str
     predicate: str
     object: str
-    node_ids: list[int] = field(default_factory=list)
+    evidence_positions: list[int] = field(default_factory=list)
     occurrence_uuids: dict[int, str] = field(default_factory=dict)
     entity_uuids: dict[tuple[int, str], str] = field(default_factory=dict)
     predicate_uuids: dict[int, str] = field(default_factory=dict)
@@ -494,12 +476,15 @@ def _validate_positions(
 
 
 def _validate_members(
-    errors: list[str], label: str, members: list[int], node_ids: set[int]
+    errors: list[str],
+    label: str,
+    member_positions: list[int],
+    node_ids: set[int],
 ) -> None:
     """Validates ordered node membership references."""
-    if len(members) != len(set(members)):
-        errors.append(f'{label} members contain duplicates')
-    for member in members:
+    if len(member_positions) != len(set(member_positions)):
+        errors.append(f'{label} member_positions contain duplicates')
+    for member in member_positions:
         if member not in node_ids:
             errors.append(f'{label} references missing node {member!r}')
 
@@ -548,7 +533,9 @@ def validate_bundle(
             )
             if not generated_procedure:
                 _validate_positions(errors, record_label, value.block)
-            _validate_members(errors, record_label, value.members, valid_positions)
+            _validate_members(
+                errors, record_label, value.member_positions, valid_positions
+            )
             if isinstance(value, Instruction) and require_identities:
                 if not value.uuid:
                     errors.append(f'{record_label} is missing a uuid')
@@ -581,15 +568,17 @@ def validate_bundle(
 
     for index, triplet in enumerate(bundle.triplets):
         label = f'triplet {index}'
-        if not triplet.node_ids:
-            errors.append(f'{label} must have evidence node ids')
-        if len(triplet.node_ids) != len(set(triplet.node_ids)):
+        if not triplet.evidence_positions:
+            errors.append(f'{label} must have evidence node positions')
+        if len(triplet.evidence_positions) != len(
+            set(triplet.evidence_positions)
+        ):
             errors.append(f'{label} evidence contains duplicates')
-        for node_id in triplet.node_ids:
-            if node_id not in valid_positions:
-                errors.append(f'{label} references missing node {node_id!r}')
-            if require_identities and not triplet.occurrence_uuids.get(node_id):
-                errors.append(f'{label} occurrence {node_id} is missing a uuid')
+        for pos in triplet.evidence_positions:
+            if pos not in valid_positions:
+                errors.append(f'{label} references missing node {pos!r}')
+            if require_identities and not triplet.occurrence_uuids.get(pos):
+                errors.append(f'{label} occurrence {pos} is missing a uuid')
 
     if errors:
         raise BundleValidationError(errors)

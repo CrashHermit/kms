@@ -18,7 +18,6 @@ def _patch_writers(monkeypatch):
         'persist_instructions',
         'persist_assertions',
         'persist_chain',
-        'persist_procedure_steps',
         'persist_entity_hubs',
         'persist_predicate_hubs',
         'attach_entity_components',
@@ -123,7 +122,7 @@ def test_final_projector_forwards_assertions(monkeypatch):
         subject='entity',
         predicate='relates',
         object='name',
-        node_ids=[0],
+        evidence_positions=[0],
     )
     identity.assign_triplet_ids([triplet], 'book')
     state = {
@@ -139,4 +138,8 @@ def test_final_projector_forwards_assertions(monkeypatch):
         projectors.FinalProjectorNode(object(), True).run(state)
     )
     assert result == {'projected': True}
-    assert calls[0][0][:2] == (state['triplets'], 'book')
+    assert calls[0][0][:3] == (
+        state['triplets'],
+        'book',
+        state['nodes'],
+    )

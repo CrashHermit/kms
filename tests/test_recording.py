@@ -168,6 +168,19 @@ def test_records_auxiliary_prediction_fields(tmp_path):
     )
 
 
+def test_same_source_gets_a_fresh_run_namespace(tmp_path):
+    output_dir = tmp_path / 'ex'
+    first = recording.Recorder('src', output_dir=str(output_dir))
+    second = recording.Recorder('src', output_dir=str(output_dir))
+    assert first._run_id != second._run_id
+
+    _record(first, inputs={'text': 'one'}, prediction=dspy.Prediction(ok='yes'))
+    _record(second, inputs={'text': 'two'}, prediction=dspy.Prediction(ok='yes'))
+
+    runs = list((output_dir / 'corrector').iterdir())
+    assert len(runs) == 2
+
+
 def test_run_metadata_records_source_stage_and_model(tmp_path):
     recorder = recording.Recorder(
         'src', output_dir=str(tmp_path / 'ex'), title='A Book'

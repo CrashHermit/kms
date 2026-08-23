@@ -4,10 +4,10 @@ from kms.core import models
 from kms.graph import nodes, procedures, writer
 
 
-def _procedure(block=(1, 2), members=(1, 2), statement_uuid=None):
+def _procedure(block=(1, 2), member_positions=(1, 2), statement_uuid=None):
     return models.Procedure(
         block=list(block),
-        members=list(members),
+        member_positions=list(member_positions),
         statement_uuid=statement_uuid,
         uuid=procedures.procedure_uuid(
             'book.pdf', list(block), 0, statement_uuid=statement_uuid
@@ -55,7 +55,11 @@ def test_statement_backed_procedure_persistence_uses_its_disambiguated_uuid():
         == expected
     )
     assert (
-        procedures.procedure_member_pairs([procedure], 'book.pdf')[0][
+        procedures.procedure_member_pairs([procedure], 'book.pdf', [
+            models.Node(document_index=0, index=0),
+            models.Node(document_index=0, index=1),
+            models.Node(document_index=0, index=2),
+        ])[0][
             'procedure'
         ]
         == expected
@@ -72,46 +76,23 @@ def test_procedure_properties_carry_compiled_content_and_provenance():
 
 
 def test_procedure_member_pairs_link_every_member_node():
-    pairs = procedures.procedure_member_pairs([_procedure()], 'book.pdf')
+    doc_nodes = [
+        models.Node(document_index=0, index=0),
+        models.Node(document_index=0, index=1),
+        models.Node(document_index=0, index=2),
+    ]
+    pairs = procedures.procedure_member_pairs([_procedure()], 'book.pdf', doc_nodes)
     assert len(pairs) == 2
     assert {pair['procedure'] for pair in pairs} == {
         procedures.procedure_uuid('book.pdf', [1, 2], 0)
     }
-    assert all(pair['node'] == 'placeholder' for pair in pairs)
+    # Node UUIDs should be resolved from the actual node stream
+    assert pairs[0]['node'] == nodes.node_uuid('book.pdf', doc_nodes[1])
+    assert pairs[1]['node'] == nodes.node_uuid('book.pdf', doc_nodes[2])
 
 
 def test_procedure_member_pairs_are_empty_without_procedures():
-    assert procedures.procedure_member_pairs([], 'book.pdf') == []
-
-
-def test_existing_step_rows_use_existing_procedure_uuid():
-    steps = [models.Step(text='Set up.', index=0)]
-
-    rows = procedures.existing_step_rows('book.pdf', 'procedure-a', steps)
-
-    assert rows[0]['uuid'] == procedures.step_uuid('book.pdf', 'procedure-a', 0)
-
-
-def test_existing_edges_use_existing_procedure_uuid():
-    steps = [
-        models.Step(text='Set up.', index=0),
-        models.Step(text='Conclude.', index=1),
-    ]
-
-    assert procedures.existing_first_pairs(
-        'book.pdf', 'procedure-a', steps
-    ) == [
-        {
-            'procedure': 'procedure-a',
-            'step': procedures.step_uuid('book.pdf', 'procedure-a', 0),
-        }
-    ]
-    assert procedures.existing_then_pairs('book.pdf', 'procedure-a', steps) == [
-        {
-            'from': procedures.step_uuid('book.pdf', 'procedure-a', 0),
-            'to': procedures.step_uuid('book.pdf', 'procedure-a', 1),
-        }
-    ]
+    assert procedures.procedure_member_pairs([], 'book.pdf', []) == []
 
 
 class _FakeSession:
@@ -136,32 +117,18 @@ class _FakeDriver:
         return _FakeSession(self.log)
 
 
-def test_persist_existing_procedure_steps_uses_existing_uuid():
-    driver = _FakeDriver()
-    steps = [models.Step(text='Set up.', index=0)]
-
-    asyncio.run(
-        writer.persist_procedure_steps(
-            'procedure-a',
-            steps,
-            'book.pdf',
-            session_factory=lambda: driver.session(database='neo4j'),
-        )
-    )
-
-    step_query, step_parameters = driver.log[0]
-    assert 'MERGE (s:Step {uuid: row.uuid})' in step_query
-    assert step_parameters['rows'][0]['uuid'] == procedures.step_uuid(
-        'book.pdf', 'procedure-a', 0
-    )
-
-
 def test_persist_procedures_points_each_member_at_the_procedure():
     driver = _FakeDriver()
+    doc_nodes = [
+        models.Node(document_index=0, index=0),
+        models.Node(document_index=0, index=1),
+        models.Node(document_index=0, index=2),
+    ]
 
     asyncio.run(
         writer.persist_procedures(
             [_procedure()],
+            doc_nodes,
             'book.pdf',
             session_factory=lambda: driver.session(database='neo4j'),
         )

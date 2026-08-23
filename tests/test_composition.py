@@ -34,7 +34,7 @@ def _bundle() -> models.ConstructionBundle:
 
 def test_compose_statement_uses_members_and_document_order() -> None:
     bundle = _bundle()
-    statement = models.Statement(block=[0, 1, 2], members=[2, 0])
+    statement = models.Statement(block=[0, 1, 2], member_positions=[2, 0])
 
     composed = compose_statement(bundle, statement)
 
@@ -44,7 +44,7 @@ def test_compose_statement_uses_members_and_document_order() -> None:
 
 def test_compose_statement_preserves_interleaved_image_provenance() -> None:
     bundle = _bundle()
-    statement = models.Statement(block=[0, 1, 2], members=[2, 1, 0])
+    statement = models.Statement(block=[0, 1, 2], member_positions=[2, 1, 0])
 
     composed = compose_statement(bundle, statement)
 
@@ -60,9 +60,9 @@ def test_compose_statement_preserves_interleaved_image_provenance() -> None:
 def test_compose_statement_supports_empty_and_image_only_statements() -> None:
     bundle = _bundle()
 
-    assert compose_statement(bundle, models.Statement(block=[0], members=[])).text == ''
+    assert compose_statement(bundle, models.Statement(block=[0], member_positions=[])).text == ''
     image_only = compose_statement(
-        bundle, models.Statement(block=[1], members=[1])
+        bundle, models.Statement(block=[1], member_positions=[1])
     )
 
     assert image_only.text == ''
@@ -72,13 +72,13 @@ def test_compose_statement_supports_empty_and_image_only_statements() -> None:
 def test_compose_statement_rejects_missing_member_positions() -> None:
     with pytest.raises(ValueError, match='missing node positions'):
         compose_statement(
-            _bundle(), models.Statement(block=[0], members=[999])
+            _bundle(), models.Statement(block=[0], member_positions=[999])
         )
 
 
 def test_compose_statement_does_not_mutate_inputs() -> None:
     bundle = _bundle()
-    statement = models.Statement(block=[0, 1], members=[1, 0])
+    statement = models.Statement(block=[0, 1], member_positions=[1, 0])
     before_nodes = repr(bundle.nodes)
     before_statement = repr(statement)
 

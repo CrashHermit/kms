@@ -20,7 +20,7 @@ def _block_key(block: list[int]) -> str:
     return '#'.join(str(node_id) for node_id in block)
 
 
-def _node_provenance_key(node: 'models.Node') -> str:
+def _node_provenance_key(node: models.Node) -> str:
     """Build a stable provenance key for a node from its source attributes."""
     doc_idx = node.document_index if node.document_index is not None else 0
     prov_idx = node.index
@@ -31,9 +31,22 @@ def source_uuid(source: str) -> str:
     return uuid5(NAMESPACE_URL, _source(source)).hex
 
 
-def node_uuid(source: str, node: 'models.Node') -> str:
+def node_uuid(source: str, node: models.Node) -> str:
     """Durable UUID for a node from its source provenance, not list position."""
-    return uuid5(NAMESPACE_URL, f'{_source(source)}#node#{_node_provenance_key(node)}').hex
+    return uuid5(
+        NAMESPACE_URL, f'{_source(source)}#node#{_node_provenance_key(node)}'
+    ).hex
+
+
+def split_child_uuid(parent_uuid: str, child_index: int) -> str:
+    """Returns a deterministic durable UUID for one split child node."""
+    if not parent_uuid:
+        raise ValueError('split child identity requires a parent uuid')
+    if child_index < 0:
+        raise ValueError('split child identity requires a non-negative index')
+    return uuid5(
+        NAMESPACE_URL, f'{parent_uuid}#split-child#{child_index}'
+    ).hex
 
 
 def instruction_uuid(source: str, block: list[int]) -> str:
@@ -80,12 +93,10 @@ def entity_uuid(source: str, node_position: int, name: str) -> str:
 
 
 def predicate_uuid(triplet_occurrence_uuid: str) -> str:
-    return uuid5(
-        NAMESPACE_URL, f'{triplet_occurrence_uuid}#predicate'
-    ).hex
+    return uuid5(NAMESPACE_URL, f'{triplet_occurrence_uuid}#predicate').hex
 
 
-def assign_node_uuids(nodes: list['models.Node'], source: str) -> None:
+def assign_node_uuids(nodes: list[models.Node], source: str) -> None:
     """Assign durable UUIDs to all nodes from their source provenance."""
     _source(source)
     for node in nodes:
@@ -134,18 +145,16 @@ def assign_statement_procedure_ids(
             )
 
 
-def assign_triplet_ids(
-    triplets: list[models.Triplet], source: str
-) -> None:
+def assign_triplet_ids(triplets: list[models.Triplet], source: str) -> None:
     """Assign triplet, entity, and predicate occurrence identities."""
     _source(source)
     for triplet in triplets:
-        if not triplet.node_ids:
+        if not triplet.evidence_positions:
             raise ValueError('triplets require at least one evidence node')
         triplet.occurrence_uuids = {}
         triplet.entity_uuids = {}
         triplet.predicate_uuids = {}
-        for node_position in triplet.node_ids:
+        for node_position in triplet.evidence_positions:
             occurrence_id = triplet_uuid(
                 source,
                 node_position,
@@ -154,22 +163,22 @@ def assign_triplet_ids(
                 triplet.object,
             )
             triplet.occurrence_uuids[node_position] = occurrence_id
-            triplet.entity_uuids[(node_position, triplet.subject)] = entity_uuid(
-                source, node_position, triplet.subject
+            triplet.entity_uuids[(node_position, triplet.subject)] = (
+                entity_uuid(source, node_position, triplet.subject)
             )
             triplet.entity_uuids[(node_position, triplet.object)] = entity_uuid(
                 source, node_position, triplet.object
             )
-            triplet.predicate_uuids[node_position] = predicate_uuid(occurrence_id)
+            triplet.predicate_uuids[node_position] = predicate_uuid(
+                occurrence_id
+            )
 
 
 def validate_assigned_ids(bundle: models.ConstructionBundle) -> None:
     """Fail fast when durable construction identities are incomplete."""
     errors: list[str] = []
     for index, instruction in enumerate(bundle.instructions):
-        expected = instruction_uuid(
-            bundle.source.key or '', instruction.block
-        )
+        expected = instruction_uuid(bundle.source.key or '', instruction.block)
         if instruction.uuid != expected:
             errors.append(f'instruction {index} has invalid uuid')
     for index, statement in enumerate(bundle.statements):
@@ -186,7 +195,7 @@ def validate_assigned_ids(bundle: models.ConstructionBundle) -> None:
         if procedure.uuid != expected:
             errors.append(f'procedure {index} has invalid uuid')
     for index, triplet in enumerate(bundle.triplets):
-        for node_position in triplet.node_ids:
+        for node_position in triplet.evidence_positions:
             expected = triplet_uuid(
                 bundle.source.key or '',
                 node_position,

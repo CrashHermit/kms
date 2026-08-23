@@ -135,7 +135,7 @@ def test_router_and_grower_encode_labeled_multimodal_parts(tmp_path):
     )
 
     assert isinstance(router_input, content.ContentParts)
-    assert router_input.content.parts[0].text == '[1] (image)'
+    assert router_input.content.parts[0].text == '[1] (image):'
     assert isinstance(router_input.content.parts[1], content.ImagePart)
     assert isinstance(grower_inputs['instruction_nodes'], content.ContentParts)
     assert isinstance(grower_inputs['next_node'], content.ContentParts)
@@ -260,6 +260,33 @@ def test_false_growth_banks_only_the_anchor_and_reconsiders_candidate():
     ] == [0, 0, 0, 0, 0]
 
 
+def test_instruction_growth_fails_at_shared_finder_budget(monkeypatch):
+    finder_settings = SimpleNamespace(
+        instruction_finder=SimpleNamespace(context_budget=10),
+        max_lookahead_budget=3,
+    )
+    monkeypatch.setattr(
+        config,
+        'get_settings',
+        lambda: SimpleNamespace(
+            stages=SimpleNamespace(finders=finder_settings)
+        ),
+    )
+    nodes = [
+        models.Node(type='paragraph', content='x' * 8),
+        models.Node(type='paragraph', content='y' * 8),
+    ]
+
+    with pytest.raises(ValueError, match='look-ahead limit'):
+        asyncio.run(
+            instruction_finder.find_instruction_spans(
+                nodes,
+                router=_ScriptedModule([True]),
+                grower=_ScriptedModule([]),
+            )
+        )
+
+
 def test_malformed_router_boolean_fails_fast():
     with pytest.raises(
         ValueError, match='is_instruction_start must be a boolean'
@@ -296,5 +323,5 @@ def test_finder_node_emits_instruction_hubs_without_mutating_nodes():
     assert len(out['instructions']) == 1
     instruction = out['instructions'][0]
     assert instruction.block == [0, 1]
-    assert instruction.members == [0, 1]
+    assert instruction.member_positions == [0, 1]
     assert [item.uuid for item in nodes] == ['node-10', 'node-20', 'node-30', 'node-40', 'node-50']

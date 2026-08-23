@@ -42,10 +42,10 @@ class FinalProjectorNode:
             metadata=bundle.source.metadata,
         )
         await writer.persist_statements(
-            statements, source, session_factory=self._session_factory
+            statements, nodes, source, session_factory=self._session_factory
         )
         await writer.persist_procedures(
-            procedures, source, session_factory=self._session_factory
+            procedures, nodes, source, session_factory=self._session_factory
         )
         await writer.persist_statement_procedure_links(
             statements,
@@ -55,12 +55,14 @@ class FinalProjectorNode:
         )
         await writer.persist_instructions(
             bundle.instructions,
+            bundle.nodes,
             source,
             session_factory=self._session_factory,
         )
         await writer.persist_assertions(
             bundle.triplets,
             source,
+            bundle.nodes,
             session_factory=self._session_factory,
             entity_descriptions=bundle.entity_descriptions,
             predicate_descriptions=bundle.predicate_descriptions,
@@ -75,24 +77,30 @@ class FinalProjectorNode:
         entity_records = bundle.entity_hub_records
         if entity_records:
             await writer.persist_entity_hubs(
-                entity_records, session_factory=self._session_factory,
-                subsumption_edges=[], tier='source',
+                entity_records,
+                session_factory=self._session_factory,
+                subsumption_edges=[],
+                tier='source',
             )
         if bundle.entity_hub_assignments:
             await writer.attach_entity_components(
-                bundle.entity_hub_assignments, aliases=[],
+                bundle.entity_hub_assignments,
+                aliases=[],
                 session_factory=self._session_factory,
             )
 
         predicate_records = bundle.predicate_hub_records
         if predicate_records:
             await writer.persist_predicate_hubs(
-                predicate_records, session_factory=self._session_factory,
-                subsumption_edges=[], tier='source',
+                predicate_records,
+                session_factory=self._session_factory,
+                subsumption_edges=[],
+                tier='source',
             )
         if bundle.predicate_hub_assignments:
             await writer.attach_predicate_components(
-                bundle.predicate_hub_assignments, aliases=[],
+                bundle.predicate_hub_assignments,
+                aliases=[],
                 session_factory=self._session_factory,
             )
 

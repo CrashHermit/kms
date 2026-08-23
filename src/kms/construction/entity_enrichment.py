@@ -2,7 +2,7 @@ import dspy
 from pydantic import BaseModel, Field
 
 from kms import config
-from kms.core import content, identity, module, semantic, state, models
+from kms.core import content, identity, models, module, semantic, state
 
 
 class TermDescription(BaseModel):
@@ -24,8 +24,8 @@ class EntityEnrichmentSignature(dspy.Signature):
         description='The passage with optional figures.'
     )
     terms: list[str] = dspy.InputField(description='Exact entity terms.')
-    descriptions: list[TermDescription] = dspy.OutputField(
-        description='One local description per term in input order.'
+    description: str = dspy.OutputField(
+        description='One local description for the supplied term.'
     )
 
 
@@ -39,8 +39,17 @@ class EntityEnricher(module.Module):
             'terms': terms,
         }
 
-    def decode(self, prediction, **inputs):
-        return module.as_list(prediction.descriptions)
+    def decode(self, prediction, **inputs) -> list[TermDescription]:
+        """Returns one validated description for the singleton input term."""
+        description = module.require_text(
+            prediction.description, 'description'
+        )
+        terms = inputs['terms']
+        if len(terms) != 1:
+            raise ValueError(
+                f'entity enrichment expects one input term, got {len(terms)}'
+            )
+        return [TermDescription(term=terms[0], description=description)]
 
 
 async def enrich(
@@ -50,7 +59,7 @@ async def enrich(
 ) -> dict[int, dict[str, str | None]]:
     terms_by_position: dict[int, set[str]] = {}
     for triplet in triplets:
-        for position in triplet.node_ids:
+        for position in triplet.evidence_positions:
             terms_by_position.setdefault(position, set()).update(
                 (triplet.subject, triplet.object)
             )
@@ -89,7 +98,7 @@ class EntityEnrichmentNode:
                 embedding=list(vectors.get(position, {}).get(name, [])),
             )
             for triplet in triplets
-            for position in triplet.node_ids
+            for position in triplet.evidence_positions
             for name in dict.fromkeys((triplet.subject, triplet.object))
             if vectors.get(position, {}).get(name) is not None
         ]

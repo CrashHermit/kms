@@ -1,14 +1,25 @@
 """Compile canonical procedure content for the graph."""
 
 import asyncio
+
 import dspy
 
 from kms import config
 from kms.construction import composition, knowledge
-from kms.core import content, embeddings, identity, llm, models, module, recording
+from kms.core import (
+    content,
+    embeddings,
+    identity,
+    llm,
+    models,
+    module,
+    recording,
+)
 
 
-def _content_from_composed(composed: composition.ComposedContent) -> content.Content:
+def _content_from_composed(
+    composed: composition.ComposedContent,
+) -> content.Content:
     """Converts ordered source parts into multimodal LLM content."""
     parts: list[content.TextPart | content.ImagePart] = []
     max_dim = config.get_settings().image.max_dim
@@ -62,7 +73,9 @@ def procedure_enrichment_input(
 ) -> models.ProcedureEnrichmentInput:
     """Builds one statement-centered procedure-compilation input."""
     if not statement.uuid:
-        raise ValueError('procedure enrichment requires an assigned statement uuid')
+        raise ValueError(
+            'procedure enrichment requires an assigned statement uuid'
+        )
     statement_content = (
         content.Content.from_text(statement.statement)
         if statement.statement
@@ -78,7 +91,7 @@ def procedure_enrichment_input(
                 'procedure enrichment requires assigned procedure uuids'
             )
         procedure_uuid = procedure.uuid
-        if procedure.members:
+        if procedure.member_positions:
             source_procedure = _content_from_composed(
                 composition.compose_procedure(bundle, procedure).content
             )
@@ -101,16 +114,17 @@ def procedure_enrichment_input(
 
 class ProcedureNeedRouterSignature(dspy.Signature):
     r"""
-    Decide whether the canonical statement requires a procedure.
+    Decide whether the supplied statement source requires a procedure.
 
+    The statement may contain text, equations, diagrams, or other images.
     Return True when fulfilling it requires a proof, derivation, calculation,
     construction, verification, or other worked solution. Return False for
     definitions, notation, explanatory prose, headings, and assertions that
     can be understood without producing work. Return only True or False.
     """
 
-    statement: str = dspy.InputField(
-        description='The complete canonical statement.'
+    statement: content.ContentParts = dspy.InputField(
+        description='The complete canonical statement as ordered text and images.'
     )
     needs_procedure: bool = dspy.OutputField(
         description='Whether the statement requires a worked procedure.'
@@ -124,11 +138,14 @@ class ProcedureNeedRouter(module.Module):
     record_name = 'procedure_need_router'
     use_chain_of_thought = True
 
-    def encode(self, statement: str) -> dict:
-        return {'statement': statement}
+    def encode(self, statement: content.Content) -> dict:
+        return {'statement': content.ContentParts(content=statement)}
 
     def decode(self, prediction, **inputs) -> bool:
-        return bool(prediction.needs_procedure)
+        """Returns the validated procedure-routing decision."""
+        return module.require_bool(
+            prediction.needs_procedure, 'needs_procedure'
+        )
 
 
 class ProcedureWriterSignature(dspy.Signature):
@@ -142,13 +159,11 @@ class ProcedureWriterSignature(dspy.Signature):
     calculation, or construction needed by the statement. Make meaningful
     reasoning explicit, answer every requested part, and do not invent facts.
 
-    Return continuous prose with Markdown LaTeX. Do not number or split steps;
-    learner-facing steps are produced by a later process. Return only the
-    procedure.
+    Return continuous prose with Markdown LaTeX. Return only the procedure.
     """
 
-    statement: str = dspy.InputField(
-        description='The complete canonical statement and learner goal.'
+    statement: content.ContentParts = dspy.InputField(
+        description='The complete canonical statement and learner goal as ordered text and images.'
     )
     source_procedure: content.ContentParts = dspy.InputField(
         description='Existing source procedure content, if any.'
@@ -169,12 +184,12 @@ class ProcedureWriter(module.Module):
 
     def encode(
         self,
-        statement: str,
+        statement: content.Content,
         source_procedure: content.Content | None,
         canonical_knowledge: str,
     ) -> dict:
         return {
-            'statement': statement,
+            'statement': content.ContentParts(content=statement),
             'source_procedure': content.ContentParts(
                 content=source_procedure or content.Content.from_text('')
             ),
@@ -182,7 +197,7 @@ class ProcedureWriter(module.Module):
         }
 
     def decode(self, prediction, **inputs) -> str:
-        return prediction.procedure
+        return module.require_text(prediction.procedure, 'procedure')
 
 
 class ProcedureEnricher:
@@ -200,11 +215,13 @@ class ProcedureEnricher:
         self, item: models.ProcedureEnrichmentInput
     ) -> tuple[bool, str | None]:
         """Returns whether a procedure was needed and its compiled text."""
-        statement = item.statement.render()
-        if not statement.strip():
+        statement = item.statement
+        if not statement.parts or not statement.render().strip():
             return False, None
+        needs_procedure = True
         if item.procedure_uuid is None:
-            if not await self.router.aforward(statement=statement):
+            needs_procedure = await self.router.aforward(statement=statement)
+            if not needs_procedure:
                 return False, None
         result = await self.writer.aforward(
             statement=statement,
@@ -212,7 +229,7 @@ class ProcedureEnricher:
             canonical_knowledge=item.canonical_knowledge,
         )
         result = result.strip()
-        return bool(result), result or None
+        return needs_procedure, result or None
 
 
 def build_procedure_inputs(
@@ -228,7 +245,9 @@ def build_procedure_inputs(
         by_statement.setdefault(owner.uuid, []).append(procedure)
     for statement in bundle.statements:
         if not statement.uuid:
-            raise ValueError('procedure inputs require assigned statement uuids')
+            raise ValueError(
+                'procedure inputs require assigned statement uuids'
+            )
         attached = by_statement.get(statement.uuid, [])
         if attached:
             inputs.extend(
@@ -247,7 +266,7 @@ def build_procedure_inputs(
 
 
 class ProcedureEnrichmentNode:
-    """Compiles and stores canonical procedure fields, without steps."""
+    """Compiles and stores canonical procedure fields."""
 
     def __init__(self, enricher: ProcedureEnricher) -> None:
         self._enricher = enricher
@@ -278,12 +297,16 @@ class ProcedureEnrichmentNode:
         procedure_inputs = []
         for statement in bundle.statements:
             if not statement.uuid:
-                raise ValueError('procedure inputs require assigned statement uuids')
+                raise ValueError(
+                    'procedure inputs require assigned statement uuids'
+                )
             attached = by_statement.get(statement.uuid, [])
             if attached:
                 for procedure in attached:
                     if not statement.uuid:
-                        raise ValueError('procedure enrichment requires an assigned statement uuid')
+                        raise ValueError(
+                            'procedure enrichment requires an assigned statement uuid'
+                        )
                     statement_content = (
                         content.Content.from_text(statement.statement)
                         if statement.statement
@@ -299,15 +322,23 @@ class ProcedureEnrichmentNode:
                                 'procedure enrichment requires assigned procedure uuids'
                             )
                         procedure_uuid = procedure.uuid
-                        if procedure.members:
+                        if procedure.member_positions:
                             source_procedure = _content_from_composed(
-                                composition.compose_procedure(bundle, procedure).content
+                                composition.compose_procedure(
+                                    bundle, procedure
+                                ).content
                             )
                         elif procedure.procedure:
-                            source_procedure = content.Content.from_text(procedure.procedure)
-                    selected = knowledge.knowledge_for_statement(bundle, statement, bundle.knowledge_index)
+                            source_procedure = content.Content.from_text(
+                                procedure.procedure
+                            )
+                    selected = knowledge.knowledge_for_statement(
+                        bundle, statement, bundle.knowledge_index
+                    )
                     selected = selected.union(
-                        knowledge.knowledge_for_procedure(bundle, procedure, bundle.knowledge_index)
+                        knowledge.knowledge_for_procedure(
+                            bundle, procedure, bundle.knowledge_index
+                        )
                     )
                     procedure_inputs.append(
                         models.ProcedureEnrichmentInput(
@@ -321,7 +352,9 @@ class ProcedureEnrichmentNode:
                     )
             else:
                 if not statement.uuid:
-                    raise ValueError('procedure enrichment requires an assigned statement uuid')
+                    raise ValueError(
+                        'procedure enrichment requires an assigned statement uuid'
+                    )
                 statement_content = (
                     content.Content.from_text(statement.statement)
                     if statement.statement
@@ -329,7 +362,9 @@ class ProcedureEnrichmentNode:
                         composition.compose_statement(bundle, statement)
                     )
                 )
-                selected = knowledge.knowledge_for_statement(bundle, statement, bundle.knowledge_index)
+                selected = knowledge.knowledge_for_statement(
+                    bundle, statement, bundle.knowledge_index
+                )
                 procedure_inputs.append(
                     models.ProcedureEnrichmentInput(
                         source=bundle.source.key or '',
@@ -356,7 +391,9 @@ class ProcedureEnrichmentNode:
             async with gate:
                 return item, await self._enricher.compile(item)
 
-        results = await asyncio.gather(*(compile_one(item) for item in procedure_inputs))
+        results = await asyncio.gather(
+            *(compile_one(item) for item in procedure_inputs)
+        )
         statements = {
             statement.uuid: statement
             for statement in bundle.statements
