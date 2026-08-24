@@ -11,9 +11,7 @@ def _fact_module() -> triplet_extractor._FactExtractor:
 
 
 def test_fact_decode_returns_text_without_model_provenance() -> None:
-    prediction = SimpleNamespace(
-        facts=[triplet_extractor._FactInput(text='A is related to B')]
-    )
+    prediction = SimpleNamespace(facts=['A is related to B'])
 
     assert _fact_module().decode(prediction, current_nodes=[]) == [
         {'text': 'A is related to B'}

@@ -13,123 +13,29 @@ import dspy
 from pydantic import BaseModel, Field
 
 from kms import config
-from kms.core import content, identity, llm, models, module, state, walker
+from kms.core import content, identity, llm, logs, models, module, state, walker
 
 logger = logging.getLogger(__name__)
 
 
-class _FactInput(BaseModel):
-    """One explicit source-level fact returned by the language model."""
-
-    text: str = Field(
-        description=(
-            'A short, self-contained rendering of one explicit source-level '
-            'claim or relation. Preserve the fact; do not infer an answer, '
-            'canonical definition, or generalization.'
-        )
-    )
-
-
 class _FactSignature(dspy.Signature):
     r"""
-    You are given one anchor node from a document, together with surrounding
-    context in document order. The anchor carries its stable id, structural
-    type, and content. Decompose the anchor node into ATOMIC FACTS.
+    Extract explicit, durable facts from the node marked ``<anchor>``.
+    Nearby nodes are context only: use them to resolve references, but never
+    extract facts from them or assign them provenance.
 
-    AN ATOMIC FACT is the smallest piece of source content worth preserving
-    on its own: an explicit claim, property, relationship, event, definition,
-    stated result, or factual premise. It conveys exactly ONE such unit as a
-    complete standalone sentence. This is domain-neutral: the document may be
-    about anything. Do not infer answers, solve exercises, or classify facts
-    into kinds. Just preserve explicit subject-matter assertions.
+    A fact is one independent claim or relation. Split combined claims. Each
+    result must be a short, complete, standalone sentence with its subject,
+    conditions, qualifiers, and resolved pronouns included. Preserve explicit
+    premises, including premises inside exercises, but omit task instructions,
+    inferred answers, and calculations.
 
-    THE ATOMICITY TEST. A fact is atomic when it conveys exactly one unit
-    of information — normally one assertion, or a source question that
-    expresses a relation — with no second independent unit joined on. Apply
-    the SPLIT TEST before emitting: if you can break the fact at a conjunction
-    or a comma into two pieces that would each still be true of the source, it
-    is not atomic — split it into those pieces. A task request such as
-    "simplify this expression" is not an atomic fact merely because it is an
-    instruction. When in doubt, split explicit subject-matter content.
+    Do not invent, generalize, duplicate, or solve anything. Skip headers,
+    captions, bibliography entries, navigation, document meta-text, rhetorical
+    framing, and scratch work. Preserve mathematical and technical notation
+    with the source's LaTeX delimiters (``$...$`` or ``$$...$$``).
 
-    EXAMPLES.
-
-    - "The discriminant of $ax^2 + bx + c = 0$ is $b^2 - 4ac$, and its
-      roots are given by the quadratic formula" is TWO facts:
-        1. "The discriminant of $ax^2 + bx + c = 0$ is $b^2 - 4ac$."
-        2. "The roots of $ax^2 + bx + c = 0$ are given by the quadratic
-           formula."
-    - "Since $a \neq 0$, the equation $ax^2 + bx + c = 0$ is quadratic" is
-      ONE fact with its condition carried inside: "When $a \neq 0$, the
-      equation $ax^2 + bx + c = 0$ is quadratic." Never emit the bare
-      fragment "Since $a \neq 0$".
-    - Successive lines of a worked manipulation — "$8a - 3a > 5a + 18$",
-      then "$5a > 5a + 18$" — are scratch work, not facts. The durable
-      content is the conclusion: "From $8a - 3a > 5a + 18$ it follows that
-      $0 > 18$, a contradiction."
-    - In a word problem, separate the EXPLICIT GIVEN premises from the task.
-      For "The highest recorded temperature was 57 degrees Celsius. Use
-      integers to write the temperature", emit the premise "The highest
-      recorded temperature was 57 degrees Celsius" and do NOT emit the
-      instruction or infer an answer such as "$+57$".
-    - For "Pennsylvania estimated a budget surplus of $540 million", emit that
-      explicit premise as a fact even if it appears inside an exercise. For
-      "Community college enrollment grew by 1,400,000 students", emit the
-      stated growth. Exercise framing is transient; factual premises stated
-      inside it are not automatically transient.
-
-    RULES:
-    - ONE UNIT PER FACT. One explicit assertion or one relation-bearing
-      source question per fact. A sentence that makes two independent claims
-      yields two facts; a passage that asserts several things yields one fact
-      per assertion. Do not emit an exercise instruction as a fact.
-    - STANDALONE, NOT FRAGMENTED. State every fact as a complete sentence
-      that names its own subject and carries its own conditions and
-      qualifiers. Resolve every "it", "this", "the former" into its
-      referent. Never emit a fragment ("since $a \neq 0$", "which is
-      continuous", "as above").
-    - SELF-CONTAINED IS NOT COPYING. Include what the fact needs to stand
-      alone (names, conditions, values) — but a multi-claim source sentence
-      yields several SHORTER facts, never one copied sentence.
-    - LATEX FORMAT. Everything that can be in LaTeX format is written in
-      LaTeX WITH its delimiters, exactly as in the source: inline math in
-      `$...$`, display math in `$$...$$`. This covers mathematical notation,
-      chemical formulas, units, and any other technical notation. When a
-      fact mentions an equation, a symbol, or any such content, keep it in
-      that delimited LaTeX form inside the fact text — never plain text,
-      never Unicode (no `x⁴`, `≤`, `α`, bare `H₂O`) when a LaTeX spelling
-      exists.
-    - DURABLE, NOT TRANSITIONAL. Emit explicit subject-matter assertions and
-      factual premises, including premises embedded in word problems. Do not
-      emit navigation ("in this section", "as we will see"), rhetorical
-      framing, formatting, an imperative task request ("simplify ...",
-      "use integers to write ..."), a bare symbolic exercise, or scratch lines
-      of a worked manipulation. A request to calculate is not itself a fact;
-      the data stated in that request may still be facts.
-    - NO DUPLICATES. State each distinct claim once per window. If the
-      window restates the same claim — rephrased, repeated, re-derived —
-      emit it once. When a sentence asserts X and then gives a reason
-      ("X because Y"), emit X as one fact — do NOT emit a second
-      near-identical fact that restates the whole sentence including the
-      reason clause.
-    - META-TEXT IS NOT A FACT. Do not emit facts about the document itself:
-      "The text states that …", "The author writes …", "This passage
-      says …", "The book now turns to …". These are about the writing, not
-      the subject. Extract the subject-matter claim they describe, or
-      nothing if there is none.
-    - CONTEXT-ONLY NODES. header (a title), bibliographic (a reference
-      entry), and caption nodes are context to help you place the facts —
-      do NOT extract facts from them.
-    - CONTEXT-ONLY SURROUNDING NODES. The marked anchor window includes
-      nearby nodes to help place facts and resolve referents. Extract facts
-      only from the node marked ``anchor`` and never attribute a fact to a
-      surrounding node.
-    - FIND EVERYTHING EXPLICIT. A missed stated premise is a lost fact, but
-      never invent the answer to an exercise or promote an implied result to a
-      source fact. When unsure whether an explicit premise is merely exercise
-      framing or subject-matter content, preserve the content and omit only
-      the instruction wrapper.
-    - Return an empty list if the anchor contains no explicit facts.
+    Return [] when the anchor contains no explicit subject-matter fact.
     """
 
     current_nodes: content.ContentParts = dspy.InputField(
@@ -141,8 +47,13 @@ class _FactSignature(dspy.Signature):
             '`[position] (image):` followed by the image itself.'
         )
     )
-    facts: list[_FactInput] = dspy.OutputField(
-        description='Every atomic fact found in the window; empty if none.'
+    facts: list[str] = dspy.OutputField(
+        description=(
+            'Every atomic fact found in the anchor; each must be a short, '
+            'self-contained rendering of one explicit source-level claim or '
+            'relation. Preserve the fact; do not infer an answer, canonical '
+            'definition, or generalization. Empty if none.'
+        )
     )
 
 
@@ -163,11 +74,11 @@ class _FactExtractor(module.Module):
         """Returns validated fact text; provenance is assigned by caller."""
         facts = module.as_list(prediction.facts)
         for index, fact in enumerate(facts):
-            if not isinstance(fact, _FactInput):
-                raise TypeError('facts must contain _FactInput values')
-            if not fact.text.strip():
-                raise ValueError(f'facts[{index}].text must be non-empty')
-        return [{'text': fact.text} for fact in facts]
+            if not isinstance(fact, str):
+                raise TypeError('facts must contain string values')
+            if not fact.strip():
+                raise ValueError(f'facts[{index}] must be non-empty')
+        return [{'text': fact} for fact in facts]
 
 
 class _TripletInput(BaseModel):
@@ -209,227 +120,44 @@ class _TripletInput(BaseModel):
 
 class _TripletSignature(dspy.Signature):
     r"""
-    You are given one ATOMIC FACT — a single, self-contained sentence
-    conveying exactly one piece of information. Decompose it into
-    (subject, predicate, object) TRIPLETS as source-level relational evidence.
+    Given one atomic source fact, extract every explicit, independent
+    (subject, predicate, object) relation it expresses.
 
-    This pass records what the source fact asserts so later hub building
-    can group and abstract it. A triplet is not yet a canonical hub or a
-    standalone textbook definition: keep the source wording and qualifiers,
-    do not merge mentions, and do not infer facts that the source does not
-    state. The later hub layer will synthesize reusable concepts, relations,
-    and canonical assertions from supported triplet evidence.
+    Use source evidence only. Do not infer, solve, generalize, merge
+    mentions, or invent entities. A fact may yield several triplets, one per
+    independent relation. If no complete relation is decomposable, return [].
 
-    A TRIPLET is one relational assertion: a subject, a predicate that
-    connects it to an object, and the object. Every triplet is ONE
-    independent relationship. A fact may yield one triplet or several —
-    compound assertions that state multiple relationships yield one
-    triplet per relationship.
+    SUBJECT AND OBJECT:
+    - Select source substrings; do not rephrase or change their meaning.
+    - Lowercase text outside `$...$` math delimiters. Preserve math content
+      and all LaTeX delimiters exactly.
+    - For a bare local variable, append one short role annotation such as
+      `$f$ (a function)` or `$G$ (a graph)`. Use the same annotation for that
+      variable throughout the fact.
+    - Use complete noun phrases, not dangling fragments, pronouns, generic
+      placeholders, or invented referents.
 
-    SUBJECT AND OBJECT must be EXACT VERBATIM SUBSTRINGS of the fact
-    text — lift them from the source, do not normalize or rephrase them.
-    If the fact says "$f$ is continuous on $[0,1]$", the subject is "$f$"
-    and the object is "continuous on $[0,1]$" — exactly as they appear.
+    PREDICATE:
+    - Use a short verb or verb phrase, not a clause or sentence.
+    - Keep negation in the predicate: "X is NOT a subgraph of Y" has
+      predicate "is NOT a subgraph of".
+    - Split independent relations and emit each distinct relation once.
 
-    CASE NORMALIZATION. After lifting the verbatim text, lowercase
-    everything EXCEPT content inside $...$ LaTeX math delimiters.
-    Characters between $...$ retain their original case.  "Graph"
-    becomes "graph", "Edge Set" becomes "edge set", but "$G$" stays
-    "$G$" and "$V'$" stays "$V'$".  Apply this to both subject and
-    object independently.
+    SPEECH ACTS AND FILTERING:
+    - Extract relations explicitly asserted, asked about, or framed by
+      "prove that"; do not infer the requested answer.
+    - Do not emit a value request ("what is ...?", "find ...", "compute ...")
+      as a relation. If its only relation is in an if/assuming/given premise,
+      omit that premise relation.
+    - Skip relations found only in reason clauses, notation conventions, or
+      document meta-text.
 
-    LOCAL-VARIABLE ANNOTATION. When the subject or object is a bare
-    variable — a single letter or symbol that serves only as a local
-    placeholder ("$f$", "$G$", "$c$", "$a$", "$x$", "$E_1$", "$E_3$") —
-    append a brief parenthetical role drawn from how the fact uses it.
-    This rule applies to BOTH subject AND object equally: "$G_1$ (a
-    graph)", "$E_1$ (an edge set)", "$c$ (a point)". A variable that
-    appears in one triplet as subject and in another as object must
-    carry the SAME annotation in both roles — decide the annotation
-    from how the fact introduces it. Named entities that carry
-    inherent meaning — "$\mathbb{R}$", "the derivative of $\sin x$",
-    "the discriminant", "every continuous function on $[0,1]$" — need
-    no annotation. The annotation is ONE short word or phrase, not a
-    description.
-
-    PREDICATE is a short verb phrase (a verb or verb+preposition) that
-    captures the relation: "is", "has", "equals", "is a subset of",
-    "implies", "is defined as", etc. It is NOT a full sentence.
-
-    EXAMPLES.
-
-    Fact: "The discriminant of $ax^2 + bx + c = 0$ is $b^2 - 4ac$."
-    Triplets:
-        1. subject="The discriminant of $ax^2 + bx + c = 0$"
-           predicate="is"
-           object="$b^2 - 4ac$"
-
-    Fact: "A function $f$ is continuous at $c$ if $\lim_{x\to c} f(x) = f(c)$."
-    Triplets:
-        1. subject="$f$ (a function)"
-           predicate="is continuous at"
-           object="$c$ (a point)"
-           (when $\lim_{x\to c} f(x) = f(c)$ — the condition is part of the
-           definition, captured as a separate triplet:)
-        2. subject="$\lim_{x\to c} f(x)$"
-           predicate="equals"
-           object="$f(c)$"
-
-    Fact: "The set $\mathbb{R}$ is uncountable and has cardinality $2^{\aleph_0}$."
-    Triplets:
-        1. subject="$\mathbb{R}$"
-           predicate="is"
-           object="uncountable"
-        2. subject="$\mathbb{R}$"
-           predicate="has cardinality"
-           object="$2^{\aleph_0}$"
-
-    Fact: "The highest recorded temperature on Earth was 57 degrees Celsius."
-    Triplets:
-        1. subject="The highest recorded temperature on Earth"
-           predicate="was"
-           object="57 degrees Celsius"
-    (This is an explicit premise from a word problem. Extract the stated
-    relation; do not infer or normalize the requested answer.)
-
-    Fact: "Prove that every continuous function on $[0,1]$ is bounded."
-    Triplets:
-        1. subject="every continuous function on $[0,1]$"
-           predicate="is"
-           object="bounded"
-    (The "Prove that" wrapper is an instruction framing — extract the
-    underlying assertion.)
-
-    Fact: "Is the sequence $\{3n\}_{n=1}^{\infty}$ bounded?"
-    Triplets:
-        1. subject="the sequence $\{3n\}_{n=1}^{\infty}$"
-           predicate="is"
-           object="bounded"
-    (A question is interrogating a relation — extract that relation as
-    if it were asserted. "Is X Y?" yields (X, is, Y). The question
-    mark is part of the source wording, not part of the subject or
-    object.)
-
-    Fact: "Is the sequence $\{n\}_{n=1}^{\infty}$ convergent, and if so,
-    what is its limit?"
-    Triplets:
-        1. subject="the sequence $\{n\}_{n=1}^{\infty}$"
-           predicate="is"
-           object="convergent"
-    (The follow-up "and if so, what is its limit?" is a request for a
-    value, not a relation — it yields no separate triplet.)
-
-    Fact: "If the sequence $\{n\}_{n=1}^{\infty}$ is convergent,
-    what is its limit?"
-    Triplets:
-        (none)
-    (The fact's primary speech act is a value request — "what is its
-    limit?" — not a relation. The "if X is convergent" clause is a
-    premise taken as given, not what is being interrogated. Do not
-    extract relations that appear only inside a conditional premise
-    when the main question is a value request.)
-
-    Fact: "The graph $G_4$ is NOT a subgraph of $G_1$, even though it looks
-    like all we did is remove vertex $e$."
-    Triplets:
-        1. subject="$G_4$ (a graph)"
-           predicate="is NOT a subgraph of"
-           object="$G_1$ (a graph)"
-    (The second clause — "even though it looks like all we did is remove
-    vertex $e$" — is the REASON, not an independent relation. Do NOT
-    extract triplets from reason clauses that merely narrate background.)
-
-    FACT: "The Bridges of Königsberg graph had double edges because
-    there really are two bridges connecting a particular island to the
-    near shore."
-    Triplets:
-        1. subject="The Bridges of Königsberg graph"
-           predicate="had"
-           object="double edges"
-    (The "because" clause explains why — it is not an independent
-    relation. Do not extract triplets from reason clauses that merely
-    narrate background.)
-
-    RULES:
-    - VERBATIM ONLY. Subject and object must be exact substrings of the
-      fact text — never rephrase, never normalize, never invent a term
-      not present in the source. The parenthetical annotation for local
-      variables (see above) is the ONLY text you may add beyond the
-      verbatim substring.
-    - ONE RELATION PER TRIPLET. A fact that asserts two independent
-      relationships yields two triplets. Apply the SPLIT TEST: if the
-      predicate connects the subject to two objects with different
-      relations, those are two triplets.
-    - SHORT PREDICATE. The predicate is a verb or a short verb phrase —
-      not a clause, not a sentence. It captures the relation type, not
-      the full assertion.
-    - COVER EVERY RELATION. Extract every (subject, predicate, object)
-      relationship the fact expresses, whether it asserts it, asks
-      about it, or instructs the reader about it. "Prove that X is Y"
-      and "Is X Y?" both express the relation (X, is, Y) — extract it.
-      The framing (imperative / interrogative / declarative) does not
-      change the relation. Explicit factual premises embedded in an exercise
-      are ordinary assertions and must be decomposed; the exercise's answer
-      request is not an additional relation.
-    - CONDITIONAL PREMISE EXCEPTION. When the fact's primary speech act
-      is a value request ("what is …?", "find …", "compute …") and a
-      relation appears only inside an "if" / "assuming" / "given"
-      premise clause, do NOT extract that premise relation — it is a
-      condition taken as given, not what the fact interrogates.
-    - STANDALONE SUBJECT/OBJECT. The subject and object should each be a
-      complete noun phrase that names what it is — not a dangling
-      modifier, not a bare symbol with no referent.
-    - EXISTENTIAL "THERE" IS A DUMMY SUBJECT. "There is no X", "there
-      are Y", "there exists Z" are existential constructions — the
-      real content is that X does not exist, Y are present, or Z
-      exists. Do NOT extract "there" as a subject. Such clauses
-      typically yield zero triplets (they don't assert a subject-
-      predicate-object relation between entities).
-    - REASON CLAUSES ARE NOT RELATIONS. A "because" clause explains
-      why something is true — it is not an independent relation to
-      extract as a separate triplet. Extract the main assertion;
-      leave the reason clause alone unless it contains a distinct
-      relation between named entities.
-    - NEGATION TRAVELS WITH THE PREDICATE. "X is NOT a subgraph of Y"
-      yields one triplet with predicate="is NOT a subgraph of" — keep
-      the negation attached to the verb phrase. Do NOT split negation
-      into a bare "is not" predicate with the rest of the verb phrase
-      pushed into the object.
-    - PROPERTY-ASCRIPTION CHECK. When a fact's structure is "X has the
-      property that [long clause]" or "X have the property that [long
-      clause]" — where the object is a clause describing a property
-      rather than a named entity — the result is not a clean
-      subject-predicate-object relationship. Skip such triplets unless
-      the object can be stated as a concrete noun phrase.
-    - ABSTRACT / GENERIC SUBJECTS. "Such graphs", "the resulting
-      graph", "this function" — when the subject is a placeholder
-      whose identity depends on the preceding sentence, it is better
-      to leave the triplet out than to create an entity that will
-      never be reused. If the subject cannot be stated as a concrete,
-      independent noun phrase, skip the triplet.
-    - PASSIVE NAMING CONSTRUCTIONS. "X are called Y", "X is known as
-      Y", "we call X Y" — the subject is the named thing (X), the
-      predicate is "is called" or "are called", and the object is the
-      name (Y). Do not extract the naming verb as a separate relation
-      or the name as a dangling entity.
-    - NOTATION CONVENTIONS. "X are denoted by Y", "we write X for Y",
-      "we use X to represent Y" — these are statements about notation,
-      not about the subject matter. Skip them — they do not assert a
-      relationship between entities in the domain.
-    - META-DISCOURSE. "We will first consider...", "this book studies",
-      "the remainder of this section is organized as follows" — these
-      are statements about the book's structure, not about its content.
-      Skip them.
-    - TRIVIAL DEFINITIONS OF NOTATION. When a fact essentially says
-      "we use the symbol X to mean Y", it is a notation convention —
-      skip it. The triplet should capture the meaning, not the naming.
-    - LATEX FORMAT. Preserve LaTeX delimiters exactly as in the fact:
-      `$...$` for inline, `$$...$$` for display. Never convert to
-      Unicode, never strip delimiters.
-    - NO DUPLICATES. Do not emit the same triplet twice.
-    - Return an empty list if the fact contains no decomposable
-      relationships (e.g., a bare existential statement with no
-      predicate-object structure).
+    OUTPUT CONTRACT:
+    - Return a finite list and close it after every relation in the fact has
+      been represented.
+    - Emit only complete triplets with non-empty subject, predicate, and
+      object. Never emit a partial triplet, empty field, or placeholder.
+    - Return [] when no complete relation remains.
     """
 
     fact_text: str = dspy.InputField(
@@ -460,9 +188,7 @@ class _TripletDecomposer(module.Module):
         triplets = module.as_list(prediction.triplets)
         for index, triplet in enumerate(triplets):
             if not isinstance(triplet, _TripletInput):
-                raise TypeError(
-                    'triplets must contain _TripletInput values'
-                )
+                raise TypeError('triplets must contain _TripletInput values')
             if not all(
                 value.strip()
                 for value in (
@@ -555,11 +281,25 @@ async def _extract_triplets(
 
     async def _decompose_one(fact: dict) -> list[models.Triplet]:
         """Decomposes one fact and attaches its evidence node positions."""
-        async with gate:
-            triplets = await triplet_module.aforward(fact_text=fact['text'])
-            for triplet in triplets:
-                triplet.evidence_positions = list(fact['node_positions'])
-            return triplets
+        logger.debug(
+            'triplet extraction: decomposing fact at node position(s) %s: %s',
+            fact['node_positions'],
+            logs.elide(fact['text']),
+        )
+        try:
+            async with gate:
+                triplets = await triplet_module.aforward(fact_text=fact['text'])
+        except Exception:
+            logger.exception(
+                'triplet extraction: triplet decode failed at node position(s) '
+                '%s: %s',
+                fact['node_positions'],
+                logs.elide(fact['text']),
+            )
+            raise
+        for triplet in triplets:
+            triplet.evidence_positions = list(fact['node_positions'])
+        return triplets
 
     per_fact = await asyncio.gather(*(_decompose_one(fact) for fact in facts))
     triplets = [

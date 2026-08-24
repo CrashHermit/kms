@@ -11,16 +11,20 @@ os.environ['KMS_MODELS__MODULES__FORMATTER__MODEL'] = (
 os.environ['KMS_MODELS__MODULES__FORMATTER__API_KEY'] = 'not-needed'
 
 from kms import runtime
-from kms.graph import db, schema
+from kms.graph import db
+from tests.helpers import (
+    clear_neo4j,
+    print_hubs,
+    print_node_summary,
+    print_triplet_summary,
+)
 
 PDF = 'tests/fixtures/books/logic_hammack_truthtables.pdf'
 SOURCE = 'logic_hammack_truthtables'
 
 
 async def main():
-    async with db.session() as session:
-        await session.run('MATCH (n) DETACH DELETE n')
-    await schema.ensure_schema(lambda: db.session())
+    await clear_neo4j()
 
     result = await runtime.ingest(
         PDF,
@@ -30,37 +34,15 @@ async def main():
     )
 
     nodes = result.get('nodes') or []
-    print(f'\n=== nodes: {len(nodes)} ===')
-    print('by type:', dict(Counter(node.type for node in nodes)))
+    print_node_summary(nodes)
 
     triplets = result.get('triplets') or []
-    print(f'\n=== triplets: {len(triplets)} ===')
-    for t in triplets:
-        print(f'  {t.subject} | {t.predicate} | {t.object}')
+    print_triplet_summary(triplets)
 
     statements = result.get('statements') or []
     print(f'\n=== statements: {len(statements)} ===')
 
-    print('\n=== hub building ===')
-    print(f'  entity assigned: {result.get("entity_assigned")}')
-    print(f'  predicate assigned: {result.get("predicate_assigned")}')
-
-    async with db.session() as session:
-        hubs = await session.run(
-            'MATCH (h:EntityHub) RETURN h.canonical_name AS name ORDER BY name'
-        )
-        records = [r async for r in hubs]
-        print(f'\n=== {len(records)} EntityHub(s) ===')
-        for r in records:
-            print(f'  {r["name"]}')
-        phubs = await session.run(
-            'MATCH (h:PredicateHub) '
-            'RETURN h.canonical_name AS name ORDER BY name'
-        )
-        precords = [r async for r in phubs]
-        print(f'\n=== {len(precords)} PredicateHub(s) ===')
-        for r in precords:
-            print(f'  {r["name"]}')
+    await print_hubs()
 
     print('\nDone.')
 

@@ -1,6 +1,9 @@
 """Finds the spans of pedagogical units in a run of nodes."""
 
 import logging
+from collections.abc import Sized
+from html import escape
+from typing import cast
 
 import dspy
 
@@ -13,7 +16,8 @@ logger = logging.getLogger(__name__)
 class Signature(dspy.Signature):
     r"""
     Find the boundaries of every pedagogical unit in this node run. Return
-    inclusive spans of local `[position]` values. This is purely structural:
+    inclusive spans of zero-based local ordinal indices. This is purely
+    structural:
     do not decide whether a unit is a statement, procedure, or something to
     skip. A later role-typing pass makes that decision.
 
@@ -45,18 +49,30 @@ class Signature(dspy.Signature):
       it is nearby. If a fragment cannot be assigned confidently, leave it
       outside every span rather than corrupting a neighbouring unit.
 
-    OUTPUT ONLY spans over the supplied nodes, using local positions. Return
-    spans in document order, with no overlap and no duplicate ownership. Do not
-    skip a clearly labelled or numbered unit. Include a unit that is unfinished
-    at the end of the window. Return an empty list when no unit is present.
+    OUTPUT ONLY spans over the supplied nodes, using local ordinal indices.
+    IMPORTANT: the bracketed number displayed on each node is its zero-based
+    local index in this supplied window. Use that local index for span
+    endpoints. Do not use numbers from the node text—such as exercise numbers,
+    page numbers, years, or quantities—as span endpoints. If the window
+    contains N nodes, every inclusive span must have both endpoints in the
+    range 0 through N-1; a one-node window can only produce span (0, 0) or no
+    span. Never emit an endpoint beyond the final supplied node. Return spans in
+    document order,
+    with no overlap or duplicate ownership. Do not skip a clearly labelled or
+    numbered unit.
+    Include a unit that is unfinished at the end of the window. Return an empty
+    list when no unit is present.
     """
 
     current_nodes: content.ContentParts = dspy.InputField(
         description=(
-            "The look-ahead window's nodes, in order. Each text node is a "
-            'line `[position] (type): content`; each image node is a line '
-            '`[position] (image):` followed by the image itself. Emit spans '
-            'over the `[position]` values only.'
+            "The look-ahead window's nodes, in order. Each node is wrapped in "
+            'explicit `<NODE>` tags with a '
+            '`local_index` and `node_type`. Text appears between the opening and '
+            'closing tags; image nodes contain an `<IMAGE>` block. Use only the '
+            '`local_index` values for span endpoints; never use numbers appearing '
+            'inside node content. For N nodes, valid inclusive span endpoints are '
+            '0 through N-1.'
         )
     )
     spans: list[walker.Span] = dspy.OutputField(
@@ -65,6 +81,42 @@ class Signature(dspy.Signature):
         'and prescribed procedures alike. Boundaries only — do NOT classify '
         'them. Empty list if none.'
     )
+
+
+def _tagged_content_parts(
+    nodes: list[walker.WindowNode],
+) -> content.ContentParts:
+    """Formats one window as explicit, ordered text/image node blocks."""
+    parts: list[content.TextPart | content.ImagePart] = [
+        content.TextPart(text='<WINDOW_NODES>\n')
+    ]
+    for node in nodes:
+        node_type = escape(node.type or 'unknown', quote=True)
+        modality = 'image' if node.image_path else 'text'
+        parts.append(
+            content.TextPart(
+                text=(
+                    f'<NODE local_index="{node.position}" '
+                    f'node_type="{node_type}" modality="{modality}">\n'
+                )
+            )
+        )
+        if node.image_path:
+            parts.append(content.TextPart(text='<IMAGE>\n'))
+            image = content.load_image(
+                node.image_path,
+                max_dim=config.get_settings().image.max_dim,
+            )
+            if image:
+                parts.append(content.ImagePart(image=image))
+            else:
+                parts.append(content.TextPart(text='[IMAGE_UNAVAILABLE]'))
+            parts.append(content.TextPart(text='\n</IMAGE>\n'))
+        else:
+            parts.append(content.TextPart(text=f'{node.content or ""}\n'))
+        parts.append(content.TextPart(text='</NODE>\n'))
+    parts.append(content.TextPart(text='</WINDOW_NODES>'))
+    return content.ContentParts(content=content.Content(parts=parts))
 
 
 class PedagogicalComponentFinder(module.Module):
@@ -79,9 +131,9 @@ class PedagogicalComponentFinder(module.Module):
         recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__(language_model, recorder)
-        self.predictor.demos = [
+        self.predictor.demos = [  # pyright: ignore[reportAttributeAccessIssue]
             dspy.Example(
-                current_nodes=content.labeled_content_parts(
+                current_nodes=_tagged_content_parts(
                     [
                         walker.WindowNode(
                             position=0,
@@ -107,7 +159,7 @@ class PedagogicalComponentFinder(module.Module):
                 ],
             ).with_inputs('current_nodes'),
             dspy.Example(
-                current_nodes=content.labeled_content_parts(
+                current_nodes=_tagged_content_parts(
                     [
                         walker.WindowNode(
                             position=0,
@@ -129,7 +181,7 @@ class PedagogicalComponentFinder(module.Module):
                 spans=[walker.Span(start=0, end=2)],
             ).with_inputs('current_nodes'),
             dspy.Example(
-                current_nodes=content.labeled_content_parts(
+                current_nodes=_tagged_content_parts(
                     [
                         walker.WindowNode(
                             position=0,
@@ -147,16 +199,20 @@ class PedagogicalComponentFinder(module.Module):
             ).with_inputs('current_nodes'),
         ]
 
-    def encode(self, current_nodes: list[walker.WindowNode]) -> dict:
+    def encode(self, **inputs: object) -> dict:
         """Builds the finder-signature kwargs for one window."""
-        return {'current_nodes': content.labeled_content_parts(current_nodes)}
+        current_nodes = cast(list[walker.WindowNode], inputs['current_nodes'])
+        return {'current_nodes': _tagged_content_parts(current_nodes)}
 
     def decode(self, prediction, **inputs) -> list[walker.Span]:
         """Returns validated, non-overlapping local unit spans."""
         spans = module.as_list(prediction.spans)
         if any(not isinstance(span, walker.Span) for span in spans):
             raise TypeError('spans must contain walker.Span values')
-        return walker.validate_spans(spans, len(inputs['current_nodes']))
+        return walker.validate_spans(
+            spans,
+            len(cast(Sized, inputs['current_nodes'])),
+        )
 
 
 async def find_spans(
