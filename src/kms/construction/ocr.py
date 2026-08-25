@@ -2,7 +2,6 @@
 
 import base64
 import json
-import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -245,9 +244,9 @@ class OCRRequestOptions(BaseModel):
     extract_footer: bool = True
     pages: list[int] | None = None
     table_format: Literal['markdown', 'html'] | None = None
-    document_annotation_format: dict | None = None
+    document_annotation_format: dict[str, Any] | None = None
     document_annotation_prompt: str | None = None
-    bbox_annotation_format: dict | None = None
+    bbox_annotation_format: dict[str, Any] | None = None
 
     @classmethod
     def with_references(cls) -> 'OCRRequestOptions':
@@ -285,6 +284,7 @@ class OCRRequest(BaseModel):
 _MISTRAL_NODE_TYPES = {
     'text': models.NodeType.PARAGRAPH,
     'paragraph': models.NodeType.PARAGRAPH,
+    'aside_text': models.NodeType.PARAGRAPH,
     'heading': models.NodeType.HEADER,
     'header': models.NodeType.HEADER,
     'title': models.NodeType.HEADER,
@@ -333,21 +333,25 @@ class OCRPageArtifact(BaseModel):
     """Represents one materialized OCR page and its correction inputs."""
 
     index: int
-    markdown: str
     image_path: str
     footer: str | None = None
-    pictures: list[models.Picture] = Field(default_factory=list)
+    picture_paths: list[str] = Field(default_factory=list)
     blocks: list[OCRBlockRegion] = Field(default_factory=list)
 
     def to_document(self) -> models.Document:
         """Converts this provider page into the canonical document model."""
-        nodes: list[models.Node] = []
+        nodes: list[models.SourceNode] = []
         picture_cursor = 0
         for region in self.blocks:
             block = region.block
-            node = models.Node(
-                type=region.canonical_type,
-                content=block.content or '',
+            canonical_type = region.canonical_type
+            node = models.SourceNode(
+                type=canonical_type,
+                content=(
+                    None
+                    if canonical_type is models.NodeType.IMAGE
+                    else block.content or ''
+                ),
                 index=region.block_index,
                 provenance={
                     'provider': 'mistral',
@@ -364,28 +368,27 @@ class OCRPageArtifact(BaseModel):
             )
             if region.crop_bbox is not None:
                 node.provenance['crop_bbox'] = region.crop_bbox
-            if region.crop_path is not None:
-                node.provenance['crop_path'] = region.crop_path
-            if block.type == 'image' and picture_cursor < len(self.pictures):
-                node.image_path = self.pictures[picture_cursor].image_path
+            if canonical_type is models.NodeType.IMAGE and picture_cursor < len(
+                self.picture_paths
+            ):
+                node.assets.append(
+                    models.VisualAsset(path=self.picture_paths[picture_cursor])
+                )
                 picture_cursor += 1
             nodes.append(node)
-        if not nodes and self.markdown.strip():
-            nodes.append(
-                models.Node(
-                    type=models.NodeType.MARKDOWN,
-                    content=self.markdown,
-                    index=0,
-                    provenance={
-                        'provider': 'mistral',
-                        'provider_type': 'markdown',
-                    },
+        if not nodes:
+            nodes.extend(
+                models.SourceNode(
+                    type=models.NodeType.IMAGE,
+                    index=index,
+                    assets=[models.VisualAsset(path=path)],
                 )
+                for index, path in enumerate(self.picture_paths)
             )
         footer = (self.footer or '').strip()
         if footer:
             nodes.append(
-                models.Node(
+                models.SourceNode(
                     type=models.NodeType.FOOTER,
                     content=footer,
                     index=len(nodes),
@@ -398,18 +401,7 @@ class OCRPageArtifact(BaseModel):
         return models.Document(
             index=self.index,
             image_path=self.image_path,
-            content=(
-                self.markdown
-                if not footer
-                else f'{self.markdown.rstrip()}\n\n{footer}'
-            ),
-            pictures=self.pictures,
             nodes=nodes,
-            metadata={
-                'provider': 'mistral',
-                'markdown': self.markdown,
-                'footer': footer or None,
-            },
         )
 
 
@@ -493,11 +485,8 @@ def ocr_pdf(
     return _request_ocr(request)
 
 
-_IMG_REF = re.compile(r'!\[[^\]]*\]\(([^)]+)\)')
-
-
 def _write_image(data: str, path: Path) -> None:
-    """Decodes base64 image data into a file, tolerating bad data."""
+    """Decodes one OCR image payload into its materialized file."""
     if not data:
         return
     if data.startswith('data:'):
@@ -508,56 +497,18 @@ def _write_image(data: str, path: Path) -> None:
         pass
 
 
-def _rewrite_page(
-    markdown: str, images: list[OCRImage], segment_dir: Path
-) -> tuple[str, list[models.Picture]]:
-    """Rewrites image placeholders to local indexes and saves pictures.
-
-    Args:
-        markdown: The page's OCR markdown.
-        images: The page's image records from the OCR response.
-        segment_dir: The segment's output directory.
-
-    Returns:
-        ``(markdown, pictures)`` with placeholders rewritten to
-        ``![N]()`` and pictures saved under ``Images/``.
-    """
-    images_by_id = {image.id: image for image in images if image.id}
-    pictures_dir = segment_dir / 'Images'
-    pictures_dir.mkdir(parents=True, exist_ok=True)
-    order: list[str] = []
-
-    def index_of(image_id: str) -> int:
-        """Returns the 1-based display index, assigning it on first use."""
-        if image_id not in order:
-            order.append(image_id)
-        return order.index(image_id) + 1
-
-    def replace(match: re.Match) -> str:
-        """Rewrites one placeholder to its local ``![N]()`` form."""
-        target = match.group(1)
-        if target not in images_by_id:
-            return match.group(0)
-        return f'![{index_of(target)}]()'
-
-    rewritten = _IMG_REF.sub(replace, markdown)
-    for image_id in images_by_id:
-        index_of(image_id)
-
-    pictures: list[models.Picture] = []
-    for position, image_id in enumerate(order, start=1):
-        path = pictures_dir / f'Image_{position - 1:03d}.png'
-        _write_image(images_by_id[image_id].image_base64 or '', path)
-        pictures.append(models.Picture(index=position, image_path=str(path)))
-    return rewritten, pictures
-
-
-def _with_footer(markdown: str, footer: str | None) -> str:
-    """Appends the extracted page footer to the markdown, if any."""
-    footer = (footer or '').strip()
-    if not footer:
-        return markdown
-    return f'{markdown.rstrip()}\n\n{footer}'
+def _materialize_images(
+    images: list[OCRImage], document_dir: Path
+) -> list[str]:
+    """Writes OCR image payloads and returns their paths in provider order."""
+    images_dir = document_dir / 'Images'
+    images_dir.mkdir(parents=True, exist_ok=True)
+    paths: list[str] = []
+    for index, image in enumerate(images):
+        path = images_dir / f'Image_{index:03d}.png'
+        _write_image(image.image_base64 or '', path)
+        paths.append(str(path))
+    return paths
 
 
 def _block_bbox(
@@ -565,6 +516,7 @@ def _block_bbox(
     page: OCRPage,
     image_size: tuple[int, int],
 ) -> tuple[int, int, int, int] | None:
+    """Returns a page block's clamped crop box in rendered-image pixels."""
     values = (
         block.top_left_x,
         block.top_left_y,
@@ -597,6 +549,7 @@ def _block_bbox(
 def _materialize_block_crops(
     artifacts: list[OCRPageArtifact], response: OCRResponse
 ) -> None:
+    """Creates correction crops and records their paths on OCR block regions."""
     for page_artifact, page in zip(artifacts, response.pages, strict=True):
         image_path = Path(page_artifact.image_path)
         if not image_path.exists():
@@ -651,17 +604,12 @@ def materialize_document(
     artifacts: list[OCRPageArtifact] = []
     for order_index, page in enumerate(response.pages):
         document_dir = output_dir / 'Documents' / f'Document_{order_index:04d}'
-        markdown, pictures = _rewrite_page(
-            page.markdown,
-            page.images,
-            document_dir,
-        )
+        picture_paths = _materialize_images(page.images, document_dir)
         artifacts.append(
             OCRPageArtifact(
                 index=order_index,
                 image_path=str(document_dir / 'Document.png'),
-                pictures=pictures,
-                markdown=markdown,
+                picture_paths=picture_paths,
                 footer=page.footer,
                 blocks=[
                     OCRBlockRegion(block_index=index, block=block)
@@ -754,7 +702,10 @@ def extract(
 
 
 class OCRNode:
-    def run(self, current_state: state.State) -> dict:
+    """Runs OCR and stores the canonical source documents in graph state."""
+
+    def run(self, current_state: state.State) -> dict[str, Any]:
+        """Extracts one PDF and returns its source and document records."""
         source = extract(
             current_state['pdf_path'],
             output_dir=current_state['output_dir'],

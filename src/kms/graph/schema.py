@@ -8,12 +8,12 @@ from kms.graph import (
     hubs,
     instructions,
     learning,
+    local_procedure_hubs,
+    local_statement_hubs,
     names,
     nodes,
     predicates,
-    procedure_hubs,
     procedures,
-    statement_hubs,
     statements,
     triplets,
 )
@@ -27,6 +27,33 @@ def schema_statements() -> list[str]:
     """
     dimension = config.get_settings().embeddings.dimension
     return [
+        'MATCH (h:StatementHub) REMOVE h:StatementHub '
+        'SET h:LocalStatementHub',
+        'MATCH (h:ProcedureHub) REMOVE h:ProcedureHub '
+        'SET h:LocalProcedureHub',
+        'MATCH (h:MetaStatementHub) REMOVE h:MetaStatementHub '
+        'SET h:GlobalStatementHub',
+        'MATCH (h:MetaProcedureHub) REMOVE h:MetaProcedureHub '
+        'SET h:GlobalProcedureHub',
+        'MATCH (h:EntityHub) REMOVE h:EntityHub SET h:LocalEntityHub',
+        'MATCH (h:PredicateHub) REMOVE h:PredicateHub '
+        'SET h:LocalPredicateHub',
+        'MATCH (h:MetaEntityHub) REMOVE h:MetaEntityHub '
+        'SET h:GlobalEntityHub',
+        'MATCH (h:MetaPredicateHub) REMOVE h:MetaPredicateHub '
+        'SET h:GlobalPredicateHub',
+        'MATCH (h:TripletHub) REMOVE h:TripletHub '
+        'SET h:LocalTripletHub',
+        'MATCH (h:MetaTripletHub) REMOVE h:MetaTripletHub '
+        'SET h:GlobalTripletHub',
+        'MATCH (h:EntityNameHub) REMOVE h:EntityNameHub '
+        'SET h:LocalEntityNameHub',
+        'MATCH (h:PredicateNameHub) REMOVE h:PredicateNameHub '
+        'SET h:LocalPredicateNameHub',
+        'MATCH (h:MetaEntityNameHub) REMOVE h:MetaEntityNameHub '
+        'SET h:GlobalEntityNameHub',
+        'MATCH (h:MetaPredicateNameHub) REMOVE h:MetaPredicateNameHub '
+        'SET h:GlobalPredicateNameHub',
         f'CREATE CONSTRAINT node_uuid IF NOT EXISTS '
         f'FOR (n:{nodes.NODE_LABEL}) REQUIRE n.uuid IS UNIQUE',
         f'CREATE CONSTRAINT source_uuid IF NOT EXISTS '
@@ -157,36 +184,36 @@ def schema_statements() -> list[str]:
         f'FOR (p:{procedures.PROCEDURE_LABEL}) ON (p.embedding) '
         f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
         f'`vector.similarity_function`: "cosine"}}}}',
-        f'CREATE CONSTRAINT meta_statement_hub_uuid IF NOT EXISTS '
-        f'FOR (h:{statement_hubs.META_STATEMENT_HUB_LABEL}) '
+        f'CREATE CONSTRAINT global_statement_hub_uuid IF NOT EXISTS '
+        f'FOR (h:{local_statement_hubs.GLOBAL_STATEMENT_HUB_LABEL}) '
         f'REQUIRE h.uuid IS UNIQUE',
-        f'CREATE VECTOR INDEX meta_statement_hub_embedding IF NOT EXISTS '
-        f'FOR (h:{statement_hubs.META_STATEMENT_HUB_LABEL}) ON (h.embedding) '
+        f'CREATE VECTOR INDEX global_statement_hub_embedding IF NOT EXISTS '
+        f'FOR (h:{local_statement_hubs.GLOBAL_STATEMENT_HUB_LABEL}) ON (h.embedding) '
         f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
         f'`vector.similarity_function`: "cosine"}}}}',
-        f'CREATE CONSTRAINT meta_procedure_hub_uuid IF NOT EXISTS '
-        f'FOR (h:{procedure_hubs.META_PROCEDURE_HUB_LABEL}) '
+        f'CREATE CONSTRAINT global_procedure_hub_uuid IF NOT EXISTS '
+        f'FOR (h:{local_procedure_hubs.GLOBAL_PROCEDURE_HUB_LABEL}) '
         f'REQUIRE h.uuid IS UNIQUE',
-        f'CREATE VECTOR INDEX meta_procedure_hub_embedding IF NOT EXISTS '
-        f'FOR (h:{procedure_hubs.META_PROCEDURE_HUB_LABEL}) ON (h.embedding) '
+        f'CREATE VECTOR INDEX global_procedure_hub_embedding IF NOT EXISTS '
+        f'FOR (h:{local_procedure_hubs.GLOBAL_PROCEDURE_HUB_LABEL}) ON (h.embedding) '
         f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
         f'`vector.similarity_function`: "cosine"}}}}',
-        f'CREATE CONSTRAINT statement_hub_uuid IF NOT EXISTS '
-        f'FOR (h:{statement_hubs.STATEMENT_HUB_LABEL}) '
+        f'CREATE CONSTRAINT local_statement_hub_uuid IF NOT EXISTS '
+        f'FOR (h:{local_statement_hubs.LOCAL_STATEMENT_HUB_LABEL}) '
         f'REQUIRE h.uuid IS UNIQUE',
-        f'CREATE INDEX statement_hub_source IF NOT EXISTS '
-        f'FOR (h:{statement_hubs.STATEMENT_HUB_LABEL}) ON (h.source)',
-        f'CREATE VECTOR INDEX statement_hub_embedding IF NOT EXISTS '
-        f'FOR (h:{statement_hubs.STATEMENT_HUB_LABEL}) ON (h.embedding) '
+        f'CREATE INDEX local_statement_hub_source IF NOT EXISTS '
+        f'FOR (h:{local_statement_hubs.LOCAL_STATEMENT_HUB_LABEL}) ON (h.source)',
+        f'CREATE VECTOR INDEX local_statement_hub_embedding IF NOT EXISTS '
+        f'FOR (h:{local_statement_hubs.LOCAL_STATEMENT_HUB_LABEL}) ON (h.embedding) '
         f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
         f'`vector.similarity_function`: "cosine"}}}}',
-        f'CREATE CONSTRAINT procedure_hub_uuid IF NOT EXISTS '
-        f'FOR (h:{procedure_hubs.PROCEDURE_HUB_LABEL}) '
+        f'CREATE CONSTRAINT local_procedure_hub_uuid IF NOT EXISTS '
+        f'FOR (h:{local_procedure_hubs.LOCAL_PROCEDURE_HUB_LABEL}) '
         f'REQUIRE h.uuid IS UNIQUE',
-        f'CREATE INDEX procedure_hub_source IF NOT EXISTS '
-        f'FOR (h:{procedure_hubs.PROCEDURE_HUB_LABEL}) ON (h.source)',
-        f'CREATE VECTOR INDEX procedure_hub_embedding IF NOT EXISTS '
-        f'FOR (h:{procedure_hubs.PROCEDURE_HUB_LABEL}) ON (h.embedding) '
+        f'CREATE INDEX local_procedure_hub_source IF NOT EXISTS '
+        f'FOR (h:{local_procedure_hubs.LOCAL_PROCEDURE_HUB_LABEL}) ON (h.source)',
+        f'CREATE VECTOR INDEX local_procedure_hub_embedding IF NOT EXISTS '
+        f'FOR (h:{local_procedure_hubs.LOCAL_PROCEDURE_HUB_LABEL}) ON (h.embedding) '
         f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
         f'`vector.similarity_function`: "cosine"}}}}',
         f'CREATE CONSTRAINT card_uuid IF NOT EXISTS '
@@ -206,12 +233,44 @@ def schema_statements() -> list[str]:
     ]
 
 
-async def ensure_schema(session_factory: Callable) -> None:
-    """Applies the full schema to the database.
+_VECTOR_INDEX_NAMES = {
+    'node_content',
+    'statement_embedding',
+    'entity_embedding',
+    'predicate_embedding',
+    'entity_hub_embedding',
+    'predicate_hub_embedding',
+    'meta_entity_hub_embedding',
+    'meta_predicate_hub_embedding',
+    'triplet_hub_embedding',
+    'meta_triplet_hub_embedding',
+    'procedure_embedding',
+    'meta_statement_hub_embedding',
+    'meta_procedure_hub_embedding',
+    'statement_hub_embedding',
+    'procedure_hub_embedding',
+}
 
-    Args:
-        session_factory: Async callable returning a Neo4j session.
-    """
+
+async def _drop_stale_vector_indexes(session) -> None:
+    """Drop known vector indexes whose dimension no longer matches."""
+    result = await session.run(
+        'SHOW VECTOR INDEXES YIELD name, options '
+        'RETURN name, options'
+    )
+    for row in await result.data():
+        name = row.get('name')
+        if name not in _VECTOR_INDEX_NAMES:
+            continue
+        options = row.get('options') or {}
+        index_config = options.get('indexConfig') or {}
+        dimensions = index_config.get('vector.dimensions')
+        if dimensions != config.get_settings().embeddings.dimension:
+            await session.run(f'DROP INDEX `{name}` IF EXISTS')
+
+async def ensure_schema(session_factory: Callable) -> None:
+    """Applies schema after removing stale known vector indexes."""
     async with session_factory() as session:
+        await _drop_stale_vector_indexes(session)
         for statement in schema_statements():
             await session.run(statement)

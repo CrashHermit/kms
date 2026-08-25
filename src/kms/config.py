@@ -84,6 +84,45 @@ class ModelPreset(_ConfigModel):
     threads: int = 0
 
 
+class DedicatedRetrievalServerConfig(_ConfigModel):
+    """Configuration for one dedicated local retrieval server."""
+
+    manage: bool = True
+    host: str = '127.0.0.1'
+    port: int = Field(..., ge=1, le=65535)
+    model: str
+    threads: int = Field(default=12, gt=0)
+    threads_batch: int = Field(default=12, gt=0)
+    ctx_size: int = Field(..., gt=0)
+    parallel: int = Field(default=1, gt=0)
+    n_gpu_layers: int = 0
+    device: str = 'none'
+    cache_ram: int = Field(default=0, ge=0)
+    ready_timeout: float = Field(default=300.0, gt=0.0)
+    poll_interval: float = Field(default=1.0, gt=0.0)
+    request_timeout: float = Field(default=30.0, gt=0.0)
+    terminate_timeout: float = Field(default=15.0, gt=0.0)
+
+
+class RetrievalServingConfig(_ConfigModel):
+    """Dedicated embedding and reranking server settings."""
+
+    embedding: DedicatedRetrievalServerConfig = Field(
+        default_factory=lambda: DedicatedRetrievalServerConfig(
+            port=8081,
+            model='~/models/qwen3-embedding-8b/Qwen3-Embedding-8B-Q4_K_M.gguf',
+            ctx_size=32768,
+        )
+    )
+    reranker: DedicatedRetrievalServerConfig = Field(
+        default_factory=lambda: DedicatedRetrievalServerConfig(
+            port=8082,
+            model='~/models/qwen3-reranker-4b/Qwen3-Reranker-4B-Q4_K_M.gguf',
+            ctx_size=8192,
+        )
+    )
+
+
 class ServingConfig(_ConfigModel):
     """The router-mode llama-server and per-module model IDs."""
 
@@ -97,26 +136,25 @@ class ServingConfig(_ConfigModel):
     request_timeout: float = Field(default=30.0, gt=0.0)
     terminate_timeout: float = Field(default=15.0, gt=0.0)
     presets: dict[str, ModelPreset] = Field(default_factory=dict)
+    retrieval: RetrievalServingConfig = Field(default_factory=RetrievalServingConfig)
 
 
 class EmbeddingsConfig(_ConfigModel):
-    """Voyage embeddings service settings."""
+    """OpenAI-compatible local embedding client settings."""
 
-    model: str = 'voyage-multimodal-3.5'
-    api_key: str = ''
-    base_url: str = 'https://api.voyageai.com/v1'
-    dimension: int = Field(default=1024, gt=0)
-    batch_size: int = Field(default=200, gt=0)
-    timeout_seconds: float = Field(default=60.0, gt=0.0)
+    model: str = 'Qwen3-Embedding-8B'
+    dimension: int = Field(default=4096, gt=0)
+    batch_size: int = Field(default=32, gt=0)
+    base_url: str = 'http://127.0.0.1:8081/v1'
+    timeout_seconds: float = Field(default=120.0, gt=0.0)
 
 
 class RerankerConfig(_ConfigModel):
-    """OpenRouter reranker service settings."""
-
-    model: str = 'nvidia/llama-nemotron-rerank-vl-1b-v2:free'
-    api_key: str = ''
-    base_url: str = 'https://openrouter.ai/api/v1'
-    timeout_seconds: float = Field(default=60.0, gt=0.0)
+    """OpenAI-compatible local reranking client settings."""
+    model: str = 'Qwen3-Reranker-4B'
+    batch_size: int = Field(default=8, gt=0)
+    base_url: str = 'http://127.0.0.1:8082/v1'
+    timeout_seconds: float = Field(default=120.0, gt=0.0)
 
 
 class OCRConfig(_ConfigModel):
@@ -221,7 +259,6 @@ class GovernanceConfig(_ConfigModel):
     backward_context_budget: int = Field(default=200, ge=0)
     forward_context_budget: int = Field(default=500, ge=0)
     max_concurrent_calls: int = Field(default=8, gt=0)
-    threshold: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
 class HubConfig(_ConfigModel):
@@ -258,6 +295,9 @@ class StagesConfig(_ConfigModel):
     splitter: SplitterConfig = Field(default_factory=SplitterConfig)
     finders: FindersConfig = Field(default_factory=FindersConfig)
     governance: GovernanceConfig = Field(default_factory=GovernanceConfig)
+    image_enrichment: EnrichmentConfig = Field(
+        default_factory=EnrichmentConfig
+    )
     entity_enrichment: EnrichmentConfig = Field(
         default_factory=EnrichmentConfig
     )

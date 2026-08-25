@@ -160,7 +160,7 @@ def test_persist_triplet_hubs_writes_roles_evidence_and_meta_support():
     asyncio.run(scenario())
 
     assert len(captured) == 3
-    assert 'MetaTripletHub' in captured[0][0]
+    assert 'GlobalTripletHub' in captured[0][0]
     assert 'HAS_META_SUBJECT_HUB' in captured[1][0]
     assert captured[2][1]['pairs'] == [
         {'source_hub': 'triplet-hub-a', 'meta_hub': 'meta-triplet'},

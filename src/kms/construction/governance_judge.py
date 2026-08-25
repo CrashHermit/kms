@@ -1,9 +1,24 @@
 """Binary judge: does an instruction govern a statement?"""
 
 import dspy
+from pydantic import BaseModel, Field
 
 from kms import config
-from kms.core import content, module, recording, walker
+from kms.core import context_window, module, recording
+
+
+class GovernanceNodeInput(BaseModel):
+    """Text-only local input for governance judging."""
+
+    local_index: int = Field(
+        description='Zero-based position in this input list.'
+    )
+    node_type: str = Field(
+        description='Canonical node type for the projected source node.'
+    )
+    node_text: str = Field(
+        description='Canonical node text; numbers here are content, not positions.'
+    )
 
 
 class GovernanceJudgeSignature(dspy.Signature):
@@ -19,22 +34,23 @@ class GovernanceJudgeSignature(dspy.Signature):
     Return False if the statement is independent or belongs to another section.
     """
 
-    instruction_directive: content.ContentParts = dspy.InputField(
-        description="The instruction's text and figures, composed from its member nodes."
-    )
-    statement_content: content.ContentParts = dspy.InputField(
-        description='The complete statement content to evaluate.'
-    )
-    context_window: content.ContentParts = dspy.InputField(
+    instruction_nodes: list[GovernanceNodeInput] = dspy.InputField(
         description=(
-            "The statement's marked node window, including nearby context."
+            'Ordered instruction text records. Image descriptions appear as '
+            'node_text; no image assets or bytes are included.'
         )
     )
-    governs: bool = dspy.OutputField(
-        description='True if the instruction governs this statement.'
+    context_before: list[GovernanceNodeInput] = dspy.InputField(
+        description='Ordered context records before statement_nodes; reference only.',
     )
-    confidence: float = dspy.OutputField(
-        description='Confidence in the decision (0.0 to 1.0).'
+    statement_nodes: list[GovernanceNodeInput] = dspy.InputField(
+        description='Ordered statement records being governed.',
+    )
+    context_after: list[GovernanceNodeInput] = dspy.InputField(
+        description='Ordered context records after statement_nodes; reference only.',
+    )
+    governs: bool = dspy.OutputField(
+        description='True if the instruction governs the statement.'
     )
 
 
@@ -56,43 +72,47 @@ class GovernanceJudge(module.Module):
 
     def encode(
         self,
-        instruction_directive: content.Content,
-        statement_content: content.Content,
-        context_window: list[walker.WindowNode],
-    ) -> dict:
-        """Builds the judge signature kwargs."""
+        instruction_nodes: list[context_window.ContextNode],
+        context_before: list[context_window.ContextNode],
+        statement_nodes: list[context_window.ContextNode],
+        context_after: list[context_window.ContextNode],
+    ) -> dict[str, object]:
+        """Projects modality-neutral nodes into structured text records."""
         return {
-            'instruction_directive': content.ContentParts(
-                content=instruction_directive
-            ),
-            'statement_content': content.ContentParts(
-                content=statement_content
-            ),
-            'context_window': content.labeled_content_parts(context_window),
+            'instruction_nodes': _governance_inputs(instruction_nodes),
+            'context_before': _governance_inputs(context_before),
+            'statement_nodes': _governance_inputs(statement_nodes),
+            'context_after': _governance_inputs(context_after),
         }
 
-    def decode(self, prediction, **inputs) -> tuple[bool, float]:
-        """Returns validated (governs, confidence)."""
-        return (
-            module.require_bool(prediction.governs, 'governs'),
-            module.require_number(
-                prediction.confidence,
-                'confidence',
-                minimum=0.0,
-                maximum=1.0,
-            ),
+    def decode(self, prediction, **inputs) -> bool:
+        return module.require_bool(prediction.governs, 'governs')
+
+def _governance_inputs(
+    nodes: list[context_window.ContextNode],
+) -> list[GovernanceNodeInput]:
+    """Projects context nodes without exposing assets or source identity."""
+    return [
+        GovernanceNodeInput(
+            local_index=node.position,
+            node_type=node.type or '',
+            node_text=node.content or '',
         )
+        for node in nodes
+    ]
 
 
 async def governs(
     judge: GovernanceJudge,
-    instruction_directive: content.Content,
-    statement_content: content.Content,
-    context_window: list[walker.WindowNode],
-) -> tuple[bool, float]:
+    instruction_nodes: list[context_window.ContextNode],
+    context_before: list[context_window.ContextNode],
+    statement_nodes: list[context_window.ContextNode],
+    context_after: list[context_window.ContextNode],
+) -> bool:
     """Convenience function to judge one instruction-statement pair."""
     return await judge.acall(
-        instruction_directive=instruction_directive,
-        statement_content=statement_content,
-        context_window=context_window,
+        instruction_nodes=instruction_nodes,
+        context_before=context_before,
+        statement_nodes=statement_nodes,
+        context_after=context_after,
     )

@@ -74,6 +74,8 @@ def test_ocr_pdf_requests_blocks_when_enabled(monkeypatch):
     ('provider_type', 'canonical_type'),
     [
         ('text', models.NodeType.PARAGRAPH),
+        ('paragraph', models.NodeType.PARAGRAPH),
+        ('aside_text', models.NodeType.PARAGRAPH),
         ('heading', models.NodeType.HEADER),
         ('equation', models.NodeType.MATH),
         ('code', models.NodeType.CODE),
@@ -144,15 +146,12 @@ def test_materialize_document_preserves_references_block(tmp_path):
     assert document.nodes[1].content == 'References\n[1] Example'
 
 
-def test_build_source_converts_blocks_and_saves_pictures(tmp_path):
+def test_build_source_materializes_blockless_page_images(tmp_path):
     resp = {
         'pages': [
             {
                 'index': 0,
-                'markdown': (
-                    '# Title\n\n![alt](img-0.jpeg)\n\n'
-                    'prose $x^2$\n\n![alt2](img-1.jpeg)\n'
-                ),
+                'markdown': 'ignored source page markdown',
                 'images': [
                     _img('img-0.jpeg'),
                     _img('img-1.jpeg', data_url=True),
@@ -160,22 +159,42 @@ def test_build_source_converts_blocks_and_saves_pictures(tmp_path):
             }
         ]
     }
-    resp = ocr.OCRResponse.model_validate(resp)
-    source = ocr.build_source(resp, tmp_path)
-    assert len(source.documents) == 1
+    source = ocr.build_source(ocr.OCRResponse.model_validate(resp), tmp_path)
+
     document = source.documents[0]
     assert document.index == 0
-    assert document.content == ('# Title\n\n![1]()\n\nprose $x^2$\n\n![2]()\n')
-    assert [node.content for node in document.nodes] == [
-        '# Title\n\n![1]()\n\nprose $x^2$\n\n![2]()\n'
+    assert [node.type for node in document.nodes] == ['image', 'image']
+    assert [
+        asset.path for node in document.nodes for asset in node.assets
+    ] == [
+        str(tmp_path / 'Documents' / 'Document_0000' / 'Images' / 'Image_000.png'),
+        str(tmp_path / 'Documents' / 'Document_0000' / 'Images' / 'Image_001.png'),
     ]
-    assert [picture.index for picture in document.pictures] == [1, 2]
-    for picture in document.pictures:
-        assert (
-            Path(picture.image_path).exists()
-            and Path(picture.image_path).stat().st_size > 0
-        )
 
+
+def test_image_block_discards_provider_placeholder_content(tmp_path):
+    artifact = ocr.OCRPageArtifact(
+        index=0,
+        image_path=str(tmp_path / 'page.png'),
+        picture_paths=[str(tmp_path / 'Image_000.png')],
+        blocks=[
+            ocr.OCRBlockRegion(
+                block_index=0,
+                block=ocr.OCRBlock(
+                    type='image',
+                    content='![img-0.jpeg](img-0.jpeg)',
+                ),
+            )
+        ],
+    )
+
+    node = artifact.to_document().nodes[0]
+
+    assert node.type is models.NodeType.IMAGE
+    assert node.content is None
+    assert [asset.path for asset in node.assets] == [
+        str(tmp_path / 'Image_000.png')
+    ]
 
 def test_materialize_document_crops_blocks(tmp_path):
     resp = {
@@ -234,50 +253,42 @@ def test_unreferenced_figure_is_still_saved(tmp_path):
     }
     resp = ocr.OCRResponse.model_validate(resp)
     source = ocr.build_source(resp, tmp_path)
-    assert len(source.documents[0].pictures) == 1
-    assert Path(source.documents[0].pictures[0].image_path).exists()
+    assert len(source.documents[0].nodes[0].assets) == 1
+    assert Path(source.documents[0].nodes[0].assets[0].path).exists()
 
 
-def test_non_figure_link_left_untouched(tmp_path):
-    md = 'see ![diagram](https://example.com/x.png) here'
-    rewritten, pics = ocr._rewrite_page(
-        md, [], tmp_path / 'Segments' / 'Segment_0000'
+def test_materialize_images_preserves_provider_order(tmp_path):
+    paths = ocr._materialize_images(
+        [
+            ocr.OCRImage.model_validate(_img('first')),
+            ocr.OCRImage.model_validate(_img('second')),
+        ],
+        tmp_path / 'Document_0000',
     )
-    assert rewritten == md
-    assert pics == []
+
+    assert [Path(path).name for path in paths] == [
+        'Image_000.png',
+        'Image_001.png',
+    ]
 
 
-def test_footer_is_appended_to_the_page_markdown(tmp_path):
+def test_footer_becomes_a_footer_node_without_page_markdown(tmp_path):
     resp = {
         'pages': [
             {
                 'index': 0,
-                'markdown': 'body text',
-                'header': '42\nCHAPTER 1. TOPOLOGICAL SPACES',
+                'markdown': 'ignored source page markdown',
                 'footer': '$^1$G. Polya, "Two Incidents," 1970.',
                 'images': [],
             }
         ]
     }
-    resp = ocr.OCRResponse.model_validate(resp)
-    document = ocr.build_source(resp, tmp_path).documents[0]
-    assert (
-        document.content == 'body text\n\n$^1$G. Polya, "Two Incidents," 1970.'
-    )
-    assert document.nodes[-1].type == 'footer'
-    assert document.nodes[-1].content == '$^1$G. Polya, "Two Incidents," 1970.'
-    assert 'TOPOLOGICAL SPACES' not in document.content
+    document = ocr.build_source(
+        ocr.OCRResponse.model_validate(resp), tmp_path
+    ).documents[0]
 
-
-def test_page_without_a_footer_is_unchanged(tmp_path):
-    resp = {
-        'pages': [
-            {'index': 0, 'markdown': 'body text', 'footer': None, 'images': []}
-        ]
-    }
-    resp = ocr.OCRResponse.model_validate(resp)
-    assert ocr.build_source(resp, tmp_path).documents[0].content == 'body text'
-    assert ocr._with_footer('body text', '   ') == 'body text'
+    assert [node.type for node in document.nodes] == ['footer']
+    assert document.nodes[0].content == '$^1$G. Polya, "Two Incidents," 1970.'
 
 
 def test_ocr_node_reads_graph_input_and_emits_documents(monkeypatch, tmp_path):
@@ -312,20 +323,15 @@ def test_ocr_node_reads_graph_input_and_emits_documents(monkeypatch, tmp_path):
 def test_pages_are_indexed_densely(tmp_path):
     resp = {
         'pages': [
-            {
-                'index': 5,
-                'markdown': '![a](img-0.jpeg)',
-                'images': [_img('img-0.jpeg')],
-            },
-            {
-                'index': 9,
-                'markdown': '![b](img-0.jpeg)',
-                'images': [_img('img-0.jpeg')],
-            },
+            {'index': 5, 'markdown': 'ignored', 'images': [_img('img-0.jpeg')]},
+            {'index': 9, 'markdown': 'ignored', 'images': [_img('img-0.jpeg')]},
         ]
     }
-    resp = ocr.OCRResponse.model_validate(resp)
-    source = ocr.build_source(resp, tmp_path)
+    source = ocr.build_source(ocr.OCRResponse.model_validate(resp), tmp_path)
+
     assert [document.index for document in source.documents] == [0, 1]
-    assert all(len(document.pictures) == 1 for document in source.documents)
-    assert all('![1]()' in document.content for document in source.documents)
+    assert all(
+        [node.type for node in document.nodes] == ['image']
+        and len(document.nodes[0].assets) == 1
+        for document in source.documents
+    )

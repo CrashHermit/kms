@@ -2,15 +2,15 @@ from uuid import NAMESPACE_URL, uuid5
 
 from kms.graph import nodes
 
-STATEMENT_HUB_LABEL = 'StatementHub'
-META_STATEMENT_HUB_LABEL = 'MetaStatementHub'
+LOCAL_STATEMENT_HUB_LABEL = 'LocalStatementHub'
+GLOBAL_STATEMENT_HUB_LABEL = 'GlobalStatementHub'
 
 
-def hub_label(tier: str = 'source') -> str:
-    if tier == 'source':
-        return STATEMENT_HUB_LABEL
-    if tier == 'meta':
-        return META_STATEMENT_HUB_LABEL
+def hub_label(tier: str = 'local') -> str:
+    if tier == 'local':
+        return LOCAL_STATEMENT_HUB_LABEL
+    if tier == 'global':
+        return GLOBAL_STATEMENT_HUB_LABEL
     raise ValueError(f'unknown statement hub tier: {tier}')
 
 
@@ -25,11 +25,11 @@ def hub_uuid(source: str, members: list[str]) -> str:
     return uuid5(NAMESPACE_URL, f'{source}#statement_hub#{identity}').hex
 
 
-def meta_hub_uuid(members: list[str]) -> str:
+def global_hub_uuid(members: list[str]) -> str:
     if not members:
-        raise ValueError('meta statement hubs require at least one member')
+        raise ValueError('global statement hubs require at least one member')
     identity = '#'.join(sorted(members))
-    return uuid5(NAMESPACE_URL, f'meta#statement_hub#{identity}').hex
+    return uuid5(NAMESPACE_URL, f'global#statement_hub#{identity}').hex
 
 
 def hub_properties(
@@ -48,14 +48,14 @@ def hub_properties(
     }
 
 
-def meta_hub_properties(
+def global_hub_properties(
     canonical_name: str,
     description: str,
     embedding: list[float],
     members: list[str],
 ) -> dict:
     return {
-        'uuid': meta_hub_uuid(members),
+        'uuid': global_hub_uuid(members),
         'canonical_name': canonical_name,
         'description': description,
         'embedding': embedding,

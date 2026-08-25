@@ -3,11 +3,10 @@ from types import SimpleNamespace
 
 import dspy
 import pytest
-from PIL import Image
 
 from kms import config
 from kms.construction import instruction_finder
-from kms.core import content, models, walker
+from kms.core import context_window, models
 
 
 class _ScriptedModule:
@@ -22,22 +21,22 @@ class _ScriptedModule:
 
 def _nodes():
     return [
-        models.Node(
+        models.SourceNode(
             type='paragraph',
             content='For the following exercises, simplify.',
             uuid='node-10',
         ),
-        models.Node(type='image', image_path='a.png', uuid='node-20'),
-        models.Node(type='list', content='3 matrix A', uuid='node-30'),
-        models.Node(
+        models.SourceNode(type='image', assets=[models.VisualAsset(path='a.png')], uuid='node-20'),
+        models.SourceNode(type='list', content='3 matrix A', uuid='node-30'),
+        models.SourceNode(
             type='paragraph', content='For the next exercises, solve.', uuid='node-40'
         ),
-        models.Node(type='list', content='4 matrix B', uuid='node-50'),
+        models.SourceNode(type='list', content='4 matrix B', uuid='node-50'),
     ]
 
 
 def _view(position, content_text, node_type='paragraph'):
-    return walker.WindowNode(
+    return context_window.ContextNode(
         position=position, type=node_type, content=content_text
     )
 
@@ -52,42 +51,29 @@ def test_specialized_prompts_and_demos_cover_boundary_contract():
     assert 'Answer only the boolean True or False.' in (
         instruction_finder.InstructionRouterSignature.__doc__
     )
-    assert (
-        '<designated>' in instruction_finder.InstructionRouterSignature.__doc__
-    )
-    assert (
-        '<candidate>' in instruction_finder.InstructionGrowerSignature.__doc__
-    )
-    assert 'Answer only the boolean True or False.' in (
-        instruction_finder.InstructionGrowerSignature.__doc__
-    )
-
-    router_text = '\\n'.join(
-        demo.current_node.content.render() for demo in router.predictor.demos
+    assert 'target_node' in instruction_finder.InstructionRouterSignature.__doc__
+    assert 'candidate_node' in instruction_finder.InstructionGrowerSignature.__doc__
+    router_text = '\n'.join(
+        demo.target_node.node_text for demo in router.predictor.demos
     )
     assert '185. Determine whether the series converges.' in router_text
     assert 'a. Find the tangent plane.' in router_text
     assert 'For Exercises 8–10' in router_text
-
-    grower_text = '\\n'.join(
-        [
-            demo.instruction_nodes.content.render()
-            + ' | '
-            + demo.next_node.content.render()
-            for demo in grower.predictor.demos
-        ]
+    grower_text = '\n'.join(
+        item.node_text
+        for demo in grower.predictor.demos
+        for item in (
+            demo.accepted_nodes
+            + [demo.candidate_node]
+            + demo.context_before
+            + demo.context_after
+        )
     )
     assert '302. $z = 4x^2 + y^2$' in grower_text
     assert 'Decorative publisher illustration.' in grower_text
     assert 'Diagram of the curve and its marked extrema.' in grower_text
     assert [demo.include_next_node for demo in grower.predictor.demos] == [
-        True,
-        True,
-        False,
-        False,
-        False,
-        False,
-        True,
+        True, True, False, False, False, False, True
     ]
 
 
@@ -120,26 +106,38 @@ def test_router_and_grower_return_only_strict_booleans():
         )
 
 
-def test_router_and_grower_encode_labeled_multimodal_parts(tmp_path):
-    image_path = tmp_path / 'figure.png'
-    Image.new('RGB', (8, 8), (0, 0, 255)).save(image_path)
-    image_node = _view(1, None, 'image')
-    image_node.image_path = str(image_path)
-    text_node = _view(0, 'For the following exercises, simplify.')
+def test_router_and_grower_encode_text_only_structured_inputs():
+    target = instruction_finder.InstructionNodeInput(
+        local_index=0,
+        node_type='image',
+        node_text='A diagram of the curve.',
+    )
+    before = [
+        instruction_finder.InstructionNodeInput(
+            local_index=0, node_type='paragraph', node_text='Before'
+        )
+    ]
+    after = [
+        instruction_finder.InstructionNodeInput(
+            local_index=0, node_type='paragraph', node_text='After'
+        )
+    ]
 
-    router_input = instruction_finder.InstructionRouter.encode(
-        object(), [image_node]
-    )['current_node']
+    router_inputs = instruction_finder.InstructionRouter.encode(
+        object(), before, target, after
+    )
     grower_inputs = instruction_finder.InstructionGrower.encode(
-        object(), [text_node], [image_node]
+        object(), [], before, target, after
     )
 
-    assert isinstance(router_input, content.ContentParts)
-    assert router_input.content.parts[0].text == '[1] (image):'
-    assert isinstance(router_input.content.parts[1], content.ImagePart)
-    assert isinstance(grower_inputs['instruction_nodes'], content.ContentParts)
-    assert isinstance(grower_inputs['next_node'], content.ContentParts)
-
+    assert router_inputs['target_node'].node_text == (
+        'A diagram of the curve.'
+    )
+    assert router_inputs['context_before'] == before
+    assert router_inputs['context_after'] == after
+    assert grower_inputs['candidate_node'] == target
+    assert grower_inputs['accepted_nodes'] == []
+    assert not hasattr(target, 'assets')
 
 def test_scan_routes_designated_nodes_and_grows_one_node_at_a_time():
     router = _ScriptedModule([True, False, False, False])
@@ -153,35 +151,29 @@ def test_scan_routes_designated_nodes_and_grows_one_node_at_a_time():
 
     assert result == [[0, 1]]
     assert [
-        [node.position for node in call['current_node']]
+        [node.local_index for node in call['context_after']]
         for call in router.calls
-    ] == [[0, 1, 2, 3], [0, 1], [0]]
+    ] == [[0, 1, 2], [0], []]
     assert [
-        next(
-            index
-            for index, node in enumerate(call['current_node'])
-            if node.marker == 'designated'
-        )
-        for call in router.calls
+        call['target_node'].local_index for call in router.calls
     ] == [0, 0, 0]
+    assert all(call['context_before'] == [] for call in router.calls)
     assert [
-        [node.position for node in call['instruction_nodes']]
+        [node.local_index for node in call['accepted_nodes']]
         for call in grower.calls
     ] == [[0], [0, 1]]
     assert [
-        [node.position for node in call['next_node']] for call in grower.calls
-    ] == [[0, 1, 2], [0, 1]]
+        call['candidate_node'].local_index for call in grower.calls
+    ] == [0, 0]
     assert [
-        [node.marker for node in call['next_node']] for call in grower.calls
-    ] == [
-        ['candidate', None, None],
-        ['candidate', None],
-    ]
+        [node.local_index for node in call['context_after']]
+        for call in grower.calls
+    ] == [[0, 1], [0]]
 
 
-def test_context_windows_keep_markers_within_the_configured_token_budget():
+def test_context_windows_keep_context_within_the_configured_token_budget():
     nodes = [
-        models.Node(
+        models.SourceNode(
             type='paragraph',
             content='context ' * 30,
             uuid=f'node-{index}',
@@ -197,27 +189,21 @@ def test_context_windows_keep_markers_within_the_configured_token_budget():
         )
     )
 
-    router_windows = [call['current_node'] for call in router.calls]
     context_budget = (
         config.get_settings().stages.finders.instruction_finder.context_budget
     )
-    grower_windows = [call['next_node'] for call in grower.calls]
-    for window in router_windows + grower_windows:
-        marker_position = next(
-            index
-            for index, node in enumerate(window)
-            if node.marker is not None
-        )
-        context_after = window[marker_position + 1 :]
+    context_lists = [
+        call['context_after'] for call in router.calls
+    ] + [call['context_after'] for call in grower.calls]
+    for context_after in context_lists:
         assert (
             sum(
-                walker.estimate_text_tokens(node.content)
+                context_window.estimate_text_tokens(node.node_text)
                 for node in context_after
             )
             <= context_budget
         )
-        assert sum(node.marker is not None for node in window) == 1
-    assert grower_windows[0][0].marker == 'candidate'
+    assert router.calls[0]['target_node'].node_text.startswith('context')
 
 
 def test_scan_finds_multiple_instructions_in_document_order():
@@ -237,26 +223,16 @@ def test_false_growth_banks_only_the_anchor_and_reconsiders_candidate():
     router = _ScriptedModule([True, False, False, False, False])
     grower = _ScriptedModule([False])
 
-    result = asyncio.run(
+    asyncio.run(
         instruction_finder.find_instruction_spans(
             _nodes(), router=router, grower=grower
         )
     )
 
-    assert result == [[0]]
-    assert [node.marker for node in grower.calls[0]['next_node']] == [
-        'candidate',
-        None,
-        None,
-        None,
-    ]
+    assert grower.calls[0]['candidate_node'].node_type == 'image'
+    assert grower.calls[0]['candidate_node'].node_text == ''
     assert [
-        next(
-            node.position
-            for node in call['current_node']
-            if node.marker == 'designated'
-        )
-        for call in router.calls
+        call['target_node'].local_index for call in router.calls
     ] == [0, 0, 0, 0, 0]
 
 
@@ -273,8 +249,8 @@ def test_instruction_growth_fails_at_shared_finder_budget(monkeypatch):
         ),
     )
     nodes = [
-        models.Node(type='paragraph', content='x' * 8),
-        models.Node(type='paragraph', content='y' * 8),
+        models.SourceNode(type='paragraph', content='x' * 8),
+        models.SourceNode(type='paragraph', content='y' * 8),
     ]
 
     with pytest.raises(ValueError, match='look-ahead limit'):
@@ -324,4 +300,10 @@ def test_finder_node_emits_instruction_hubs_without_mutating_nodes():
     instruction = out['instructions'][0]
     assert instruction.block == [0, 1]
     assert instruction.member_positions == [0, 1]
-    assert [item.uuid for item in nodes] == ['node-10', 'node-20', 'node-30', 'node-40', 'node-50']
+    assert [item.uuid for item in nodes] == [
+        'node-10',
+        'node-20',
+        'node-30',
+        'node-40',
+        'node-50',
+    ]

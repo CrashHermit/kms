@@ -1,10 +1,9 @@
 import asyncio
 
 import pytest
-from PIL import Image
 
 from kms.construction import pedagogical_component_finder
-from kms.core import content, models, walker
+from kms.core import context_window, models, walker
 
 
 class _ScriptedFinder:
@@ -17,10 +16,10 @@ class _ScriptedFinder:
 
 def _nodes():
     return [
-        models.Node(type='paragraph', content='intro prose', uuid='node-0'),
-        models.Node(type='header', content='Example 1', uuid='node-1'),
-        models.Node(type='paragraph', content='solve this', uuid='node-2'),
-        models.Node(type='paragraph', content='more prose', uuid='node-3'),
+        models.SourceNode(type='paragraph', content='intro prose', uuid='node-0'),
+        models.SourceNode(type='header', content='Example 1', uuid='node-1'),
+        models.SourceNode(type='paragraph', content='solve this', uuid='node-2'),
+        models.SourceNode(type='paragraph', content='more prose', uuid='node-3'),
     ]
 
 
@@ -137,15 +136,49 @@ def test_node_run_on_empty_stream_yields_an_empty_channel():
     assert asyncio.run(node.run({'nodes': []})) == {'spans': []}
 
 
-def test_window_parts_labels_text_and_loads_images(tmp_path):
-    image_path = tmp_path / 'Image_000.png'
-    Image.new('RGB', (10, 10), (0, 0, 255)).save(image_path)
+def test_projection_is_text_only_and_preserves_image_positions():
     nodes = [
-        walker.WindowNode(position=0, type='paragraph', content='intro'),
-        walker.WindowNode(position=1, type='image', image_path=str(image_path)),
+        context_window.ContextNode(position=0, type='paragraph', content='intro'),
+        context_window.ContextNode(
+            position=1,
+            type='image',
+            content='Diagram of the curve.',
+            assets=[models.VisualAsset(path='figure.png')],
+        ),
     ]
-    parts = content.labeled_content_parts(nodes).content.parts
-    assert len(parts) == 3
-    assert parts[0].text == '[0] (paragraph): intro'
-    assert parts[1].text == '[1] (image):'
-    assert isinstance(parts[2], content.ImagePart)
+
+    encoded = pedagogical_component_finder.PedagogicalComponentFinder.encode(
+        object(), current_nodes=nodes
+    )['current_nodes']
+
+    assert all(
+        isinstance(item, pedagogical_component_finder.PedagogicalNodeInput)
+        for item in encoded
+    )
+    assert [item.local_index for item in encoded] == [0, 1]
+    assert encoded[1].node_type == 'image'
+    assert encoded[1].node_text == 'Diagram of the curve.'
+    assert not hasattr(encoded[1], 'assets')
+    assert not hasattr(encoded[1], 'path')
+
+
+def test_empty_image_description_remains_position_bearing():
+    nodes = [
+        context_window.ContextNode(
+            position=3,
+            type='image',
+            content=None,
+        )
+    ]
+
+    encoded = pedagogical_component_finder.PedagogicalComponentFinder.encode(
+        object(), current_nodes=nodes
+    )['current_nodes']
+
+    assert encoded == [
+        pedagogical_component_finder.PedagogicalNodeInput(
+            local_index=3,
+            node_type='image',
+            node_text='',
+        )
+    ]

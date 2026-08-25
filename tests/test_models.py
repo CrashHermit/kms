@@ -7,7 +7,7 @@ def test_construction_bundle_has_independent_collection_defaults() -> None:
     first = models.ConstructionBundle(source=models.Source(key='first'))
     second = models.ConstructionBundle(source=models.Source(key='second'))
 
-    first.nodes.append(models.Node(content='one'))
+    first.nodes.append(models.SourceNode(content='one'))
     first.derived['embedding'] = [1.0]
     first.diagnostics.append('warning')
 
@@ -18,7 +18,7 @@ def test_construction_bundle_has_independent_collection_defaults() -> None:
 
 def test_construction_bundle_retains_typed_source_records() -> None:
     source = models.Source(key='book')
-    node = models.Node(type=models.NodeType.PARAGRAPH, content='A fact.')
+    node = models.SourceNode(type=models.NodeType.PARAGRAPH, content='A fact.')
     instruction = models.Instruction(block=[0], member_positions=[0])
     statement = models.Statement(block=[0], member_positions=[0])
     procedure = models.Procedure(block=[1], member_positions=[1])
@@ -59,8 +59,8 @@ def _complete_bundle() -> models.ConstructionBundle:
         documents=[models.Document(index=3, image_path='page.png')],
     )
     nodes = [
-        models.Node(uuid='node-0', document_index=3, content='first'),
-        models.Node(uuid='node-1', document_index=3, content='second'),
+        models.SourceNode(uuid='node-0', document_index=3, content='first'),
+        models.SourceNode(uuid='node-1', document_index=3, content='second'),
     ]
     return models.ConstructionBundle(
         source=source,
@@ -130,7 +130,7 @@ def test_validate_bundle_rejects_source_and_page_contracts() -> None:
     )
     bundle = models.ConstructionBundle(
         source=source,
-        nodes=[models.Node(uuid='node-1', document_index=1)],
+        nodes=[models.SourceNode(uuid='node-1', document_index=1)],
         triplets=[models.Triplet('a', 'b', 'c')],
     )
 

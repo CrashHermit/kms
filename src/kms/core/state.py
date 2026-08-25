@@ -27,7 +27,7 @@ class State(TypedDict, total=False):
         lambda old, new: new if new is not None else old,
     ]
     documents: list[models.Document]
-    nodes: list[models.Node]
+    nodes: list[models.SourceNode]
     spans: list[list[int]]
     instructions: list[models.Instruction]
     statements: list[models.Statement]
@@ -65,17 +65,23 @@ class State(TypedDict, total=False):
     statements_clustered: int
     procedures_clustered: int
     block_correction_results: Annotated[
-        list[tuple[int, list[models.Node]]], operator.add
+        list[tuple[int, list[models.SourceNode]]], operator.add
     ]
     format_results: Annotated[list[tuple[int, int, str]], operator.add]
     extract_results: Annotated[
-        list[tuple[int, list[models.Node]]], operator.add
+        list[tuple[int, list[models.SourceNode]]], operator.add
     ]
     seam_even_results: Annotated[
-        list[tuple[int, list[models.Node]]], operator.add
+        list[tuple[int, list[models.SourceNode]]], operator.add
     ]
     seam_odd_results: Annotated[
-        list[tuple[int, list[models.Node]]], operator.add
+        list[tuple[int, list[models.SourceNode]]], operator.add
+    ]
+    image_seam_even_results: Annotated[
+        list[tuple[int, list[models.SourceNode]]], operator.add
+    ]
+    image_seam_odd_results: Annotated[
+        list[tuple[int, list[models.SourceNode]]], operator.add
     ]
 
 

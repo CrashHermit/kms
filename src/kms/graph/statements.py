@@ -6,10 +6,6 @@ from kms.graph import nodes
 STATEMENT_LABEL = 'Statement'
 
 
-def statement_uuid(source: str, block: list[int]) -> str:
-    """Compatibility export for the canonical identity function."""
-    return identity.statement_uuid(source, block)
-
 
 def _statement_id(statement: models.Statement, source: str) -> str:
     """Returns and verifies the assigned model identity."""
@@ -53,7 +49,7 @@ def statement_enrichment_properties(
 
 def statement_member_pairs(
     statements: list[models.Statement],
-    node_stream: list[models.Node],
+    node_stream: list[models.SourceNode],
     source: str,
 ) -> list[dict]:
     """Builds statement→member node edge pairs."""

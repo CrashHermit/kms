@@ -1,6 +1,5 @@
 import asyncio
 import os
-from collections import Counter
 
 os.environ['KMS_MODELS__MODULES__FORMATTER__BASE_URL'] = (
     'http://localhost:8080/v1'
@@ -10,14 +9,14 @@ os.environ['KMS_MODELS__MODULES__FORMATTER__MODEL'] = (
 )
 os.environ['KMS_MODELS__MODULES__FORMATTER__API_KEY'] = 'not-needed'
 
-from kms import runtime
-from kms.graph import db
 from tests.helpers import (
     clear_neo4j,
     print_hubs,
     print_node_summary,
     print_triplet_summary,
 )
+
+from kms import runtime
 
 PDF = 'tests/fixtures/books/logic_hammack_truthtables.pdf'
 SOURCE = 'logic_hammack_truthtables'

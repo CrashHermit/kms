@@ -67,7 +67,7 @@ def test_unassigned_components_exclude_canonicalized_records():
     asyncio.run(scenario())
 
     cypher = '\n'.join(captured['queries'])
-    assert 'NOT (c)-[:CANONICAL]->(:EntityHub)' in cypher
+    assert 'NOT (c)-[:CANONICAL]->(:LocalEntityHub)' in cypher
     assert 'src.key = $source' in cypher
 
 
@@ -82,7 +82,7 @@ def test_all_source_hubs_reads_canonical_fields_and_can_filter():
     asyncio.run(scenario())
 
     cypher = '\n'.join(captured['queries'])
-    assert 'MATCH (h:EntityHub)' in cypher
+    assert 'MATCH (h:LocalEntityHub)' in cypher
     assert 'h.canonical_name AS name' in cypher
     assert 'h.aliases AS aliases' in cypher
     assert 'src.key AS source' in cypher
@@ -115,7 +115,7 @@ def test_qualified_meta_hub_query_requires_two_source_values():
     asyncio.run(scenario())
 
     cypher = '\n'.join(captured['queries'])
-    assert 'OPTIONAL MATCH (m)<-[:ALIGNS_TO]-(s:EntityHub)' in cypher
+    assert 'OPTIONAL MATCH (m)<-[:ALIGNS_TO]-(s:LocalEntityHub)' in cypher
     assert 'count(DISTINCT s.source)' in cypher
     assert 'WHERE source_count >= 2' in cypher
 
@@ -193,5 +193,5 @@ def test_vector_search_overfetches_known_source_indexes():
 
     asyncio.run(scenario())
 
-    assert 'MATCH (node:TripletHub)' in calls[0][0]
+    assert 'MATCH (node:LocalTripletHub)' in calls[0][0]
     assert calls[1][1]['k'] == 12

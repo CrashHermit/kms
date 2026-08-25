@@ -324,7 +324,7 @@ class FormatterNode:
     async def worker(self, state: dict) -> dict:
         """Formats one canonical node's Markdown content."""
         document: models.Document = state['document']
-        node: models.Node = state['node']
+        node: models.SourceNode = state['node']
         formatted = await self.module.aforward(node_content=node.content)
         return {'format_results': [(document.index, node.index, formatted)]}
 

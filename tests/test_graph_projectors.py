@@ -114,6 +114,11 @@ def test_final_projector_forwards_assertions(monkeypatch):
     calls = []
     _patch_writers(monkeypatch)
 
+    async def embed_source_nodes(nodes):
+        return [[0.0] for _ in nodes]
+
+    monkeypatch.setattr(projectors.embeddings, 'embed_source_nodes', embed_source_nodes)
+
     async def persist(*args, **kwargs):
         calls.append((args, kwargs))
 
@@ -127,7 +132,7 @@ def test_final_projector_forwards_assertions(monkeypatch):
     identity.assign_triplet_ids([triplet], 'book')
     state = {
         'source_key': 'book',
-        'nodes': [models.Node(uuid='node-0', content='fact')],
+        'nodes': [models.SourceNode(uuid='node-0', content='fact')],
         'triplets': [triplet],
         'entity_descriptions': {0: {'entity': 'description'}},
         'predicate_descriptions': {0: {'predicate': 'description'}},

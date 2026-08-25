@@ -82,7 +82,7 @@ def test_evidence_pairs_one_pair_per_node_occurrence():
     triplets_list = [
         _triplet('$G_4$', 'is NOT a subgraph of', '$G_1$', evidence_positions=[3, 9]),
     ]
-    doc_nodes = [models.Node(uuid=f'node-{i}') for i in range(10)]
+    doc_nodes = [models.SourceNode(uuid=f'node-{i}') for i in range(10)]
     pairs = evidence_pairs(triplets_list, 'hefferon.pdf', doc_nodes)
     assert len(pairs) == 2
     expected_triplet_uuid = triplet_uuid(

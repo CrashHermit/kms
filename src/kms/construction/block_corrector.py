@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import dspy
 from langgraph.types import Send
 
-from kms.core import content, models, module, state
+from kms.core import images, models, module, state
 from kms.core.edits import LineEdit, apply_line_edits, number_lines
 
 logger = logging.getLogger(__name__)
@@ -102,7 +102,7 @@ class BlockCorrectionRouter(module.Module):
         block_type: str,
         original_text: str,
     ) -> dict:
-        image = content.load_image(crop_path)
+        image = images.load_image(crop_path)
         if image is None:
             raise ValueError(f'block crop does not exist: {crop_path}')
         return {
@@ -202,7 +202,7 @@ class BlockCorrectionEditor(module.Module):
         block_type: str,
         original_text: str,
     ) -> dict:
-        image = content.load_image(crop_path)
+        image = images.load_image(crop_path)
         if image is None:
             raise ValueError(f'block crop does not exist: {crop_path}')
         return {
@@ -225,14 +225,19 @@ class BlockCorrectionEditor(module.Module):
                 'block corrector editor returned duplicate line indices: '
                 f'{edit_indices}'
             )
+        valid_edits = []
         for edit in edits:
             if not 1 <= edit.index <= max_line:
-                raise ValueError(
-                    'block corrector editor returned out-of-range edit: '
-                    f'index={edit.index}, max_line={max_line}, '
-                    f'block_type={inputs.get("block_type")}'
+                logger.warning(
+                    'Ignoring out-of-range OCR correction: index=%d, '
+                    'max_line=%d, block_type=%s',
+                    edit.index,
+                    max_line,
+                    inputs.get('block_type'),
                 )
-        return edits
+                continue
+            valid_edits.append(edit)
+        return valid_edits
 
 
 class BlockCorrector:

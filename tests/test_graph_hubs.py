@@ -6,10 +6,10 @@ from kms.graph import hubs, queries, schema, writer
 
 
 def test_hub_labels_distinguish_source_and_meta_tiers():
-    assert hubs.hub_label('entity', tier='source') == 'EntityHub'
-    assert hubs.hub_label('predicate', tier='source') == 'PredicateHub'
-    assert hubs.meta_hub_label('entity') == 'MetaEntityHub'
-    assert hubs.meta_hub_label('predicate') == 'MetaPredicateHub'
+    assert hubs.hub_label('entity', tier='source') == 'LocalEntityHub'
+    assert hubs.hub_label('predicate', tier='source') == 'LocalPredicateHub'
+    assert hubs.meta_hub_label('entity') == 'GlobalEntityHub'
+    assert hubs.meta_hub_label('predicate') == 'GlobalPredicateHub'
 
 
 def test_hub_label_rejects_unknown_tier():
@@ -31,8 +31,8 @@ def test_alignment_query_uses_distinct_relationship_and_labels():
         hubs.META_ENTITY_HUB_LABEL,
     )
 
-    assert '(s:EntityHub {uuid: pair.source_hub})' in cypher
-    assert '(m:MetaEntityHub {uuid: pair.meta_hub})' in cypher
+    assert '(s:LocalEntityHub {uuid: pair.source_hub})' in cypher
+    assert '(m:GlobalEntityHub {uuid: pair.meta_hub})' in cypher
     assert 'MERGE (s)-[r:ALIGNS_TO]->(m)' in cypher
     assert 'r.score = pair.score' in cypher
     assert 'r.decision = pair.decision' in cypher
@@ -46,7 +46,7 @@ def test_schema_contains_meta_hub_constraints_and_indexes():
     assert 'meta_predicate_hub_uuid' in combined
     assert 'meta_entity_hub_embedding' in combined
     assert 'meta_predicate_hub_embedding' in combined
-    assert '`vector.dimensions`: 1024' in combined
+    assert '`vector.dimensions`: 4096' in combined
 
 
 def test_meta_hub_properties_require_stable_id_and_omit_source():
@@ -162,7 +162,7 @@ def test_attach_meta_hubs_replaces_alignment_and_updates_aliases(
     assert 'DELETE r' in captured[0][0]
     assert 'MERGE (s)-[r:ALIGNS_TO]->(m)' in captured[1][0]
     assert captured[1][1]['pairs'][0]['decision'] == 'Merge'
-    assert 'MetaEntityHub' in captured[2][0]
+    assert 'GlobalEntityHub' in captured[2][0]
 
 
 def test_attach_meta_hubs_rejects_unqualified_new_meta_hubs(monkeypatch):
@@ -221,7 +221,7 @@ def test_clear_source_hubs_targets_one_source_only():
     assert captured == [
         (
             'MATCH (src:Source {key: $source}), '
-            '(h:EntityHub {source: src.uuid}) DETACH DELETE h',
+            '(h:LocalEntityHub {source: src.uuid}) DETACH DELETE h',
             {'source': 'book-a'},
         )
     ]
@@ -248,7 +248,7 @@ def test_clear_invalid_meta_hubs_targets_underqualified_meta_nodes():
     asyncio.run(scenario())
 
     assert captured == [
-        'MATCH (h:MetaEntityHub) '
+        'MATCH (h:GlobalEntityHub) '
         'OPTIONAL MATCH (h)<-[:ALIGNS_TO]-(s) '
         'WITH h, count(DISTINCT s.source) AS source_count '
         'WHERE source_count < 2 DETACH DELETE h'
@@ -275,7 +275,7 @@ def test_clear_meta_hubs_targets_only_meta_label():
 
     asyncio.run(scenario())
 
-    assert captured == ['MATCH (h:MetaEntityHub) DETACH DELETE h']
+    assert captured == ['MATCH (h:GlobalEntityHub) DETACH DELETE h']
 
 
 def test_persist_hubs_rejects_singleton_meta_hubs():
@@ -364,7 +364,7 @@ def test_persist_hubs_uses_alignment_for_meta_members(monkeypatch):
     asyncio.run(scenario())
 
     assert len(captured) == 2
-    assert 'MERGE (h:MetaEntityHub' in captured[0][0]
+    assert 'MERGE (h:GlobalEntityHub' in captured[0][0]
     assert 'MERGE (s)-[r:ALIGNS_TO]->(m)' in captured[1][0]
     assert captured[1][1]['pairs'] == [
         {'source_hub': 'source-hub-a', 'meta_hub': 'meta-graph'},

@@ -56,9 +56,9 @@ def test_statement_backed_procedure_persistence_uses_its_disambiguated_uuid():
     )
     assert (
         procedures.procedure_member_pairs([procedure], 'book.pdf', [
-            models.Node(document_index=0, index=0),
-            models.Node(document_index=0, index=1),
-            models.Node(document_index=0, index=2),
+            models.SourceNode(document_index=0, index=0),
+            models.SourceNode(document_index=0, index=1),
+            models.SourceNode(document_index=0, index=2),
         ])[0][
             'procedure'
         ]
@@ -66,20 +66,20 @@ def test_statement_backed_procedure_persistence_uses_its_disambiguated_uuid():
     )
 
 
-def test_procedure_properties_carry_compiled_content_and_provenance():
+def test_procedure_properties_carry_content_provenance_and_kind():
     procedure = _procedure()
     procedure.procedure = 'Compiled procedure.'
     props = procedures.procedure_properties('book.pdf', procedure)
     assert props['uuid'] == procedures.procedure_uuid('book.pdf', [1, 2], 0)
     assert props['source'] == nodes.source_uuid('book.pdf')
+    assert props['kind'] == 'source'
     assert props['procedure'] == 'Compiled procedure.'
-
 
 def test_procedure_member_pairs_link_every_member_node():
     doc_nodes = [
-        models.Node(document_index=0, index=0),
-        models.Node(document_index=0, index=1),
-        models.Node(document_index=0, index=2),
+        models.SourceNode(document_index=0, index=0),
+        models.SourceNode(document_index=0, index=1),
+        models.SourceNode(document_index=0, index=2),
     ]
     pairs = procedures.procedure_member_pairs([_procedure()], 'book.pdf', doc_nodes)
     assert len(pairs) == 2
@@ -120,9 +120,9 @@ class _FakeDriver:
 def test_persist_procedures_points_each_member_at_the_procedure():
     driver = _FakeDriver()
     doc_nodes = [
-        models.Node(document_index=0, index=0),
-        models.Node(document_index=0, index=1),
-        models.Node(document_index=0, index=2),
+        models.SourceNode(document_index=0, index=0),
+        models.SourceNode(document_index=0, index=1),
+        models.SourceNode(document_index=0, index=2),
     ]
 
     asyncio.run(

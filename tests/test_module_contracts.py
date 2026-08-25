@@ -11,60 +11,117 @@ from kms.construction import (
     procedure_enrichment,
     statement_procedure_builder,
 )
-from kms.core import content, walker
+from kms.core import context_window, models
 
 
-def _node(position: int, text: str = 'text') -> walker.WindowNode:
-    return walker.WindowNode(
+def _node(position: int, text: str = 'text') -> context_window.ContextNode:
+    return context_window.ContextNode(
         position=position,
         type='paragraph',
         content=text,
     )
 
 
-def test_governance_judge_preserves_three_multimodal_inputs_and_validates():
+def test_governance_judge_uses_text_only_inputs_and_validates_boolean():
     judge = governance_judge.GovernanceJudge.__new__(
         governance_judge.GovernanceJudge
     )
-    instruction = content.Content.from_text('Use this rule.')
-    statement = content.Content.from_text('A statement.')
-    context = [_node(0, 'Context.')]
-
-    encoded = judge.encode(instruction, statement, context)
-    assert all(
-        isinstance(encoded[name], content.ContentParts)
-        for name in (
-            'instruction_directive',
-            'statement_content',
-            'context_window',
+    instruction_nodes = [
+        _node(0, 'Use this rule.')
+    ]
+    statement_nodes = [
+        context_window.ContextNode(
+            position=0,
+            type='image',
+            content='A diagram of the rule.',
+            assets=[models.VisualAsset(path='figure.png')],
         )
+    ]
+    context_before = [
+        context_window.ContextNode(
+            position=0,
+            type='paragraph',
+            content='Before',
+        )
+    ]
+    context_after = [
+        context_window.ContextNode(
+            position=0,
+            type='paragraph',
+            content='After',
+        )
+    ]
+
+    encoded = judge.encode(
+        instruction_nodes, context_before, statement_nodes, context_after
     )
+    assert all(
+        isinstance(item, governance_judge.GovernanceNodeInput)
+        for field in encoded.values()
+        for item in field
+    )
+    assert encoded['statement_nodes'][0].node_text == 'A diagram of the rule.'
+    assert encoded['context_before'][0].node_text == 'Before'
+    assert encoded['context_after'][0].node_text == 'After'
+    assert not hasattr(encoded['statement_nodes'][0], 'assets')
+    assert 'confidence' not in encoded
     assert judge.decode(
-        SimpleNamespace(governs=True, confidence=0.75), **encoded
-    ) == (True, 0.75)
+        SimpleNamespace(governs=True), **encoded
+    ) is True
     with pytest.raises(ValueError, match='governs must be a boolean'):
-        judge.decode(
-            SimpleNamespace(governs='true', confidence=0.75), **encoded
-        )
-
+        judge.decode(SimpleNamespace(governs='true'), **encoded)
 
 def test_role_and_partition_modules_validate_positions_against_original_nodes():
     role_typer = statement_procedure_builder.RoleTyper.__new__(
         statement_procedure_builder.RoleTyper
     )
-    role_encoded = role_typer.encode(content.Content.from_text('A proof.'))
-    assert isinstance(role_encoded['contents'], content.ContentParts)
+    nodes = [
+        _node(0, 'A proof.'),
+        context_window.ContextNode(
+            position=1,
+            type='image',
+            content='Diagram of the proof structure.',
+            assets=[models.VisualAsset(path='figure.png')],
+        ),
+    ]
+    role_encoded = role_typer.encode(current_nodes=nodes)
+    assert all(
+        isinstance(
+            item, statement_procedure_builder.StatementProcedureNodeInput
+        )
+        for item in role_encoded['current_nodes']
+    )
+    assert role_encoded['current_nodes'][1].node_text == (
+        'Diagram of the proof structure.'
+    )
+    assert not hasattr(role_encoded['current_nodes'][1], 'assets')
     assert role_typer.decode(
         SimpleNamespace(has_statement=True, has_procedure=False),
         **role_encoded,
     ) == (True, False)
 
-    nodes = [_node(0), _node(1)]
     partitioner = statement_procedure_builder.StatementPartitioner.__new__(
         statement_procedure_builder.StatementPartitioner
     )
-    encoded = partitioner.encode(nodes)
-    assert isinstance(encoded['current_nodes'], content.ContentParts)
+    encoded = partitioner.encode(current_nodes=nodes)
+    assert all(
+        isinstance(
+            item, statement_procedure_builder.StatementProcedureNodeInput
+        )
+        for item in encoded['current_nodes']
+    )
+    empty_image = partitioner.encode(
+        current_nodes=[
+            context_window.ContextNode(position=2, type='image', content=None)
+        ]
+    )['current_nodes']
+    assert empty_image == [
+        statement_procedure_builder.StatementProcedureNodeInput(
+            local_index=2,
+            node_type='image',
+            node_text='',
+        )
+    ]
     assert partitioner.decode(
         SimpleNamespace(statement_positions=[0]), current_nodes=nodes
     ) == [0]
@@ -72,7 +129,6 @@ def test_role_and_partition_modules_validate_positions_against_original_nodes():
         partitioner.decode(
             SimpleNamespace(statement_positions=[2]), current_nodes=nodes
         )
-
 
 def test_formatter_and_corrector_routers_reject_non_boolean_predictions():
     formatter_router = formatter.FormatterRouter.__new__(
@@ -99,29 +155,59 @@ def test_formatter_and_corrector_routers_reject_non_boolean_predictions():
         )
 
 
-def test_procedure_writer_encodes_empty_source_as_structured_content():
-    writer = procedure_enrichment.ProcedureWriter.__new__(
-        procedure_enrichment.ProcedureWriter
+def test_source_procedure_writer_contract():
+    writer = procedure_enrichment.SourceProcedureWriter.__new__(
+        procedure_enrichment.SourceProcedureWriter
     )
-    encoded = writer.encode(content.Content.from_text('Solve x = 1.'), None, '')
-    source = encoded['source_procedure']
-    assert isinstance(source, content.ContentParts)
-    assert source.content.parts[0].text == ''
+    statement = [
+        models.TextNodeInput(
+            local_index=0, node_type='paragraph', node_text='Solve x = 1.'
+        )
+    ]
+    source_procedure = [
+        models.TextNodeInput(
+            local_index=1, node_type='paragraph', node_text='Subtract one.'
+        )
+    ]
+    encoded = writer.encode(statement, source_procedure, '')
+    assert encoded['statement'] == statement
+    assert encoded['source_procedure'] == source_procedure
     assert writer.decode(SimpleNamespace(procedure='  proof  ')) == '  proof  '
     with pytest.raises(ValueError, match='procedure must be a non-empty string'):
         writer.decode(SimpleNamespace(procedure=''))
 
 
-def test_entity_and_predicate_enrichment_require_single_structured_results():
-    passage = content.Content.from_text('A vector moves.')
+def test_entity_and_predicate_enrichment_use_directional_text_inputs():
+    context_before = [_node(0, 'Before')]
+    target_node = context_window.ContextNode(
+        position=0,
+        type='image',
+        content='A diagram',
+        assets=[models.VisualAsset(path='figure.png')],
+    )
+    context_after = [_node(0, 'After')]
     entity = entity_enrichment.EntityEnricher.__new__(
         entity_enrichment.EntityEnricher
     )
     predicate = predicate_enrichment.PredicateEnricher.__new__(
         predicate_enrichment.PredicateEnricher
     )
-    entity_input = entity.encode(passage, ['vector'])
-    predicate_input = predicate.encode(passage, ['moves'])
+    entity_input = entity.encode(
+        context_before, target_node, context_after, ['vector']
+    )
+    predicate_input = predicate.encode(
+        context_before, target_node, context_after, ['moves']
+    )
+    for encoded in (entity_input, predicate_input):
+        assert list(encoded) == [
+            'context_before',
+            'target_node',
+            'context_after',
+            'terms',
+        ]
+        assert encoded['target_node'].node_text == 'A diagram'
+        assert not hasattr(encoded['target_node'], 'assets')
+        assert not hasattr(encoded['target_node'], 'path')
     entity_result = entity_enrichment.TermDescription(
         term='vector', description='A directed quantity.'
     )
@@ -129,7 +215,8 @@ def test_entity_and_predicate_enrichment_require_single_structured_results():
         term='moves', description='Changes position.'
     )
     assert entity.decode(
-        SimpleNamespace(description=entity_result.description), **entity_input
+        SimpleNamespace(description=entity_result.description),
+        **entity_input,
     ) == [entity_result]
     assert predicate.decode(
         SimpleNamespace(description=predicate_result.description),
@@ -146,12 +233,48 @@ def test_entity_and_predicate_enrichment_require_single_structured_results():
         )
 
 
+def test_hub_mentions_normalize_once_at_the_adjudication_boundary():
+    from kms.construction import entity_hubs, predicate_hubs
+
+    mention = models.HubMentionInput.from_record(
+        {
+            'name': 'vector',
+            'aliases': ['vector', 'directed segment'],
+            'description': 'An oriented quantity.',
+        }
+    )
+    assert mention.name == 'vector'
+    assert mention.aliases == ['directed segment']
+    assert mention.description == 'An oriented quantity.'
+    with pytest.raises(ValueError, match='extra'):
+        models.HubMentionInput(name='vector', unsupported=True)
+
+    left = models.HubMentionInput(name='vector')
+    right = models.HubMentionInput(name='field')
+    for adjudicator_type in (
+        entity_hubs.EntityHubAdjudicator,
+        predicate_hubs.PredicateHubAdjudicator,
+    ):
+        encoded = adjudicator_type.__new__(adjudicator_type).encode(
+            left=left,
+            right=right,
+            scope='test scope',
+        )
+        assert encoded == {
+            'left': left,
+            'right': right,
+            'scope': 'test scope',
+        }
+        assert encoded['left'] is left
+        assert encoded['right'] is right
+
+
 def test_hub_synthesis_and_adjudication_outputs_are_strict():
     from kms.construction import (
         entity_hubs,
+        local_procedure_hubs,
+        local_statement_hubs,
         predicate_hubs,
-        procedure_hubs,
-        statement_hubs,
         triplet_hubs,
     )
 
@@ -161,8 +284,14 @@ def test_hub_synthesis_and_adjudication_outputs_are_strict():
             predicate_hubs.PredicateHubSynthesizer,
             predicate_hubs.PredicateHubDefinition,
         ),
-        (statement_hubs.StatementHubSynthesizer, statement_hubs.StatementHubResult),
-        (procedure_hubs.ProcedureHubSynthesizer, procedure_hubs.ProcedureHubResult),
+        (
+            local_statement_hubs.LocalStatementHubSynthesizer,
+            local_statement_hubs.LocalStatementHubResult,
+        ),
+        (
+            local_procedure_hubs.LocalProcedureHubSynthesizer,
+            local_procedure_hubs.LocalProcedureHubResult,
+        ),
         (
             triplet_hubs._TripletDefinitionSynthesizer,
             triplet_hubs._TripletDefinition,
@@ -182,11 +311,11 @@ def test_hub_synthesis_and_adjudication_outputs_are_strict():
                 )
             )
 
-    statement = statement_hubs.StatementHubAdjudicator.__new__(
-        statement_hubs.StatementHubAdjudicator
+    statement = local_statement_hubs.LocalStatementHubAdjudicator.__new__(
+        local_statement_hubs.LocalStatementHubAdjudicator
     )
-    procedure = procedure_hubs.ProcedureHubAdjudicator.__new__(
-        procedure_hubs.ProcedureHubAdjudicator
+    procedure = local_procedure_hubs.LocalProcedureHubAdjudicator.__new__(
+        local_procedure_hubs.LocalProcedureHubAdjudicator
     )
     assert statement.decode(SimpleNamespace(should_merge=True)) is True
     assert procedure.decode(SimpleNamespace(should_merge=False)) is False

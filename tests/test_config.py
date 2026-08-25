@@ -11,12 +11,18 @@ def test_nested_env_var_overrides_toml_default(monkeypatch):
 
 def test_toml_provides_the_defaults():
     settings = config.load_settings()
-    assert settings.embeddings.model == 'voyage-multimodal-3.5'
-    assert settings.embeddings.dimension == 1024
+    assert settings.embeddings.model == 'Qwen3-Embedding-8B'
+    assert settings.embeddings.dimension == 4096
+    assert settings.embeddings.base_url == 'http://127.0.0.1:8081/v1'
+    assert settings.reranker.model == 'Qwen3-Reranker-4B'
+    assert settings.reranker.base_url == 'http://127.0.0.1:8082/v1'
+    assert settings.serving.retrieval.embedding.port == 8081
+    assert settings.serving.retrieval.reranker.port == 8082
+    assert settings.serving.retrieval.embedding.threads == 12
+    assert settings.serving.retrieval.embedding.n_gpu_layers == 0
     assert settings.concurrency.recursion_limit == 1000
     assert settings.serving.port == 8080
     assert settings.serving.max_loaded_models == 1
-    assert settings.stages.search.rerank_top_n == 5
     assert settings.stages.procedure.entity_definition_top_k == 10
     assert settings.stages.entity_enrichment.before_budget == 200
     assert settings.stages.finders.instruction_finder.context_budget == 300
@@ -35,6 +41,17 @@ def test_toml_provides_the_defaults():
     assert settings.serving.module_models['procedure_enrichment'] == (
         'qwen3.5-9b'
     )
+
+
+def test_image_enrichment_defaults_and_routing():
+    settings = config.load_settings()
+    assert settings.stages.image_enrichment.before_budget == 200
+    assert settings.stages.image_enrichment.after_budget == 200
+    assert settings.stages.image_enrichment.max_concurrent_calls == 16
+    assert settings.models.modules['image_enricher'].model == (
+        'openai/qwen3.5-9b'
+    )
+    assert settings.serving.module_models['image_enricher'] == 'qwen3.5-9b'
 
 
 def test_instruction_finder_context_budget_can_be_overridden(monkeypatch):

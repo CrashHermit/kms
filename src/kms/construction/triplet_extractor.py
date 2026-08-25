@@ -13,9 +13,33 @@ import dspy
 from pydantic import BaseModel, Field
 
 from kms import config
-from kms.core import content, identity, llm, logs, models, module, state, walker
+from kms.core import (
+    context_window,
+    identity,
+    llm,
+    logs,
+    models,
+    module,
+    state,
+)
 
 logger = logging.getLogger(__name__)
+class FactNodeInput(BaseModel):
+    """Text-only local input for fact extraction."""
+
+    local_index: int = Field(
+        description='Zero-based position in the supplied node list.'
+    )
+    node_type: str = Field(
+        description='Canonical node type for the projected source node.'
+    )
+    node_text: str = Field(
+        description=(
+            'Canonical node text; numbers here are content, not positions.'
+        )
+    )
+
+
 
 
 class _FactSignature(dspy.Signature):
@@ -38,14 +62,17 @@ class _FactSignature(dspy.Signature):
     Return [] when the anchor contains no explicit subject-matter fact.
     """
 
-    current_nodes: content.ContentParts = dspy.InputField(
+    context_before: list[FactNodeInput] = dspy.InputField(
+        description='Ordered preceding context records; reference only.'
+    )
+    target_node: FactNodeInput = dspy.InputField(
         description=(
-            'A static node window containing exactly one node marked '
-            '<anchor>. Extract facts only from that marked node; nearby '
-            'nodes are context and are never evidence. Each text node is a '
-            'line `[position] (type): content`; each image node is a line '
-            '`[position] (image):` followed by the image itself.'
+            'The only evidence record. Extract facts only from target_node; '
+            'image descriptions appear as node_text.'
         )
+    )
+    context_after: list[FactNodeInput] = dspy.InputField(
+        description='Ordered following context records; reference only.'
     )
     facts: list[str] = dspy.OutputField(
         description=(
@@ -57,6 +84,17 @@ class _FactSignature(dspy.Signature):
     )
 
 
+def _fact_input(
+    node: context_window.ContextNode, local_index: int | None = None
+) -> FactNodeInput:
+    """Projects one context node without exposing assets or source identity."""
+    return FactNodeInput(
+        local_index=node.position if local_index is None else local_index,
+        node_type=node.type or '',
+        node_text=node.content or '',
+    )
+
+
 class _FactExtractor(module.Module):
     """Decomposes a node window into standalone atomic facts."""
 
@@ -65,10 +103,22 @@ class _FactExtractor(module.Module):
 
     def encode(
         self,
-        current_nodes: list[walker.WindowNode],
-    ) -> dict:
-        """Builds the fact-signature kwargs for one static window."""
-        return {'current_nodes': content.labeled_content_parts(current_nodes)}
+        context_before: list[context_window.ContextNode],
+        target_node: context_window.ContextNode,
+        context_after: list[context_window.ContextNode],
+    ) -> dict[str, object]:
+        """Projects independent document-order context fields."""
+        return {
+            'context_before': [
+                _fact_input(node, index)
+                for index, node in enumerate(context_before)
+            ],
+            'target_node': _fact_input(target_node, 0),
+            'context_after': [
+                _fact_input(node, index)
+                for index, node in enumerate(context_after)
+            ],
+        }
 
     def decode(self, prediction, **inputs) -> list[dict]:
         """Returns validated fact text; provenance is assigned by caller."""
@@ -211,7 +261,7 @@ class _TripletDecomposer(module.Module):
 
 
 async def _extract_triplets(
-    nodes: list[models.Node],
+    nodes: list[models.SourceNode],
     fact_module: _FactExtractor,
     triplet_module: _TripletDecomposer,
     max_concurrency: int | None = None,
@@ -251,15 +301,23 @@ async def _extract_triplets(
 
     async def _extract_one_anchor(node_index: int) -> list[dict]:
         """Extracts facts from one node and assigns deterministic provenance."""
-        current_nodes = walker.marked_window(
-            nodes,
-            [node_index],
-            backward_budget=triplet.backward_context_budget,
-            forward_budget=triplet.forward_context_budget,
-            marker='anchor',
+        target_node = context_window.project_nodes([nodes[node_index]])[0]
+        context_before = context_window.project_nodes(
+            context_window.nodes_before(
+                nodes, node_index, triplet.backward_context_budget
+            )
+        )
+        context_after = context_window.project_nodes(
+            context_window.nodes_after(
+                nodes, node_index, triplet.forward_context_budget
+            )
         )
         async with gate:
-            facts = await fact_module.aforward(current_nodes=current_nodes)
+            facts = await fact_module.aforward(
+                context_before=context_before,
+                target_node=target_node,
+                context_after=context_after,
+            )
         return [
             {'text': fact['text'], 'node_positions': [node_index]}
             for fact in facts

@@ -20,7 +20,7 @@ def _block_key(block: list[int]) -> str:
     return '#'.join(str(node_id) for node_id in block)
 
 
-def _node_provenance_key(node: models.Node) -> str:
+def _node_provenance_key(node: models.SourceNode) -> str:
     """Build a stable provenance key for a node from its source attributes."""
     doc_idx = node.document_index if node.document_index is not None else 0
     prov_idx = node.index
@@ -31,7 +31,7 @@ def source_uuid(source: str) -> str:
     return uuid5(NAMESPACE_URL, _source(source)).hex
 
 
-def node_uuid(source: str, node: models.Node) -> str:
+def node_uuid(source: str, node: models.SourceNode) -> str:
     """Durable UUID for a node from its source provenance, not list position."""
     return uuid5(
         NAMESPACE_URL, f'{_source(source)}#node#{_node_provenance_key(node)}'
@@ -96,7 +96,7 @@ def predicate_uuid(triplet_occurrence_uuid: str) -> str:
     return uuid5(NAMESPACE_URL, f'{triplet_occurrence_uuid}#predicate').hex
 
 
-def assign_node_uuids(nodes: list[models.Node], source: str) -> None:
+def assign_node_uuids(nodes: list[models.SourceNode], source: str) -> None:
     """Assign durable UUIDs to all nodes from their source provenance."""
     _source(source)
     for node in nodes:

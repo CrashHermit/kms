@@ -13,18 +13,20 @@ from kms.construction import (
     formatter,
     governance_judge,
     governance_walker,
+    image_enricher,
+    image_seam_merger,
     instruction_finder,
+    local_procedure_hubs,
+    local_statement_hubs,
     ocr,
     pedagogical_component_finder,
     predicate_enrichment,
     predicate_hubs,
     procedure_enrichment,
-    procedure_hubs,
-    seam_merger,
     splitter,
     statement_enrichment,
-    statement_hubs,
     statement_procedure_builder,
+    text_seam_merger,
     triplet_extractor,
     triplet_hubs,
 )
@@ -70,11 +72,21 @@ def _build_modules(
         'formatter': formatter.Formatter(
             language_model=llm.module_lm('formatter'), recorder=recorder
         ),
-        'seam_merger': seam_merger.SeamMerger(
-            language_model=llm.module_lm('seam_merger'), recorder=recorder
+        'text_seam_merger': text_seam_merger.TextSeamMerger(
+            language_model=llm.module_lm('text_seam_merger'),
+            recorder=recorder,
         ),
-        'seam_rewriter': seam_merger.SeamRewriter(
-            language_model=llm.module_lm('seam_rewriter'), recorder=recorder
+        'text_seam_rewriter': text_seam_merger.TextSeamRewriter(
+            language_model=llm.module_lm('text_seam_rewriter'),
+            recorder=recorder,
+        ),
+        'image_seam_merger': image_seam_merger.ImageSeamMerger(
+            language_model=llm.module_lm('image_seam_merger'),
+            recorder=recorder,
+        ),
+        'image_enricher': image_enricher.ImageEnricher(
+            language_model=llm.module_lm('image_enricher'),
+            recorder=recorder,
         ),
         'splitter': splitter.Splitter(
             language_model=llm.module_lm('splitter'), recorder=recorder
@@ -136,19 +148,19 @@ def _build_modules(
             language_model=llm.module_lm('procedure_enrichment'),
             recorder=recorder,
         ),
-        'statement_hub_builder': statement_hubs.StatementHubSynthesizer(
+        'statement_hub_builder': local_statement_hubs.LocalStatementHubSynthesizer(
             language_model=llm.module_lm('statement_hub_builder'),
             recorder=recorder,
         ),
-        'statement_hub_adjudicator': statement_hubs.StatementHubAdjudicator(
+        'statement_hub_adjudicator': local_statement_hubs.LocalStatementHubAdjudicator(
             language_model=llm.module_lm('statement_hub_builder'),
             recorder=recorder,
         ),
-        'procedure_hub_builder': procedure_hubs.ProcedureHubSynthesizer(
+        'procedure_hub_builder': local_procedure_hubs.LocalProcedureHubSynthesizer(
             language_model=llm.module_lm('procedure_hub_builder'),
             recorder=recorder,
         ),
-        'procedure_hub_adjudicator': procedure_hubs.ProcedureHubAdjudicator(
+        'procedure_hub_adjudicator': local_procedure_hubs.LocalProcedureHubAdjudicator(
             language_model=llm.module_lm('procedure_hub_builder'),
             recorder=recorder,
         ),
@@ -187,8 +199,10 @@ def build_workflow(
     modules = _build_modules(recorder)
     block_corrector_module = modules['block_corrector']
     formatter_module = modules['formatter']
-    seam_module = modules['seam_merger']
-    seam_rewriter_module = modules['seam_rewriter']
+    text_seam_module = modules['text_seam_merger']
+    text_seam_rewriter_module = modules['text_seam_rewriter']
+    image_seam_module = modules['image_seam_merger']
+    image_enricher_module = modules['image_enricher']
     splitter_module = modules['splitter']
     instruction_router_module = modules['instruction_router']
     instruction_grower_module = modules['instruction_grower']
@@ -211,8 +225,15 @@ def build_workflow(
         corrector=block_corrector_module,
     )
     formatter_node = formatter.FormatterNode(module=formatter_module)
-    seam_node = seam_merger.SeamMergerNode(
-        module=seam_module, rewriter=seam_rewriter_module
+    text_seam_node = text_seam_merger.TextSeamMergerNode(
+        module=text_seam_module,
+        rewriter=text_seam_rewriter_module,
+    )
+    image_seam_node = image_seam_merger.ImageSeamMergerNode(
+        merger=image_seam_module
+    )
+    image_enrichment_node = image_enricher.ImageEnrichmentNode(
+        enricher=image_enricher_module,
     )
     splitter_node = splitter.SplitterNode(module=splitter_module)
     instruction_finder_node = instruction_finder.InstructionFinderNode(
@@ -229,7 +250,6 @@ def build_workflow(
         judge=modules['governance_judge'],
         backward_budget=governance_config.backward_context_budget,
         forward_budget=governance_config.forward_context_budget,
-        threshold=governance_config.threshold,
     )
     statement_procedure_builder_node = (
         statement_procedure_builder.StatementProcedureBuilderNode(
@@ -268,25 +288,29 @@ def build_workflow(
         enricher=procedure_enrichment_module,
     )
 
-    statement_hub_node = statement_hubs.StatementHubNode(
+    statement_hub_node = local_statement_hubs.LocalStatementHubNode(
         adjudicator=statement_hub_adjudicator,
         synthesizer=statement_hub_module,
     )
-    procedure_hub_node = procedure_hubs.ProcedureHubNode(
+    procedure_hub_node = local_procedure_hubs.LocalProcedureHubNode(
         adjudicator=procedure_hub_adjudicator,
         synthesizer=procedure_hub_module,
     )
-
     graph = StateGraph(state.State)
     graph.add_node('ocr', ocr.OCRNode().run)
     graph.add_node('block_corrector_worker', block_corrector_node.worker)
     graph.add_node('block_corrector_collect', block_corrector_node.collect)
     graph.add_node('formatter_worker', formatter_node.worker)
     graph.add_node('formatter_collect', formatter_node.collect)
-    graph.add_node('seam_even_worker', seam_node.even_worker)
-    graph.add_node('seam_even_collect', seam_node.even_collect)
-    graph.add_node('seam_odd_worker', seam_node.odd_worker)
-    graph.add_node('seam_odd_collect', seam_node.odd_collect)
+    graph.add_node('text_seam_even_worker', text_seam_node.even_worker)
+    graph.add_node('text_seam_even_collect', text_seam_node.even_collect)
+    graph.add_node('text_seam_odd_worker', text_seam_node.odd_worker)
+    graph.add_node('text_seam_odd_collect', text_seam_node.odd_collect)
+    graph.add_node('image_seam_even_worker', image_seam_node.even_worker)
+    graph.add_node('image_seam_even_collect', image_seam_node.even_collect)
+    graph.add_node('image_seam_odd_worker', image_seam_node.odd_worker)
+    graph.add_node('image_seam_odd_collect', image_seam_node.odd_collect)
+    graph.add_node('image_enrichment', image_enrichment_node.run)
     graph.add_node('splitter', splitter_node.run)
     graph.add_node('instruction_finder', instruction_finder_node.run)
     graph.add_node('governance_walker', governance_walker_node.run)
@@ -310,8 +334,10 @@ def build_workflow(
     graph.add_edge(START, 'ocr')
     block_corrector_entry = 'ocr'
     formatter_entry = 'block_corrector_collect'
-    seam_even_entry = 'formatter_collect'
-    seam_odd_entry = 'seam_even_collect'
+    text_seam_even_entry = 'formatter_collect'
+    text_seam_odd_entry = 'text_seam_even_collect'
+    image_seam_even_entry = 'text_seam_odd_collect'
+    image_seam_odd_entry = 'image_seam_even_collect'
     splitter_entry = 'splitter'
     instruction_entry = 'instruction_finder'
     component_entry = 'pedagogical_component_finder'
@@ -340,18 +366,31 @@ def build_workflow(
     )
     graph.add_edge('formatter_worker', 'formatter_collect')
     graph.add_conditional_edges(
-        seam_even_entry,
-        seam_node.dispatch_even,
-        ['seam_even_worker', 'seam_even_collect'],
+        text_seam_even_entry,
+        text_seam_node.dispatch_even,
+        ['text_seam_even_worker', 'text_seam_even_collect'],
     )
-    graph.add_edge('seam_even_worker', 'seam_even_collect')
+    graph.add_edge('text_seam_even_worker', 'text_seam_even_collect')
     graph.add_conditional_edges(
-        seam_odd_entry,
-        seam_node.dispatch_odd,
-        ['seam_odd_worker', 'seam_odd_collect'],
+        text_seam_odd_entry,
+        text_seam_node.dispatch_odd,
+        ['text_seam_odd_worker', 'text_seam_odd_collect'],
     )
-    graph.add_edge('seam_odd_worker', 'seam_odd_collect')
-    graph.add_edge('seam_odd_collect', splitter_entry)
+    graph.add_edge('text_seam_odd_worker', 'text_seam_odd_collect')
+    graph.add_conditional_edges(
+        image_seam_even_entry,
+        image_seam_node.dispatch_even,
+        ['image_seam_even_worker', 'image_seam_even_collect'],
+    )
+    graph.add_edge('image_seam_even_worker', 'image_seam_even_collect')
+    graph.add_conditional_edges(
+        image_seam_odd_entry,
+        image_seam_node.dispatch_odd,
+        ['image_seam_odd_worker', 'image_seam_odd_collect'],
+    )
+    graph.add_edge('image_seam_odd_worker', 'image_seam_odd_collect')
+    graph.add_edge('image_seam_odd_collect', 'image_enrichment')
+    graph.add_edge('image_enrichment', splitter_entry)
     graph.add_edge('splitter', instruction_entry)
     graph.add_edge('instruction_finder', component_entry)
     graph.add_edge('pedagogical_component_finder', statement_builder_entry)

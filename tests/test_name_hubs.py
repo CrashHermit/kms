@@ -47,11 +47,11 @@ def test_lexical_groups_use_phrase_similarity_not_semantic_similarity():
 def test_entity_and_predicate_name_hubs_have_parallel_labels():
     assert names.name_label('entity') == 'EntityName'
     assert names.name_label('predicate') == 'PredicateName'
-    assert names.name_hub_label('entity') == 'EntityNameHub'
-    assert names.name_hub_label('predicate') == 'PredicateNameHub'
-    assert names.name_hub_label('entity', tier='meta') == 'MetaEntityNameHub'
+    assert names.name_hub_label('entity') == 'LocalEntityNameHub'
+    assert names.name_hub_label('predicate') == 'LocalPredicateNameHub'
+    assert names.name_hub_label('entity', tier='meta') == 'GlobalEntityNameHub'
     assert names.name_hub_label('predicate', tier='meta') == (
-        'MetaPredicateNameHub'
+        'GlobalPredicateNameHub'
     )
 
 
@@ -117,9 +117,9 @@ def test_meta_name_hubs_use_alignment_edges():
     align = queries.merge_name_hub_alignments_query('predicate')
     delete = queries.delete_meta_name_hubs_query('entity')
 
-    assert 'MetaEntityNameHub' in merge
-    assert 'PredicateNameHub' in align
-    assert 'MetaPredicateNameHub' in align
+    assert 'GlobalEntityNameHub' in merge
+    assert 'LocalPredicateNameHub' in align
+    assert 'GlobalPredicateNameHub' in align
     assert 'MERGE (s)-[r:ALIGNS_TO]->(m)' in align
     assert 'DETACH DELETE h' in delete
 
@@ -127,10 +127,10 @@ def test_meta_name_hubs_use_alignment_edges():
 def test_semantic_name_projection_uses_occurrence_membership_path():
     cypher = queries.merge_semantic_name_links_query('predicate')
 
-    assert 'PredicateHub' in cypher
+    assert 'LocalPredicateHub' in cypher
     assert '<-[:CANONICAL]-(c:Predicate)' in cypher
     assert '-[:HAS_NAME]->(n:PredicateName)' in cypher
-    assert '-[:LEXICAL_CANONICAL]->(nh:PredicateNameHub)' in cypher
+    assert '-[:LEXICAL_CANONICAL]->(nh:LocalPredicateNameHub)' in cypher
     assert 'MERGE (h)-[:HAS_NAME_HUB]->(nh)' in cypher
 
 

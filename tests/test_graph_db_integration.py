@@ -36,9 +36,9 @@ def test_connectivity_round_trip_and_idempotent_schema():
 def test_persist_nodes_upserts_labels_and_next_chain():
     source = 'integration-test-book'
     stream = [
-        models.Node(type='header', content='§1', id=0, document_index=0),
-        models.Node(type='paragraph', content='a', id=1, document_index=0),
-        models.Node(type='math', content='$x$', id=2, document_index=0),
+        models.SourceNode(type='header', content='§1', id=0, document_index=0),
+        models.SourceNode(type='paragraph', content='a', id=1, document_index=0),
+        models.SourceNode(type='math', content='$x$', id=2, document_index=0),
     ]
 
     async def one(session, query):

@@ -7,44 +7,44 @@ from kms.construction import instruction_finder
 from kms.core import llm, models
 
 
-def _nodes() -> list[models.Node]:
+def _nodes() -> list[models.SourceNode]:
     return [
-        models.Node(
+        models.SourceNode(
             index=0,
             type='paragraph',
             content='For the following exercises, find the gradient.',
         ),
-        models.Node(
+        models.SourceNode(
             index=1,
             type='paragraph',
             content='280. Find the gradient of $f(x, y) = x^2 + y^2$.',
         ),
-        models.Node(
+        models.SourceNode(
             index=2,
             type='paragraph',
             content='281. Find the gradient of $f(x, y) = xy$.',
         ),
-        models.Node(
+        models.SourceNode(
             index=3,
             type='paragraph',
             content='For the following exercises, find equations of:',
         ),
-        models.Node(
+        models.SourceNode(
             index=4,
             type='paragraph',
             content='a. the tangent plane and',
         ),
-        models.Node(
+        models.SourceNode(
             index=5,
             type='paragraph',
             content='b. the normal line to the given surface at the given point.',
         ),
-        models.Node(
+        models.SourceNode(
             index=6,
             type='paragraph',
             content='302. $z = 4x^2 + y^2$, point $P(2, 1, 8)$',
         ),
-        models.Node(
+        models.SourceNode(
             index=7,
             type='paragraph',
             content=(

@@ -80,7 +80,7 @@ def triplet_rows(
 def evidence_pairs(
     triplets: list[models.Triplet],
     source: str,
-    doc_nodes: list[models.Node],
+    doc_nodes: list[models.SourceNode],
 ) -> list[dict]:
     """Builds evidence node→triplet edge pairs."""
     pairs: list[dict] = []

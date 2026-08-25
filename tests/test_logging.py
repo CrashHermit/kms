@@ -3,8 +3,8 @@ import logging
 
 from kms.construction import (
     pedagogical_component_finder,
-    seam_merger,
     statement_procedure_builder,
+    text_seam_merger,
 )
 from kms.core import logs, models, walker
 
@@ -36,7 +36,9 @@ def test_counts_renders_none_values_and_empty_input():
 
 def _nodes(*contents):
     return [
-        models.Node(type='paragraph', content=text, uuid=f'node-{i}', document_index=0)
+        models.SourceNode(
+            type='paragraph', content=text, uuid=f'node-{i}', document_index=0
+        )
         for i, text in enumerate(contents)
     ]
 
@@ -74,7 +76,7 @@ class _ScriptedRoles:
     def __init__(self, roles):
         self._roles = list(roles)
 
-    async def acall(self, contents):
+    async def acall(self, current_nodes):
         return self._roles.pop(0)
 
 
@@ -123,8 +125,10 @@ def test_statement_procedure_builder_logs_zero_derivations(caplog):
 def test_seam_merger_logs_the_flattened_stream_size(caplog):
     document = models.Document(index=0, image_path='p0.png')
     document.nodes = _nodes('a', 'b')
-    node = seam_merger.SeamMergerNode(module=None, rewriter=None)
-    with caplog.at_level(logging.INFO, logger='kms.construction.seam_merger'):
+    node = text_seam_merger.TextSeamMergerNode(module=None, rewriter=None)
+    with caplog.at_level(
+        logging.INFO, logger='kms.construction.text_seam_merger'
+    ):
         result = node.odd_collect(
             {'documents': [document], 'seam_odd_results': []}
         )

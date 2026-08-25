@@ -9,20 +9,19 @@ from kms.core import models
 def _bundle() -> models.ConstructionBundle:
     source = models.Source(key='book')
     nodes = [
-        models.Node(
+        models.SourceNode(
             uuid='node-0',
             type=models.NodeType.PARAGRAPH,
             content='first',
             document_index=2,
         ),
-        models.Node(
+        models.SourceNode(
             uuid='node-1',
             type=models.NodeType.IMAGE,
-            content='![99]()',
             document_index=2,
-            image_path='images/actual.png',
+            assets=[models.VisualAsset(path='images/actual.png')],
         ),
-        models.Node(
+        models.SourceNode(
             uuid='node-2',
             type=models.NodeType.PARAGRAPH,
             content=' second ',
@@ -49,8 +48,10 @@ def test_compose_statement_preserves_interleaved_image_provenance() -> None:
     composed = compose_statement(bundle, statement)
 
     assert [part.position for part in composed.parts] == [0, 1, 2]
-    assert composed.parts[1].content == '![99]()'
-    assert composed.parts[1].image_path == 'images/actual.png'
+    assert composed.parts[1].content is None
+    assert [asset.path for asset in composed.parts[1].assets] == [
+        'images/actual.png'
+    ]
     assert composed.parts[1].document_index == 2
     assert composed.pictures == [
         {'index': 0, 'document_index': 2, 'image_path': 'images/actual.png'}

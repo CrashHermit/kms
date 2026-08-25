@@ -8,12 +8,98 @@ import subprocess
 import threading
 import time
 import urllib.error
-import urllib.request
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from kms import config
+
+
+@dataclass
+class DedicatedServerConfig:
+    """Configuration for one embedding or reranking llama-server."""
+
+    start: list[str]
+    endpoint: str
+    ready_timeout: float
+    poll_interval: float
+    request_timeout: float
+    terminate_timeout: float
+
+
+class DedicatedServer:
+    """Lazily manages one process-level retrieval server."""
+
+    def __init__(self, server_config: DedicatedServerConfig) -> None:
+        self._config = server_config
+        self._proc: subprocess.Popen | None = None
+        self._lock = threading.Lock()
+
+    def _model_path(self) -> Path:
+        """Extracts the model path from the llama-server command."""
+        try:
+            return Path(self._config.start[self._config.start.index('--model') + 1])
+        except (ValueError, IndexError) as exc:
+            raise RuntimeError(
+                f'retrieval server command has no model path: {self._config.start!r}'
+            ) from exc
+
+    def ensure_started(self) -> None:
+        """Starts the server if its health endpoint is not ready."""
+        with self._lock:
+            health = _get_json(
+                self._config.endpoint + '/health',
+                self._config.request_timeout,
+            )
+            if health is not None and health.get('status') not in (
+                'error',
+                'failed',
+            ):
+                return
+            model = self._model_path()
+            if not model.is_file():
+                raise RuntimeError(f'retrieval model missing: {model}')
+            self._proc = subprocess.Popen(
+                self._config.start,
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            deadline = time.monotonic() + self._config.ready_timeout
+            while time.monotonic() < deadline:
+                if self._proc.poll() is not None:
+                    raise RuntimeError(
+                        f'retrieval model {model} process exited early with '
+                        f'code {self._proc.returncode}'
+                    )
+                health = _get_json(
+                    self._config.endpoint + '/health',
+                    self._config.request_timeout,
+                )
+                if health is not None:
+                    if health.get('status') in ('error', 'failed'):
+                        raise RuntimeError(
+                            f'retrieval model {model} health check failed'
+                        )
+                    return
+                time.sleep(self._config.poll_interval)
+            raise RuntimeError(
+                f'retrieval model {model} endpoint '
+                f'{self._config.endpoint} not ready within '
+                f'{self._config.ready_timeout:.0f}s'
+            )
+
+    async def aensure_started(self) -> None:
+        """Ensures the retrieval process without blocking the loop."""
+        await asyncio.to_thread(self.ensure_started)
+
+    def shutdown(self) -> None:
+        """Stops the dedicated retrieval process."""
+        with self._lock:
+            if self._proc is not None:
+                _terminate(self._proc, self._config.terminate_timeout)
+                self._proc = None
 
 
 @dataclass
@@ -273,6 +359,114 @@ def default_router() -> RouterConfig:
         request_timeout=serving.request_timeout,
         terminate_timeout=serving.terminate_timeout,
     )
+
+
+def _dedicated_server(
+    settings: config.DedicatedRetrievalServerConfig,
+    *,
+    reranking: bool,
+) -> DedicatedServer:
+    path = _expand_home(settings.model, Path.home())
+    flags = [
+        'llama-server',
+        '--model',
+        path,
+        '--host',
+        settings.host,
+        '--port',
+        str(settings.port),
+        '--embedding',
+        '--device',
+        settings.device,
+    ]
+    if reranking:
+        flags.append('--reranking')
+    flags.extend(
+        [
+            '--pooling',
+            'rank' if reranking else 'last',
+            '--n-gpu-layers',
+            str(settings.n_gpu_layers),
+            '--threads',
+            str(settings.threads),
+            '--threads-batch',
+            str(settings.threads_batch),
+            '--ctx-size',
+            str(settings.ctx_size),
+            '--parallel',
+            str(settings.parallel),
+            '--cache-ram',
+            str(settings.cache_ram),
+            '--no-warmup',
+        ]
+    )
+    return DedicatedServer(
+        DedicatedServerConfig(
+            start=flags,
+            endpoint=f'http://{settings.host}:{settings.port}',
+            ready_timeout=settings.ready_timeout,
+            poll_interval=settings.poll_interval,
+            request_timeout=settings.request_timeout,
+            terminate_timeout=settings.terminate_timeout,
+        )
+    )
+
+
+def default_embedding_server() -> DedicatedServer:
+    """Builds the dedicated embedding server from current settings."""
+    return _dedicated_server(
+        config.get_settings().serving.retrieval.embedding,
+        reranking=False,
+    )
+
+
+def default_reranker_server() -> DedicatedServer:
+    """Builds the dedicated reranker server from current settings."""
+    return _dedicated_server(
+        config.get_settings().serving.retrieval.reranker,
+        reranking=True,
+    )
+
+
+class RetrievalServerManager:
+    """Owns the independent embedding and reranking servers."""
+
+    def __init__(
+        self,
+        embedding: DedicatedServer | None = None,
+        reranker: DedicatedServer | None = None,
+    ) -> None:
+        settings = config.get_settings().serving.retrieval
+        self._embedding = embedding or default_embedding_server()
+        self._reranker = reranker or default_reranker_server()
+        self._manage_embedding = settings.embedding.manage
+        self._manage_reranker = settings.reranker.manage
+
+    def ensure_embedding_started(self) -> None:
+        if self._manage_embedding:
+            self._embedding.ensure_started()
+
+    async def aensure_embedding_started(self) -> None:
+        if self._manage_embedding:
+            await self._embedding.aensure_started()
+
+    def ensure_reranker_started(self) -> None:
+        if self._manage_reranker:
+            self._reranker.ensure_started()
+
+    async def aensure_reranker_started(self) -> None:
+        if self._manage_reranker:
+            await self._reranker.aensure_started()
+
+    def shutdown(self) -> None:
+        self._embedding.shutdown()
+        self._reranker.shutdown()
+
+
+@lru_cache(maxsize=1)
+def retrieval_server_manager() -> RetrievalServerManager:
+    """Returns the shared retrieval server manager."""
+    return RetrievalServerManager()
 
 
 def _preset_ini(home: Path) -> str:

@@ -17,9 +17,8 @@ def _document():
     return models.Document(
         index=3,
         image_path='page.png',
-        content='original text',
         nodes=[
-            models.Node(
+            models.SourceNode(
                 index=0,
                 type=models.NodeType.PARAGRAPH,
                 content='original text',
@@ -59,6 +58,19 @@ def test_editor_rejects_duplicate_line_indices():
             block_type='text',
         )
 
+def test_editor_ignores_out_of_range_line_indices():
+    edits = [
+        block_corrector.LineEdit(index=1, replacement='A'),
+        block_corrector.LineEdit(index=2, replacement='B'),
+    ]
+    result = block_corrector.BlockCorrectionEditor.decode(
+        None,
+        SimpleNamespace(edits=edits),
+        original_text='a',
+        block_type='text',
+    )
+    assert result == [edits[0]]
+
 
 def test_collect_writes_corrected_nodes_to_documents():
     document = _document()
@@ -67,7 +79,7 @@ def test_collect_writes_corrected_nodes_to_documents():
         {
             'documents': [document],
             'block_correction_results': [
-                (3, [models.Node(content='corrected text')])
+                (3, [models.SourceNode(content='corrected text')])
             ],
         }
     )

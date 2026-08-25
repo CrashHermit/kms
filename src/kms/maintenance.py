@@ -7,12 +7,13 @@ import json
 from kms import runtime
 from kms.construction import (
     entity_hubs,
+    local_procedure_hubs,
+    local_statement_hubs,
     maintenance,
     predicate_hubs,
-    procedure_hubs,
-    statement_hubs,
 )
 from kms.core import llm
+from kms.graph import maintenance as graph_maintenance
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -33,17 +34,21 @@ def _parser() -> argparse.ArgumentParser:
     meta.add_argument(
         '--learning',
         action='store_true',
-        help='Also rebuild statement and procedure meta hubs.',
+        help='Also rebuild global statement and procedure hubs.',
     )
     meta.add_argument(
         '--statements',
         action='store_true',
-        help='Rebuild the MetaStatementHub layer.',
+        help='Rebuild the GlobalStatementHub layer.',
     )
     meta.add_argument(
         '--procedures',
         action='store_true',
-        help='Rebuild the MetaProcedureHub layer.',
+        help='Rebuild the GlobalProcedureHub layer.',
+    )
+    subparsers.add_parser(
+        'rebuild-embeddings',
+        help='Re-embed all persisted vector-indexed graph records.',
     )
     return parser
 
@@ -69,28 +74,31 @@ def _models() -> dict[str, object]:
         'predicate_synthesizer': predicate_hubs.PredicateHubSynthesizer(
             language_model=predicate_language_model
         ),
-        'statement_adjudicator': statement_hubs.StatementHubAdjudicator(
+        'statement_adjudicator': local_statement_hubs.LocalStatementHubAdjudicator(
             language_model=statement_language_model
         ),
-        'statement_synthesizer': statement_hubs.StatementHubSynthesizer(
+        'statement_synthesizer': local_statement_hubs.LocalStatementHubSynthesizer(
             language_model=statement_language_model
         ),
-        'procedure_adjudicator': procedure_hubs.ProcedureHubAdjudicator(
+        'procedure_adjudicator': local_procedure_hubs.LocalProcedureHubAdjudicator(
             language_model=procedure_language_model
         ),
-        'procedure_synthesizer': procedure_hubs.ProcedureHubSynthesizer(
+        'procedure_synthesizer': local_procedure_hubs.LocalProcedureHubSynthesizer(
             language_model=procedure_language_model
         ),
     }
-
-
 async def _run(arguments: argparse.Namespace) -> dict:
     """Run the selected maintenance operation in a shared runtime."""
-    models = _models()
     async with runtime.Runtime() as application:
         session_factory = application.session_factory()
         if not session_factory:
             raise RuntimeError('Neo4j is not configured')
+        if arguments.command == 'rebuild-embeddings':
+            return await graph_maintenance.rebuild_embeddings(
+                session_factory=session_factory
+            )
+
+        models = _models()
         if arguments.command == 'rebuild-meta':
             return await maintenance.rebuild_meta(
                 session_factory=session_factory,

@@ -3,32 +3,54 @@
 import logging
 
 import dspy
+from pydantic import BaseModel, Field
 
 from kms import config
-from kms.core import content, identity, models, module, recording, state, walker
+from kms.core import (
+    context_window,
+    identity,
+    models,
+    module,
+    recording,
+    state,
+)
 
 logger = logging.getLogger(__name__)
 
 
+class InstructionNodeInput(BaseModel):
+    """Text-only local input for instruction routing and growth."""
+
+    local_index: int = Field(
+        description='Zero-based position in this input list; never infer positions from node_text.'
+    )
+    node_type: str = Field(
+        description='Canonical node type for the projected source node.'
+    )
+    node_text: str = Field(
+        description='Canonical node text; numbers here are content, not positions.'
+    )
+
 class InstructionRouterSignature(dspy.Signature):
     r"""
-    Classify only the node marked `<designated>`.
-
-    Return True only when that node is an unnumbered directive introducing or
-    governing multiple exercises. Return False for a numbered exercise,
-    lettered fragment without its lead-in, ordinary prose, heading, answer, or
-    continuation of an earlier instruction. Surrounding nodes are context
-    only; adjacency does not make the designated node an instruction.
+    Classify only `target_node`. The before and after lists are context only.
+    Return True only when the target node is an unnumbered directive
+    introducing or governing multiple exercises. Return False for a numbered
+    exercise, lettered fragment without its lead-in, ordinary prose, heading,
+    answer, or continuation of an earlier instruction.
 
     Return only a boolean. Do not return a reason, label, span, or text.
     Answer only the boolean True or False.
     """
 
-    current_node: content.ContentParts = dspy.InputField(
-        description=(
-            'A bounded local window. The designated node is labeled '
-            '`<designated>`; surrounding nodes are context only.'
-        )
+    context_before: list[InstructionNodeInput] = dspy.InputField(
+        description='Ordered text records immediately before target_node; context only.',
+    )
+    target_node: InstructionNodeInput = dspy.InputField(
+        description='The only node being classified as an instruction start.',
+    )
+    context_after: list[InstructionNodeInput] = dspy.InputField(
+        description='Ordered text records immediately after target_node; context only.',
     )
     is_instruction_start: bool = dspy.OutputField(
         description='True only when the designated node starts a shared exercise instruction.'
@@ -37,30 +59,113 @@ class InstructionRouterSignature(dspy.Signature):
 
 class InstructionGrowerSignature(dspy.Signature):
     r"""
-    Classify only the node marked `<candidate>`.
+    Classify only `candidate_node`.
 
-    `instruction_nodes` are the accepted members of one instruction. The
-    candidate owns the inclusion decision: return True only when it continues
-    that same directive and completes its content. Lettered fragments may
-    continue it before the first numbered exercise. Return False for the first
-    numbered exercise, a new instruction, unrelated prose, or adjacency alone;
-    never resume an instruction after an exercise.
+    `accepted_nodes` are the accepted members of one instruction. Return True
+    only when candidate_node continues that same directive. Return False for
+    the first numbered exercise, a new instruction, unrelated prose, or
+    adjacency alone; never resume an instruction after an exercise.
 
-    Return only a boolean. Do not return a reason, label, span, or text.
-    Answer only the boolean True or False.
+    Return only a boolean. Answer only True or False.
     """
 
-    instruction_nodes: content.ContentParts = dspy.InputField(
-        description='Accepted instruction nodes in document order.'
+    accepted_nodes: list[InstructionNodeInput] = dspy.InputField(
+        description='Accepted text records in document order; no assets or bytes.',
     )
-    next_node: content.ContentParts = dspy.InputField(
-        description=(
-            'A bounded local window around the immediately following '
-            'candidate, labeled `<candidate>`.'
-        )
+    context_before: list[InstructionNodeInput] = dspy.InputField(
+        description='Text records immediately before candidate_node; context only.',
+    )
+    candidate_node: InstructionNodeInput = dspy.InputField(
+        description='The only node being classified for inclusion.',
+    )
+    context_after: list[InstructionNodeInput] = dspy.InputField(
+        description='Text records immediately after candidate_node; context only.',
     )
     include_next_node: bool = dspy.OutputField(
-        description='True only when next_node continues the anchored instruction.'
+        description='True only when candidate_node continues the anchored instruction.'
+    )
+
+def _instruction_input(
+    node: context_window.ContextNode, local_index: int = 0
+) -> InstructionNodeInput:
+    return InstructionNodeInput(
+        local_index=local_index,
+        node_type=node.type or '',
+        node_text=node.content or '',
+    )
+
+
+def _instruction_lists(
+    nodes: list[context_window.ContextNode],
+) -> tuple[
+    list[InstructionNodeInput], InstructionNodeInput, list[InstructionNodeInput]
+]:
+    target_index = next(
+        index for index, node in enumerate(nodes) if node.marker is not None
+    )
+    return (
+        [
+            _instruction_input(node, index)
+            for index, node in enumerate(nodes[:target_index])
+        ],
+        _instruction_input(nodes[target_index]),
+        [
+            _instruction_input(node, index)
+            for index, node in enumerate(nodes[target_index + 1 :])
+        ],
+    )
+
+
+def _router_demo(
+    text: str, is_instruction_start: bool, node_type: str = 'paragraph'
+) -> dspy.Example:
+    window = [
+        context_window.ContextNode(
+            position=0,
+            type=node_type,
+            marker='designated',
+            content=text,
+        )
+    ]
+    before, target, after = _instruction_lists(window)
+    return dspy.Example(
+        context_before=before,
+        target_node=target,
+        context_after=after,
+        is_instruction_start=is_instruction_start,
+    ).with_inputs('context_before', 'target_node', 'context_after')
+
+
+def _grower_demo(
+    accepted: list[str],
+    candidate: str,
+    include_next_node: bool,
+    candidate_type: str = 'paragraph',
+) -> dspy.Example:
+    accepted_nodes = [
+        InstructionNodeInput(local_index=index, node_type='paragraph', node_text=text)
+        for index, text in enumerate(accepted)
+    ]
+    candidate_context = [
+        context_window.ContextNode(
+            position=0,
+            type=candidate_type,
+            marker='candidate',
+            content=candidate,
+        )
+    ]
+    before, target, after = _instruction_lists(candidate_context)
+    return dspy.Example(
+        accepted_nodes=accepted_nodes,
+        context_before=before,
+        candidate_node=target,
+        context_after=after,
+        include_next_node=include_next_node,
+    ).with_inputs(
+        'accepted_nodes',
+        'context_before',
+        'candidate_node',
+        'context_after',
     )
 
 
@@ -77,81 +182,38 @@ class InstructionRouter(module.Module):
     ) -> None:
         super().__init__(language_model, recorder)
         self.predictor.demos = [
-            # A complete, unnumbered directive is a start.
-            dspy.Example(
-                current_node=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=0,
-                            type='paragraph',
-                            marker='designated',
-                            content='For the following exercises, simplify each expression.',
-                        )
-                    ]
-                ),
-                is_instruction_start=True,
-            ).with_inputs('current_node'),
-            # The exercise number is the boundary, even when its wording is
-            # an imperative.
-            dspy.Example(
-                current_node=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=0,
-                            type='paragraph',
-                            marker='designated',
-                            content='185. Determine whether the series converges.',
-                        )
-                    ]
-                ),
-                is_instruction_start=False,
-            ).with_inputs('current_node'),
-            dspy.Example(
-                current_node=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=0,
-                            type='list',
-                            marker='designated',
-                            content='12. Find the derivative of f(x).',
-                        )
-                    ]
-                ),
-                is_instruction_start=False,
-            ).with_inputs('current_node'),
-            # A lettered node without its shared lead-in is not an instruction
-            # start.
-            dspy.Example(
-                current_node=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=0,
-                            type='paragraph',
-                            marker='designated',
-                            content='a. Find the tangent plane.',
-                        )
-                    ]
-                ),
-                is_instruction_start=False,
-            ).with_inputs('current_node'),
-            dspy.Example(
-                current_node=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=0,
-                            type='paragraph',
-                            marker='designated',
-                            content='For Exercises 8–10, determine whether each set is a subspace.',
-                        )
-                    ]
-                ),
-                is_instruction_start=True,
-            ).with_inputs('current_node'),
+            _router_demo(
+                'For the following exercises, simplify each expression.',
+                True,
+            ),
+            _router_demo(
+                '185. Determine whether the series converges.',
+                False,
+            ),
+            _router_demo(
+                '12. Find the derivative of f(x).',
+                False,
+                node_type='list',
+            ),
+            _router_demo('a. Find the tangent plane.', False),
+            _router_demo(
+                'For Exercises 8–10, determine whether each set is a subspace.',
+                True,
+            ),
         ]
 
-    def encode(self, current_node: list[walker.WindowNode]) -> dict:
-        """Builds the multimodal input for one designated node window."""
-        return {'current_node': content.labeled_content_parts(current_node)}
+    def encode(
+        self,
+        context_before: list[InstructionNodeInput],
+        target_node: InstructionNodeInput,
+        context_after: list[InstructionNodeInput],
+    ) -> dict[str, object]:
+        """Passes document-ordered target and context to DSPy."""
+        return {
+            'context_before': context_before,
+            'target_node': target_node,
+            'context_after': context_after,
+        }
 
     def decode(self, prediction, **inputs) -> bool:
         """Returns a strictly boolean routing decision."""
@@ -173,196 +235,69 @@ class InstructionGrower(module.Module):
     ) -> None:
         super().__init__(language_model, recorder)
         self.predictor.demos = [
-            # Lettered fragments can complete a split lead-in.
-            dspy.Example(
-                instruction_nodes=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=0,
-                            type='paragraph',
-                            content='For the following exercises, find equations of:',
-                        )
-                    ]
-                ),
-                next_node=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=1,
-                            type='paragraph',
-                            marker='candidate',
-                            content='a. the tangent plane and',
-                        )
-                    ]
-                ),
-                include_next_node=True,
-            ).with_inputs('instruction_nodes', 'next_node'),
-            dspy.Example(
-                instruction_nodes=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=0,
-                            type='paragraph',
-                            content='For the following exercises, find equations of:',
-                        ),
-                        walker.WindowNode(
-                            position=1,
-                            type='paragraph',
-                            content='a. the tangent plane and',
-                        ),
-                    ]
-                ),
-                next_node=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=2,
-                            type='paragraph',
-                            marker='candidate',
-                            content='b. the normal line to the surface.',
-                        )
-                    ]
-                ),
-                include_next_node=True,
-            ).with_inputs('instruction_nodes', 'next_node'),
-            # The first numbered exercise ends the instruction.
-            dspy.Example(
-                instruction_nodes=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=0,
-                            type='paragraph',
-                            content='For the following exercises, find equations of:',
-                        ),
-                        walker.WindowNode(
-                            position=1,
-                            type='paragraph',
-                            content='a. the tangent plane and',
-                        ),
-                    ]
-                ),
-                next_node=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=2,
-                            type='paragraph',
-                            marker='candidate',
-                            content='302. $z = 4x^2 + y^2$, point P(2, 1, 8)',
-                        )
-                    ]
-                ),
-                include_next_node=False,
-            ).with_inputs('instruction_nodes', 'next_node'),
-            # A new directive is a boundary, not a continuation.
-            dspy.Example(
-                instruction_nodes=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=0,
-                            type='paragraph',
-                            content='For the following exercises, simplify each expression.',
-                        )
-                    ]
-                ),
-                next_node=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=1,
-                            type='paragraph',
-                            marker='candidate',
-                            content='For Exercises 8–10, determine whether each set is a subspace.',
-                        )
-                    ]
-                ),
-                include_next_node=False,
-            ).with_inputs('instruction_nodes', 'next_node'),
-            # A continuation after an exercise number cannot be pulled back
-            # into the earlier instruction.
-            dspy.Example(
-                instruction_nodes=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=0,
-                            type='paragraph',
-                            content='For the following exercises, find the gradient.',
-                        ),
-                        walker.WindowNode(
-                            position=1,
-                            type='paragraph',
-                            content='280. Find the gradient of f(x, y).',
-                        ),
-                    ]
-                ),
-                next_node=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=2,
-                            type='paragraph',
-                            marker='candidate',
-                            content='Use the definition of the gradient.',
-                        )
-                    ]
-                ),
-                include_next_node=False,
-            ).with_inputs('instruction_nodes', 'next_node'),
-            # Positional adjacency alone does not make an image a member.
-            dspy.Example(
-                instruction_nodes=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=0,
-                            type='paragraph',
-                            content='For the following exercises, identify the extrema.',
-                        )
-                    ]
-                ),
-                next_node=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=1,
-                            type='image',
-                            marker='candidate',
-                            content='Decorative publisher illustration.',
-                        )
-                    ]
-                ),
-                include_next_node=False,
-            ).with_inputs('instruction_nodes', 'next_node'),
-            # An image whose visible content is explicitly used by the
-            # directive belongs to the instruction span.
-            dspy.Example(
-                instruction_nodes=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=0,
-                            type='paragraph',
-                            content='For the following exercises, use the diagram to identify the extrema.',
-                        )
-                    ]
-                ),
-                next_node=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=1,
-                            type='image',
-                            marker='candidate',
-                            content='Diagram of the curve and its marked extrema.',
-                        )
-                    ]
-                ),
-                include_next_node=True,
-            ).with_inputs('instruction_nodes', 'next_node'),
+            _grower_demo(
+                ['For the following exercises, find equations of:'],
+                'a. the tangent plane and',
+                True,
+            ),
+            _grower_demo(
+                [
+                    'For the following exercises, find equations of:',
+                    'a. the tangent plane and',
+                ],
+                'b. the normal line to the surface.',
+                True,
+            ),
+            _grower_demo(
+                [
+                    'For the following exercises, find equations of:',
+                    'a. the tangent plane and',
+                ],
+                '302. $z = 4x^2 + y^2$, point P(2, 1, 8)',
+                False,
+            ),
+            _grower_demo(
+                ['For the following exercises, simplify each expression.'],
+                'For Exercises 8–10, determine whether each set is a subspace.',
+                False,
+            ),
+            _grower_demo(
+                [
+                    'For the following exercises, find the gradient.',
+                    '280. Find the gradient of f(x, y).',
+                ],
+                'Use the definition of the gradient.',
+                False,
+            ),
+            _grower_demo(
+                ['For the following exercises, identify the extrema.'],
+                'Decorative publisher illustration.',
+                False,
+                candidate_type='image',
+            ),
+            _grower_demo(
+                [
+                    'For the following exercises, use the diagram to identify the extrema.'
+                ],
+                'Diagram of the curve and its marked extrema.',
+                True,
+                candidate_type='image',
+            ),
         ]
 
     def encode(
         self,
-        instruction_nodes: list[walker.WindowNode],
-        next_node: list[walker.WindowNode],
-    ) -> dict:
-        """Builds labelled multimodal inputs for the anchor and candidate windows."""
+        accepted_nodes: list[InstructionNodeInput],
+        context_before: list[InstructionNodeInput],
+        candidate_node: InstructionNodeInput,
+        context_after: list[InstructionNodeInput],
+    ) -> dict[str, object]:
+        """Passes document-ordered target and context to DSPy."""
         return {
-            'instruction_nodes': content.labeled_content_parts(
-                instruction_nodes
-            ),
-            'next_node': content.labeled_content_parts(next_node),
+            'accepted_nodes': accepted_nodes,
+            'context_before': context_before,
+            'candidate_node': candidate_node,
+            'context_after': context_after,
         }
 
     def decode(self, prediction, **inputs) -> bool:
@@ -375,31 +310,12 @@ def _strict_bool(value: object, field_name: str) -> bool:
     return module.require_bool(value, field_name)
 
 
-def _node_view(
-    node: models.Node, position: int, marker: str | None = None
-) -> walker.WindowNode:
-    """Builds a local view for the designated or candidate node."""
-    return walker.WindowNode(
-        position=position,
-        type=node.type,
-        content=node.content,
-        image_path=node.image_path,
-        marker=marker,
-    )
-
-
 async def find_instruction_spans(
-    nodes: list[models.Node],
+    nodes: list[models.SourceNode],
     router: InstructionRouter,
     grower: InstructionGrower,
 ) -> list[list[int]]:
-    """Scans and grows instruction spans deterministically over ``nodes``.
-
-    The router is called once for each unclaimed node. A routed start anchors a
-    span, and the grower then examines each following node exactly once until
-    it returns False or the stream ends. Model positions are local and are
-    converted to the stable node ids only after the decisions are validated.
-    """
+    """Scans and grows instruction spans deterministically over ``nodes``."""
     spans: list[list[int]] = []
     cursor = 0
     finder_settings = config.get_settings().stages.finders
@@ -407,15 +323,20 @@ async def find_instruction_spans(
     max_span_budget = finder_settings.max_lookahead_budget
 
     while cursor < len(nodes):
-        start_window = walker.marked_window(
+        selected = context_window.select_around(
             nodes,
             [cursor],
             backward_budget=0,
             forward_budget=context_budget,
             marker='designated',
         )
+        before, target, after = _instruction_lists(selected)
         is_start = _strict_bool(
-            await router.aforward(current_node=start_window),
+            await router.aforward(
+                context_before=before,
+                target_node=target,
+                context_after=after,
+            ),
             'is_instruction_start',
         )
         if not is_start:
@@ -423,29 +344,36 @@ async def find_instruction_spans(
             continue
 
         end = cursor + 1
-        accepted_size = walker.estimate_tokens(nodes[cursor])
+        accepted_size = context_window.estimate_tokens(nodes[cursor])
         while end < len(nodes):
-            next_size = walker.estimate_tokens(nodes[end])
+            next_size = context_window.estimate_tokens(nodes[end])
             if accepted_size + next_size > max_span_budget:
                 raise ValueError(
                     f'instruction span reaches the {max_span_budget}-token '
                     f'look-ahead limit at cursor {cursor}'
                 )
             accepted = [
-                _node_view(nodes[position], position)
-                for position in range(cursor, end)
+                _instruction_input(node, index)
+                for index, node in enumerate(
+                    context_window.project_nodes(nodes[cursor:end])
+                )
             ]
-            candidate_window = walker.marked_window(
+            selected_candidate = context_window.select_around(
                 nodes,
                 [end],
                 backward_budget=0,
                 forward_budget=context_budget,
                 marker='candidate',
             )
+            candidate_before, candidate, candidate_after = _instruction_lists(
+                selected_candidate
+            )
             include = _strict_bool(
                 await grower.aforward(
-                    instruction_nodes=accepted,
-                    next_node=candidate_window,
+                    accepted_nodes=accepted,
+                    context_before=candidate_before,
+                    candidate_node=candidate,
+                    context_after=candidate_after,
                 ),
                 'include_next_node',
             )

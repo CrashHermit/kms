@@ -23,7 +23,7 @@ logging.getLogger('openai').setLevel(logging.WARNING)
 logging.getLogger('litellm').setLevel(logging.WARNING)
 
 from kms import runtime  # noqa: E402
-from kms.core import content, loading  # noqa: E402
+from kms.core import loading  # noqa: E402
 from kms.graph import db, schema  # noqa: E402
 
 PDF = 'tests/fixtures/books/calc3_gradients_exercises.pdf'
@@ -51,14 +51,7 @@ def _require_destructive_test_guard() -> None:
 
 
 def _assert_recording_value(value: object) -> None:
-    """Checks replayed values for canonical multimodal/legacy shape."""
-    if isinstance(value, content.ContentParts):
-        assert isinstance(value.content, content.Content)
-        assert all(
-            isinstance(part, (content.TextPart, content.ImagePart))
-            for part in value.content.parts
-        )
-        return
+    """Rejects legacy recording values while allowing text-only records."""
     if isinstance(value, list):
         if any(type(item).__name__ == 'WindowNode' for item in value):
             raise AssertionError('recording contains legacy WindowNode inputs')

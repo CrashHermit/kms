@@ -204,3 +204,58 @@ def test_default_router_uses_configured_preset_file(monkeypatch, tmp_path):
     assert '--models-preset' in config.start
     assert '--models-max' in config.start
     assert (tmp_path / 'models' / 'kms-models.ini').exists()
+
+
+def test_default_retrieval_servers_are_cpu_only_and_separate():
+    embedding = serve.default_embedding_server()._config
+    reranker = serve.default_reranker_server()._config
+    assert embedding.endpoint.endswith(':8081')
+    assert reranker.endpoint.endswith(':8082')
+    assert '--n-gpu-layers' in embedding.start
+    assert embedding.start[embedding.start.index('--n-gpu-layers') + 1] == '0'
+    assert '--device' in embedding.start
+    assert embedding.start[embedding.start.index('--device') + 1] == 'none'
+    assert '--device' in reranker.start
+    assert reranker.start[reranker.start.index('--device') + 1] == 'none'
+    assert '--reranking' in reranker.start
+
+
+def test_dedicated_server_reports_missing_model(monkeypatch, tmp_path):
+    server = serve.DedicatedServer(
+        serve.DedicatedServerConfig(
+            start=['llama-server', '--model', str(tmp_path / 'missing.gguf')],
+            endpoint='http://127.0.0.1:9999',
+            ready_timeout=1.0,
+            poll_interval=0.0,
+            request_timeout=1.0,
+            terminate_timeout=1.0,
+        )
+    )
+    monkeypatch.setattr(serve, '_get_json', lambda url, timeout: None)
+    with pytest.raises(RuntimeError, match='missing.gguf'):
+        server.ensure_started()
+
+
+def test_dedicated_server_waits_for_health(monkeypatch, tmp_path):
+    model = tmp_path / 'model.gguf'
+    model.touch()
+    states = iter([None, {'status': 'ok'}])
+    pops = []
+    monkeypatch.setattr(serve, '_get_json', lambda url, timeout: next(states))
+    monkeypatch.setattr(
+        serve.subprocess,
+        'Popen',
+        lambda *args, **kwargs: pops.append((args, kwargs)) or _FakeProc(),
+    )
+    server = serve.DedicatedServer(
+        serve.DedicatedServerConfig(
+            start=['llama-server', '--model', str(model)],
+            endpoint='http://127.0.0.1:9999',
+            ready_timeout=1.0,
+            poll_interval=0.0,
+            request_timeout=1.0,
+            terminate_timeout=1.0,
+        )
+    )
+    server.ensure_started()
+    assert pops[0][1]['start_new_session'] is True

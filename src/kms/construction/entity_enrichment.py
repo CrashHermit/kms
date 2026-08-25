@@ -2,7 +2,14 @@ import dspy
 from pydantic import BaseModel, Field
 
 from kms import config
-from kms.core import content, identity, models, module, semantic, state
+from kms.core import (
+    context_window,
+    identity,
+    models,
+    module,
+    semantic,
+    state,
+)
 
 
 class TermDescription(BaseModel):
@@ -20,8 +27,14 @@ class EntityEnrichmentSignature(dspy.Signature):
     facts. Return exactly one description per input term in order.
     """
 
-    passage: content.ContentParts = dspy.InputField(
-        description='The passage with optional figures.'
+    context_before: list[semantic.TermContextNodeInput] = dspy.InputField(
+        description='Ordered preceding text context; reference only.'
+    )
+    target_node: semantic.TermContextNodeInput = dspy.InputField(
+        description='The target node containing the local entity term context.'
+    )
+    context_after: list[semantic.TermContextNodeInput] = dspy.InputField(
+        description='Ordered following text context; reference only.'
     )
     terms: list[str] = dspy.InputField(description='Exact entity terms.')
     description: str = dspy.OutputField(
@@ -33,9 +46,23 @@ class EntityEnricher(module.Module):
     signature = EntityEnrichmentSignature
     record_name = 'entity_enrichment'
 
-    def encode(self, passage: content.Content, terms: list[str]) -> dict:
+    def encode(
+        self,
+        context_before: list[context_window.ContextNode],
+        target_node: context_window.ContextNode,
+        context_after: list[context_window.ContextNode],
+        terms: list[str],
+    ) -> dict[str, object]:
         return {
-            'passage': content.ContentParts(content=passage),
+            'context_before': [
+                semantic.term_context_input(node, index)
+                for index, node in enumerate(context_before)
+            ],
+            'target_node': semantic.term_context_input(target_node),
+            'context_after': [
+                semantic.term_context_input(node, index)
+                for index, node in enumerate(context_after)
+            ],
             'terms': terms,
         }
 

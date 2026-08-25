@@ -1,7 +1,7 @@
 import asyncio
 
-from kms.core import models
-from kms.graph import instructions, nodes, statements, writer
+from kms.core import identity, models
+from kms.graph import instructions, nodes, writer
 
 
 def _instruction(block=None, member_positions=None):
@@ -31,9 +31,9 @@ def test_instruction_uuid_distinguishes_block_and_source():
 def test_instruction_uuids_are_disjoint_from_other_tiers():
     key = instructions.instruction_uuid('book.pdf', [7])
     # Create a mock node with the expected UUID
-    mock_node = models.Node(uuid='node-uuid-7', document_index=0)
+    mock_node = models.SourceNode(uuid='node-uuid-7', document_index=0)
     assert key != nodes.node_uuid('book.pdf', mock_node)
-    assert key != statements.statement_uuid('book.pdf', [7])
+    assert key != identity.statement_uuid('book.pdf', [7])
     assert key != nodes.source_uuid('book.pdf')
 
 
@@ -46,7 +46,7 @@ def test_properties_carry_only_identity():
 
 
 def test_instruction_member_pairs_one_per_member():
-    node_stream = [models.Node(uuid=f'node-{index}') for index in range(4)]
+    node_stream = [models.SourceNode(uuid=f'node-{index}') for index in range(4)]
     pairs = instructions.instruction_member_pairs(
         [_instruction(block=[0], member_positions=[1, 2, 3])], node_stream, 'ea2e.pdf'
     )
@@ -91,7 +91,7 @@ class _FakeDriver:
 
 
 def _node_stream():
-    return [models.Node(uuid=f'node-{index}') for index in range(3)]
+    return [models.SourceNode(uuid=f'node-{index}') for index in range(3)]
 
 
 def test_persist_instructions_writes_hubs_then_member_edges():

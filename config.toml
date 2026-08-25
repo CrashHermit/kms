@@ -39,12 +39,22 @@ base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
 max_tokens = 8192
 
-[models.modules.seam_merger]
+[models.modules.text_seam_merger]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
 max_tokens = 8192
 
-[models.modules.seam_rewriter]
+[models.modules.text_seam_rewriter]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+max_tokens = 8192
+
+[models.modules.image_seam_merger]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/qwen3.5-9b"
+max_tokens = 8192
+
+[models.modules.image_enricher]
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/qwen3.5-9b"
 max_tokens = 8192
@@ -189,10 +199,12 @@ terminate_timeout = 15.0
 [serving.module_models]
 corrector = "qwen3.5-9b"
 formatter = "qwen3.5-9b"
+image_enricher = "qwen3.5-9b"
 formatter_router = "qwen3.5-9b"
 formatter_editor = "qwen3.5-9b"
-seam_merger = "qwen3.5-9b"
-seam_rewriter = "qwen3.5-9b"
+text_seam_merger = "qwen3.5-9b"
+text_seam_rewriter = "qwen3.5-9b"
+image_seam_merger = "qwen3.5-9b"
 splitter = "qwen3.5-9b"
 instruction_router = "qwen3.5-9b"
 instruction_grower = "qwen3.5-9b"
@@ -264,17 +276,49 @@ temperature = 0.0
 
 # ── external services ────────────────────────────────────────────────
 
+[serving.retrieval.embedding]
+manage = true
+host = "127.0.0.1"
+port = 8081
+model = "~/models/qwen3-embedding-8b/Qwen3-Embedding-8B-Q4_K_M.gguf"
+threads = 12
+threads_batch = 12
+ctx_size = 32768
+parallel = 1
+n_gpu_layers = 0
+device = "none"
+ready_timeout = 300.0
+poll_interval = 1.0
+request_timeout = 30.0
+
+[serving.retrieval.reranker]
+manage = true
+host = "127.0.0.1"
+port = 8082
+model = "~/models/qwen3-reranker-4b/Qwen3-Reranker-4B-Q4_K_M.gguf"
+threads = 4
+threads_batch = 4
+device = "none"
+ctx_size = 8192
+parallel = 1
+n_gpu_layers = 0
+cache_ram = 0
+ready_timeout = 300.0
+poll_interval = 1.0
+request_timeout = 30.0
+
 [embeddings]
-model = "voyage-multimodal-3.5"
-base_url = "https://api.voyageai.com/v1"
-dimension = 1024
-batch_size = 200
-timeout_seconds = 60.0
+model = "Qwen3-Embedding-8B"
+dimension = 4096
+batch_size = 32
+base_url = "http://127.0.0.1:8081/v1"
+timeout_seconds = 120.0
 
 [reranker]
-model = "nvidia/llama-nemotron-rerank-vl-1b-v2:free"
-base_url = "https://openrouter.ai/api/v1"
-timeout_seconds = 60.0
+model = "Qwen3-Reranker-4B"
+batch_size = 8
+base_url = "http://127.0.0.1:8082/v1"
+timeout_seconds = 120.0
 
 [ocr]
 model = "mistral-ocr-latest"
@@ -341,6 +385,11 @@ merge_above = 0.85
 separate_below = 0.35
 max_concurrent_calls = 16
 
+[stages.image_enrichment]
+before_budget = 200
+after_budget = 200
+max_concurrent_calls = 16
+
 [stages.triplet_hubs]
 max_concurrent_calls = 16
 
@@ -354,7 +403,6 @@ max_concurrent_calls = 16
 backward_context_budget = 200
 forward_context_budget = 500
 max_concurrent_calls = 8
-threshold = 0.5
 
 [stages.search]
 top_k = 20

@@ -13,8 +13,7 @@ def _document(index, content):
     return models.Document(
         index=index,
         image_path='',
-        content=content,
-        nodes=[models.Node(index=0, content=content)] if content else [],
+        nodes=[models.SourceNode(index=0, content=content)] if content else [],
     )
 
 

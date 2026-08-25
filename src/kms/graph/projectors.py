@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from kms.core import models, state
+from kms.core import embeddings, models, state
 from kms.graph import queries, schema, writer
 
 
@@ -33,6 +33,7 @@ class FinalProjectorNode:
 
     async def _persist_raw(self, bundle, source: str) -> None:
         nodes = bundle.nodes
+        node_embeddings = await embeddings.embed_source_nodes(nodes)
         statements = bundle.statements
         procedures = bundle.procedures
         await writer.persist_nodes(
@@ -40,6 +41,7 @@ class FinalProjectorNode:
             source,
             session_factory=self._session_factory,
             metadata=bundle.source.metadata,
+            embeddings=node_embeddings,
         )
         await writer.persist_statements(
             statements, nodes, source, session_factory=self._session_factory

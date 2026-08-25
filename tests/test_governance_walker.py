@@ -10,15 +10,15 @@ class _Judge:
 
     async def acall(self, **kwargs):
         self.calls.append(kwargs)
-        return True, 1.0
+        return True
 
 
 def test_governance_judges_complete_statement_with_static_context():
     nodes = [
-        models.Node(uuid='node-0', type='paragraph', content='Instruction'),
-        models.Node(uuid='node-1', type='paragraph', content='Before'),
-        models.Node(uuid='node-2', type='paragraph', content='Statement'),
-        models.Node(uuid='node-3', type='paragraph', content='After'),
+        models.SourceNode(uuid='node-0', type='paragraph', content='Instruction'),
+        models.SourceNode(uuid='node-1', type='paragraph', content='Before'),
+        models.SourceNode(uuid='node-2', type='paragraph', content='Statement'),
+        models.SourceNode(uuid='node-3', type='paragraph', content='After'),
     ]
     instruction = models.Instruction(
         block=[0], member_positions=[0], uuid='instruction-uuid'
@@ -45,14 +45,13 @@ def test_governance_judges_complete_statement_with_static_context():
     assert result['statements'][0].instruction_uuids == ['instruction-uuid']
     assert 'procedures' not in result
     call = judge.calls[0]
-    assert call['statement_content'].render() == 'Statement'
-    # Check that context window has the right structure with positions
-    context_window = call['context_window']
-    assert len(context_window) == 4
-    assert [item.position for item in context_window] == [0, 1, 2, 3]
-    assert [item.marker for item in context_window] == [
-        None,
-        None,
-        'statement',
-        None,
+    assert all(
+        isinstance(item, governance_walker.context_window.ContextNode)
+        for item in call['statement_nodes']
+    )
+    assert call['statement_nodes'][0].content == 'Statement'
+    assert [node.content for node in call['context_before']] == [
+        'Instruction',
+        'Before',
     ]
+    assert [node.content for node in call['context_after']] == ['After']

@@ -1,6 +1,6 @@
 """Tests for pure enrichment input assembly."""
 
-from kms.construction import statement_enrichment, procedure_enrichment
+from kms.construction import procedure_enrichment, statement_enrichment
 from kms.core import models
 
 
@@ -22,8 +22,8 @@ def _bundle() -> models.ConstructionBundle:
     return models.ConstructionBundle(
         source=models.Source(key='book'),
         nodes=[
-            models.Node(uuid='node-1', content='statement'),
-            models.Node(uuid='node-2', content='procedure'),
+            models.SourceNode(uuid='node-1', content='statement'),
+            models.SourceNode(uuid='node-2', content='procedure'),
         ],
         statements=[models.Statement(block=[1], member_positions=[0], uuid='statement-1')],
         knowledge_index=models.KnowledgeIndex(
@@ -39,7 +39,7 @@ def test_statement_enrichment_input_is_pure_and_typed() -> None:
 
     result = statement_enrichment.statement_enrichment_input(bundle, statement)
 
-    assert result.statement.render() == 'statement'
+    assert result.statement[0].node_text == 'statement'
     assert 'statement-fact' in result.canonical_knowledge
 
 
@@ -57,5 +57,5 @@ def test_procedure_enrichment_input_explicitly_unions_statement_and_procedure_kn
     )
 
     assert 'procedure-fact' in result.canonical_knowledge
-    assert result.statement.render() == 'statement'
-    assert result.procedure.render() == 'procedure'
+    assert result.statement[0].node_text == 'statement'
+    assert result.procedure[0].node_text == 'procedure'

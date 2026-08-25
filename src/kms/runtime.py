@@ -20,6 +20,16 @@ class Runtime:
         )
 
     @property
+    def retrieval_server_manager(self) -> serve.RetrievalServerManager | None:
+        retrieval = getattr(config.get_settings().serving, 'retrieval', None)
+        if retrieval is None:
+            return None
+        if retrieval.embedding.manage or retrieval.reranker.manage:
+            return serve.retrieval_server_manager()
+        return None
+
+
+    @property
     def model_manager(self) -> serve.RouterManager | None:
         """Return the shared local model manager, if enabled."""
         return self._model_manager
@@ -32,20 +42,25 @@ class Runtime:
     def session_factory(self) -> Callable | None:
         """Return the shared Neo4j session factory, if configured."""
         return db.session if self._neo4j_configured else None
-
     async def __aenter__(self) -> 'Runtime':
         """Start the runtime context."""
         return self
 
+    async def close(self) -> None:
+        """Stop shared services owned by this runtime."""
+        from kms.core import embeddings, reranker
+
+        await embeddings.close_retrieval_clients()
+        await reranker.close_retrieval_clients()
+        if self.retrieval_server_manager:
+            self.retrieval_server_manager.shutdown()
+        if self._model_manager:
+            self._model_manager.shutdown()
+        await db.close_driver()
     async def __aexit__(self, exception_type, exception, traceback) -> None:
         """Stop shared services after the process context exits."""
         await self.close()
 
-    async def close(self) -> None:
-        """Stop shared services owned by this runtime."""
-        if self._model_manager:
-            self._model_manager.shutdown()
-        await db.close_driver()
 
     async def ingest(
         self,

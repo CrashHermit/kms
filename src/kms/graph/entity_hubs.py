@@ -5,9 +5,10 @@ from uuid import NAMESPACE_URL, uuid5
 from kms.graph import nodes
 
 COMPONENT_LABEL = 'Entity'
-HUB_LABEL = 'EntityHub'
-META_HUB_LABEL = 'MetaEntityHub'
-COMPONENT_LABEL = 'Entity'
+LOCAL_HUB_LABEL = 'LocalEntityHub'
+GLOBAL_HUB_LABEL = 'GlobalEntityHub'
+HUB_LABEL = LOCAL_HUB_LABEL
+META_HUB_LABEL = GLOBAL_HUB_LABEL
 
 
 def component_label() -> str:

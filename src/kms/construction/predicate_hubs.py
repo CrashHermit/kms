@@ -1,8 +1,8 @@
 """Build reusable PredicateHub concepts from source-local components.
 
 Source-level triplet components carry local names and passage-grounded glosses.
-This module builds those mentions into reusable PredicateHub concepts, preserving
-source provenance while synthesizing standalone learner-facing descriptions.
+This module groups those mentions into reusable PredicateHub concepts while
+preserving source provenance and supported meaning.
 """
 
 import asyncio
@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from kms import config
 from kms.construction import name_hubs, triplet_hubs
-from kms.core import content, embeddings, llm, models, module, vector_index
+from kms.core import embeddings, llm, models, module, vector_index
 from kms.graph import hubs, queries, writer
 
 logger = logging.getLogger(__name__)
@@ -113,7 +113,7 @@ class PredicateHubDefinition(BaseModel):
         description='The canonical name for the predicate relation.'
     )
     description: str = Field(
-        description='A standalone learner-facing predicate description.'
+        description='A standalone canonical predicate description supported by the supplied evidence.'
     )
 
 
@@ -129,9 +129,10 @@ class PredicateHubAdjudication(BaseModel):
 
 class PredicateHubSynthesisSignature(dspy.Signature):
     r"""
-    Synthesize one source-local learner-facing predicate concept from supplied
+    Synthesize one source-local canonical predicate concept from supplied
     relation phrases and their passage-grounded descriptions. Generalize only
-    what the evidence supports. Do not mention the source or invent facts.
+    what the evidence supports. Preserve the supported meaning and do not
+    mention the source or invent facts.
     """
 
     surface_forms: list[str] = dspy.InputField()
@@ -140,14 +141,16 @@ class PredicateHubSynthesisSignature(dspy.Signature):
     result: PredicateHubDefinition = dspy.OutputField()
 
 
+
+
 class PredicateHubAdjudicationSignature(dspy.Signature):
     r"""
     Compare two predicate mentions. Return Merge for the same relation,
     Hierarchy only for a strict kind-of relation, and Separate otherwise.
     """
 
-    left: content.ContentParts = dspy.InputField()
-    right: content.ContentParts = dspy.InputField()
+    left: models.HubMentionInput = dspy.InputField()
+    right: models.HubMentionInput = dspy.InputField()
     scope: str = dspy.InputField()
     result: PredicateHubAdjudication = dspy.OutputField()
 
@@ -182,15 +185,11 @@ class PredicateHubAdjudicator(module.Module):
 
     def encode(
         self,
-        left: content.Content,
-        right: content.Content,
+        left: models.HubMentionInput,
+        right: models.HubMentionInput,
         scope: str,
     ) -> dict:
-        return {
-            'left': content.ContentParts(content=left),
-            'right': content.ContentParts(content=right),
-            'scope': scope,
-        }
+        return {'left': left, 'right': right, 'scope': scope}
 
     def decode(self, prediction, **inputs) -> PredicateHubAdjudication:
         result = prediction.result
@@ -254,23 +253,6 @@ def _central_mention(component: list[dict]) -> dict:
     return best
 
 
-def _mention_content(mention: dict) -> content.Content:
-    """Builds the adjudicator's content view of one hub-building record."""
-    parts: list[content.TextPart] = [
-        content.TextPart(text=f'Name: {mention["name"]}'),
-    ]
-    aliases = [
-        alias
-        for alias in mention.get('aliases', [])
-        if alias != mention['name']
-    ]
-    if aliases:
-        parts.append(content.TextPart(text=f'Aliases: {", ".join(aliases)}'))
-    if mention.get('description'):
-        parts.append(
-            content.TextPart(text=f'Description: {mention["description"]}')
-        )
-    return content.Content(parts=parts)
 
 
 async def _adjudicate_component(
@@ -305,8 +287,8 @@ async def _adjudicate_component(
             else:
                 async with gate:
                     decision = await adjudicator.aforward(
-                        left=_mention_content(pivot),
-                        right=_mention_content(member),
+                        left=models.HubMentionInput.from_record(pivot),
+                        right=models.HubMentionInput.from_record(member),
                         scope=scope,
                     )
                 if decision.decision == 'Merge':
@@ -528,7 +510,7 @@ async def build_hubs(
         for definition in definitions
     ]
     hub_vectors = await embeddings.embedder().embed(
-        [content.Content.from_text(text) for text in hub_texts]
+        [text for text in hub_texts]
     )
 
     make_hub_id = spec.hub_id_factory
@@ -614,8 +596,8 @@ async def _choose_hub(
             continue
         async with gate:
             decision = await adjudicator.aforward(
-                left=_mention_content(record),
-                right=_mention_content(candidate),
+                left=models.HubMentionInput.from_record(record),
+                right=models.HubMentionInput.from_record(candidate),
                 scope=scope,
             )
         if decision.decision == 'Merge':
@@ -638,9 +620,7 @@ async def _new_hub(
     )[0]
     vector = await embeddings.embedder().embed(
         [
-            content.Content.from_text(
-                f'{definition["canonical_name"]}: {definition["description"]}'
-            )
+            f'{definition["canonical_name"]}: {definition["description"]}'
         ]
     )
     return {
@@ -679,9 +659,7 @@ async def _refresh_source_hubs(
         )[0]
         vector = await embeddings.embedder().embed(
             [
-                content.Content.from_text(
-                    f'{definition["canonical_name"]}: {definition["description"]}'
-                )
+                f'{definition["canonical_name"]}: {definition["description"]}'
             ]
         )
         hub = {

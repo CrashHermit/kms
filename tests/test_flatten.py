@@ -9,22 +9,20 @@ def _documents():
         models.Document(
             index=0,
             image_path='p0.png',
-            pictures=[],
             nodes=[
-                models.Node(type=models.NodeType.HEADER, content='# Ch 1'),
-                models.Node(type=models.NodeType.PARAGRAPH, content='intro'),
+                models.SourceNode(type=models.NodeType.HEADER, content='# Ch 1'),
+                models.SourceNode(type=models.NodeType.PARAGRAPH, content='intro'),
             ],
         ),
         models.Document(
             index=1,
             image_path='p1.png',
-            pictures=[],
             nodes=[
-                models.Node(
+                models.SourceNode(
                     type=models.NodeType.PARAGRAPH,
                     content='body ![1]() fig',
                 ),
-                models.Node(
+                models.SourceNode(
                     type=models.NodeType.PARAGRAPH, content='1. solve x'
                 ),
             ],
@@ -39,70 +37,55 @@ def test_flatten_assigns_stable_ids_and_document_index_across_pages():
     assert [n.document_index for n in flat] == [0, 0, 1, 1]
 
 
-def test_flatten_resolves_image_nodes_to_picture_paths(tmp_path):
+def test_flatten_preserves_directly_attached_assets(tmp_path):
     first_path = str(tmp_path / 'Image_000.png')
     second_path = str(tmp_path / 'Image_001.png')
     documents = [
         models.Document(
             index=0,
             image_path='p0.png',
-            pictures=[
-                models.Picture(index=1, image_path=first_path),
-                models.Picture(index=2, image_path=second_path),
-            ],
             nodes=[
-                models.Node(type=models.NodeType.PARAGRAPH, content='see figure'),
-                models.Node(type=models.NodeType.IMAGE),
-                models.Node(type=models.NodeType.IMAGE, content='![2]()'),
+                models.SourceNode(
+                    type=models.NodeType.IMAGE,
+                    assets=[models.VisualAsset(path=first_path)],
+                ),
+                models.SourceNode(
+                    type=models.NodeType.IMAGE,
+                    assets=[models.VisualAsset(path=second_path)],
+                ),
             ],
         )
     ]
-    flat = models.flatten_documents(documents)
-    assert flat[0].image_path is None
-    assert flat[1].image_path == first_path
-    assert flat[2].image_path == second_path
 
-
-def test_flatten_ignores_pictures_without_image_nodes(tmp_path):
-    used_path = str(tmp_path / 'Image_000.png')
-    documents = [
-        models.Document(
-            index=0,
-            image_path='p0.png',
-            pictures=[
-                models.Picture(index=1, image_path=used_path),
-                models.Picture(index=2, image_path=str(tmp_path / 'orphan.png')),
-            ],
-            nodes=[models.Node(type=models.NodeType.IMAGE)],
-        )
-    ]
     flat = models.flatten_documents(documents)
-    assert flat[0].image_path == used_path
+
+    assert [asset.path for asset in flat[0].assets] == [first_path]
+    assert [asset.path for asset in flat[1].assets] == [second_path]
 
 
 class _AllStatements:
-    async def acall(self, contents):
+    async def acall(self, current_nodes):
         return (True, False)
 
 
 def test_overlay_leaves_each_block_in_the_stream_exactly_once():
     nodes = [
-        models.Node(
+        models.SourceNode(
             type='paragraph', content='Theorem 2.1.', uuid='node-0', document_index=0
         ),
-        models.Node(
+        models.SourceNode(
             type='paragraph',
             content='Proof. Let e be ...',
             uuid='node-1',
             document_index=0,
         ),
-        models.Node(
+        models.SourceNode(
             type='paragraph',
             content='Hence e is unique.',
             uuid='node-2',
             document_index=0,
         ),
-        models.Node(type='paragraph', content='1.23 Compute it.', uuid='node-3', document_index=0),
+        models.SourceNode(type='paragraph', content='1.23 Compute it.', uuid='node-3', document_index=0),
     ]
     state = {
         'nodes': nodes,

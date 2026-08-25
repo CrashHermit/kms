@@ -40,7 +40,7 @@ def instruction_rows(
 
 def instruction_member_pairs(
     instructions: list[models.Instruction],
-    node_stream: list[models.Node],
+    node_stream: list[models.SourceNode],
     source: str,
 ) -> list[dict]:
     """Builds instruction→member node edge pairs."""

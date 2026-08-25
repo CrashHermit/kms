@@ -1,19 +1,17 @@
 """Detects and rejoins blocks split across segment (page) seams."""
 
-import hashlib
 import logging
-from pathlib import Path
+from typing import Any
 
 import dspy
 from langgraph.types import Send
-from PIL import Image
 
-from kms.core import content, logs, models, module, state, walker
+from kms.core import logs, models, module, state
 
 logger = logging.getLogger(__name__)
 
 
-class Signature(dspy.Signature):
+class TextSeamSignature(dspy.Signature):
     """
     You are an expert technical editor. Two adjacent runs of document blocks
     share a seam — the boundary where one run ends and the next begins.
@@ -36,17 +34,17 @@ class Signature(dspy.Signature):
     your judgment — they are never part of the join.
     """
 
-    top_node_context: content.ContentParts = dspy.InputField(
-        description='The node immediately before the tail, as multimodal read-only context.'
+    top_node_context: str = dspy.InputField(
+        description='Text from the node immediately before the tail, if available.'
     )
-    top_bottom_edge_node: content.ContentParts = dspy.InputField(
-        description='The tail node of the top element run, including text and image content.'
+    top_bottom_edge_node: str = dspy.InputField(
+        description='The complete text of the tail source node.'
     )
-    bottom_top_edge_node: content.ContentParts = dspy.InputField(
-        description='The head node of the bottom element run, including text and image content.'
+    bottom_top_edge_node: str = dspy.InputField(
+        description='The complete text of the head source node.'
     )
-    bottom_node_context: content.ContentParts = dspy.InputField(
-        description='The node immediately after the head, as multimodal read-only context.'
+    bottom_node_context: str = dspy.InputField(
+        description='Text from the node immediately after the head, if available.'
     )
 
     is_split: bool = dspy.OutputField(
@@ -54,7 +52,7 @@ class Signature(dspy.Signature):
     )
 
 
-class MergeSignature(dspy.Signature):
+class TextSeamRewriteSignature(dspy.Signature):
     r"""
     Two texts are the two halves of ONE block of a document that a page break
     interrupted — the first is cut off, the second continues it. Write them
@@ -116,23 +114,23 @@ class MergeSignature(dspy.Signature):
     in what you return.
     """
 
-    tail: content.ContentParts = dspy.InputField(
-        description='The first half — the block as it was cut off at the foot of the page.'
+    tail: str = dspy.InputField(
+        description='The first text half, cut off at the page boundary.'
     )
-    head: content.ContentParts = dspy.InputField(
-        description='The second half — the block as it resumes at the top of the next page.'
+    head: str = dspy.InputField(
+        description='The second text half, resuming after the page boundary.'
     )
     tail_kind: str = dspy.InputField(
-        description="The first half's structural kind (paragraph, math, list, code, table, …)."
+        description="The first half's structural kind."
     )
     head_kind: str = dspy.InputField(
         description="The second half's structural kind."
     )
-    before_tail: content.ContentParts = dspy.InputField(
-        description='The block before the tail on its page, as read-only multimodal context.'
+    before_tail: str = dspy.InputField(
+        description='Text from the block before the tail, if available.'
     )
-    after_head: content.ContentParts = dspy.InputField(
-        description='The block after the head on its page, as read-only multimodal context.'
+    after_head: str = dspy.InputField(
+        description='Text from the block after the head, if available.'
     )
 
     merged: str = dspy.OutputField(
@@ -140,208 +138,165 @@ class MergeSignature(dspy.Signature):
     )
 
 
-class SeamMerger(module.Module):
+class TextSeamMerger(module.Module):
     """Decides whether two edge nodes are halves of one split block."""
 
-    signature = Signature
-    record_name = 'seam_merger'
+    signature = TextSeamSignature
+    record_name = 'text_seam_merger'
 
     def encode(
         self,
-        top_bottom_edge_node: walker.WindowNode,
-        bottom_top_edge_node: walker.WindowNode,
-        top_node_context: walker.WindowNode | None = None,
-        bottom_node_context: walker.WindowNode | None = None,
-    ) -> dict:
-        """Builds multimodal seam-signature kwargs for one edge pair."""
+        top_bottom_edge_node: models.SourceNode,
+        bottom_top_edge_node: models.SourceNode,
+        top_node_context: models.SourceNode | None = None,
+        bottom_node_context: models.SourceNode | None = None,
+    ) -> dict[str, str]:
+        """Builds text-only seam-signature kwargs for one edge pair."""
         return {
-            'top_node_context': _content_parts(top_node_context),
-            'top_bottom_edge_node': _content_parts(top_bottom_edge_node),
-            'bottom_top_edge_node': _content_parts(bottom_top_edge_node),
-            'bottom_node_context': _content_parts(bottom_node_context),
+            'top_node_context': _text(top_node_context),
+            'top_bottom_edge_node': _text(top_bottom_edge_node),
+            'bottom_top_edge_node': _text(bottom_top_edge_node),
+            'bottom_node_context': _text(bottom_node_context),
         }
 
-    def decode(self, prediction, **inputs) -> bool:
+    def decode(self, prediction: Any, **inputs: Any) -> bool:
         """Returns whether the edge nodes are one interrupted block."""
         return module.require_bool(prediction.is_split, 'is_split')
 
 
-class SeamRewriter(module.Module):
+class TextSeamRewriter(module.Module):
     """Rejoins two halves of a split block into one coherent block."""
 
-    signature = MergeSignature
-    record_name = 'seam_rewriter'
+    signature = TextSeamRewriteSignature
+    record_name = 'text_seam_rewriter'
 
     def encode(
         self,
-        top_bottom_edge_node: walker.WindowNode,
-        bottom_top_edge_node: walker.WindowNode,
-        top_node_context: walker.WindowNode | None = None,
-        bottom_node_context: walker.WindowNode | None = None,
-    ) -> dict:
-        """Builds multimodal merge-signature kwargs for one edge pair."""
+        top_bottom_edge_node: models.SourceNode,
+        bottom_top_edge_node: models.SourceNode,
+        top_node_context: models.SourceNode | None = None,
+        bottom_node_context: models.SourceNode | None = None,
+    ) -> dict[str, str]:
+        """Builds text-only merge-signature kwargs for one edge pair."""
         return {
-            'tail': _content_parts(top_bottom_edge_node),
-            'head': _content_parts(bottom_top_edge_node),
+            'tail': _text(top_bottom_edge_node),
+            'head': _text(bottom_top_edge_node),
             'tail_kind': top_bottom_edge_node.type or '',
             'head_kind': bottom_top_edge_node.type or '',
-            'before_tail': _content_parts(top_node_context),
-            'after_head': _content_parts(bottom_node_context),
+            'before_tail': _text(top_node_context),
+            'after_head': _text(bottom_node_context),
         }
 
-    def decode(self, prediction, **inputs) -> str:
+    def decode(self, prediction: Any, **inputs: Any) -> str:
         """Returns the rejoined block text for the two halves."""
         return module.require_text(prediction.merged, 'merged')
 
 
-def _to_window_node(node: models.Node | None) -> walker.WindowNode:
-    """Projects a seam node into the shared multimodal window view."""
-    if node is None:
-        return walker.WindowNode(position=0)
-    return walker.WindowNode(
-        position=0,
-        type=node.type,
-        content=node.content,
-        image_path=node.image_path,
-    )
+def _text(node: models.SourceNode | None) -> str:
+    """Returns source text for the text-only DSPy boundary."""
+    return node.content or '' if node is not None else ''
 
 
-def _content_parts(node: walker.WindowNode | None) -> content.ContentParts:
-    """Converts one seam view into the canonical DSPy content boundary."""
-    if node is None:
-        return content.ContentParts(content=content.Content())
-    return content.labeled_content_parts([node])
-
-
-def _image_only_node(node: models.Node) -> bool:
-    """Returns whether an image node has no independent textual payload."""
+def _text_mergeable(node: models.SourceNode) -> bool:
+    """Returns whether a node is safe for the text-only seam path."""
     return bool(
-        node.image_path
-        and node.type == models.NodeType.IMAGE
-        and (
-            not node.content
-            or node.content.lstrip().startswith('![')
-        )
+        node.content
+        and node.type not in _APPARATUS
+        and node.type != models.NodeType.IMAGE
+        and not node.assets
     )
-
-
-def _merge_images(top_path: str, bottom_path: str) -> str:
-    """Stitches two page-seam image assets into one deterministic PNG."""
-    top = Path(top_path)
-    bottom = Path(bottom_path)
-    digest = hashlib.sha256(
-        top.read_bytes() + b'\\0' + bottom.read_bytes()
-    ).hexdigest()[:16]
-    output = top.with_name(f'{top.stem}--seam-{digest}.png')
-    if output.exists():
-        return str(output)
-    with Image.open(top) as first, Image.open(bottom) as second:
-        images = [first.convert('RGBA'), second.convert('RGBA')]
-        width = max(image.width for image in images)
-        height = sum(image.height for image in images)
-        canvas = Image.new('RGBA', (width, height), (255, 255, 255, 0))
-        y = 0
-        for image in images:
-            canvas.paste(image, ((width - image.width) // 2, y), image)
-            y += image.height
-        canvas.save(output, format='PNG')
-    return str(output)
 
 
 _APPARATUS = {'bibliographic', 'note'}
 
 
-def _mergeable_indices(nodes: list[models.Node]) -> list[int]:
-    """Returns the indices of nodes that can take part in a seam merge."""
-    return [
-        index for index, node in enumerate(nodes) if node.type not in _APPARATUS
-    ]
+def _skip_for_text(node: models.SourceNode) -> bool:
+    """Returns whether text seam selection should pass over this node."""
+    return bool(
+        node.type in _APPARATUS
+        or node.type == models.NodeType.IMAGE
+        or node.assets
+    )
+
+
+def _edge_index(nodes: list[models.SourceNode], *, reverse: bool) -> int | None:
+    """Returns the nearest text edge, skipping apparatus and visual nodes."""
+    indices = range(len(nodes) - 1, -1, -1) if reverse else range(len(nodes))
+    for index in indices:
+        node = nodes[index]
+        if _skip_for_text(node):
+            continue
+        return index if _text_mergeable(node) else None
+    return None
+
+
+def _context_node(
+    nodes: list[models.SourceNode], start: int, step: int
+) -> models.SourceNode | None:
+    """Finds nearby text context while skipping apparatus and visual nodes."""
+    for index in range(start, len(nodes) if step > 0 else -1, step):
+        node = nodes[index]
+        if _skip_for_text(node):
+            continue
+        return node if _text_mergeable(node) else None
+    return None
 
 
 def _pairs(
     documents: list[models.Document], parity: int
 ) -> list[tuple[models.Document, models.Document]]:
-    """Returns adjacent segment pairs of the given index parity."""
+    """Returns adjacent text-compatible segment pairs of the given parity."""
     return [
         (documents[i], documents[i + 1])
         for i in range(len(documents) - 1)
         if documents[i].index % 2 == parity
-        and _mergeable_indices(documents[i].nodes)
-        and _mergeable_indices(documents[i + 1].nodes)
+        and _edge_index(documents[i].nodes, reverse=True) is not None
+        and _edge_index(documents[i + 1].nodes, reverse=False) is not None
     ]
 
 
 async def _merge_pair(
-    module: SeamMerger,
-    rewriter: SeamRewriter,
+    module: TextSeamMerger,
+    rewriter: TextSeamRewriter,
     top: models.Document,
     bottom: models.Document,
-) -> list[tuple[int, list[models.Node]]]:
-    """Judges and merges one segment pair, returning both node lists.
-
-    When the seam is judged split, the tail is rewritten in place with
-    the joined block and the bottom's head node is deleted.
-    """
+) -> list[tuple[int, list[models.SourceNode]]]:
+    """Judges and merges one text-compatible segment pair."""
     top_nodes = list(top.nodes)
     bottom_nodes = list(bottom.nodes)
 
-    top_mergeable = _mergeable_indices(top_nodes)
-    bottom_mergeable = _mergeable_indices(bottom_nodes)
-    if not top_mergeable or not bottom_mergeable:
+    tail_index = _edge_index(top_nodes, reverse=True)
+    head_index = _edge_index(bottom_nodes, reverse=False)
+    if tail_index is None or head_index is None:
         return [(top.index, top_nodes), (bottom.index, bottom_nodes)]
 
-    tail_index = top_mergeable[-1]
-    head_index = bottom_mergeable[0]
     tail = top_nodes[tail_index]
     head = bottom_nodes[head_index]
-    top_context = (
-        top_nodes[top_mergeable[-2]] if len(top_mergeable) > 1 else None
-    )
-    bottom_context = (
-        bottom_nodes[bottom_mergeable[1]] if len(bottom_mergeable) > 1 else None
-    )
+    top_context = _context_node(top_nodes, tail_index - 1, -1)
+    bottom_context = _context_node(bottom_nodes, head_index + 1, 1)
 
     edges = {
-        'top_bottom_edge_node': _to_window_node(tail),
-        'bottom_top_edge_node': _to_window_node(head),
-        'top_node_context': _to_window_node(top_context),
-        'bottom_node_context': _to_window_node(bottom_context),
+        'top_bottom_edge_node': tail,
+        'bottom_top_edge_node': head,
+        'top_node_context': top_context,
+        'bottom_node_context': bottom_context,
     }
     is_split = await module.aforward(**edges)
     logger.debug(
         'seam %d/%d: %s | tail %r + head %r',
-        top.index,
         bottom.index,
         'merged' if is_split else 'left split',
         logs.elide(tail.content, 40),
         logs.elide(head.content, 40),
     )
     if is_split:
-        if _image_only_node(tail) and _image_only_node(head):
-            original_image_paths = [tail.image_path, head.image_path]
-            tail.image_path = _merge_images(
-                tail.image_path, head.image_path
-            )
-            tail.content = None
-            tail.provenance = {
-                **tail.provenance,
-                'seam_merged_from': original_image_paths,
-            }
-        elif tail.content or head.content:
-            tail.content = await rewriter.aforward(**edges)
-        else:
-            logger.warning(
-                'seam %d/%d judged split but has no mergeable text or image pair',
-                top.index,
-                bottom.index,
-            )
-            return [(top.index, top_nodes), (bottom.index, bottom_nodes)]
+        tail.content = await rewriter.aforward(**edges)
         del bottom_nodes[head_index]
 
     return [(top.index, top_nodes), (bottom.index, bottom_nodes)]
 
 
-class SeamMergerNode:
+class TextSeamMergerNode:
     """Two-phase langgraph node merging seams on even/odd pairs.
 
     Even and odd pairs are processed in separate passes so that
@@ -350,8 +305,8 @@ class SeamMergerNode:
 
     def __init__(
         self,
-        module: SeamMerger,
-        rewriter: SeamRewriter,
+        module: TextSeamMerger,
+        rewriter: TextSeamRewriter,
     ) -> None:
         self.module = module
         self.rewriter = rewriter
@@ -360,35 +315,35 @@ class SeamMergerNode:
         """Sends one worker per even-indexed adjacent segment pair."""
         pairs = _pairs(state.get('documents', []), parity=0)
         sends = [
-            Send('seam_even_worker', {'top': top, 'bottom': bottom})
+            Send('text_seam_even_worker', {'top': top, 'bottom': bottom})
             for top, bottom in pairs
         ]
-        return sends or 'seam_even_collect'
+        return sends or 'text_seam_even_collect'
 
     def dispatch_odd(self, state: state.State) -> list[Send] | str:
         """Sends one worker per odd-indexed adjacent segment pair."""
         pairs = _pairs(state.get('documents', []), parity=1)
         sends = [
-            Send('seam_odd_worker', {'top': top, 'bottom': bottom})
+            Send('text_seam_odd_worker', {'top': top, 'bottom': bottom})
             for top, bottom in pairs
         ]
-        return sends or 'seam_odd_collect'
+        return sends or 'text_seam_odd_collect'
 
-    async def even_worker(self, state: dict) -> dict:
+    async def even_worker(self, state: dict[str, Any]) -> dict[str, Any]:
         """Merges one even-indexed pair and reports its node lists."""
         merged = await _merge_pair(
             self.module, self.rewriter, state['top'], state['bottom']
         )
         return {'seam_even_results': merged}
 
-    async def odd_worker(self, state: dict) -> dict:
+    async def odd_worker(self, state: dict[str, Any]) -> dict[str, Any]:
         """Merges one odd-indexed pair and reports its node lists."""
         merged = await _merge_pair(
             self.module, self.rewriter, state['top'], state['bottom']
         )
         return {'seam_odd_results': merged}
 
-    def _collect(self, state: state.State, channel: str) -> dict:
+    def _collect(self, state: dict[str, Any], channel: str) -> dict[str, Any]:
         """Merges one channel's worker results back onto documents."""
         documents = state['documents']
         by_index = dict(state.get(channel, []))

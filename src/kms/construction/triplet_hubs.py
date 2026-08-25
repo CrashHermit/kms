@@ -2,7 +2,7 @@
 
 Source-level triplets preserve explicit relational evidence and provenance.
 This module groups exact subject/predicate/object hub memberships and asks the
-LLM to synthesize a standalone learner-facing assertion for each supported
+LLM to synthesize a standalone canonical assertion for each supported
 TripletHub. MetaTripletHub performs the same abstraction across sources; it
 must be supported by multiple sources and must not invent consequences.
 """
@@ -13,7 +13,7 @@ from collections.abc import Callable
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import content, embeddings, identity, llm, models, module
+from kms.core import embeddings, identity, llm, models, module
 from kms.graph import hubs, queries, writer
 from kms.graph import triplets as graph_triplets
 
@@ -26,8 +26,8 @@ class _TripletDefinition(BaseModel):
     )
     description: str = Field(
         description=(
-            'A standalone 1-2 sentence learner-facing explanation of the '
-            'canonical fact, supported by the supplied triplets.'
+            'A standalone 1-2 sentence canonical explanation of the '
+            'assertion, supported by the supplied triplets.'
         )
     )
 
@@ -38,12 +38,11 @@ class _TripletDefinitionSignature(dspy.Signature):
     and object hub tuple and the source triplets that belong to exactly that
     tuple.
 
-    The source triplets are evidence, not the final educational abstraction.
-    Produce a concise assertion and a standalone learner-facing explanation
-    that can be understood without the original passage. Generalize only the
-    common fact supported by the evidence. Preserve negation, conditions,
-    quantifiers, mathematical notation, and other qualifiers that appear in
-    the evidence.
+    The source triplets are evidence, not the final canonical abstraction.
+    Produce a concise assertion and a standalone explanation that can be
+    understood without the original passage. Generalize only the common fact
+    supported by the evidence. Preserve negation, conditions, quantifiers,
+    mathematical notation, and other qualifiers that appear in the evidence.
 
     The tuple membership is already decided by the graph. Do not add facts,
     infer consequences, or combine the assertion with neighboring facts.
@@ -66,8 +65,7 @@ class _TripletDefinitionSignature(dspy.Signature):
     )
     result: _TripletDefinition = dspy.OutputField(
         description=(
-            'Canonical reusable fact name and standalone learner-facing '
-            'explanation.'
+            'Canonical reusable fact name and standalone explanation.'
         )
     )
 
@@ -278,7 +276,7 @@ async def _synthesize_groups(
         for group in synthesized
     ]
     vectors = await embeddings.embedder().embed(
-        [content.Content.from_text(text) for text in texts]
+        [text for text in texts]
     )
     return [
         {**group, 'embedding': vector}

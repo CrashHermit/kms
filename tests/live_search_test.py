@@ -1,13 +1,9 @@
 import asyncio
-import base64
 import sys
-from pathlib import Path
 
 sys.path.insert(0, '.')
 
-import dspy
-
-from kms.core import llm, search
+from kms.core import llm, models, search
 from kms.graph import db
 
 QUERIES = [
@@ -15,11 +11,6 @@ QUERIES = [
     'prove that every induced subgraph is a subgraph',
     'a graph that is not a subgraph because it has an extra edge',
 ]
-
-
-def _load_image(path: str) -> dspy.Image:
-    encoded = base64.b64encode(Path(path).read_bytes()).decode('utf-8')
-    return dspy.Image(url=f'data:image/png;base64,{encoded}')
 
 
 async def main() -> None:
@@ -33,14 +24,18 @@ async def main() -> None:
     def _session():
         return db.session()
 
-    image_path = 'output/Segments/Segment_0000/Images/Image_000.png'
-    image_queries = [
-        ['What does this diagram show?', _load_image(image_path)],
-    ]
-
-    for query in QUERIES + image_queries:
+    for text in QUERIES:
+        query = models.SearchQuery(
+            parts=[
+                models.TextNodeInput(
+                    local_index=0,
+                    node_type='query',
+                    node_text=text,
+                )
+            ]
+        )
         print('=' * 72)
-        print(f'QUERY: {query}')
+        print(f'QUERY: {text}')
         try:
             groups = await search.search(
                 query,

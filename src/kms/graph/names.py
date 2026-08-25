@@ -7,10 +7,14 @@ from kms.graph import nodes
 
 ENTITY_NAME_LABEL = 'EntityName'
 PREDICATE_NAME_LABEL = 'PredicateName'
-ENTITY_NAME_HUB_LABEL = 'EntityNameHub'
-PREDICATE_NAME_HUB_LABEL = 'PredicateNameHub'
-META_ENTITY_NAME_HUB_LABEL = 'MetaEntityNameHub'
-META_PREDICATE_NAME_HUB_LABEL = 'MetaPredicateNameHub'
+LOCAL_ENTITY_NAME_HUB_LABEL = 'LocalEntityNameHub'
+LOCAL_PREDICATE_NAME_HUB_LABEL = 'LocalPredicateNameHub'
+GLOBAL_ENTITY_NAME_HUB_LABEL = 'GlobalEntityNameHub'
+GLOBAL_PREDICATE_NAME_HUB_LABEL = 'GlobalPredicateNameHub'
+ENTITY_NAME_HUB_LABEL = LOCAL_ENTITY_NAME_HUB_LABEL
+PREDICATE_NAME_HUB_LABEL = LOCAL_PREDICATE_NAME_HUB_LABEL
+META_ENTITY_NAME_HUB_LABEL = GLOBAL_ENTITY_NAME_HUB_LABEL
+META_PREDICATE_NAME_HUB_LABEL = GLOBAL_PREDICATE_NAME_HUB_LABEL
 
 _NAME_LABELS = {
     'entity': ENTITY_NAME_LABEL,
@@ -35,7 +39,7 @@ def name_label(kind: str) -> str:
 
 
 def name_hub_label(kind: str, tier: str = 'source') -> str:
-    """Returns the source-local or meta lexical hub label."""
+    """Returns the local or global lexical hub label."""
     labels = _NAME_HUB_LABELS if tier == 'source' else _META_NAME_HUB_LABELS
     if tier not in {'source', 'meta'}:
         raise ValueError(f'unknown name-hub tier: {tier}')
@@ -43,6 +47,16 @@ def name_hub_label(kind: str, tier: str = 'source') -> str:
         return labels[kind]
     except KeyError as error:
         raise ValueError(f'unknown name kind: {kind}') from error
+
+
+def local_name_hub_label(kind: str) -> str:
+    """Returns the local lexical hub label."""
+    return name_hub_label(kind, tier='source')
+
+
+def global_name_hub_label(kind: str) -> str:
+    """Returns the global lexical hub label."""
+    return name_hub_label(kind, tier='meta')
 
 
 def normalize_text(text: str) -> str:

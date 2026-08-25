@@ -8,7 +8,7 @@ NODE_LABEL = 'Node'
 SOURCE_LABEL = 'Source'
 
 
-def node_uuid(source: str, node: models.Node) -> str:
+def node_uuid(source: str, node: models.SourceNode) -> str:
     """Returns the deterministic uuid for one AST node."""
     if node.uuid:
         return node.uuid
@@ -43,14 +43,14 @@ def source_properties(
     }
 
 
-def node_label(node: models.Node) -> str | None:
+def node_label(node: models.SourceNode) -> str | None:
     """Returns the Neo4j label for a node's type, title-cased."""
     ntype = node.type
     return ntype.title() if ntype else None
 
 
 def node_properties(
-    node: models.Node, source: str, embedding: list[float] | None = None
+    node: models.SourceNode, source: str, embedding: list[float] | None = None
 ) -> dict:
     """Builds the property dict used to persist one AST node.
 
@@ -68,8 +68,8 @@ def node_properties(
         'type': node.type,
         'content': node.content,
         'document_index': node.document_index,
-        'image_path': node.image_path,
-        'embedding': embedding,
+        'image_paths': [asset.path for asset in node.assets],
+        'embedding': node.embedding if embedding is None else embedding,
     }
     return {
         key: value for key, value in properties.items() if value is not None

@@ -1,34 +1,26 @@
 """Compile canonical statement content for the graph."""
 
+
 import asyncio
 
 import dspy
 
 from kms import config
 from kms.construction import composition, knowledge
-from kms.core import content, embeddings, llm, models, module
+from kms.core import embeddings, llm, models, module
 
 
-def _content_from_composed(
+def _text_nodes(
     composed: composition.ComposedContent,
-) -> content.Content:
-    """Converts ordered source parts into multimodal LLM content."""
-    parts: list[content.TextPart | content.ImagePart] = []
-    max_dim = config.get_settings().image.max_dim
-    for part in composed.parts:
-        if part.type == models.NodeType.IMAGE:
-            if part.image_path:
-                try:
-                    image = content.load_image(part.image_path, max_dim=max_dim)
-                except OSError:
-                    image = None
-                if image is not None:
-                    parts.append(content.ImagePart(image=image))
-            continue
-        if part.content:
-            parts.append(content.TextPart(text=part.content))
-    return content.Content(parts=parts)
-
+) -> tuple[models.TextNodeInput, ...]:
+    return tuple(
+        models.TextNodeInput(
+            local_index=index,
+            node_type=part.type.value if part.type else '',
+            node_text=part.content or '',
+        )
+        for index, part in enumerate(composed.parts)
+    )
 
 def statement_enrichment_input(
     bundle: models.ConstructionBundle,
@@ -38,11 +30,10 @@ def statement_enrichment_input(
     """Builds one canonical statement-compilation input."""
     if not statement.uuid:
         raise ValueError('statement enrichment requires an assigned uuid')
+    composed = composition.compose_statement(bundle, statement)
     return models.StatementEnrichmentInput(
         statement_uuid=statement.uuid,
-        statement=_content_from_composed(
-            composition.compose_statement(bundle, statement)
-        ),
+        statement=_text_nodes(composed),
         canonical_knowledge=knowledge.knowledge_for_statement(
             bundle, statement, index
         ).render(),
@@ -62,8 +53,8 @@ class StatementEnrichmentSignature(dspy.Signature):
     Return only the compiled statement.
     """
 
-    source_content: content.ContentParts = dspy.InputField(
-        description='Ordered statement source text and figures.'
+    source_content: list[models.TextNodeInput] = dspy.InputField(
+        description='Ordered canonical statement text nodes.'
     )
     canonical_knowledge: str = dspy.InputField(
         description='Supported canonical concepts, relations, and facts.'
@@ -80,10 +71,12 @@ class StatementEnricher(module.Module):
     record_name = 'statement_enrichment'
 
     def encode(
-        self, source_content: content.Content, canonical_knowledge: str
+        self,
+        source_content: list[models.TextNodeInput],
+        canonical_knowledge: str,
     ) -> dict:
         return {
-            'source_content': content.ContentParts(content=source_content),
+            'source_content': source_content,
             'canonical_knowledge': canonical_knowledge,
         }
 
@@ -117,8 +110,8 @@ class StatementEnrichmentNode:
                 raise ValueError(
                     'statement enrichment requires an assigned uuid'
                 )
-            source_content = _content_from_composed(
-                composition.compose_statement(bundle, statement)
+            source_content = list(
+                _text_nodes(composition.compose_statement(bundle, statement))
             )
             canonical_knowledge = knowledge.knowledge_for_statement(
                 bundle, statement, bundle.knowledge_index
@@ -128,7 +121,6 @@ class StatementEnrichmentNode:
                     source_content=source_content,
                     canonical_knowledge=canonical_knowledge,
                 )
-
         compiled = await asyncio.gather(
             *(compile_one(stmt) for stmt in bundle.statements)
         )
@@ -141,7 +133,7 @@ class StatementEnrichmentNode:
             if stmt.uuid:
                 statements_by_uuid[stmt.uuid].statement = text.strip()
         vectors = await embeddings.embedder().embed(
-            [content.Content.from_text(text) for text in compiled]
+            [text for text in compiled]
         )
         source = bundle.source.key or ''
         enrichments = [

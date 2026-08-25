@@ -1,9 +1,7 @@
 import asyncio
 
-from PIL import Image
-
-from kms.construction import seam_merger
-from kms.core import models, walker
+from kms.construction import text_seam_merger
+from kms.core import models
 
 
 def _segment(index, nodes):
@@ -11,33 +9,28 @@ def _segment(index, nodes):
 
 
 def _para(content):
-    return models.Node(type='paragraph', content=content)
+    return models.SourceNode(type='paragraph', content=content)
 
 
 def _ref(content):
-    return models.Node(type='bibliographic', content=content)
+    return models.SourceNode(type='bibliographic', content=content)
 
 
 def _note(content):
-    return models.Node(type='note', content=content)
+    return models.SourceNode(type='note', content=content)
 
 
-def test_seam_encoder_uses_multimodal_content_parts(tmp_path):
-    image_path = tmp_path / 'figure.png'
-    Image.new('RGB', (4, 3), 'red').save(image_path)
-    node = walker.WindowNode(
-        position=0,
-        type='image',
-        image_path=str(image_path),
-    )
+def test_seam_encoder_uses_plain_text_fields():
+    node = models.SourceNode(type='paragraph', content='tail text')
 
-    encoded = seam_merger.SeamMerger.encode(object(), node, node)
+    encoded = text_seam_merger.TextSeamMerger.encode(object(), node, node)
 
-    assert all(
-        isinstance(value, seam_merger.content.ContentParts)
-        for value in encoded.values()
-    )
-    assert len(encoded['top_bottom_edge_node'].content.parts) == 2
+    assert encoded == {
+        'top_node_context': '',
+        'top_bottom_edge_node': 'tail text',
+        'bottom_top_edge_node': 'tail text',
+        'bottom_node_context': '',
+    }
 
 
 def _shown(
@@ -46,11 +39,16 @@ def _shown(
     top_node_context,
     bottom_node_context,
 ):
+    def text(node):
+        if node is None:
+            return ''
+        return getattr(node, 'content', node)
+
     return (
-        top_bottom_edge_node.content,
-        bottom_top_edge_node.content,
-        top_node_context.content,
-        bottom_node_context.content,
+        text(top_bottom_edge_node),
+        text(bottom_top_edge_node),
+        text(top_node_context),
+        text(bottom_node_context),
     )
 
 
@@ -112,7 +110,7 @@ class _NeverRewrites:
 def _merge(top, bottom, module, rewriter=None):
     return dict(
         asyncio.run(
-            seam_merger._merge_pair(
+            text_seam_merger._merge_pair(
                 module, rewriter or _Rewriter(), top, bottom
             )
         )
@@ -204,6 +202,86 @@ def test_context_nodes_also_skip_citations():
     assert bottom_context == 'context below'
 
 
+def test_image_at_top_edge_is_skipped_for_text_seam_dispatch():
+    documents = [
+        _segment(
+            0,
+            [
+                _para('text before image'),
+                models.SourceNode(
+                    type='image',
+                    assets=[models.VisualAsset(path='bottom.png')],
+                ),
+            ],
+        ),
+        _segment(1, [_para('next-page text')]),
+    ]
+
+    pairs = text_seam_merger._pairs(documents, parity=0)
+
+    assert [(top.index, bottom.index) for top, bottom in pairs] == [(0, 1)]
+
+
+def test_image_at_bottom_edge_is_skipped_for_text_seam_dispatch():
+    documents = [
+        _segment(0, [_para('previous-page text')]),
+        _segment(
+            1,
+            [
+                models.SourceNode(
+                    type='image',
+                    assets=[models.VisualAsset(path='top.png')],
+                ),
+                _para('text after image'),
+            ],
+        ),
+    ]
+
+    pairs = text_seam_merger._pairs(documents, parity=0)
+
+    assert [(top.index, bottom.index) for top, bottom in pairs] == [(0, 1)]
+
+
+def test_image_before_tail_is_skipped_for_farther_context():
+    top = _segment(
+        0,
+        [
+            _para('farther text'),
+            models.SourceNode(
+                type='image',
+                assets=[models.VisualAsset(path='before-tail.png')],
+            ),
+            _para('tail'),
+        ],
+    )
+    bottom = _segment(1, [_para('head')])
+    merger = _Merger()
+
+    _merge(top, bottom, merger)
+
+    assert merger.seen[0][2] == 'farther text'
+
+
+def test_image_after_head_is_skipped_for_farther_context():
+    top = _segment(0, [_para('tail')])
+    bottom = _segment(
+        1,
+        [
+            _para('head'),
+            models.SourceNode(
+                type='image',
+                assets=[models.VisualAsset(path='after-head.png')],
+            ),
+            _para('farther text'),
+        ],
+    )
+    merger = _Merger()
+
+    _merge(top, bottom, merger)
+
+    assert merger.seen[0][3] == 'farther text'
+
+
 def test_a_seam_between_two_citations_is_never_judged():
     top = _segment(0, [_ref('Agirre et al. 2000.')])
     bottom = _segment(1, [_ref('Bollacker et al. 2008.')])
@@ -251,39 +329,65 @@ def test_a_healed_seam_takes_the_rewriter_s_text():
     assert result[1] == []
 
 
-def test_a_healed_image_seam_is_stitched_deterministically(tmp_path):
+def test_an_image_seam_is_left_separate(tmp_path):
     top_path = tmp_path / 'top.png'
     bottom_path = tmp_path / 'bottom.png'
-    Image.new('RGB', (4, 3), 'red').save(top_path)
-    Image.new('RGB', (2, 5), 'blue').save(bottom_path)
-    top = _segment(0, [models.Node(type='image', image_path=str(top_path))])
+    top = _segment(
+        0,
+        [
+            models.SourceNode(
+                type='image',
+                assets=[models.VisualAsset(path=str(top_path))],
+            )
+        ],
+    )
     bottom = _segment(
-        1, [models.Node(type='image', image_path=str(bottom_path))]
+        1,
+        [
+            models.SourceNode(
+                type='image',
+                assets=[models.VisualAsset(path=str(bottom_path))],
+            )
+        ],
     )
 
-    result = _merge(top, bottom, _Merger(), _NeverRewrites())
-    merged_path = result[0][0].image_path
+    merger = _Merger()
+    result = _merge(top, bottom, merger, _NeverRewrites())
 
-    assert merged_path is not None
-    assert result[0][0].provenance['seam_merged_from'] == [
-        str(top_path),
-        str(bottom_path),
-    ]
-    with Image.open(merged_path) as merged:
-        assert merged.size == (4, 8)
-    assert result[1] == []
-    assert seam_merger._merge_images(str(top_path), str(bottom_path)) == merged_path
+    assert merger.seen == []
+    assert [asset.path for asset in result[0][0].assets] == [str(top_path)]
+    assert [asset.path for asset in result[1][0].assets] == [str(bottom_path)]
 
 
-def test_an_image_seam_with_text_does_not_discard_text():
-    top = _segment(0, [models.Node(type='image', content='caption')])
-    bottom = _segment(1, [models.Node(type='image', content='continuation')])
+def test_an_asset_bearing_text_seam_is_left_separate():
+    asset = models.VisualAsset(path='figure.png')
+    top = _segment(
+        0,
+        [
+            models.SourceNode(
+                type='paragraph', content='caption', assets=[asset]
+            )
+        ],
+    )
+    bottom = _segment(
+        1,
+        [
+            models.SourceNode(
+                type='paragraph',
+                content='continuation',
+                assets=[asset],
+            )
+        ],
+    )
 
-    rewriter = _Rewriter('caption continuation')
-    result = _merge(top, bottom, _Merger(), rewriter)
+    merger = _Merger()
+    rewriter = _Rewriter('should not be used')
+    result = _merge(top, bottom, merger, rewriter)
 
-    assert result[0][0].content == 'caption continuation'
-    assert result[1] == []
+    assert merger.seen == []
+    assert rewriter.seen == []
+    assert result[0][0].content == 'caption'
+    assert result[1][0].content == 'continuation'
 
 
 def test_the_rewriter_sees_the_same_nodes_as_the_judge():
@@ -308,8 +412,8 @@ def test_pairs_skip_a_page_with_nothing_mergeable():
         _segment(1, [_ref('one'), _ref('two')]),
         _segment(2, [_para('body')]),
     ]
-    assert seam_merger._pairs(documents, parity=0) == []
-    assert seam_merger._pairs(documents, parity=1) == []
+    assert text_seam_merger._pairs(documents, parity=0) == []
+    assert text_seam_merger._pairs(documents, parity=1) == []
 
 
 def test_pairs_still_fan_out_over_ordinary_neighbours():
@@ -320,9 +424,9 @@ def test_pairs_still_fan_out_over_ordinary_neighbours():
     ]
     assert [
         (top.index, bottom.index)
-        for top, bottom in seam_merger._pairs(documents, parity=0)
+        for top, bottom in text_seam_merger._pairs(documents, parity=0)
     ] == [(0, 1)]
     assert [
         (top.index, bottom.index)
-        for top, bottom in seam_merger._pairs(documents, parity=1)
+        for top, bottom in text_seam_merger._pairs(documents, parity=1)
     ] == [(1, 2)]

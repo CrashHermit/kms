@@ -17,11 +17,15 @@ from kms.graph import (
     nodes,
     predicate_hubs,
     predicates,
-    procedure_hubs,
     procedures,
-    statement_hubs,
     statements,
     triplets,
+)
+from kms.graph import (
+    local_procedure_hubs as procedure_hubs,
+)
+from kms.graph import (
+    local_statement_hubs as statement_hubs,
 )
 
 MERGE_SOURCE = (
@@ -114,7 +118,8 @@ MERGE_PROCEDURES = (
 MERGE_PROCEDURE_ENRICHMENT = (
     f'UNWIND $rows AS row '
     f'MATCH (p:{procedures.PROCEDURE_LABEL} {{uuid: row.uuid}}) '
-    f'SET p.description = row.description, p.embedding = row.embedding'
+    f'SET p.procedure = row.procedure, p.embedding = row.embedding '
+    f'REMOVE p.description'
 )
 
 MERGE_PROCEDURE_MEMBERS = (
@@ -233,58 +238,58 @@ def merge_procedure_hub_memberships_query() -> str:
     )
 
 
-def merge_meta_statement_hubs_query() -> str:
-    meta_label = statement_hubs.hub_label(tier='meta')
+def merge_global_statement_hubs_query() -> str:
+    global_label = statement_hubs.hub_label(tier='global')
     return (
         f'UNWIND $rows AS row '
-        f'MERGE (h:{meta_label} {{uuid: row.uuid}}) '
+        f'MERGE (h:{global_label} {{uuid: row.uuid}}) '
         f'ON CREATE SET h.created_at = $now '
         f'SET h += row, h.modified_at = $now'
     )
 
 
-def merge_meta_statement_alignments_query() -> str:
-    source_label = statement_hubs.hub_label()
-    meta_label = statement_hubs.hub_label(tier='meta')
+def merge_global_statement_alignments_query() -> str:
+    local_label = statement_hubs.hub_label()
+    global_label = statement_hubs.hub_label(tier='global')
     return (
         f'UNWIND $pairs AS pair '
-        f'MATCH (s:{source_label} {{uuid: pair.source_hub}}), '
-        f'(m:{meta_label} {{uuid: pair.meta_hub}}) '
-        f'MERGE (s)-[r:ALIGNS_TO]->(m) '
+        f'MATCH (s:{local_label} {{uuid: pair.source_hub}}), '
+        f'(g:{global_label} {{uuid: pair.meta_hub}}) '
+        f'MERGE (s)-[r:ALIGNS_TO]->(g) '
         f'ON CREATE SET r.created_at = $now '
         f'SET r.modified_at = $now'
     )
 
 
-def merge_meta_procedure_hubs_query() -> str:
-    meta_label = procedure_hubs.hub_label(tier='meta')
+def merge_global_procedure_hubs_query() -> str:
+    global_label = procedure_hubs.hub_label(tier='global')
     return (
         f'UNWIND $rows AS row '
-        f'MERGE (h:{meta_label} {{uuid: row.uuid}}) '
+        f'MERGE (h:{global_label} {{uuid: row.uuid}}) '
         f'ON CREATE SET h.created_at = $now '
         f'SET h += row, h.modified_at = $now'
     )
 
 
-def merge_meta_procedure_alignments_query() -> str:
-    source_label = procedure_hubs.hub_label()
-    meta_label = procedure_hubs.hub_label(tier='meta')
+def merge_global_procedure_alignments_query() -> str:
+    local_label = procedure_hubs.hub_label()
+    global_label = procedure_hubs.hub_label(tier='global')
     return (
         f'UNWIND $pairs AS pair '
-        f'MATCH (s:{source_label} {{uuid: pair.source_hub}}), '
-        f'(m:{meta_label} {{uuid: pair.meta_hub}}) '
-        f'MERGE (s)-[r:ALIGNS_TO]->(m) '
+        f'MATCH (s:{local_label} {{uuid: pair.source_hub}}), '
+        f'(g:{global_label} {{uuid: pair.meta_hub}}) '
+        f'MERGE (s)-[r:ALIGNS_TO]->(g) '
         f'ON CREATE SET r.created_at = $now '
         f'SET r.modified_at = $now'
     )
 
 
-def delete_meta_statement_hubs_query() -> str:
-    return f'MATCH (h:{statement_hubs.hub_label(tier="meta")}) DETACH DELETE h'
+def delete_global_statement_hubs_query() -> str:
+    return f'MATCH (h:{statement_hubs.hub_label(tier="global")}) DETACH DELETE h'
 
 
-def delete_meta_procedure_hubs_query() -> str:
-    return f'MATCH (h:{procedure_hubs.hub_label(tier="meta")}) DETACH DELETE h'
+def delete_global_procedure_hubs_query() -> str:
+    return f'MATCH (h:{procedure_hubs.hub_label(tier="global")}) DETACH DELETE h'
 
 
 def delete_statement_hubs_query() -> str:
@@ -1029,10 +1034,10 @@ _VECTOR_INDEX_LABELS = {
     'procedure_embedding': procedures.PROCEDURE_LABEL,
     'entity_embedding': entities.ENTITY_LABEL,
     'predicate_embedding': predicates.PREDICATE_LABEL,
-    'entity_hub_embedding': hubs.ENTITY_HUB_LABEL,
-    'predicate_hub_embedding': hubs.PREDICATE_HUB_LABEL,
-    'meta_entity_hub_embedding': hubs.META_ENTITY_HUB_LABEL,
-    'meta_predicate_hub_embedding': hubs.META_PREDICATE_HUB_LABEL,
+    'local_statement_hub_embedding': statement_hubs.LOCAL_STATEMENT_HUB_LABEL,
+    'global_statement_hub_embedding': statement_hubs.GLOBAL_STATEMENT_HUB_LABEL,
+    'local_procedure_hub_embedding': procedure_hubs.LOCAL_PROCEDURE_HUB_LABEL,
+    'global_procedure_hub_embedding': procedure_hubs.GLOBAL_PROCEDURE_HUB_LABEL,
     'triplet_hub_embedding': hubs.TRIPLET_HUB_LABEL,
     'meta_triplet_hub_embedding': hubs.META_TRIPLET_HUB_LABEL,
 }
@@ -1165,8 +1170,8 @@ async def procedure_hub_items(
     cypher = (
         f'MATCH (b:{label}) '
         f'MATCH (src:{nodes.SOURCE_LABEL} {{uuid: b.source}}) '
-        f'WHERE src.key = $source '
-        f'RETURN b.uuid AS uuid, b.description AS description, '
+        f'WHERE src.key = $source AND b.kind = "source" '
+        f'RETURN b.uuid AS uuid, b.procedure AS description, '
         f'b.embedding AS embedding, src.key AS source '
         f'ORDER BY b.uuid'
     )

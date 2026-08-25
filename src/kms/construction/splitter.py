@@ -6,7 +6,14 @@ import dspy
 from pydantic import BaseModel, Field
 
 from kms import config
-from kms.core import content, identity, models, module, state, walker
+from kms.core import (
+    context_window,
+    identity,
+    models,
+    module,
+    state,
+    walker,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +39,25 @@ class NodeSplit(BaseModel):
         description='The individual exercises it holds, in order (two or more).'
     )
 
+
+class SplitterNodeInput(BaseModel):
+    """One text-only node view supplied to the splitter."""
+
+    local_index: int = Field(
+        description=(
+            'Zero-based position in the supplied current_nodes list. '
+            'This is the only position value valid in a NodeSplit response.'
+        )
+    )
+    node_type: str = Field(
+        description='Canonical node type, such as paragraph, list, or image.'
+    )
+    node_text: str = Field(
+        description=(
+            'Canonical text payload for this node. Numbers in this text are '
+            'content, never local positions.'
+        )
+    )
 
 class Signature(dspy.Signature):
     r"""
@@ -60,22 +86,19 @@ class Signature(dspy.Signature):
     empty.
     """
 
-    current_nodes: content.ContentParts = dspy.InputField(
+    current_nodes: list[SplitterNodeInput] = dspy.InputField(
         description=(
-            "The look-ahead window's nodes, in order. Each text node is a "
-            'line `[position] (type): content`; each image node is a line '
-            '`[position] (image):` followed by the image itself.'
+            'Ordered look-ahead nodes. Each record has local_index, node_type, '
+            'and node_text. Use only local_index from current_nodes in output '
+            'positions. Image assets and bytes are not supplied.'
         )
     )
-    context_before: content.ContentParts = dspy.InputField(
+    context_before: list[SplitterNodeInput] = dspy.InputField(
         description=(
-            'Nodes immediately before the window, in document order, or an '
-            'empty content value when there is no preceding context. CONTEXT '
-            'ONLY — use it to place the exercises; never split or copy text '
-            'from it. Each text node is a line `[position] (type): content`; '
-            'each image node is a line `[position] (image):` followed by the '
-            'image itself.'
-        ),
+            'Ordered nodes immediately before current_nodes. Placement context '
+            'only; never split or copy text from this list. Its local_index '
+            'values are context-local and must not be returned.'
+        )
     )
     splits: list[NodeSplit] = dspy.OutputField(
         description='Nodes that pack two or more exercises, each split into its individual exercises.'
@@ -88,6 +111,20 @@ class Decision(BaseModel):
     splits: dict[int, list[SplitExercise]] = {}
 
 
+def _splitter_inputs(
+    nodes: list[context_window.ContextNode],
+) -> list[SplitterNodeInput]:
+    """Projects context nodes into the splitter's text-only boundary."""
+    return [
+        SplitterNodeInput(
+            local_index=node.position,
+            node_type=str(node.type or ''),
+            node_text=node.content or '',
+        )
+        for node in nodes
+    ]
+
+
 class Splitter(module.Module):
     """Finds nodes packing multiple exercises and splits them."""
 
@@ -96,15 +133,13 @@ class Splitter(module.Module):
 
     def encode(
         self,
-        current_nodes: list[walker.WindowNode],
-        context_before: list[walker.WindowNode] | None = None,
-    ) -> dict:
+        current_nodes: list[SplitterNodeInput],
+        context_before: list[SplitterNodeInput] | None = None,
+    ) -> dict[str, object]:
         """Builds the splitter-signature kwargs for one window."""
         return {
-            'current_nodes': content.labeled_content_parts(current_nodes),
-            'context_before': content.labeled_content_parts(
-                context_before or []
-            ),
+            'current_nodes': current_nodes,
+            'context_before': context_before or [],
         }
 
     def decode(self, prediction, **inputs) -> list[NodeSplit]:
@@ -134,7 +169,7 @@ class Splitter(module.Module):
 
 
 async def _gather_decisions(
-    nodes: list[models.Node], module: Splitter, budget: int
+    nodes: list[models.SourceNode], module: Splitter, budget: int
 ) -> Decision:
     """Walks the node stream in windows, collecting split decisions."""
     decision = Decision()
@@ -144,12 +179,16 @@ async def _gather_decisions(
         window = nodes[cursor:end]
         last_local = len(window) - 1
         splits = await module.aforward(
-            current_nodes=walker.node_views(window),
-            context_before=walker.node_views(
-                walker.nodes_before(
-                    nodes,
-                    cursor,
-                    config.get_settings().stages.splitter.backward_context_budget,
+            current_nodes=_splitter_inputs(
+                context_window.project_nodes(window)
+            ),
+            context_before=_splitter_inputs(
+                context_window.project_nodes(
+                    context_window.nodes_before(
+                        nodes,
+                        cursor,
+                        config.get_settings().stages.splitter.backward_context_budget,
+                    )
                 )
             ),
         )
@@ -190,13 +229,13 @@ async def _gather_decisions(
     return decision
 
 
-def _rebuild(nodes: list[models.Node], decision: Decision) -> list[models.Node]:
+def _rebuild(nodes: list[models.SourceNode], decision: Decision) -> list[models.SourceNode]:
     """Rebuilds the node stream with split nodes expanded in place.
 
     Split children receive deterministic UUIDs derived from their parent UUID
     and child ordinal; all other source nodes retain their existing UUID.
     """
-    out: list[models.Node] = []
+    out: list[models.SourceNode] = []
     for position, node in enumerate(nodes):
         pieces = decision.splits.get(position)
         if pieces:
@@ -209,12 +248,12 @@ def _rebuild(nodes: list[models.Node], decision: Decision) -> list[models.Node]:
                 body = item.content or ''
                 content = f'{number} {body}' if number else body
                 out.append(
-                    models.Node(
+                    models.SourceNode(
                         type=node.type,
                         content=content,
                         document_index=node.document_index,
                         uuid=identity.split_child_uuid(node.uuid, child_index),
-                        image_path=node.image_path,
+                        assets=node.assets.copy(),
                         provenance=node.provenance,
                         governing_instruction_uuids=(
                             node.governing_instruction_uuids.copy()
@@ -227,10 +266,10 @@ def _rebuild(nodes: list[models.Node], decision: Decision) -> list[models.Node]:
 
 
 async def split_exercises(
-    nodes: list[models.Node],
+    nodes: list[models.SourceNode],
     module: Splitter,
     budget: int | None = None,
-) -> list[models.Node]:
+) -> list[models.SourceNode]:
     """Splits packed exercises across the whole node stream.
 
     Args:
@@ -270,7 +309,7 @@ class SplitterNode:
         nodes = await split_exercises(nodes, module=self.module)
         documents = state.get('documents', [])
         if documents:
-            by_document: dict[int, list[models.Node]] = {
+            by_document: dict[int, list[models.SourceNode]] = {
                 document.index: [] for document in documents
             }
             for node in nodes:

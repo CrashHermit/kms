@@ -1,12 +1,12 @@
 import asyncio
-from collections import Counter
 
-from kms import runtime
 from tests.helpers import (
     print_instructions,
     print_node_summary,
     print_statement_images,
 )
+
+from kms import runtime
 
 PDF = 'tests/fixtures/books/ode_lebl_diffyqs.pdf'
 SOURCE = 'ode_lebl_diffyqs'

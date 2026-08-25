@@ -1,141 +1,102 @@
-"""OpenRouter reranking client for search result re-scoring."""
+"""Local HTTP text reranking client."""
 
 from collections.abc import Sequence
 from functools import lru_cache
+from numbers import Real
 from typing import Any
 
 import httpx
 
 from kms import config
-from kms.core import content
-
-
-def _api_key() -> str:
-    """Returns the configured reranker API key.
-
-    Raises:
-        RuntimeError: If neither the reranker key nor the OpenRouter
-            key is configured.
-    """
-    settings = config.get_settings()
-    key = settings.reranker.api_key or settings.models.openrouter_api_key
-    if not key:
-        raise RuntimeError(
-            'KMS_RERANKER__API_KEY is not set (and no '
-            'KMS_MODELS__OPENROUTER_API_KEY to fall back to). Export '
-            'your API key before calling the reranker.'
-        )
-    return key
+from kms.core import serve
 
 
 def is_configured() -> bool:
-    """True if a reranker API key is configured."""
-    settings = config.get_settings()
-    return bool(settings.reranker.api_key or settings.models.openrouter_api_key)
+    return bool(config.get_settings().reranker.model)
 
 
-def _wire_content(value: str | content.Content | dict[str, Any]) -> str | dict[str, Any]:
-    """Serializes canonical content into OpenRouter's rerank shape."""
-    if not isinstance(value, content.Content):
-        return value
-    text = ' '.join(
-        part.text
-        for part in value.parts
-        if isinstance(part, content.TextPart)
-    ).strip()
-    images = [
-        content.image_url(part.image)
-        for part in value.parts
-        if isinstance(part, content.ImagePart)
-    ]
-    if not images:
-        return text
-    if len(images) > 1:
-        raise ValueError(
-            'OpenRouter rerank documents support at most one image; '
-            'compose multiple images before reranking'
-        )
-    return {'text': text, 'image': images[0]}
+@lru_cache(maxsize=1)
+def _http_client() -> httpx.AsyncClient:
+    settings = config.get_settings().reranker
+    return httpx.AsyncClient(
+        base_url=settings.base_url.rstrip('/'), timeout=settings.timeout_seconds
+    )
 
 
 class Reranker:
-    """Reranks a text query against text, image, or mixed candidates."""
+    """Lazily-loaded local HTTP reranking client."""
 
-    def __init__(
-        self,
-        base_url: str | None = None,
-        model: str | None = None,
-        api_key: str | None = None,
-        *,
-        timeout: float | None = None,
-    ) -> None:
+    def __init__(self, model: str | None = None, *, batch_size: int | None = None) -> None:
         settings = config.get_settings().reranker
-        self.base_url = (base_url or settings.base_url).rstrip('/')
         self.model = model or settings.model
-        self.api_key = api_key
-        self.timeout = (
-            timeout if timeout is not None else settings.timeout_seconds
-        )
-        self._client: httpx.AsyncClient | None = None
-
-    async def _client_for(self) -> httpx.AsyncClient:
-        """Returns the lazily-created HTTP client."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=self.timeout,
-                headers={'Authorization': f'Bearer {self._require_key()}'},
-            )
-        return self._client
-
-    def _require_key(self) -> str:
-        """Returns the constructor key or the configured key."""
-        return self.api_key or _api_key()
+        self.batch_size = batch_size or settings.batch_size
 
     async def rerank(
         self,
-        query: str | dict[str, Any],
-        documents: Sequence[str | content.Content | dict[str, Any]],
+        query: str,
+        documents: Sequence[str],
         top_n: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Reranks the documents and returns the scored results.
-
-        Args:
-            query: The text query accepted by the rerank endpoint.
-            documents: Candidate text or canonical multimodal content.
-            top_n: Maximum number of reranked results to return.
-
-        Returns:
-            The reranker's ``results`` list, highest score first.
-
-        Raises:
-            RuntimeError: If the rerank request fails.
-        """
-        client = await self._client_for()
-        payload: dict[str, Any] = {
+        if not isinstance(query, str) or any(
+            not isinstance(document, str) for document in documents
+        ):
+            raise TypeError('rerank() accepts a text query and text documents')
+        values = list(documents)
+        if not values:
+            return []
+        await serve.retrieval_server_manager().aensure_reranker_started()
+        body: dict[str, Any] = {
             'model': self.model,
-            'query': _wire_content(query),
-            'documents': [_wire_content(document) for document in documents],
+            'query': query,
+            'documents': values,
         }
         if top_n is not None:
-            payload['top_n'] = top_n
-
-        response = await client.post(f'{self.base_url}/rerank', json=payload)
-        if response.status_code != 200:
-            body = response.text[:500]
-            raise RuntimeError(
-                f'rerank request failed with HTTP '
-                f'{response.status_code}: {body}'
+            body['top_n'] = top_n
+        endpoint = config.get_settings().reranker.base_url
+        try:
+            response = await _http_client().post('/rerank', json=body)
+            response.raise_for_status()
+            results = response.json()['results']
+            if not isinstance(results, list) or not results:
+                raise ValueError('invalid reranker result count')
+            if len(results) > len(values):
+                raise ValueError('invalid reranker result count')
+            seen: set[int] = set()
+            validated: list[dict[str, Any]] = []
+            for result in results:
+                index = result['index']
+                score = result['relevance_score']
+                if (
+                    not isinstance(index, int)
+                    or index < 0
+                    or index >= len(values)
+                    or index in seen
+                    or not isinstance(score, Real)
+                    or isinstance(score, bool)
+                ):
+                    raise ValueError('invalid or duplicated reranker result')
+                seen.add(index)
+                validated.append({'index': index, 'relevance_score': float(score)})
+            validated.sort(
+                key=lambda result: (-result['relevance_score'], result['index'])
             )
-        return response.json().get('results', [])
+            return validated if top_n is None else validated[:top_n]
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(f'local reranker endpoint {endpoint} failed: {exc}') from exc
 
     async def aclose(self) -> None:
-        """Closes the HTTP client if one was created."""
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
+        if _http_client.cache_info().currsize:
+            await _http_client().aclose()
+
+
+async def close_retrieval_clients() -> None:
+    if _http_client.cache_info().currsize:
+        await _http_client().aclose()
+    _http_client.cache_clear()
 
 
 @lru_cache(maxsize=1)
 def reranker() -> Reranker:
-    """Returns the shared Reranker, configured from the settings."""
     return Reranker()

@@ -9,9 +9,9 @@ from kms.core import identity, models
 def _bundle() -> models.ConstructionBundle:
     source = models.Source(key='book')
     nodes = [
-        models.Node(uuid='node-0', type=models.NodeType.PARAGRAPH, content='intro'),
-        models.Node(uuid='node-1', type=models.NodeType.IMAGE, image_path='figure.png'),
-        models.Node(uuid='node-2', type=models.NodeType.PARAGRAPH, content='finish'),
+        models.SourceNode(uuid='node-0', type=models.NodeType.PARAGRAPH, content='intro'),
+        models.SourceNode(uuid='node-1', type=models.NodeType.IMAGE, assets=[models.VisualAsset(path='figure.png')]),
+        models.SourceNode(uuid='node-2', type=models.NodeType.PARAGRAPH, content='finish'),
     ]
     statement = models.Statement(block=[0, 1], member_positions=[0, 1])
     procedure = models.Procedure(block=[0, 1], member_positions=[0, 1])

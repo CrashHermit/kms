@@ -1,30 +1,85 @@
 """Core dataclasses shared across the ingestion pipeline."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from kms.core import content
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+
+class TextNodeInput(BaseModel):
+    """Text-only source node crossing a DSPy enrichment boundary."""
+
+    local_index: int = Field(description='Position in the composed input.')
+    node_type: str = Field(description='Canonical node type.')
+    node_text: str = Field(description='Canonical node text.')
+
+
+
+class HubMentionInput(BaseModel):
+    """Text-only hub mention crossing an adjudication boundary."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    name: str
+    aliases: list[str] = Field(default_factory=list)
+    description: str | None = None
+
+    @classmethod
+    def from_record(cls, record: Mapping[str, Any]) -> 'HubMentionInput':
+        name = record['name']
+        aliases = [
+            alias
+            for alias in (record.get('aliases') or [])
+            if alias != name
+        ]
+        return cls(
+            name=name,
+            aliases=aliases,
+            description=record.get('description'),
+        )
+
+
+class SearchQuery(BaseModel):
+    """One ordered, text-only query accepted by the search pipeline."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    parts: list[TextNodeInput]
+
+    @model_validator(mode='after')
+    def validate_parts(self) -> 'SearchQuery':
+        if not self.parts:
+            raise ValueError('search query must contain at least one part')
+        expected = list(range(len(self.parts)))
+        actual = [part.local_index for part in self.parts]
+        if actual != expected:
+            raise ValueError(
+                'search query local_index values must be contiguous from zero'
+            )
+        if any(not part.node_text.strip() for part in self.parts):
+            raise ValueError('search query parts must contain non-blank text')
+        return self
 
 @dataclass(frozen=True, slots=True)
 class StatementEnrichmentInput:
     """Complete typed input for one statement enrichment operation."""
 
     statement_uuid: str
-    statement: content.Content
+    statement: tuple[TextNodeInput, ...]
     canonical_knowledge: str
 
 
 @dataclass(frozen=True, slots=True)
 class ProcedureEnrichmentInput:
-    """Complete typed input for one statement-centered procedure enrichment."""
+    """Typed statement and procedure content for canonicalization or generation."""
 
     source: str
     statement_uuid: str
-    statement: content.Content
+    statement: tuple[TextNodeInput, ...]
     procedure_uuid: str | None = None
-    procedure: content.Content | None = None
+    procedure: tuple[TextNodeInput, ...] | None = None
     canonical_knowledge: str = ''
 
 
@@ -207,16 +262,31 @@ class NodeType(StrEnum):
     INSTRUCTION = 'instruction'
 
 
+@dataclass(frozen=True, slots=True)
+class VisualAsset:
+    """One source visual asset in a source node's document order."""
+
+    path: str
+
+
 @dataclass(slots=True)
-class Node:
-    """One ordered canonical node within a source document."""
+class SourceNode:
+    """One ordered unit of authoritative source evidence.
+
+    ``content`` is the node's canonical text representation: source/OCR
+    transcription for ordinary nodes and the generated visual description
+    for enriched image nodes. ``assets`` preserves every attached visual
+    asset in source order as the original visual evidence. Derived structure
+    and knowledge records refer back to these nodes; they do not replace them.
+    """
 
     type: NodeType | None = None
     content: str | None = None
     index: int = 0
     uuid: str | None = None
     document_index: int | None = None
-    image_path: str | None = None
+    assets: list[VisualAsset] = field(default_factory=list)
+    embedding: list[float] | None = None
     provenance: dict[str, Any] = field(default_factory=dict)
     governing_instruction_uuids: list[str] = field(default_factory=list)
 
@@ -230,17 +300,24 @@ class ProcedureLink:
     procedure_uuid: str
 
 
+class ProcedureKind(StrEnum):
+    """Provenance kind for persisted procedure content."""
+
+    SOURCE = 'source'
+    GENERATED = 'generated'
+
+
 @dataclass(slots=True)
 class Procedure:
-    """A procedure with source provenance and compiled canonical content."""
+    """A procedure node with provenance and canonical content."""
 
     block: list[int]
     index: int = 0
+    kind: ProcedureKind = ProcedureKind.SOURCE
     uuid: str | None = None
     statement_uuid: str | None = None
     member_positions: list[int] = field(default_factory=list)
     procedure: str | None = None
-
 
 @dataclass(slots=True)
 class FSRSState:
@@ -334,13 +411,6 @@ class Statement:
     instruction_uuids: list[str] = field(default_factory=list)
 
 
-@dataclass(slots=True)
-class Picture:
-    """A picture referenced by a segment, keyed by its local index."""
-
-    index: int
-    image_path: str
-
 
 @dataclass(slots=True)
 class Document:
@@ -348,10 +418,7 @@ class Document:
 
     index: int
     image_path: str
-    content: str | None = None
-    pictures: list[Picture] = field(default_factory=list)
-    nodes: list[Node] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    nodes: list[SourceNode] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -407,7 +474,7 @@ class ConstructionBundle:
     """
 
     source: Source
-    nodes: list[Node] = field(default_factory=list)
+    nodes: list[SourceNode] = field(default_factory=list)
     instructions: list[Instruction] = field(default_factory=list)
     statements: list[Statement] = field(default_factory=list)
     procedures: list[Procedure] = field(default_factory=list)
@@ -584,16 +651,11 @@ def validate_bundle(
         raise BundleValidationError(errors)
 
 
-def flatten_documents(documents: list[Document]) -> list[Node]:
-    """Flattens canonical documents into one ordered node stream."""
-    flat: list[Node] = []
+def flatten_documents(documents: list[Document]) -> list[SourceNode]:
+    """Flattens canonical documents into one ordered source-evidence stream."""
+    flat: list[SourceNode] = []
     for document in documents:
-        pictures = list(document.pictures or [])
-        picture_cursor = 0
         for node in document.nodes or []:
             node.document_index = document.index
-            if node.type == NodeType.IMAGE and picture_cursor < len(pictures):
-                node.image_path = pictures[picture_cursor].image_path
-                picture_cursor += 1
             flat.append(node)
     return flat

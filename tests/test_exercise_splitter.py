@@ -1,89 +1,132 @@
 import asyncio
-import base64
 
 import pytest
 
 from kms.construction import splitter
-from kms.core import content, identity, models, walker
+from kms.core import context_window, identity, models
 
 
 class _ScriptedSplitter:
     def __init__(self, scripted):
         self._scripted = list(scripted)
+        self.calls = []
 
     async def aforward(self, current_nodes, context_before=None):
+        self.calls.append((current_nodes, context_before))
         return self._scripted.pop(0) if self._scripted else []
 
 
 def _nodes():
     return [
-        models.Node(
+        models.SourceNode(
             type='paragraph',
             content='In Exercises 3-4, compute the determinant.',
             uuid='node-0',
             document_index=0,
         ),
-        models.Node(
+        models.SourceNode(
             type='list',
             content='3 matrix A\n4 matrix B',
             uuid='node-1',
             document_index=0,
         ),
-        models.Node(
+        models.SourceNode(
             type='paragraph', content='ordinary prose', uuid='node-2', document_index=0
         ),
     ]
 
 
-def test_encode_wraps_text_and_image_context_as_content_parts(tmp_path):
-    image_path = tmp_path / 'context.png'
-    image_path.write_bytes(
-        base64.b64decode(
-            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNk'
-            '+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
-        )
-    )
+def test_encode_returns_text_only_splitter_inputs():
     encoded = splitter.Splitter.encode(
         None,
         current_nodes=[
-            walker.WindowNode(
-                position=2,
-                type='paragraph',
-                content='candidate text',
+            splitter.SplitterNodeInput(
+                local_index=2,
+                node_type='paragraph',
+                node_text='candidate text',
             )
         ],
         context_before=[
-            walker.WindowNode(
-                position=1,
-                type='image',
-                image_path=str(image_path),
+            splitter.SplitterNodeInput(
+                local_index=1,
+                node_type='image',
+                node_text='A diagram.',
             )
         ],
     )
 
-    assert isinstance(encoded['current_nodes'], content.ContentParts)
-    assert isinstance(encoded['context_before'], content.ContentParts)
-    assert encoded['current_nodes'].format()[0] == {
-        'type': 'text',
-        'text': '[2] (paragraph): candidate text',
+    assert encoded['current_nodes'][0].model_dump() == {
+        'local_index': 2,
+        'node_type': 'paragraph',
+        'node_text': 'candidate text',
     }
-    assert [block['type'] for block in encoded['context_before'].format()] == [
-        'text',
-        'image_url',
-    ]
+    assert encoded['context_before'][0].model_dump() == {
+        'local_index': 1,
+        'node_type': 'image',
+        'node_text': 'A diagram.',
+    }
 
+
+def test_splitter_projection_maps_image_description_without_assets(tmp_path):
+    image_path = tmp_path / 'figure.png'
+    image_path.write_bytes(b'image')
+    projected = splitter._splitter_inputs(
+        context_window.project_nodes(
+            [
+                models.SourceNode(
+                    type='paragraph',
+                    content='Exercise 3.12',
+                ),
+                models.SourceNode(
+                    type='image',
+                    content='A diagram of the parabola',
+                    assets=[models.VisualAsset(path=str(image_path))],
+                ),
+            ]
+        )
+    )
+
+    assert [node.model_dump() for node in projected] == [
+        {
+            'local_index': 0,
+            'node_type': 'paragraph',
+            'node_text': 'Exercise 3.12',
+        },
+        {
+            'local_index': 1,
+            'node_type': 'image',
+            'node_text': 'A diagram of the parabola',
+        },
+    ]
 
 def test_nodes_before_preserves_multimodal_nodes_and_order():
     nodes = [
-        models.Node(type='image', image_path='/tmp/first.png', uuid='first'),
-        models.Node(type='paragraph', content='second', uuid='second'),
-        models.Node(type='list', content='target', uuid='target'),
+        models.SourceNode(type='image', assets=[models.VisualAsset(path='/tmp/first.png')], uuid='first'),
+        models.SourceNode(type='paragraph', content='second', uuid='second'),
+        models.SourceNode(type='list', content='target', uuid='target'),
     ]
 
-    before = walker.nodes_before(nodes, cursor=2, budget=100)
+    before = context_window.nodes_before(nodes, cursor=2, budget=100)
 
     assert before == nodes[:2]
-    assert before[0].image_path == '/tmp/first.png'
+    assert before[0].assets[0].path == '/tmp/first.png'
+
+
+def test_gather_decisions_uses_structured_text_only_inputs():
+    fake = _ScriptedSplitter([[]])
+
+    asyncio.run(splitter._gather_decisions(_nodes(), fake, budget=100))
+
+    current_nodes, context_before = fake.calls[0]
+    assert all(
+        isinstance(node, splitter.SplitterNodeInput) for node in current_nodes
+    )
+    assert all(
+        isinstance(node, splitter.SplitterNodeInput)
+        for node in context_before
+    )
+    assert [node.local_index for node in current_nodes] == [0, 1, 2]
+    assert current_nodes[1].node_text == '3 matrix A\n4 matrix B'
 
 
 def test_split_rebuilds_multiple_exercises(tmp_path):
@@ -202,11 +245,9 @@ def test_single_exercise_is_invalid_split_output():
         )
 
 
-def test_rebuild_preserves_image_governance_and_child_identity():
-    node = models.Node(
+    node = models.SourceNode(
         type='image',
-        content='packed source',
-        image_path='/tmp/figure.png',
+        assets=[models.VisualAsset(path='/tmp/figure.png')],
         uuid='node-1',
         document_index=3,
         provenance={'provider': 'mistral'},
@@ -222,7 +263,7 @@ def test_rebuild_preserves_image_governance_and_child_identity():
 
     rebuilt = splitter._rebuild([node], splitter.Decision(splits={0: split.exercises}))
 
-    assert [item.image_path for item in rebuilt] == [
+    assert [item.assets[0].path for item in rebuilt] == [
         '/tmp/figure.png',
         '/tmp/figure.png',
     ]
@@ -247,21 +288,21 @@ def test_no_verdict_passes_through():
 def test_splitter_preserves_mistral_block_boundaries_while_splitting_packed_lists():
     """Exercises packed by one OCR list block are the splitter's input."""
     nodes = [
-        models.Node(
+        models.SourceNode(
             type=models.NodeType.PARAGRAPH,
             content='Solve each problem below.',
             uuid='node-0',
             document_index=2,
             provenance={'provider': 'mistral', 'provider_index': 4},
         ),
-        models.Node(
+        models.SourceNode(
             type=models.NodeType.LIST,
             content='1. Solve $x + 1 = 2$.\\n2. Prove that $0 < 1$.',
             uuid='node-1',
             document_index=2,
             provenance={'provider': 'mistral', 'provider_index': 5},
         ),
-        models.Node(
+        models.SourceNode(
             type=models.NodeType.MATH,
             content='$$x = 1$$',
             uuid='node-2',
@@ -296,14 +337,14 @@ def test_splitter_preserves_mistral_block_boundaries_while_splitting_packed_list
 
 def test_splitter_leaves_already_separate_mistral_blocks_untouched():
     nodes = [
-        models.Node(
+        models.SourceNode(
             type=models.NodeType.LIST,
             content='1. First exercise.',
             uuid='node-0',
             document_index=2,
             provenance={'provider': 'mistral', 'provider_index': 5},
         ),
-        models.Node(
+        models.SourceNode(
             type=models.NodeType.LIST,
             content='2. Second exercise.',
             uuid='node-1',

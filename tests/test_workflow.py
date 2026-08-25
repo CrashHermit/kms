@@ -26,6 +26,10 @@ def test_workflow_builds_independent_semantic_stage_modules(monkeypatch):
         'procedure_enrichment',
         'statement_hub_builder',
         'procedure_hub_builder',
+        'text_seam_merger',
+        'text_seam_rewriter',
+        'image_seam_merger',
+        'image_enricher',
     }
     assert expected <= modules.keys()
     assert expected <= set(calls)
@@ -79,6 +83,17 @@ def test_workflow_has_no_model_switch_nodes(monkeypatch):
     assert ('statement_procedure_builder', 'governance_walker') in edges
     assert ('governance_walker', 'triplet_extraction') in edges
     assert ('procedure_hub_builder', 'final_projector') in edges
+
+
+def test_workflow_runs_image_seams_after_text_seams(monkeypatch):
+    monkeypatch.setattr(workflow.llm, 'module_lm', lambda name: object())
+    graph = workflow.build_workflow().get_graph()
+    edges = {(edge.source, edge.target) for edge in graph.edges}
+
+    assert ('formatter_collect', 'text_seam_even_worker') in edges
+    assert ('text_seam_odd_collect', 'image_seam_even_worker') in edges
+    assert ('image_seam_odd_collect', 'image_enrichment') in edges
+    assert ('image_enrichment', 'splitter') in edges
 
 
 def test_workflow_defines_the_langgraph_composition():

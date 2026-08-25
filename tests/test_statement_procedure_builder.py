@@ -3,16 +3,22 @@ import asyncio
 import pytest
 
 from kms.construction import statement_procedure_builder
-from kms.core import models
-from kms.graph import statements as statement_graph
+from kms.core import identity, models
 
 
 class _ScriptedRoles:
     def __init__(self, roles):
         self._roles = list(roles)
 
-    async def acall(self, contents):
+    async def acall(self, current_nodes):
         return self._roles.pop(0)
+class _RecordingRoles:
+    def __init__(self):
+        self.calls = []
+
+    async def acall(self, **kwargs):
+        self.calls.append(kwargs)
+        return (True, True)
 
 
 class _ScriptedPositions:
@@ -25,11 +31,11 @@ class _ScriptedPositions:
 
 def _nodes():
     return {
-        0: models.Node(
+        0: models.SourceNode(
             type='paragraph', content='Example 4.2. Compute ...', uuid='node-0'
         ),
-        1: models.Node(type='paragraph', content='Integrate ...', uuid='node-1'),
-        2: models.Node(type='paragraph', content='Hence the value is 4.', uuid='node-2'),
+        1: models.SourceNode(type='paragraph', content='Integrate ...', uuid='node-1'),
+        2: models.SourceNode(type='paragraph', content='Hence the value is 4.', uuid='node-2'),
     }
 
 
@@ -43,8 +49,8 @@ def _both_modules(stmt_positions, proc_positions):
 
 def test_assigns_statement_ids_and_dual_role_links():
     nodes = {
-        0: models.Node(type='paragraph', content='Example', uuid='node-0'),
-        1: models.Node(type='paragraph', content='Solution', uuid='node-1'),
+        0: models.SourceNode(type='paragraph', content='Example', uuid='node-0'),
+        1: models.SourceNode(type='paragraph', content='Solution', uuid='node-1'),
     }
     role_mod = _ScriptedRoles([(True, True)])
     stmt_mod = _ScriptedPositions([[0]])
@@ -61,16 +67,16 @@ def test_assigns_statement_ids_and_dual_role_links():
         )
     )
 
-    expected = statement_graph.statement_uuid('book.pdf', [0, 1])
+    expected = identity.statement_uuid('book.pdf', [0, 1])
     assert statements[0].uuid == expected
     assert procedures[0].statement_uuid == expected
 
 
 def test_creates_a_hub_per_role():
     nodes = [
-        models.Node(type='paragraph', content='Theorem 2.1', uuid='node-0'),
-        models.Node(type='paragraph', content='Proof. ...', uuid='node-1'),
-        models.Node(type='paragraph', content='Exercise 3', uuid='node-2'),
+        models.SourceNode(type='paragraph', content='Theorem 2.1', uuid='node-0'),
+        models.SourceNode(type='paragraph', content='Proof. ...', uuid='node-1'),
+        models.SourceNode(type='paragraph', content='Exercise 3', uuid='node-2'),
     ]
     by_id = {i: node for i, node in enumerate(nodes)}
     module = _ScriptedRoles([(True, False), (False, True), (True, False)])
@@ -87,8 +93,8 @@ def test_creates_a_hub_per_role():
 
 def test_neither_role_is_skipped():
     nodes = [
-        models.Node(type='header', content='Learning Objectives', uuid='node-0'),
-        models.Node(type='paragraph', content='Theorem 2.1', uuid='node-1'),
+        models.SourceNode(type='header', content='Learning Objectives', uuid='node-0'),
+        models.SourceNode(type='paragraph', content='Theorem 2.1', uuid='node-1'),
     ]
     module = _ScriptedRoles([(False, False), (True, False)])
     statements, procedures = asyncio.run(
@@ -104,8 +110,8 @@ def test_neither_role_is_skipped():
 
 def test_a_both_block_creates_both_independent_hubs():
     nodes = [
-        models.Node(type='paragraph', content='Example 4.2. Compute ...', uuid='node-0'),
-        models.Node(type='paragraph', content='The value is 4.', uuid='node-1'),
+        models.SourceNode(type='paragraph', content='Example 4.2. Compute ...', uuid='node-0'),
+        models.SourceNode(type='paragraph', content='The value is 4.', uuid='node-1'),
     ]
     by_id = {i: node for i, node in enumerate(nodes)}
     role_mod = _ScriptedRoles([(True, True)])
@@ -132,20 +138,20 @@ def test_a_statement_cannot_be_built_without_a_block():
 
 
 def test_a_statement_is_not_an_ast_node():
-    nodes = [models.Node(type='paragraph', content='Theorem 2.1', uuid='node-0')]
+    nodes = [models.SourceNode(type='paragraph', content='Theorem 2.1', uuid='node-0')]
     module = _ScriptedRoles([(True, False)])
     statements, _ = asyncio.run(
         statement_procedure_builder.build_statement_procedure_hubs(
             [[0]], {0: nodes[0]}, role_module=module
         )
     )
-    assert not isinstance(statements[0], models.Node)
+    assert not isinstance(statements[0], models.SourceNode)
 
 
 def test_the_node_stream_is_left_alone():
     nodes = [
-        models.Node(type='paragraph', content='Theorem 2.1', uuid='node-0'),
-        models.Node(type='paragraph', content='Proof. ...', uuid='node-1'),
+        models.SourceNode(type='paragraph', content='Theorem 2.1', uuid='node-0'),
+        models.SourceNode(type='paragraph', content='Proof. ...', uuid='node-1'),
     ]
     by_id = {i: node for i, node in enumerate(nodes)}
     module = _ScriptedRoles([(True, False)])
@@ -166,12 +172,33 @@ def test_no_spans_is_a_noop():
             role_module=_ScriptedRoles([]),
         )
     ) == ([], [])
+def test_undescribed_image_span_skips_role_typing():
+    nodes = [
+        models.SourceNode(
+            type='image',
+            content=None,
+            assets=[models.VisualAsset(path='figure.png')],
+            uuid='node-0',
+        )
+    ]
+    role_module = _RecordingRoles()
+
+    statements, procedures = asyncio.run(
+        statement_procedure_builder.build_statement_procedure_hubs(
+            [[0]], nodes, role_module=role_module
+        )
+    )
+
+    assert statements == []
+    assert procedures == []
+    assert role_module.calls == []
+    assert nodes[0].assets[0].path == 'figure.png'
 
 
 def test_node_run_writes_the_hub_channels():
     nodes = [
-        models.Node(type='paragraph', content='Theorem 2.1', uuid='node-0'),
-        models.Node(type='paragraph', content='Proof. ...', uuid='node-1'),
+        models.SourceNode(type='paragraph', content='Theorem 2.1', uuid='node-0'),
+        models.SourceNode(type='paragraph', content='Proof. ...', uuid='node-1'),
     ]
     node = statement_procedure_builder.StatementProcedureBuilderNode(
         role_module=_ScriptedRoles([(True, False), (False, True)])
@@ -191,7 +218,7 @@ def test_node_run_writes_the_hub_channels():
     assert [s.block for s in statements] == [[0]]
     assert [p.block for p in procedures] == [[1]]
     assert all(n.type == 'paragraph' for n in nodes)
-    assert statements[0].uuid == statement_graph.statement_uuid(
+    assert statements[0].uuid == identity.statement_uuid(
         'book.pdf', [0]
     )
 
@@ -203,7 +230,7 @@ def test_node_run_on_an_empty_spans_channel_is_a_noop():
     out = asyncio.run(
         node.run(
             {
-                'nodes': [models.Node(type='paragraph', content='x', uuid='node-0')],
+                'nodes': [models.SourceNode(type='paragraph', content='x', uuid='node-0')],
                 'spans': [],
             }
         )

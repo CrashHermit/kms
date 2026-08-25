@@ -15,7 +15,6 @@ from kms.construction import formatter  # noqa: E402
 from kms.core import llm  # noqa: E402
 from kms.core.edits import apply_line_edits, number_lines  # noqa: E402
 
-
 SAMPLE = r"""Quadratic Formula
 
 Given \(ax^2 + bx + c = 0\), the roots are x = (-b ± √(b² - 4ac)) / 2a.

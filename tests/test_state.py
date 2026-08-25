@@ -18,7 +18,7 @@ def _state() -> state.State:
         'source_key': 'ignored-after-source-materializes',
         'source_metadata': {'ignored': 'metadata'},
         'documents': source.documents,
-        'nodes': [models.Node(uuid='node-10', document_index=0, content='text')],
+        'nodes': [models.SourceNode(uuid='node-10', document_index=0, content='text')],
         'instructions': [models.Instruction(block=[0], member_positions=[0])],
         'statements': [models.Statement(block=[1], member_positions=[0])],
         'procedures': [models.Procedure(block=[2], member_positions=[0])],

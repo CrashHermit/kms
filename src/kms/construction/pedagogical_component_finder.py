@@ -1,16 +1,36 @@
 """Finds the spans of pedagogical units in a run of nodes."""
 
 import logging
-from collections.abc import Sized
-from html import escape
 from typing import cast
 
 import dspy
+from pydantic import BaseModel, Field
 
 from kms import config
-from kms.core import content, models, module, recording, state, walker
+from kms.core import (
+    context_window,
+    models,
+    module,
+    recording,
+    state,
+    walker,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class PedagogicalNodeInput(BaseModel):
+    """Text-only local input for pedagogical boundary detection."""
+
+    local_index: int = Field(
+        description='Zero-based window position; the only valid span endpoint reference.',
+    )
+    node_type: str = Field(
+        description='Canonical node type for the projected source node.',
+    )
+    node_text: str = Field(
+        description='Canonical node text; numbers here are content, not positions.',
+    )
 
 
 class Signature(dspy.Signature):
@@ -64,15 +84,11 @@ class Signature(dspy.Signature):
     list when no unit is present.
     """
 
-    current_nodes: content.ContentParts = dspy.InputField(
+    current_nodes: list[PedagogicalNodeInput] = dspy.InputField(
         description=(
-            "The look-ahead window's nodes, in order. Each node is wrapped in "
-            'explicit `<NODE>` tags with a '
-            '`local_index` and `node_type`. Text appears between the opening and '
-            'closing tags; image nodes contain an `<IMAGE>` block. Use only the '
-            '`local_index` values for span endpoints; never use numbers appearing '
-            'inside node content. For N nodes, valid inclusive span endpoints are '
-            '0 through N-1.'
+            'Ordered local text records. Use only local_index for span '
+            'endpoints; node_text numbers are content. Image descriptions '
+            'appear as node_text, and no image assets or bytes are included.'
         )
     )
     spans: list[walker.Span] = dspy.OutputField(
@@ -83,40 +99,18 @@ class Signature(dspy.Signature):
     )
 
 
-def _tagged_content_parts(
-    nodes: list[walker.WindowNode],
-) -> content.ContentParts:
-    """Formats one window as explicit, ordered text/image node blocks."""
-    parts: list[content.TextPart | content.ImagePart] = [
-        content.TextPart(text='<WINDOW_NODES>\n')
-    ]
-    for node in nodes:
-        node_type = escape(node.type or 'unknown', quote=True)
-        modality = 'image' if node.image_path else 'text'
-        parts.append(
-            content.TextPart(
-                text=(
-                    f'<NODE local_index="{node.position}" '
-                    f'node_type="{node_type}" modality="{modality}">\n'
-                )
-            )
+def _pedagogical_inputs(
+    nodes: list[context_window.ContextNode],
+) -> list[PedagogicalNodeInput]:
+    """Projects context nodes without exposing assets or source identity."""
+    return [
+        PedagogicalNodeInput(
+            local_index=node.position,
+            node_type=node.type or '',
+            node_text=node.content or '',
         )
-        if node.image_path:
-            parts.append(content.TextPart(text='<IMAGE>\n'))
-            image = content.load_image(
-                node.image_path,
-                max_dim=config.get_settings().image.max_dim,
-            )
-            if image:
-                parts.append(content.ImagePart(image=image))
-            else:
-                parts.append(content.TextPart(text='[IMAGE_UNAVAILABLE]'))
-            parts.append(content.TextPart(text='\n</IMAGE>\n'))
-        else:
-            parts.append(content.TextPart(text=f'{node.content or ""}\n'))
-        parts.append(content.TextPart(text='</NODE>\n'))
-    parts.append(content.TextPart(text='</WINDOW_NODES>'))
-    return content.ContentParts(content=content.Content(parts=parts))
+        for node in nodes
+    ]
 
 
 class PedagogicalComponentFinder(module.Module):
@@ -133,25 +127,23 @@ class PedagogicalComponentFinder(module.Module):
         super().__init__(language_model, recorder)
         self.predictor.demos = [  # pyright: ignore[reportAttributeAccessIssue]
             dspy.Example(
-                current_nodes=_tagged_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=0,
-                            type='paragraph',
-                            content="**Exercise 1.2.1:** Sketch the slope field for $y' = e^{x-y}$.",
-                        ),
-                        walker.WindowNode(
-                            position=1,
-                            type='paragraph',
-                            content="**Exercise 1.2.2:** Sketch the slope field for $y' = x^2$.",
-                        ),
-                        walker.WindowNode(
-                            position=2,
-                            type='paragraph',
-                            content="**Exercise 1.2.3:** Sketch the slope field for $y' = y^2$.",
-                        ),
-                    ]
-                ),
+                current_nodes=_pedagogical_inputs([
+                    context_window.ContextNode(
+                        position=0,
+                        type='paragraph',
+                        content="**Exercise 1.2.1:** Sketch the slope field for $y' = e^{x-y}$.",
+                    ),
+                    context_window.ContextNode(
+                        position=1,
+                        type='paragraph',
+                        content="**Exercise 1.2.2:** Sketch the slope field for $y' = x^2$.",
+                    ),
+                    context_window.ContextNode(
+                        position=2,
+                        type='paragraph',
+                        content="**Exercise 1.2.3:** Sketch the slope field for $y' = y^2$.",
+                    ),
+                ]),
                 spans=[
                     walker.Span(start=0, end=0),
                     walker.Span(start=1, end=1),
@@ -159,50 +151,48 @@ class PedagogicalComponentFinder(module.Module):
                 ],
             ).with_inputs('current_nodes'),
             dspy.Example(
-                current_nodes=_tagged_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=0,
-                            type='paragraph',
-                            content='**Exercise 1.2.7:** Let $\\{x_n\\}$ be a sequence.',
-                        ),
-                        walker.WindowNode(
-                            position=1,
-                            type='list',
-                            content='a) Show that $\\lim x_n = 0$ iff $\\lim |x_n| = 0$.',
-                        ),
-                        walker.WindowNode(
-                            position=2,
-                            type='list',
-                            content='b) Find an example where $\\{|x_n|\\}$ converges and $\\{x_n\\}$ diverges.',
-                        ),
-                    ]
-                ),
+                current_nodes=_pedagogical_inputs([
+                    context_window.ContextNode(
+                        position=0,
+                        type='paragraph',
+                        content='**Exercise 1.2.7:** Let $\\{x_n\\}$ be a sequence.',
+                    ),
+                    context_window.ContextNode(
+                        position=1,
+                        type='list',
+                        content='a) Show that $\\lim x_n = 0$ iff $\\lim |x_n| = 0$.',
+                    ),
+                    context_window.ContextNode(
+                        position=2,
+                        type='list',
+                        content='b) Find an example where $\\{|x_n|\\}$ converges and $\\{x_n\\}$ diverges.',
+                    ),
+                ]),
                 spans=[walker.Span(start=0, end=2)],
             ).with_inputs('current_nodes'),
             dspy.Example(
-                current_nodes=_tagged_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=0,
-                            type='paragraph',
-                            content='**Theorem 2.1.10.** Every bounded monotone sequence converges.',
-                        ),
-                        walker.WindowNode(
-                            position=1,
-                            type='paragraph',
-                            content='Proof. Assume without loss of generality that the sequence is increasing.',
-                        ),
-                    ]
-                ),
+                current_nodes=_pedagogical_inputs([
+                    context_window.ContextNode(
+                        position=0,
+                        type='paragraph',
+                        content='**Theorem 2.1.10.** Every bounded monotone sequence converges.',
+                    ),
+                    context_window.ContextNode(
+                        position=1,
+                        type='paragraph',
+                        content='Proof. Assume without loss of generality that the sequence is increasing.',
+                    ),
+                ]),
                 spans=[walker.Span(start=0, end=1)],
             ).with_inputs('current_nodes'),
         ]
 
-    def encode(self, **inputs: object) -> dict:
-        """Builds the finder-signature kwargs for one window."""
-        current_nodes = cast(list[walker.WindowNode], inputs['current_nodes'])
-        return {'current_nodes': _tagged_content_parts(current_nodes)}
+    def encode(self, **inputs: object) -> dict[str, object]:
+        """Projects modality-neutral context into structured text records."""
+        current_nodes = cast(
+            list[context_window.ContextNode], inputs['current_nodes']
+        )
+        return {'current_nodes': _pedagogical_inputs(current_nodes)}
 
     def decode(self, prediction, **inputs) -> list[walker.Span]:
         """Returns validated, non-overlapping local unit spans."""
@@ -211,12 +201,12 @@ class PedagogicalComponentFinder(module.Module):
             raise TypeError('spans must contain walker.Span values')
         return walker.validate_spans(
             spans,
-            len(cast(Sized, inputs['current_nodes'])),
+            len(cast(list[context_window.ContextNode], inputs['current_nodes'])),
         )
 
 
 async def find_spans(
-    nodes: list[models.Node],
+    nodes: list[models.SourceNode],
     module: PedagogicalComponentFinder,
     budget: int | None = None,
     max_budget: int | None = None,

@@ -50,6 +50,7 @@ def procedure_properties(source: str, procedure: models.Procedure) -> dict:
         'uuid': _procedure_id(source, procedure),
         'source': nodes.source_uuid(source),
         'index': procedure.index,
+        'kind': procedure.kind.value,
         'procedure': procedure.procedure,
     }
     return {
@@ -60,17 +61,14 @@ def procedure_properties(source: str, procedure: models.Procedure) -> dict:
 def procedure_enrichment_properties(
     procedure_uuid_value: str,
     procedure: str,
-    description: str,
     embedding: list[float],
 ) -> dict:
-    """Builds compiled and derived properties for one Procedure."""
+    """Builds compiled content and its embedding for one Procedure."""
     return {
         'uuid': procedure_uuid_value,
         'procedure': procedure,
-        'description': description,
         'embedding': embedding,
     }
-
 
 def procedure_rows(
     procedures: list[models.Procedure], source: str
@@ -82,7 +80,7 @@ def procedure_rows(
 def procedure_member_pairs(
     procedures: list[models.Procedure],
     source: str,
-    doc_nodes: list[models.Node],
+    doc_nodes: list[models.SourceNode],
 ) -> list[dict]:
     """Builds procedure→member node edge pairs."""
     pairs: list[dict] = []

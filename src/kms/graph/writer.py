@@ -10,11 +10,11 @@ from kms.graph import (
     assertions,
     entity_hubs,
     learning,
+    local_procedure_hubs,
+    local_statement_hubs,
     names,
     predicate_hubs,
-    procedure_hubs,
     queries,
-    statement_hubs,
 )
 from kms.graph.hubs import triplet_hub_properties
 from kms.graph.instructions import (
@@ -50,44 +50,37 @@ def utcnow_iso() -> str:
 
 
 def node_batches(
-    nodes: list[models.Node], source: str
+    nodes: list[models.SourceNode],
+    source: str,
+    embeddings: list[list[float] | None] | None = None,
 ) -> dict[str | None, list[dict]]:
-    """Groups node rows by their Neo4j label for batched merges.
-
-    Args:
-        nodes: The AST nodes to batch.
-        source: The source key.
-
-    Returns:
-        A mapping from node label to the rows for that label.
-    """
+    """Groups node rows by label for batched merges."""
+    if embeddings is not None and len(embeddings) != len(nodes):
+        raise ValueError('node embeddings must match node count')
     batches: dict[str | None, list[dict]] = defaultdict(list)
-    for node in nodes:
-        batches[node_label(node)].append(node_properties(node, source))
+    for index, node in enumerate(nodes):
+        embedding = embeddings[index] if embeddings is not None else None
+        batches[node_label(node)].append(
+            node_properties(node, source, embedding=embedding)
+        )
     return dict(batches)
 
 
 async def persist_nodes(
-    nodes: list[models.Node],
+    nodes: list[models.SourceNode],
     source: str,
     *,
     session_factory: Callable,
     metadata: dict[str, Any] | None = None,
+    embeddings: list[list[float] | None] | None = None,
 ) -> None:
-    """Persists the source vertex and all AST nodes.
-
-    Args:
-        nodes: The AST nodes to persist.
-        source: The source key.
-        session_factory: Async callable returning a Neo4j session.
-        metadata: Optional extra source metadata.
-    """
+    """Persists the source vertex and all AST nodes."""
     if not nodes:
         return
     if any(node.uuid is None for node in nodes):
         raise ValueError('cannot persist nodes without stable ids')
     source_props = source_properties(source, metadata)
-    batches = node_batches(nodes, source)
+    batches = node_batches(nodes, source, embeddings)
     now = utcnow_iso()
 
     async with session_factory() as session:
@@ -103,7 +96,7 @@ async def persist_nodes(
             )
 
 
-def _chain_nodes(nodes: list[models.Node], source: str) -> list[str]:
+def _chain_nodes(nodes: list[models.SourceNode], source: str) -> list[str]:
     """Returns the uuid of every node in document order for the NEXT chain."""
     missing = [index for index, node in enumerate(nodes) if node.uuid is None]
     if missing:
@@ -120,7 +113,7 @@ def _chain_pairs(chain: list[str]) -> list[dict]:
 
 
 async def persist_chain(
-    nodes: list[models.Node],
+    nodes: list[models.SourceNode],
     source: str,
     *,
     session_factory: Callable,
@@ -161,7 +154,7 @@ def _statement_rows(
 
 async def persist_statements(
     statements: list[models.Statement],
-    nodes: list[models.Node],
+    nodes: list[models.SourceNode],
     source: str,
     *,
     session_factory: Callable,
@@ -226,7 +219,7 @@ async def persist_statement_hubs(
     await _persist_hubs(
         hubs,
         session_factory=session_factory,
-        graph_module=statement_hubs,
+        graph_module=local_statement_hubs,
         merge_query=queries.merge_statement_hubs_query,
         membership_query=queries.merge_statement_hub_memberships_query,
     )
@@ -238,7 +231,7 @@ async def persist_procedure_hubs(
     await _persist_hubs(
         hubs,
         session_factory=session_factory,
-        graph_module=procedure_hubs,
+        graph_module=local_procedure_hubs,
         merge_query=queries.merge_procedure_hubs_query,
         membership_query=queries.merge_procedure_hub_memberships_query,
     )
@@ -286,7 +279,7 @@ async def _persist_meta_hubs(
                 f'{hub.get("uuid")}'
             )
     rows = [
-        graph_module.meta_hub_properties(
+        graph_module.global_hub_properties(
             hub['canonical_name'],
             hub['description'],
             hub['embedding'],
@@ -314,40 +307,40 @@ async def _persist_meta_hubs(
             )
 
 
-async def persist_meta_statement_hubs(
+async def persist_global_statement_hubs(
     hubs: list[dict], *, session_factory: Callable
 ) -> None:
     await _persist_meta_hubs(
         hubs,
         session_factory=session_factory,
-        graph_module=statement_hubs,
+        graph_module=local_statement_hubs,
         all_source_query=queries.all_source_statement_hubs,
-        merge_query=queries.merge_meta_statement_hubs_query,
-        alignment_query=queries.merge_meta_statement_alignments_query,
+        merge_query=queries.merge_global_statement_hubs_query,
+        alignment_query=queries.merge_global_statement_alignments_query,
     )
 
 
-async def persist_meta_procedure_hubs(
+async def persist_global_procedure_hubs(
     hubs: list[dict], *, session_factory: Callable
 ) -> None:
     await _persist_meta_hubs(
         hubs,
         session_factory=session_factory,
-        graph_module=procedure_hubs,
+        graph_module=local_procedure_hubs,
         all_source_query=queries.all_source_procedure_hubs,
-        merge_query=queries.merge_meta_procedure_hubs_query,
-        alignment_query=queries.merge_meta_procedure_alignments_query,
+        merge_query=queries.merge_global_procedure_hubs_query,
+        alignment_query=queries.merge_global_procedure_alignments_query,
     )
 
 
-async def clear_meta_statement_hubs(*, session_factory: Callable) -> None:
+async def clear_global_statement_hubs(*, session_factory: Callable) -> None:
     async with session_factory() as session:
-        await session.run(queries.delete_meta_statement_hubs_query())
+        await session.run(queries.delete_global_statement_hubs_query())
 
 
-async def clear_meta_procedure_hubs(*, session_factory: Callable) -> None:
+async def clear_global_procedure_hubs(*, session_factory: Callable) -> None:
     async with session_factory() as session:
-        await session.run(queries.delete_meta_procedure_hubs_query())
+        await session.run(queries.delete_global_procedure_hubs_query())
 
 
 async def persist_statement_enrichment(
@@ -386,8 +379,7 @@ async def persist_procedure_enrichment(
     rows = [
         procedure_enrichment_properties(
             enrichment['uuid'],
-            enrichment.get('procedure', enrichment['description']),
-            enrichment['description'],
+            enrichment['procedure'],
             enrichment['embedding'],
         )
         for enrichment in enrichments
@@ -402,7 +394,7 @@ async def persist_procedure_enrichment(
 
 async def persist_instructions(
     instructions: list[models.Instruction],
-    nodes: list[models.Node],
+    nodes: list[models.SourceNode],
     source: str,
     *,
     session_factory: Callable,
@@ -431,7 +423,7 @@ async def persist_instructions(
 
 async def persist_procedures(
     procedures: list[models.Procedure],
-    doc_nodes: list[models.Node],
+    doc_nodes: list[models.SourceNode],
     source: str,
     *,
     session_factory: Callable,
@@ -488,7 +480,7 @@ async def persist_statement_procedure_links(
 async def persist_assertions(
     triplets: list[models.Triplet],
     source: str,
-    doc_nodes: list[models.Node],
+    doc_nodes: list[models.SourceNode],
     *,
     session_factory: Callable,
     entity_descriptions: dict[int, dict[str, str | None]] | None = None,

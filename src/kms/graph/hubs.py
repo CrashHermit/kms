@@ -4,12 +4,19 @@ from uuid import NAMESPACE_URL, uuid5
 
 from kms.graph import nodes
 
-ENTITY_HUB_LABEL = 'EntityHub'
-PREDICATE_HUB_LABEL = 'PredicateHub'
-META_ENTITY_HUB_LABEL = 'MetaEntityHub'
-META_PREDICATE_HUB_LABEL = 'MetaPredicateHub'
-TRIPLET_HUB_LABEL = 'TripletHub'
-META_TRIPLET_HUB_LABEL = 'MetaTripletHub'
+LOCAL_ENTITY_HUB_LABEL = 'LocalEntityHub'
+LOCAL_PREDICATE_HUB_LABEL = 'LocalPredicateHub'
+GLOBAL_ENTITY_HUB_LABEL = 'GlobalEntityHub'
+GLOBAL_PREDICATE_HUB_LABEL = 'GlobalPredicateHub'
+LOCAL_TRIPLET_HUB_LABEL = 'LocalTripletHub'
+GLOBAL_TRIPLET_HUB_LABEL = 'GlobalTripletHub'
+
+ENTITY_HUB_LABEL = LOCAL_ENTITY_HUB_LABEL
+PREDICATE_HUB_LABEL = LOCAL_PREDICATE_HUB_LABEL
+META_ENTITY_HUB_LABEL = GLOBAL_ENTITY_HUB_LABEL
+META_PREDICATE_HUB_LABEL = GLOBAL_PREDICATE_HUB_LABEL
+TRIPLET_HUB_LABEL = LOCAL_TRIPLET_HUB_LABEL
+META_TRIPLET_HUB_LABEL = GLOBAL_TRIPLET_HUB_LABEL
 
 _SOURCE_LABELS = {
     'entity': ENTITY_HUB_LABEL,
@@ -47,9 +54,19 @@ def hub_label(kind: str, tier: str) -> str:
         raise ValueError(f'unknown hub kind: {kind}') from error
 
 
-def meta_hub_label(kind: str) -> str:
-    """Returns the Neo4j label for a cross-source meta hub."""
+def local_hub_label(kind: str) -> str:
+    """Returns the local semantic hub label."""
+    return hub_label(kind, tier='source')
+
+
+def global_hub_label(kind: str) -> str:
+    """Returns the global semantic hub label."""
     return hub_label(kind, tier='meta')
+
+
+def meta_hub_label(kind: str) -> str:
+    """Returns the Neo4j label for a cross-source global hub."""
+    return global_hub_label(kind)
 
 
 def triplet_hub_label(tier: str) -> str:
@@ -59,6 +76,16 @@ def triplet_hub_label(tier: str) -> str:
     if tier == 'meta':
         return META_TRIPLET_HUB_LABEL
     raise ValueError(f'unknown triplet hub tier: {tier}')
+
+
+def local_triplet_hub_label() -> str:
+    """Returns the local triplet hub label."""
+    return LOCAL_TRIPLET_HUB_LABEL
+
+
+def global_triplet_hub_label() -> str:
+    """Returns the global triplet hub label."""
+    return GLOBAL_TRIPLET_HUB_LABEL
 
 
 def triplet_hub_uuid(

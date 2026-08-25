@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 from kms.construction import triplet_extractor
+from kms.core import context_window, models
 
 
 def _fact_module() -> triplet_extractor._FactExtractor:
@@ -20,6 +21,37 @@ def test_fact_decode_returns_text_without_model_provenance() -> None:
 
 def test_fact_signature_has_no_provenance_output() -> None:
     assert 'node_ids' not in triplet_extractor._FactSignature.output_fields
+def test_fact_encode_uses_document_ordered_target_context_fields():
+    encoded = _fact_module().encode(
+        context_before=[
+            context_window.ContextNode(
+                position=0, type='paragraph', content='Before'
+            )
+        ],
+        target_node=context_window.ContextNode(
+            position=4,
+            type='image',
+            content='A diagram',
+            assets=[models.VisualAsset(path='figure.png')],
+        ),
+        context_after=[
+            context_window.ContextNode(
+                position=0, type='paragraph', content='After'
+            )
+        ],
+    )
+
+    assert list(encoded) == [
+        'context_before',
+        'target_node',
+        'context_after',
+    ]
+    assert encoded['target_node'].node_text == 'A diagram'
+    assert encoded['target_node'].local_index == 0
+    assert encoded['context_before'][0].node_text == 'Before'
+    assert encoded['context_after'][0].node_text == 'After'
+    assert not hasattr(encoded['target_node'], 'assets')
+    assert not hasattr(encoded['target_node'], 'marker')
 
 
 class _FactModule:
@@ -46,12 +78,8 @@ class _TripletModule:
 
 def test_extract_triplets_assigns_only_anchor_provenance(monkeypatch) -> None:
     nodes = [
-        SimpleNamespace(
-            type='paragraph', content='Anchor A', image_path=None
-        ),
-        SimpleNamespace(
-            type='paragraph', content='Context B', image_path=None
-        ),
+        SimpleNamespace(type='paragraph', content='Anchor A', assets=[]),
+        SimpleNamespace(type='paragraph', content='Context B', assets=[]),
     ]
     fact_module = _FactModule()
     triplet_module = _TripletModule()
@@ -70,14 +98,11 @@ def test_extract_triplets_assigns_only_anchor_provenance(monkeypatch) -> None:
         )
     )
 
-    # With position-based references, the marked window anchor position
-    # is 0 in each call (the only target in the window)
+    assert [call['target_node'].position for call in fact_module.calls] == [0, 0]
     assert [
-        next(
-            node.position for node in call['current_nodes'] if node.marker == 'anchor'
-        )
+        [node.content for node in call['context_after']]
         for call in fact_module.calls
-    ] == [0, 1]
+    ] == [['Context B'], []]
     # evidence_positions are now positions
     assert [triplet.evidence_positions for triplet in result] == [[0], [1]]
     assert all(triplet.occurrence_uuids for triplet in result)
@@ -88,7 +113,7 @@ def test_extract_triplets_allows_an_image_anchor() -> None:
         SimpleNamespace(
             type='image',
             content=None,
-            image_path='/tmp/figure.png',
+            assets=[models.VisualAsset(path='/tmp/figure.png')],
         )
     ]
     fact_module = _FactModule()
@@ -103,8 +128,9 @@ def test_extract_triplets_allows_an_image_anchor() -> None:
         )
     )
 
-    assert (
-        fact_module.calls[0]['current_nodes'][0].image_path == '/tmp/figure.png'
-    )
+    target = fact_module.calls[0]['target_node']
+    assert target.type == 'image'
+    assert target.content is None
+    assert target.position == 0
     assert result[0].evidence_positions == [0]
     assert result[0].occurrence_uuids

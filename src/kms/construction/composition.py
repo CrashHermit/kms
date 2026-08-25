@@ -13,7 +13,7 @@ class ComposedPart:
     type: models.NodeType | None
     content: str | None
     document_index: int | None
-    image_path: str | None
+    assets: tuple[models.VisualAsset, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,17 +34,17 @@ class ComposedContent:
 
     @property
     def pictures(self) -> list[dict[str, int | str | None]]:
-        """Returns image metadata in composed document order."""
+        """Returns asset metadata in composed document order."""
         return [
             {
                 'index': index,
                 'document_index': part.document_index,
-                'image_path': part.image_path,
+                'image_path': asset.path,
             }
-            for index, part in enumerate(
-                part
+            for index, (part, asset) in enumerate(
+                (part, asset)
                 for part in self.parts
-                if part.type == models.NodeType.IMAGE
+                for asset in part.assets
             )
         ]
 
@@ -84,7 +84,7 @@ def _compose_content(
             type=bundle.nodes[position].type,
             content=bundle.nodes[position].content,
             document_index=bundle.nodes[position].document_index,
-            image_path=bundle.nodes[position].image_path,
+            assets=tuple(bundle.nodes[position].assets),
         )
         for position in sorted(members)
     )

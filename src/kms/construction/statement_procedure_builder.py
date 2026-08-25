@@ -4,20 +4,39 @@ import asyncio
 import logging
 
 import dspy
+from pydantic import BaseModel, Field
 
-from kms import config
 from kms.core import (
-    content,
+    context_window,
     identity,
     llm,
     models,
     module,
     recording,
     state,
-    walker,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class StatementProcedureNodeInput(BaseModel):
+    """Text-only local input for role typing and partitioning."""
+
+    local_index: int = Field(
+        description=(
+            'Zero-based position in the supplied current_nodes list; '
+            'the only valid span endpoint reference.'
+        )
+    )
+    node_type: str = Field(
+        description='Canonical node type for the projected source node.'
+    )
+    node_text: str = Field(
+        description=(
+            'Canonical node text; numbers here are content, not positions. '
+            'Image descriptions appear as node_text.'
+        )
+    )
 
 
 class Classify(dspy.Signature):
@@ -67,8 +86,11 @@ class Classify(dspy.Signature):
     flags True.
     """
 
-    contents: content.ContentParts = dspy.InputField(
-        description="The span's text and figures, in document order."
+    current_nodes: list[StatementProcedureNodeInput] = dspy.InputField(
+        description=(
+            "The span's ordered text records. Image descriptions appear as "
+            'node_text; no image assets or bytes are included.'
+        )
     )
     has_statement: bool = dspy.OutputField(
         description='True when the block states something (a claim, definition, theorem, example, exercise, or problem posed).'
@@ -84,11 +106,11 @@ class RoleTyper(module.Module):
     signature = Classify
     record_name = 'role_typer'
 
-    def encode(self, contents: content.Content) -> dict:
-        """Builds the role-typer signature kwargs."""
-        return {
-            'contents': content.ContentParts(content=contents),
-        }
+    def encode(
+        self, current_nodes: list[context_window.ContextNode]
+    ) -> dict[str, object]:
+        """Projects the span window into structured text records."""
+        return {'current_nodes': _statement_procedure_inputs(current_nodes)}
 
     def decode(self, prediction, **inputs) -> tuple[bool, bool]:
         """Returns validated role decisions for one span."""
@@ -116,11 +138,11 @@ class StatementPartitionSignature(dspy.Signature):
     portion, or both — never neither.
     """
 
-    current_nodes: content.ContentParts = dspy.InputField(
+    current_nodes: list[StatementProcedureNodeInput] = dspy.InputField(
         description=(
-            "The block's member nodes, in order. Each text node is a "
-            'line `[position] (type): content`; each image node is a line '
-            '`[position] (image):` followed by the image itself.'
+            "The block's ordered text records. Use only local_index for "
+            'positions; image descriptions appear as node_text and no image '
+            'assets or bytes are included.'
         )
     )
     statement_positions: list[int] = dspy.OutputField(
@@ -142,44 +164,40 @@ class StatementPartitioner(module.Module):
         super().__init__(language_model, recorder)
         self.predictor.demos = [
             dspy.Example(
-                current_nodes=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=0,
-                            type='paragraph',
-                            content="**Exercise 1.2.1:** Sketch the slope field for $y' = e^{x-y}$.",
-                        ),
-                        walker.WindowNode(
-                            position=1,
-                            type='paragraph',
-                            content="**Exercise 1.2.2:** Sketch the slope field for $y' = x^2$.",
-                        ),
-                    ]
-                ),
+                current_nodes=_statement_procedure_inputs([
+                    context_window.ContextNode(
+                        position=0,
+                        type='paragraph',
+                        content="**Exercise 1.2.1:** Sketch the slope field for $y' = e^{x-y}$.",
+                    ),
+                    context_window.ContextNode(
+                        position=1,
+                        type='paragraph',
+                        content="**Exercise 1.2.2:** Sketch the slope field for $y' = x^2$.",
+                    ),
+                ]),
                 statement_positions=[0, 1],
             ).with_inputs('current_nodes'),
             dspy.Example(
-                current_nodes=content.labeled_content_parts(
-                    [
-                        walker.WindowNode(
-                            position=0,
-                            type='paragraph',
-                            content="**Example 1.2.1:** Attempt to solve: $y' = \\frac{1}{x}, y(0) = 0$.",
-                        ),
-                        walker.WindowNode(
-                            position=1,
-                            type='paragraph',
-                            content='Integrate to find the general solution $y = \\ln |x| + C$.',
-                        ),
-                    ]
-                ),
+                current_nodes=_statement_procedure_inputs([
+                    context_window.ContextNode(
+                        position=0,
+                        type='paragraph',
+                        content="**Example 1.2.1:** Attempt to solve: $y' = \\frac{1}{x}, y(0) = 0$.",
+                    ),
+                    context_window.ContextNode(
+                        position=1,
+                        type='paragraph',
+                        content='Integrate to find the general solution $y = \\ln |x| + C$.',
+                    ),
+                ]),
                 statement_positions=[0],
             ).with_inputs('current_nodes'),
         ]
 
-    def encode(self, current_nodes: list[walker.WindowNode]) -> dict:
+    def encode(self, current_nodes: list[context_window.ContextNode]) -> dict:
         """Builds the partitioner-signature kwargs for one block."""
-        return {'current_nodes': content.labeled_content_parts(current_nodes)}
+        return {'current_nodes': _statement_procedure_inputs(current_nodes)}
 
     def decode(self, prediction, **inputs) -> list[int]:
         """Returns validated statement-portion positions."""
@@ -210,11 +228,11 @@ class ProcedurePartitionSignature(dspy.Signature):
     portion, or both — never neither.
     """
 
-    current_nodes: content.ContentParts = dspy.InputField(
+    current_nodes: list[StatementProcedureNodeInput] = dspy.InputField(
         description=(
-            "The block's member nodes, in order. Each text node is a "
-            'line `[position] (type): content`; each image node is a line '
-            '`[position] (image):` followed by the image itself.'
+            "The block's ordered text records. Use only local_index for "
+            'positions; image descriptions appear as node_text and no image '
+            'assets or bytes are included.'
         )
     )
     procedure_positions: list[int] = dspy.OutputField(
@@ -228,9 +246,9 @@ class ProcedurePartitioner(module.Module):
     signature = ProcedurePartitionSignature
     record_name = 'procedure_partitioner'
 
-    def encode(self, current_nodes: list[walker.WindowNode]) -> dict:
+    def encode(self, current_nodes: list[context_window.ContextNode]) -> dict:
         """Builds the partitioner-signature kwargs for one block."""
-        return {'current_nodes': content.labeled_content_parts(current_nodes)}
+        return {'current_nodes': _statement_procedure_inputs(current_nodes)}
 
     def decode(self, prediction, **inputs) -> list[int]:
         """Returns validated procedure-portion positions."""
@@ -243,38 +261,33 @@ class ProcedurePartitioner(module.Module):
         )
 
 
-def _span_parts(
-    span: list[int], nodes: list[models.Node]
-) -> content.Content:
-    """Builds the multimodal content of one span for the role typer."""
-    parts: list[content.TextPart | content.ImagePart] = []
-    for position in span:
-        node = nodes[position]
-        if node.type == 'image' and node.image_path:
-            image = content.load_image(
-                node.image_path,
-                max_dim=config.get_settings().image.max_dim,
-            )
-            if image:
-                parts.append(content.ImagePart(image=image))
-        elif node.content and node.content.strip():
-            parts.append(content.TextPart(text=node.content))
-    return content.Content(parts=parts)
+def _statement_procedure_inputs(
+    nodes: list[context_window.ContextNode],
+) -> list[StatementProcedureNodeInput]:
+    """Projects context nodes without exposing assets or source identity."""
+    return [
+        StatementProcedureNodeInput(
+            local_index=node.position,
+            node_type=node.type or '',
+            node_text=node.content or '',
+        )
+        for node in nodes
+    ]
 
 
 def _member_window(
-    members: list[int], nodes: list[models.Node]
-) -> list[walker.WindowNode]:
-    """Builds the ordered walker.WindowNode view of a block's members."""
-    window: list[walker.WindowNode] = []
+    members: list[int], nodes: list[models.SourceNode]
+) -> list[context_window.ContextNode]:
+    """Builds the ordered context-window view of a block's members."""
+    window: list[context_window.ContextNode] = []
     for position, node_id in enumerate(members):
         node = nodes[node_id]
         window.append(
-            walker.WindowNode(
+            context_window.ContextNode(
                 position=position,
                 type=node.type,
                 content=node.content,
-                image_path=node.image_path,
+                assets=node.assets.copy(),
             )
         )
     return window
@@ -308,7 +321,7 @@ def _mark_procedure(span: list[int]) -> models.Procedure:
 async def _partition_both_block(
     statement: models.Statement,
     procedure: models.Procedure,
-    nodes: list[models.Node],
+    nodes: list[models.SourceNode],
     statement_partitioner: StatementPartitioner,
     procedure_partitioner: ProcedurePartitioner,
     gate: asyncio.Semaphore,
@@ -337,7 +350,7 @@ async def _partition_both_block(
 
 async def build_statement_procedure_hubs(
     spans: list[list[int]],
-    nodes: list[models.Node],
+    nodes: list[models.SourceNode],
     role_module: RoleTyper,
     statement_partitioner: StatementPartitioner | None = None,
     procedure_partitioner: ProcedurePartitioner | None = None,
@@ -367,12 +380,12 @@ async def build_statement_procedure_hubs(
     gate = llm.gate(max_concurrency)
 
     async def _type_one(span: list[int]) -> tuple[bool, bool]:
-        """Types one span, skipping spans with no usable content."""
-        parts = _span_parts(span, nodes)
-        if not parts.parts:
+        """Types one span, skipping spans with no usable text."""
+        window = _member_window(span, nodes)
+        if not any(node.content and node.content.strip() for node in window):
             return (False, False)
         async with gate:
-            return await role_module.acall(contents=parts)
+            return await role_module.acall(current_nodes=window)
 
     roles_by_span = await asyncio.gather(*(_type_one(span) for span in spans))
 

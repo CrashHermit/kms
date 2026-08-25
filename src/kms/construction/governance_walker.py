@@ -5,62 +5,36 @@ import logging
 
 from kms import config
 from kms.construction import governance_judge
-from kms.core import content, models, state, walker
+from kms.core import context_window, models, state
 
 logger = logging.getLogger(__name__)
 
 
-def _compose_nodes(nodes: list[models.Node]) -> content.Content:
-    """Composes ordered nodes into multimodal content."""
-    if not nodes:
-        return content.Content.from_text('')
-
-    parts: list[content.TextPart | content.ImagePart] = []
-    for node in nodes:
-        if node.image_path:
-            image = content.load_image(
-                node.image_path,
-                max_dim=config.get_settings().image.max_dim,
-            )
-            if image:
-                parts.append(content.ImagePart(image=image))
-        if node.content:
-            parts.append(content.TextPart(text=node.content))
-    return content.Content(parts=parts)
 
 
 def _member_nodes(
-    member_positions: list[int], nodes: list[models.Node]
-) -> list[models.Node]:
+    member_positions: list[int], nodes: list[models.SourceNode]
+) -> list[models.SourceNode]:
     """Returns existing member nodes in the unit's declared order."""
     return [nodes[position] for position in member_positions]
+def _member_window(
+    member_positions: list[int], nodes: list[models.SourceNode]
+) -> list[context_window.ContextNode]:
+    """Projects ordered source members into a local node window."""
+    return context_window.project_nodes(_member_nodes(member_positions, nodes))
 
 
-def compose_instruction_content(
-    instruction: models.Instruction,
-    nodes: list[models.Node],
-) -> content.Content:
-    """Composes an instruction's member nodes into multimodal content."""
-    return _compose_nodes(_member_nodes(instruction.member_positions, nodes))
-
-
-def compose_statement_content(
-    statement: models.Statement,
-    nodes: list[models.Node],
-) -> content.Content:
-    """Composes a statement's complete member content."""
-    return _compose_nodes(_member_nodes(statement.member_positions, nodes))
 
 
 def _positions(
-    member_positions: list[int], nodes: list[models.Node]
+    member_positions: list[int], nodes: list[models.SourceNode]
 ) -> list[int]:
     """Returns stream positions for member positions."""
     return member_positions
 
 
 def _span_positions(
-    member_positions: list[int], nodes: list[models.Node]
+    member_positions: list[int], nodes: list[models.SourceNode]
 ) -> tuple[int, int] | None:
     """Returns the inclusive stream span for a set of member positions."""
     if not member_positions:
@@ -68,19 +42,26 @@ def _span_positions(
     return min(member_positions), max(member_positions)
 
 
-def _marked_statement_window(
-    nodes: list[models.Node],
+def _statement_context_parts(
+    nodes: list[models.SourceNode],
     target_positions: list[int],
     backward_budget: int,
     forward_budget: int,
-) -> list[walker.WindowNode]:
-    """Builds a static context window around statement members."""
-    return walker.marked_window(
-        nodes,
-        target_positions,
-        backward_budget=backward_budget,
-        forward_budget=forward_budget,
-        marker='statement',
+) -> tuple[
+    list[context_window.ContextNode], list[context_window.ContextNode]
+]:
+    """Builds directional context around explicit statement members."""
+    if not target_positions:
+        return [], []
+    start = min(target_positions)
+    end = max(target_positions)
+    return (
+        context_window.project_nodes(
+            context_window.nodes_before(nodes, start, backward_budget)
+        ),
+        context_window.project_nodes(
+            context_window.nodes_after(nodes, end, forward_budget)
+        ),
     )
 
 
@@ -92,7 +73,6 @@ class GovernanceStatementWalkerNode:
         judge: governance_judge.GovernanceJudge,
         backward_budget: int | None = None,
         forward_budget: int | None = None,
-        threshold: float = 0.5,
         max_concurrent_calls: int | None = None,
     ) -> None:
         governance_config = config.get_settings().stages.governance
@@ -107,7 +87,6 @@ class GovernanceStatementWalkerNode:
             if forward_budget is not None
             else governance_config.forward_context_budget
         )
-        self.threshold = threshold
         self.max_concurrent_calls = (
             max_concurrent_calls
             if max_concurrent_calls is not None
@@ -116,29 +95,28 @@ class GovernanceStatementWalkerNode:
 
     async def _judge_statement(
         self,
-        instruction_content: content.Content,
+        instruction_nodes: list[context_window.ContextNode],
         statement: models.Statement,
-        nodes: list[models.Node],
-        start: int,
-        end: int,
+        nodes: list[models.SourceNode],
         semaphore: asyncio.Semaphore,
-    ) -> tuple[models.Statement, bool, float]:
+    ) -> tuple[models.Statement, bool]:
         """Judges one complete statement with its surrounding context."""
-        statement_content = compose_statement_content(statement, nodes)
+        statement_nodes = _member_window(statement.member_positions, nodes)
         target_positions = _positions(statement.member_positions, nodes)
-        context_window = _marked_statement_window(
+        context_before, context_after = _statement_context_parts(
             nodes,
             target_positions,
             backward_budget=self.backward_budget,
             forward_budget=self.forward_budget,
         )
         async with semaphore:
-            governs_result, confidence = await self.judge.acall(
-                instruction_directive=instruction_content,
-                statement_content=statement_content,
-                context_window=context_window,
+            governs_result = await self.judge.acall(
+                instruction_nodes=instruction_nodes,
+                context_before=context_before,
+                statement_nodes=statement_nodes,
+                context_after=context_after,
             )
-        return statement, governs_result, confidence
+        return statement, governs_result
 
     async def run(self, current_state: state.State) -> dict:
         """Walks statements and assigns applicable instruction identities."""
@@ -205,27 +183,24 @@ class GovernanceStatementWalkerNode:
             if not candidates:
                 continue
 
-            instruction_content = compose_instruction_content(
-                instruction, nodes
+            instruction_nodes = _member_window(
+                instruction.member_positions or instruction.block, nodes
             )
             results = await asyncio.gather(
                 *(
                     self._judge_statement(
-                        instruction_content,
+                        instruction_nodes,
                         statement,
                         nodes,
-                        start,
-                        end,
                         semaphore,
                     )
-                    for statement, start, end in candidates
+                    for statement, _start, _end in candidates
                 )
             )
             evaluated += len(results)
-            for statement, governs_result, confidence in results:
+            for statement, governs_result in results:
                 if (
                     governs_result
-                    and confidence >= self.threshold
                     and instruction.uuid not in statement.instruction_uuids
                 ):
                     statement.instruction_uuids.append(instruction.uuid)

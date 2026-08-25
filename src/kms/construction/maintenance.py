@@ -5,10 +5,11 @@ from typing import Any
 
 from kms.construction import (
     entity_hubs,
+    local_procedure_hubs,
+    local_statement_hubs,
     predicate_hubs,
-    procedure_hubs,
-    statement_hubs,
 )
+from kms.postprocessing import global_procedure_hubs, global_statement_hubs
 
 
 async def rebuild_source(
@@ -68,13 +69,13 @@ async def rebuild_source(
         session_factory=session_factory,
         max_concurrency=max_concurrency,
     )
-    statement_result = await statement_hubs.rebuild(
+    statement_result = await local_statement_hubs.rebuild(
         source,
         session_factory=session_factory,
         adjudicator=statement_adjudicator,
         synthesizer=statement_synthesizer,
     )
-    procedure_result = await procedure_hubs.rebuild(
+    procedure_result = await local_procedure_hubs.rebuild(
         source,
         session_factory=session_factory,
         adjudicator=procedure_adjudicator,
@@ -143,13 +144,13 @@ async def rebuild_meta(
     )
     result = {'entity': entity_result, 'predicate': predicate_result}
     if include_statement_learning:
-        result['statement'] = await statement_hubs.rebuild_meta(
+        result['statement'] = await global_statement_hubs.rebuild(
             session_factory=session_factory,
             adjudicator=statement_adjudicator,
             synthesizer=statement_synthesizer,
         )
     if include_procedure_learning:
-        result['procedure'] = await procedure_hubs.rebuild_meta(
+        result['procedure'] = await global_procedure_hubs.rebuild(
             session_factory=session_factory,
             adjudicator=procedure_adjudicator,
             synthesizer=procedure_synthesizer,

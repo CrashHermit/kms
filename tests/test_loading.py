@@ -12,7 +12,7 @@ from kms.construction import (
     entity_enrichment,
     triplet_extractor,
 )
-from kms.core import content, loading, recording
+from kms.core import loading, recording, semantic
 
 
 def _png_bytes() -> bytes:
@@ -96,59 +96,71 @@ def test_loads_auxiliary_prediction_fields(tmp_path):
     )
 
 
-def test_loads_a_content_parts_input(tmp_path):
+def test_loads_structured_entity_context_input(tmp_path):
     recorder = recording.Recorder('src', output_dir=str(tmp_path / 'ex'))
-    passage = content.ContentParts(
-        content=content.Content(
-            parts=[
-                content.TextPart(text='hi'),
-                content.ImagePart(
-                    image=dspy.Image(url=_data_url(_png_bytes()))
-                ),
-            ]
-        )
-    )
     recorder.record(
-        'component_enrichment',
+        'entity_enrichment',
         entity_enrichment.EntityEnrichmentSignature,
-        {'passage': passage, 'terms': ['vector space']},
+        {
+            'context_before': [
+                semantic.TermContextNodeInput(
+                    local_index=0,
+                    node_type='paragraph',
+                    node_text='Before',
+                )
+            ],
+            'target_node': semantic.TermContextNodeInput(
+                local_index=0,
+                node_type='image',
+                node_text='A diagram',
+            ),
+            'context_after': [
+                semantic.TermContextNodeInput(
+                    local_index=0,
+                    node_type='paragraph',
+                    node_text='After',
+                )
+            ],
+            'terms': ['vector space'],
+        },
         dspy.Prediction(description='A directed quantity.'),
     )
 
-    example = _by_stage(tmp_path / 'ex')['component_enrichment'].examples[0]
-    assert isinstance(example.passage, content.ContentParts)
-    parts = example.passage.content.parts
-    assert parts[0].text == 'hi'
-    assert isinstance(parts[1].image, dspy.Image)
+    example = _by_stage(tmp_path / 'ex')['entity_enrichment'].examples[0]
+    assert example.target_node.node_text == 'A diagram'
+    assert example.context_before[0].node_text == 'Before'
+    assert example.context_after[0].node_text == 'After'
     assert example.terms == ['vector space']
 
 
-def test_resolves_image_path_sidecars(tmp_path):
+def test_loads_structured_fact_context_inputs(tmp_path):
     recorder = recording.Recorder('src', output_dir=str(tmp_path / 'ex'))
-    image_file = tmp_path / 'fig.png'
-    image_file.write_bytes(_png_bytes())
-    passage = content.ContentParts(
-        content=content.Content(
-            parts=[
-                content.TextPart(text='[0] (image):'),
-                content.ImagePart(image=dspy.Image(url=str(image_file))),
-            ]
-        )
-    )
     recorder.record(
         'atomic_fact_extractor',
         triplet_extractor._FactSignature,
-        {'current_nodes': passage},
+        {
+            'context_before': [
+                triplet_extractor.FactNodeInput(
+                    local_index=0,
+                    node_type='paragraph',
+                    node_text='Before',
+                )
+            ],
+            'target_node': triplet_extractor.FactNodeInput(
+                local_index=0,
+                node_type='image',
+                node_text='A diagram',
+            ),
+            'context_after': [],
+        },
         dspy.Prediction(facts=[]),
     )
 
     example = _by_stage(tmp_path / 'ex')['atomic_fact_extractor'].examples[0]
-    loaded = example.current_nodes.content.parts[1].image
-    assert isinstance(loaded, dspy.Image)
-    assert loaded.url.startswith('data:image/')
-    sidecars = list((tmp_path / 'ex' / 'images').glob('*.png'))
-    assert len(sidecars) == 1
-    assert sidecars[0].read_bytes() == image_file.read_bytes()
+    assert example.context_before[0].node_text == 'Before'
+    assert example.target_node.node_type == 'image'
+    assert example.target_node.node_text == 'A diagram'
+    assert example.context_after == []
 
 
 def test_round_trip_through_a_module(tmp_path):
