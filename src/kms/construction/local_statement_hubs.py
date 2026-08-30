@@ -22,39 +22,22 @@ class LocalStatementHubSynthesisSignature(dspy.Signature):
     r"""
     Synthesize one reusable source-local canonical statement from statements
     that express the same claim, fact, theorem, explanation, or question
-    pattern.
-
-    The supplied descriptions are already enriched source-level statements.
-    Preserve the supported meaning, qualifiers, and mathematical notation.
-    Generalize across the supplied statements only where they share meaning.
-    Do not mention the source, passages, statement identifiers, or procedures.
-    Do not solve a question or invent facts.
-
-    evidence: list[str] = dspy.InputField(
-        description='Descriptions of statements assigned to one local hub.'
-    )
-    result: LocalStatementHubResult = dspy.OutputField(
-        description='A canonical name and description of the shared statement.'
-    )
+    pattern. Preserve supported meaning and qualifiers. Do not solve or invent.
     """
+
+    request: models.EvidenceInput = dspy.InputField()
+    result: LocalStatementHubResult = dspy.OutputField()
 
 
 class LocalStatementHubAdjudicationSignature(dspy.Signature):
     r"""
     Decide whether two enriched statements express the same canonical meaning
-    within one source.
-
-    Return True only when they communicate the same claim, fact, theorem,
-    explanation, or question pattern with equivalent meaning. Return False for
-    merely related, sequential, broader, narrower, or differently solved
-    statements. Ignore whether either statement has a procedure.
-
-    left: str = dspy.InputField(description='The first enriched statement.')
-    right: str = dspy.InputField(description='The second enriched statement.')
-    should_merge: bool = dspy.OutputField(
-        description='Whether both statements belong to one local StatementHub.'
-    )
+    within one source. Return True only for equivalent meaning, not merely
+    related, sequential, broader, narrower, or differently solved statements.
     """
+
+    pair: models.TextPairInput = dspy.InputField()
+    result: models.MergeDecision = dspy.OutputField()
 
 
 class LocalStatementHubSynthesizer(module.Module):
@@ -62,10 +45,10 @@ class LocalStatementHubSynthesizer(module.Module):
     record_name = 'statement_hub_synthesizer'
 
     def encode(self, evidence: list[str]) -> dict:
-        return {'evidence': evidence}
+        return {'request': models.EvidenceInput(evidence=evidence)}
 
     def decode(self, prediction, **inputs) -> tuple[str, str]:
-        result = prediction.result
+        result = LocalStatementHubResult.model_validate(prediction.result)
         return (
             module.require_text(result.canonical_name, 'canonical_name'),
             module.require_text(result.description, 'description'),
@@ -77,11 +60,11 @@ class LocalStatementHubAdjudicator(module.Module):
     record_name = 'statement_hub_adjudicator'
 
     def encode(self, left: str, right: str) -> dict:
-        return {'left': left, 'right': right}
+        return {'pair': models.TextPairInput(left=left, right=right)}
 
     def decode(self, prediction, **inputs) -> bool:
-        """Returns the validated hub-merge decision."""
-        return module.require_bool(prediction.should_merge, 'should_merge')
+        result = models.MergeDecision.model_validate(prediction.result)
+        return module.require_bool(result.should_merge, 'should_merge')
 
 
 def _records(rows: list[dict]) -> tuple[models.StatementHubRecord, ...]:
@@ -126,6 +109,8 @@ async def _build(
         separate_below=stage.separate_below,
         adjudicate=adjudicate,
         max_concurrency=stage.max_concurrent_calls,
+        comparison_token_budget=stage.comparison_token_budget,
+        rerank_top_n=stage.rerank_top_n,
     )
     if meta:
         groups = [
@@ -222,5 +207,3 @@ async def rebuild(
         'statement_hubs': len(result['hubs']),
         'statements': result['records'],
     }
-
-

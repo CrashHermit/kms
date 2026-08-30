@@ -1,5 +1,7 @@
 """Local HTTP text reranking client."""
 
+import logging
+import time
 from collections.abc import Sequence
 from functools import lru_cache
 from numbers import Real
@@ -8,7 +10,9 @@ from typing import Any
 import httpx
 
 from kms import config
-from kms.core import serve
+from kms.core import logs, serve
+
+logger = logging.getLogger(__name__)
 
 
 def is_configured() -> bool:
@@ -44,6 +48,7 @@ class Reranker:
         values = list(documents)
         if not values:
             return []
+        started = time.perf_counter()
         await serve.retrieval_server_manager().aensure_reranker_started()
         body: dict[str, Any] = {
             'model': self.model,
@@ -80,11 +85,23 @@ class Reranker:
             validated.sort(
                 key=lambda result: (-result['relevance_score'], result['index'])
             )
-            return validated if top_n is None else validated[:top_n]
+            selected = validated if top_n is None else validated[:top_n]
         except RuntimeError:
             raise
         except Exception as exc:
             raise RuntimeError(f'local reranker endpoint {endpoint} failed: {exc}') from exc
+        elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
+        logger.info(
+            'reranker: %d candidates -> %d selected; query=%s; '
+            'documents=%s; results=%s; duration=%s ms',
+            len(values),
+            len(selected),
+            logs.elide(query),
+            logs.elide([logs.elide(doc) for doc in values]),
+            logs.elide(selected),
+            elapsed_ms,
+        )
+        return selected
 
     async def aclose(self) -> None:
         if _http_client.cache_info().currsize:

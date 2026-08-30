@@ -21,47 +21,33 @@ class LocalProcedureHubResult(BaseModel):
 class LocalProcedureHubSynthesisSignature(dspy.Signature):
     r"""
     Synthesize one reusable source-local canonical method from procedures that
-    use the same general reasoning or action pattern.
-
-    The supplied descriptions are enriched source-level procedures. Explain
-    the shared goal and method without copying source-specific names, values,
-    answers, or navigation. Preserve supported conditions and mathematical
-    notation. Do not invent steps or collapse merely related but different
-    methods.
-
-    evidence: list[str] = dspy.InputField(
-        description='Descriptions of procedures assigned to one local hub.'
-    )
-    result: LocalProcedureHubResult = dspy.OutputField(
-        description='A canonical name and description of the shared method.'
-    )
+    use the same general reasoning or action pattern. Preserve supported
+    conditions and notation. Do not invent steps or answers.
     """
+
+    request: models.EvidenceInput = dspy.InputField()
+    result: LocalProcedureHubResult = dspy.OutputField()
 
 
 class LocalProcedureHubAdjudicationSignature(dspy.Signature):
     r"""
     Decide whether two enriched procedures use the same reusable method within
-    one source.
-
-    Return True only when their general reasoning or action pattern is the
-    same. Return False when they merely concern the same subject, share a
-    result, or use materially different methods.
+    one source. Return True only for the same reasoning or action pattern.
     """
 
-    left: str = dspy.InputField(description='The first enriched procedure.')
-    right: str = dspy.InputField(description='The second enriched procedure.')
-    should_merge: bool = dspy.OutputField(
-        description='Whether both procedures belong to one local ProcedureHub.'
-    )
+    pair: models.TextPairInput = dspy.InputField()
+    result: models.MergeDecision = dspy.OutputField()
 
 
 class LocalProcedureHubSynthesizer(module.Module):
     signature = LocalProcedureHubSynthesisSignature
+    record_name = 'procedure_hub_synthesizer'
+
     def encode(self, evidence: list[str]) -> dict:
-        return {'evidence': evidence}
+        return {'request': models.EvidenceInput(evidence=evidence)}
 
     def decode(self, prediction, **inputs) -> tuple[str, str]:
-        result = prediction.result
+        result = LocalProcedureHubResult.model_validate(prediction.result)
         return (
             module.require_text(result.canonical_name, 'canonical_name'),
             module.require_text(result.description, 'description'),
@@ -70,12 +56,14 @@ class LocalProcedureHubSynthesizer(module.Module):
 
 class LocalProcedureHubAdjudicator(module.Module):
     signature = LocalProcedureHubAdjudicationSignature
+    record_name = 'procedure_hub_adjudicator'
+
     def encode(self, left: str, right: str) -> dict:
-        return {'left': left, 'right': right}
+        return {'pair': models.TextPairInput(left=left, right=right)}
 
     def decode(self, prediction, **inputs) -> bool:
-        """Returns the validated hub-merge decision."""
-        return module.require_bool(prediction.should_merge, 'should_merge')
+        result = models.MergeDecision.model_validate(prediction.result)
+        return module.require_bool(result.should_merge, 'should_merge')
 
 
 def _records(rows: list[dict]) -> tuple[models.ProcedureHubRecord, ...]:
@@ -119,6 +107,8 @@ async def _build(
         separate_below=stage.separate_below,
         adjudicate=adjudicate,
         max_concurrency=stage.max_concurrent_calls,
+        comparison_token_budget=stage.comparison_token_budget,
+        rerank_top_n=stage.rerank_top_n,
     )
     if meta:
         groups = [
@@ -215,5 +205,3 @@ async def rebuild(
         'procedure_hubs': len(result['hubs']),
         'procedures': result['records'],
     }
-
-
