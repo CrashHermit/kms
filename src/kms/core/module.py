@@ -68,9 +68,7 @@ def require_number(
             f'{field_name} must be at least {minimum}, got {value}'
         )
     if maximum is not None and result > maximum:
-        raise ValueError(
-            f'{field_name} must be at most {maximum}, got {value}'
-        )
+        raise ValueError(f'{field_name} must be at most {maximum}, got {value}')
     return result
 
 
@@ -105,9 +103,7 @@ def require_positions(
     if unique and len(value) != len(set(value)):
         raise ValueError(f'{field_name} contains duplicate positions: {value}')
     if ordered and value != sorted(value):
-        raise ValueError(
-            f'{field_name} must be in document order: {value}'
-        )
+        raise ValueError(f'{field_name} must be in document order: {value}')
     return value
 
 
@@ -123,7 +119,6 @@ class Module(dspy.Module):
 
     signature: type[dspy.Signature]
     record_name: str = 'module'
-    use_chain_of_thought: bool = False
 
     def __init__(
         self,
@@ -131,10 +126,7 @@ class Module(dspy.Module):
         recorder: recording.Recorder | None = None,
     ) -> None:
         super().__init__()
-        predictor_factory = (
-            dspy.ChainOfThought if self.use_chain_of_thought else dspy.Predict
-        )
-        self.predictor = predictor_factory(self.signature)
+        self.predictor = dspy.Predict(self.signature)
         self.set_lm(language_model)
         self._recorder = recorder
         self._language_model = language_model

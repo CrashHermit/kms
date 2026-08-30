@@ -26,7 +26,7 @@ from kms import runtime  # noqa: E402
 from kms.core import loading  # noqa: E402
 from kms.graph import db, schema  # noqa: E402
 
-PDF = 'tests/fixtures/books/calc3_gradients_exercises.pdf'
+PDF = 'books/calc3_gradients_exercises.pdf'
 SOURCE = 'calc3_gradients_exercises'
 OUTPUT_DIR = f'output/live_smoke/run-{time.time_ns()}'
 CACHE_DIR = f'output/live_smoke/cache-{time.time_ns()}'

@@ -90,7 +90,7 @@ def test_overlay_leaves_each_block_in_the_stream_exactly_once():
     state = {
         'nodes': nodes,
         'spans': [[0, 1, 2], [1, 2], [3]],
-        'source_key': 'book.pdf',
+        'source': models.Source(key='book.pdf'),
     }
 
     typer = statement_procedure_builder.StatementProcedureBuilderNode(

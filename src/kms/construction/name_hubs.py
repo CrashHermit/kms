@@ -1,13 +1,14 @@
 """Deterministic lexical name-hub materialization."""
 
 import asyncio
+import logging
 from collections.abc import Callable
-from typing import Literal
 
 import dspy
 from pydantic import BaseModel, Field
 
-from kms.core import llm, module
+from kms import config
+from kms.core import batching, context_window, llm, module
 from kms.graph import names, queries, writer
 
 
@@ -19,6 +20,25 @@ class _LexicalDefinition(BaseModel):
     )
 
 
+class _LexicalDefinitionInput(BaseModel):
+    """Structured lexical canonical-form input."""
+
+    surface_forms: list[str]
+    kind: str
+
+
+class _LexicalMembership(BaseModel):
+    """The boolean decision for one deterministic candidate pair."""
+
+    should_merge: bool
+
+
+class _LexicalMembershipInput(BaseModel):
+    """Structured lexical membership input."""
+
+    left: str
+    right: str
+    kind: str
 class _LexicalDefinitionSignature(dspy.Signature):
     r"""
     Choose one preferred written form for a fixed lexical cluster.
@@ -31,61 +51,21 @@ class _LexicalDefinitionSignature(dspy.Signature):
     present in the supplied surface forms whenever possible.
     """
 
-    surface_forms: list[str] = dspy.InputField(
-        description='The exact lexical phrases in one deterministic cluster.'
-    )
-    kind: str = dspy.InputField(
-        description='Whether the phrases are entity names or predicate phrases.'
-    )
-    result: _LexicalDefinition = dspy.OutputField(
-        description=(
-            'The zero-based index of one supplied surface form; never invent '
-            'or rewrite a form.'
-        )
-    )
+    request: _LexicalDefinitionInput = dspy.InputField()
+    result: _LexicalDefinition = dspy.OutputField()
 
 
-class _LexicalMembership(BaseModel):
-    """The lexical judge's decision for one deterministic candidate pair."""
-
-    decision: Literal['Merge', 'Separate'] = Field(
-        description=(
-            "'Merge' when both phrases are the same written form or a "
-            "conservative lexical variant; otherwise 'Separate'."
-        )
-    )
 
 
 class _LexicalMembershipSignature(dspy.Signature):
     r"""
     Decide whether two already-similar complete phrases belong to one
-    lexical-form group.
-
-    The deterministic similarity filter has already made these two phrases
-    candidates. Judge only written-form equivalence, not semantic equivalence.
-
-    Merge spelling, punctuation, separator, whitespace, or closely related
-    inflectional variants of the same phrase, such as "color"/"colour" or
-    "sub-graph"/"subgraph". Keep synonyms such as "car"/"automobile",
-    broader or narrower phrases such as "graph"/"subgraph", different word
-    orders, and positive/negative phrases Separate. Preserve mathematical
-    notation, meaningful case, quantifiers, prepositions, and negation.
+    lexical-form group. Return TRUE only for conservative written-form
+    equivalence and FALSE otherwise. Do not judge semantic equivalence.
     """
 
-    left: str = dspy.InputField(
-        description='The first complete lexical phrase.'
-    )
-    right: str = dspy.InputField(
-        description='The second complete lexical phrase.'
-    )
-    kind: str = dspy.InputField(
-        description='Whether the phrases are entity names or predicate phrases.'
-    )
-    result: _LexicalMembership = dspy.OutputField(
-        description=(
-            "'Merge' or 'Separate'; never infer a semantic relationship."
-        )
-    )
+    request: _LexicalMembershipInput = dspy.InputField()
+    result: _LexicalMembership = dspy.OutputField()
 
 
 class _LexicalMembershipJudge(module.Module):
@@ -95,18 +75,17 @@ class _LexicalMembershipJudge(module.Module):
     record_name = 'lexical_membership_judge'
 
     def encode(self, left: str, right: str, kind: str) -> dict:
-        """Build the lexical membership judge inputs."""
-        return {'left': left, 'right': right, 'kind': kind}
-
-    def decode(self, prediction, **inputs) -> str:
-        """Return the judge's validated Merge or Separate decision."""
-        decision = prediction.result.decision
-        if decision not in {'Merge', 'Separate'}:
-            raise ValueError(
-                'lexical membership decision must be Merge or Separate, '
-                f'got {decision!r}'
+        """Build the structured lexical membership input."""
+        return {
+            'request': _LexicalMembershipInput(
+                left=left, right=right, kind=kind
             )
-        return decision
+        }
+
+    def decode(self, prediction, **inputs) -> bool:
+        """Return the validated lexical merge decision."""
+        result = _LexicalMembership.model_validate(prediction.result)
+        return result.should_merge
 
 
 class _LexicalDefinitionSynthesizer(module.Module):
@@ -116,8 +95,12 @@ class _LexicalDefinitionSynthesizer(module.Module):
     record_name = 'lexical_name_synthesizer'
 
     def encode(self, surface_forms: list[str], kind: str) -> dict:
-        """Build the canonical-form selector inputs."""
-        return {'surface_forms': surface_forms, 'kind': kind}
+        """Build the structured canonical-form selector input."""
+        return {
+            'request': _LexicalDefinitionInput(
+                surface_forms=surface_forms, kind=kind
+            )
+        }
 
     def decode(self, prediction, **inputs) -> int:
         """Return the validated supplied surface-form index."""
@@ -137,6 +120,7 @@ async def _judged_groups(
     language_model: dspy.LM,
     similarity_threshold: float,
     gate: asyncio.Semaphore,
+    comparison_token_budget: int = 4096,
 ) -> list[list[dict]]:
     """Runs lexical judgment only on deterministic similarity candidates."""
     exact_pairs = [
@@ -166,15 +150,43 @@ async def _judged_groups(
                 right=rows[right]['text'],
                 kind=kind,
             )
-        if decision not in {'Merge', 'Separate'}:
-            raise RuntimeError(
-                f'lexical membership judge returned invalid decision: '
-                f'{decision}'
+        if not isinstance(decision, bool):
+            raise TypeError(
+                f'lexical membership judge returned non-boolean decision: '
+                f'{decision!r}'
             )
-        return pair if decision == 'Merge' else None
+        return pair if decision else None
 
-    decisions = await asyncio.gather(
-        *(_judge_pair(pair) for pair in candidate_pairs)
+    def token_cost(pair: tuple[int, int]) -> int:
+        left, right = pair
+        return (
+            context_window.estimate_text_tokens(rows[left]['text'])
+            + context_window.estimate_text_tokens(rows[right]['text'])
+            + context_window.estimate_text_tokens(kind)
+            + 32
+        )
+    decisions: list[tuple[int, int] | None] = []
+    wave_count = 0
+    largest_wave_tokens = 0
+    for wave in batching.token_batches(
+        candidate_pairs,
+        token_cost=token_cost,
+        token_budget=comparison_token_budget,
+    ):
+        wave_count += 1
+        largest_wave_tokens = max(
+            largest_wave_tokens,
+            sum(token_cost(pair) for pair in wave),
+        )
+        decisions.extend(await asyncio.gather(*(_judge_pair(pair) for pair in wave)))
+    logger = logging.getLogger(__name__)
+    logger.info(
+        '%s lexical hub comparisons: %d candidate pairs, %d waves, '
+        'largest wave %d estimated tokens',
+        kind,
+        len(candidate_pairs),
+        wave_count,
+        largest_wave_tokens,
     )
     accepted_pairs = exact_pairs + [
         pair for pair in decisions if pair is not None
@@ -204,12 +216,14 @@ async def rebuild(
         session_factory, kind, source
     )
     gate = llm.gate(max_concurrency)
+    stage = getattr(config.get_settings().stages, f'{kind}_hubs')
     groups = await _judged_groups(
         occurrence_rows,
         kind,
         language_model=language_model,
         similarity_threshold=similarity_threshold,
         gate=gate,
+        comparison_token_budget=stage.comparison_token_budget,
     )
     synthesizer = _LexicalDefinitionSynthesizer(language_model)
 
@@ -249,83 +263,4 @@ async def rebuild(
     return {
         'name_hubs': len(hubs),
         'names': len(occurrence_rows),
-    }
-
-
-async def rebuild_meta(
-    kind: str,
-    *,
-    language_model: dspy.LM,
-    session_factory: Callable,
-    similarity_threshold: float = 0.9,
-    max_concurrency: int | None = None,
-) -> dict:
-    """Rebuilds qualified meta lexical hubs from source-local name hubs."""
-    source_hubs = await queries.all_name_hubs(session_factory, kind)
-    await writer.clear_meta_name_hubs(
-        kind,
-        session_factory=session_factory,
-    )
-    if not source_hubs:
-        return {'name_hubs': 0, 'source_name_hubs': 0}
-
-    sources = {row['source'] for row in source_hubs if row.get('source')}
-    if len(sources) < 2:
-        raise RuntimeError(
-            f'name hubs (meta/{kind}): requires at least two distinct '
-            f'sources, found {len(sources)}'
-        )
-
-    gate = llm.gate(max_concurrency)
-    groups = await _judged_groups(
-        source_hubs,
-        kind,
-        language_model=language_model,
-        similarity_threshold=similarity_threshold,
-        gate=gate,
-    )
-    qualified_groups = [
-        group
-        for group in groups
-        if len({row['source'] for row in group if row.get('source')}) >= 2
-    ]
-    synthesizer = _LexicalDefinitionSynthesizer(language_model)
-
-    async def _synthesize(group: list[dict]) -> dict:
-        surface_forms = list(dict.fromkeys(row['text'] for row in group))
-        async with gate:
-            canonical_index = await synthesizer.aforward(
-                surface_forms=surface_forms,
-                kind=kind,
-            )
-        if not 0 <= canonical_index < len(surface_forms):
-            raise RuntimeError(
-                'meta lexical name synthesizer returned an invalid '
-                f'surface-form index: {canonical_index}'
-            )
-        canonical_form = surface_forms[canonical_index]
-        aliases = sorted(
-            {alias for row in group for alias in row.get('aliases', []) or []}
-            | set(surface_forms)
-        )
-        member_ids = [row['uuid'] for row in group]
-        return {
-            'uuid': names.meta_name_hub_uuid(kind, member_ids),
-            'canonical_form': canonical_form,
-            'aliases': aliases,
-            'members': member_ids,
-            'sources': sorted({row['source'] for row in group}),
-        }
-
-    hubs = await asyncio.gather(
-        *(_synthesize(group) for group in qualified_groups)
-    )
-    await writer.persist_meta_name_hubs(
-        kind,
-        list(hubs),
-        session_factory=session_factory,
-    )
-    return {
-        'name_hubs': len(hubs),
-        'source_name_hubs': len(source_hubs),
     }

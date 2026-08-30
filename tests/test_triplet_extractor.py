@@ -2,7 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 from kms.construction import triplet_extractor
-from kms.core import context_window, models
+from kms.core import models
 
 
 def _fact_module() -> triplet_extractor._FactExtractor:
@@ -12,7 +12,9 @@ def _fact_module() -> triplet_extractor._FactExtractor:
 
 
 def test_fact_decode_returns_text_without_model_provenance() -> None:
-    prediction = SimpleNamespace(facts=['A is related to B'])
+    prediction = SimpleNamespace(
+        facts=[models.AtomicFact(text='A is related to B')]
+    )
 
     assert _fact_module().decode(prediction, current_nodes=[]) == [
         {'text': 'A is related to B'}
@@ -21,42 +23,72 @@ def test_fact_decode_returns_text_without_model_provenance() -> None:
 
 def test_fact_signature_has_no_provenance_output() -> None:
     assert 'node_ids' not in triplet_extractor._FactSignature.output_fields
-def test_fact_encode_uses_document_ordered_target_context_fields():
-    encoded = _fact_module().encode(
+
+
+def test_fact_prompt_uses_structured_request_boundary():
+    prompt = triplet_extractor._FactSignature.__doc__
+    assert 'supplied request' in prompt
+    assert 'neighboring' in prompt
+    assert '<anchor>' not in prompt
+    assert 'HARD EXCLUSIONS' not in prompt
+    assert 'problem specifications' in prompt
+    assert 'explicitly asserts' in prompt
+
+
+def test_triplet_prompt_requires_concise_source_relations():
+    prompt = triplet_extractor._TripletSignature.__doc__
+    assert '1–5 words' in prompt
+    assert 'Never output a sentence' in prompt
+    assert 'Find the gradient' in prompt
+    assert 'Return [] rather than guessing' in prompt
+
+
+def test_triplet_decode_discards_sentence_predicates():
+    module_instance = triplet_extractor._TripletDecomposer.__new__(
+        triplet_extractor._TripletDecomposer
+    )
+    prediction = SimpleNamespace(
+        triplets=[
+            triplet_extractor._TripletInput(
+                subject='f',
+                predicate='The function is defined by the expression',
+                object='x',
+                subject_kind=models.NodeKind.ENTITY,
+                object_kind=models.NodeKind.ENTITY,
+            ),
+            triplet_extractor._TripletInput(
+                subject='f',
+                predicate='is defined by',
+                object='x',
+                subject_kind=models.NodeKind.ENTITY,
+                object_kind=models.NodeKind.ENTITY,
+            ),
+        ]
+    )
+    result = module_instance.decode(prediction, fact_text='f is defined by x')
+    assert [(item.subject, item.predicate, item.object) for item in result] == [
+        ('f', 'is defined by', 'x')
+    ]
+def test_fact_encode_passes_canonical_request():
+    request = models.FactExtractionInput(
         context_before=[
-            context_window.ContextNode(
-                position=0, type='paragraph', content='Before'
-            )
+            models.NodeInput(index=1, node_type='paragraph', text='Before')
         ],
-        target_node=context_window.ContextNode(
-            position=4,
-            type='image',
-            content='A diagram',
-            assets=[models.VisualAsset(path='figure.png')],
+        target_node=models.NodeInput(
+            index=1, node_type='image', text='A diagram'
         ),
         context_after=[
-            context_window.ContextNode(
-                position=0, type='paragraph', content='After'
-            )
+            models.NodeInput(index=1, node_type='paragraph', text='After')
         ],
     )
+    encoded = _fact_module().encode(request)
 
-    assert list(encoded) == [
-        'context_before',
-        'target_node',
-        'context_after',
-    ]
-    assert encoded['target_node'].node_text == 'A diagram'
-    assert encoded['target_node'].local_index == 0
-    assert encoded['context_before'][0].node_text == 'Before'
-    assert encoded['context_after'][0].node_text == 'After'
-    assert not hasattr(encoded['target_node'], 'assets')
-    assert not hasattr(encoded['target_node'], 'marker')
+    assert encoded == {'request': request}
 
 
 class _FactModule:
-    async def aforward(self, **kwargs):
-        self.calls.append(kwargs)
+    async def aforward(self, *, request):
+        self.calls.append(request)
         return [{'text': 'The anchor states a fact.'}]
 
     def __init__(self) -> None:
@@ -88,7 +120,6 @@ def test_extract_triplets_assigns_only_anchor_provenance(monkeypatch) -> None:
         'backward_context_budget',
         100,
     )
-
     result = asyncio.run(
         triplet_extractor._extract_triplets(
             nodes,
@@ -97,13 +128,11 @@ def test_extract_triplets_assigns_only_anchor_provenance(monkeypatch) -> None:
             source='book.pdf',
         )
     )
-
-    assert [call['target_node'].position for call in fact_module.calls] == [0, 0]
+    assert [call.target_node.index for call in fact_module.calls] == [1, 1]
     assert [
-        [node.content for node in call['context_after']]
+        [node.text for node in call.context_after]
         for call in fact_module.calls
     ] == [['Context B'], []]
-    # evidence_positions are now positions
     assert [triplet.evidence_positions for triplet in result] == [[0], [1]]
     assert all(triplet.occurrence_uuids for triplet in result)
 
@@ -118,7 +147,6 @@ def test_extract_triplets_allows_an_image_anchor() -> None:
     ]
     fact_module = _FactModule()
     triplet_module = _TripletModule()
-
     result = asyncio.run(
         triplet_extractor._extract_triplets(
             nodes,
@@ -127,10 +155,34 @@ def test_extract_triplets_allows_an_image_anchor() -> None:
             source='book.pdf',
         )
     )
-
-    target = fact_module.calls[0]['target_node']
-    assert target.type == 'image'
-    assert target.content is None
-    assert target.position == 0
+    target = fact_module.calls[0].target_node
+    assert target.node_type == 'image'
+    assert target.text == ''
     assert result[0].evidence_positions == [0]
     assert result[0].occurrence_uuids
+def test_triplet_decode_preserves_all_endpoint_kind_combinations():
+    module_instance = triplet_extractor._TripletDecomposer.__new__(
+        triplet_extractor._TripletDecomposer
+    )
+    combinations = [
+        (models.NodeKind.ENTITY, models.NodeKind.ENTITY),
+        (models.NodeKind.ENTITY, models.NodeKind.EVENT),
+        (models.NodeKind.EVENT, models.NodeKind.ENTITY),
+        (models.NodeKind.EVENT, models.NodeKind.EVENT),
+    ]
+    prediction = SimpleNamespace(
+        triplets=[
+            triplet_extractor._TripletInput(
+                subject='left',
+                predicate='relates to',
+                object='right',
+                subject_kind=subject_kind,
+                object_kind=object_kind,
+            )
+            for subject_kind, object_kind in combinations
+        ]
+    )
+    result = module_instance.decode(prediction, fact_text='left relates to right')
+    assert [
+        (item.subject_kind, item.object_kind) for item in result
+    ] == combinations

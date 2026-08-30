@@ -4,7 +4,6 @@ import asyncio
 import logging
 
 import dspy
-from pydantic import BaseModel, Field
 
 from kms.core import (
     context_window,
@@ -19,24 +18,6 @@ from kms.core import (
 logger = logging.getLogger(__name__)
 
 
-class StatementProcedureNodeInput(BaseModel):
-    """Text-only local input for role typing and partitioning."""
-
-    local_index: int = Field(
-        description=(
-            'Zero-based position in the supplied current_nodes list; '
-            'the only valid span endpoint reference.'
-        )
-    )
-    node_type: str = Field(
-        description='Canonical node type for the projected source node.'
-    )
-    node_text: str = Field(
-        description=(
-            'Canonical node text; numbers here are content, not positions. '
-            'Image descriptions appear as node_text.'
-        )
-    )
 
 
 class Classify(dspy.Signature):
@@ -68,11 +49,20 @@ class Classify(dspy.Signature):
     "does this text work out what came before it?" — not "does it
     contain equations?".
 
-    A COMPUTATION SESSION IS A PROCEDURE. Unlabelled transcript lines
+    A BARE EXPRESSION, EQUATION, NUMBER, OR FORMULA IS NOT BY ITSELF
+    WORKING. In an exercise block, inputs such as "25 - 7", "5 · 6",
+    "$x^2 + 1$", or "$f(x)=x^2$" are the content of a problem posed to the
+    reader: set has_statement = True and has_procedure = False unless the
+    block also contains visible working or an answer. Do not infer a result
+    from the expression and do not treat mathematical notation alone as a
+    computation.
+
+    A COMPUTATION SESSION IS A PROCEDURE only when the source shows the
+    computation being carried out or its output. Unlabelled transcript lines
     and their printed output — "sage: f = x^15 + 1",
     "sage: f.roots()", "[(12, 1), (10, 1), (4, 1)]", a shell or REPL
-    session, a table of computed values — are the working of a block
-    above them, so answer has_procedure = True.
+    session, or a table of computed values — are the working of a block above
+    them, so answer has_procedure = True. A lone input expression is not.
 
     A derivation never carries a block label of its own — it either
     opens with a derivation marker ("Proof.", "Solution.") or is
@@ -86,10 +76,10 @@ class Classify(dspy.Signature):
     flags True.
     """
 
-    current_nodes: list[StatementProcedureNodeInput] = dspy.InputField(
+    current_nodes: list[models.NodeInput] = dspy.InputField(
         description=(
-            "The span's ordered text records. Image descriptions appear as "
-            'node_text; no image assets or bytes are included.'
+            "The span's ordered one-based node records. Use only index for "
+            'positions; text numbers are content.'
         )
     )
     has_statement: bool = dspy.OutputField(
@@ -138,11 +128,10 @@ class StatementPartitionSignature(dspy.Signature):
     portion, or both — never neither.
     """
 
-    current_nodes: list[StatementProcedureNodeInput] = dspy.InputField(
+    current_nodes: list[models.NodeInput] = dspy.InputField(
         description=(
-            "The block's ordered text records. Use only local_index for "
-            'positions; image descriptions appear as node_text and no image '
-            'assets or bytes are included.'
+            "The block's ordered one-based node records. Use only index for "
+            'positions; text numbers are content.'
         )
     )
     statement_positions: list[int] = dspy.OutputField(
@@ -176,7 +165,7 @@ class StatementPartitioner(module.Module):
                         content="**Exercise 1.2.2:** Sketch the slope field for $y' = x^2$.",
                     ),
                 ]),
-                statement_positions=[0, 1],
+                statement_positions=[1, 2],
             ).with_inputs('current_nodes'),
             dspy.Example(
                 current_nodes=_statement_procedure_inputs([
@@ -191,7 +180,7 @@ class StatementPartitioner(module.Module):
                         content='Integrate to find the general solution $y = \\ln |x| + C$.',
                     ),
                 ]),
-                statement_positions=[0],
+                statement_positions=[1],
             ).with_inputs('current_nodes'),
         ]
 
@@ -200,12 +189,20 @@ class StatementPartitioner(module.Module):
         return {'current_nodes': _statement_procedure_inputs(current_nodes)}
 
     def decode(self, prediction, **inputs) -> list[int]:
-        """Returns validated statement-portion positions."""
-        positions = module.as_list(prediction.statement_positions)
+        """Converts one-based model positions to zero-based positions."""
+        raw_positions = module.as_list(prediction.statement_positions)
+        window_size = len(inputs['current_nodes'])
+        if any(type(position) is not int for position in raw_positions):
+            raise TypeError('statement_positions must contain integers')
+        if any(not 1 <= position <= window_size for position in raw_positions):
+            raise ValueError(
+                f'statement_positions must be one-based within 1..{window_size}: '
+                f'{raw_positions}'
+            )
         return module.require_positions(
-            positions,
+            [position - 1 for position in raw_positions],
             field_name='statement_positions',
-            upper_bound=len(inputs['current_nodes']),
+            upper_bound=window_size,
             ordered=True,
         )
 
@@ -228,11 +225,10 @@ class ProcedurePartitionSignature(dspy.Signature):
     portion, or both — never neither.
     """
 
-    current_nodes: list[StatementProcedureNodeInput] = dspy.InputField(
+    current_nodes: list[models.NodeInput] = dspy.InputField(
         description=(
-            "The block's ordered text records. Use only local_index for "
-            'positions; image descriptions appear as node_text and no image '
-            'assets or bytes are included.'
+            "The block's ordered one-based node records. Use only index for "
+            'positions; text numbers are content.'
         )
     )
     procedure_positions: list[int] = dspy.OutputField(
@@ -251,25 +247,33 @@ class ProcedurePartitioner(module.Module):
         return {'current_nodes': _statement_procedure_inputs(current_nodes)}
 
     def decode(self, prediction, **inputs) -> list[int]:
-        """Returns validated procedure-portion positions."""
-        positions = module.as_list(prediction.procedure_positions)
+        """Converts one-based model positions to zero-based positions."""
+        raw_positions = module.as_list(prediction.procedure_positions)
+        window_size = len(inputs['current_nodes'])
+        if any(type(position) is not int for position in raw_positions):
+            raise TypeError('procedure_positions must contain integers')
+        if any(not 1 <= position <= window_size for position in raw_positions):
+            raise ValueError(
+                f'procedure_positions must be one-based within 1..{window_size}: '
+                f'{raw_positions}'
+            )
         return module.require_positions(
-            positions,
+            [position - 1 for position in raw_positions],
             field_name='procedure_positions',
-            upper_bound=len(inputs['current_nodes']),
+            upper_bound=window_size,
             ordered=True,
         )
 
 
 def _statement_procedure_inputs(
     nodes: list[context_window.ContextNode],
-) -> list[StatementProcedureNodeInput]:
-    """Projects context nodes without exposing assets or source identity."""
+) -> list[models.NodeInput]:
+    """Projects context nodes as one-based structured records."""
     return [
-        StatementProcedureNodeInput(
-            local_index=node.position,
+        models.NodeInput(
+            index=node.position + 1,
             node_type=node.type or '',
-            node_text=node.content or '',
+            text=node.content or '',
         )
         for node in nodes
     ]
@@ -474,10 +478,7 @@ class StatementProcedureBuilderNode:
         nodes = state.get('nodes', [])
         if not state.get('spans', []):
             return {'statements': [], 'procedures': []}
-        source = state.get('source_key', '').strip()
-        if not source:
-            source_object = state.get('source')
-            source = models.source_key(source_object) or ''
+        source = state['source'].key
         if not source:
             raise ValueError(
                 'statement/procedure construction requires a source'

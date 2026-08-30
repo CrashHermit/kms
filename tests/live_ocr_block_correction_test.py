@@ -32,7 +32,9 @@ OUTPUT = Path('output/live_ocr_block_correction')
 async def run_case(name: str, pdf_name: str, pages: list[int]) -> None:
     pdf_path = Path(pdf_name)
     response = ocr.ocr_pdf(
-        pdf_path.read_bytes(), pages=pages, include_blocks=True
+        pdf_path.read_bytes(),
+        pages=pages,
+        options=ocr.OCRRequestOptions(include_blocks=True),
     )
     document_dir = OUTPUT / name
     document = ocr.materialize_document(

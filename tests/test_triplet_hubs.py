@@ -43,22 +43,48 @@ def test_triplet_memberships_use_predicate_occurrence_identity():
     assert memberships[0].predicate_hubs == ('predicate-hub',)
     assert memberships[0].object_hubs == ('object-hub',)
 
+def test_triplet_memberships_support_event_endpoints():
+    triplet = models.Triplet(
+        subject='event-a',
+        predicate='precedes',
+        object='event-b',
+        subject_kind=models.NodeKind.EVENT,
+        object_kind=models.NodeKind.EVENT,
+        evidence_positions=[0],
+    )
+    identity.assign_triplet_ids([triplet], 'book.pdf')
+    subject_id = identity.event_uuid('book.pdf', 0, triplet.subject)
+    object_id = identity.event_uuid('book.pdf', 0, triplet.object)
+    predicate_id = identity.predicate_uuid(triplet.occurrence_uuids[0])
+    memberships = triplet_hubs.build_triplet_memberships(
+        [triplet],
+        source='book.pdf',
+        entity_assignments={},
+        event_assignments={
+            subject_id: ('event-hub-a',),
+            object_id: ('event-hub-b',),
+        },
+        predicate_assignments={predicate_id: ('predicate-hub',)},
+    )
+    assert memberships[0].subject_hubs == ('event-hub-a',)
+    assert memberships[0].object_hubs == ('event-hub-b',)
+
 
 def test_schema_contains_triplet_hub_constraints_and_indexes():
     combined = '\n'.join(schema.schema_statements())
 
     assert 'triplet_hub_uuid' in combined
     assert 'triplet_hub_embedding' in combined
-    assert 'meta_triplet_hub_uuid' in combined
-    assert 'meta_triplet_hub_embedding' in combined
+    assert 'global_triplet_hub_uuid' in combined
+    assert 'global_triplet_hub_embedding' in combined
 
 
 def test_group_query_keeps_triplet_as_three_way_intersection_anchor():
     cypher = asyncio.run(_group_query_text('source'))
     assert 'MATCH (t:Triplet)' in cypher
-    assert '(t)-[:HAS_SUBJECT]->(s:Entity)-[:CANONICAL]->' in cypher
+    assert '(t)-[:HAS_SUBJECT]->(s)-[:CANONICAL]->(sh)' in cypher
     assert '(t)-[:HAS_PREDICATE]->(p:Predicate)-[:CANONICAL]->' in cypher
-    assert '(t)-[:HAS_OBJECT]->(o:Entity)-[:CANONICAL]->' in cypher
+    assert '(t)-[:HAS_OBJECT]->(o)-[:CANONICAL]->(oh)' in cypher
     assert 'collect(DISTINCT t.uuid)' in cypher
 
 
@@ -161,14 +187,14 @@ def test_persist_triplet_hubs_writes_roles_evidence_and_meta_support():
 
     assert len(captured) == 3
     assert 'GlobalTripletHub' in captured[0][0]
-    assert 'HAS_META_SUBJECT_HUB' in captured[1][0]
+    assert 'HAS_GLOBAL_SUBJECT_HUB' in captured[1][0]
     assert captured[2][1]['pairs'] == [
         {'source_hub': 'triplet-hub-a', 'meta_hub': 'meta-triplet'},
         {'source_hub': 'triplet-hub-b', 'meta_hub': 'meta-triplet'},
     ]
 
 
-def test_persist_meta_triplet_hubs_rejects_single_source_support():
+def test_persist_global_triplet_hubs_rejects_single_source_support():
     try:
         asyncio.run(
             writer.persist_triplet_hubs(

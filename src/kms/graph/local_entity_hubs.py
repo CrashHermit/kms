@@ -7,19 +7,18 @@ from kms.graph import nodes
 COMPONENT_LABEL = 'Entity'
 LOCAL_HUB_LABEL = 'LocalEntityHub'
 GLOBAL_HUB_LABEL = 'GlobalEntityHub'
-HUB_LABEL = LOCAL_HUB_LABEL
-META_HUB_LABEL = GLOBAL_HUB_LABEL
+LOCAL_HUB_LABEL = LOCAL_HUB_LABEL
 
 
 def component_label() -> str:
     return COMPONENT_LABEL
 
 
-def hub_label(tier: str = 'source') -> str:
-    if tier == 'source':
-        return HUB_LABEL
-    if tier == 'meta':
-        return META_HUB_LABEL
+def hub_label(tier: str = 'local') -> str:
+    if tier in {'local', 'source'}:
+        return LOCAL_HUB_LABEL
+    if tier in {'global', 'meta'}:
+        return GLOBAL_HUB_LABEL
     raise ValueError(f'unknown hub tier: {tier}')
 
 
@@ -27,8 +26,16 @@ def hub_uuid(source: str, identity: str) -> str:
     return uuid5(NAMESPACE_URL, f'{source}#entity_hub#{identity}').hex
 
 
-def meta_hub_uuid(identity: str) -> str:
+def local_hub_uuid(source: str, identity: str) -> str:
+    """Returns the deterministic local entity-hub UUID."""
+    return hub_uuid(source, identity)
+
+
+def global_hub_uuid(identity: str) -> str:
+    """Returns the deterministic global entity-hub UUID."""
     return uuid5(NAMESPACE_URL, f'meta#entity_hub#{identity}').hex
+
+
 
 
 def hub_properties(
@@ -41,14 +48,14 @@ def hub_properties(
     tier: str,
     hub_id: str | None = None,
 ) -> dict:
-    if tier == 'source':
+    if tier in {'local', 'source'}:
         if source is None:
-            raise ValueError('source entity hubs require a source')
+            raise ValueError('local entity hubs require a source')
         if hub_id is None:
-            raise ValueError('source entity hubs require an explicit hub_id')
-    elif tier == 'meta':
+            raise ValueError('local entity hubs require an explicit hub_id')
+    elif tier in {'global', 'meta'}:
         if hub_id is None:
-            raise ValueError('meta entity hubs require an explicit hub_id')
+            raise ValueError('global entity hubs require an explicit hub_id')
     else:
         raise ValueError(f'unknown hub tier: {tier}')
 

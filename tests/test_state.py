@@ -15,8 +15,6 @@ def _state() -> state.State:
         'pdf_path': 'book.pdf',
         'output_dir': 'output',
         'source': source,
-        'source_key': 'ignored-after-source-materializes',
-        'source_metadata': {'ignored': 'metadata'},
         'documents': source.documents,
         'nodes': [models.SourceNode(uuid='node-10', document_index=0, content='text')],
         'instructions': [models.Instruction(block=[0], member_positions=[0])],
@@ -47,7 +45,6 @@ def test_to_construction_bundle_projects_durable_data_only() -> None:
     assert bundle.predicate_descriptions == {0: {'term': 'relation'}}
     assert bundle.entity_embeddings == {0: {'model': [1.0, 2.0]}}
     assert bundle.predicate_embeddings == {0: {'model': [3.0, 4.0]}}
-    assert bundle.source.key != current_state['source_key']
 
 
 def test_to_construction_bundle_returns_a_valid_bundle() -> None:
@@ -57,7 +54,9 @@ def test_to_construction_bundle_returns_a_valid_bundle() -> None:
 
 
 def test_to_construction_bundle_uses_empty_defaults() -> None:
-    bundle = state.to_construction_bundle({'source_key': 'empty'})
+    bundle = state.to_construction_bundle(
+        {'source': models.Source(key='empty')}
+    )
 
     assert bundle.source.key == 'empty'
     assert bundle.nodes == []
@@ -76,7 +75,7 @@ def test_to_construction_bundle_requires_source_identity() -> None:
         state.to_construction_bundle({})
 
     with pytest.raises(ValueError, match='non-empty source'):
-        state.to_construction_bundle({'source_key': '  '})
+        state.to_construction_bundle({'source': models.Source(key='  ')})
 
 
 def test_to_construction_bundle_does_not_alias_state_collections() -> None:

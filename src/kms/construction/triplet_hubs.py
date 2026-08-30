@@ -124,21 +124,27 @@ def build_source_groups(
     source: str,
     entity_assignments: list[dict],
     predicate_assignments: list[dict],
+    event_assignments: list[dict] | None = None,
     entity_hubs: list[dict] | None = None,
+    event_hubs: list[dict] | None = None,
     predicate_hubs: list[dict] | None = None,
 ) -> list[dict]:
-    """Builds exact source-local TripletHub groups without graph reads."""
+    """Build exact source-local TripletHub groups for typed endpoints."""
     entity_map = assignment_map(entity_assignments)
     predicate_map = assignment_map(predicate_assignments)
+    event_map = assignment_map(event_assignments or [])
     memberships = build_triplet_memberships(
         triplets,
         source=source,
         entity_assignments=entity_map,
+        event_assignments=event_map,
         predicate_assignments=predicate_map,
     )
     grouped = exact_tuple_intersections(list(memberships))
     entity_context = {hub['uuid']: hub for hub in entity_hubs or []}
+    event_context = {hub['uuid']: hub for hub in event_hubs or []}
     predicate_context = {hub['uuid']: hub for hub in predicate_hubs or []}
+    component_context = entity_context | event_context
     groups = []
     for (subject_hub, predicate_hub, object_hub), indexes in sorted(
         grouped.items()
@@ -175,10 +181,10 @@ def build_source_groups(
                 'object_hub': object_hub,
                 'triplets': triplet_ids,
                 'evidence': evidence,
-                'subject_name': entity_context.get(subject_hub, {}).get(
+                'subject_name': component_context.get(subject_hub, {}).get(
                     'canonical_name', subject_hub
                 ),
-                'subject_description': entity_context.get(subject_hub, {}).get(
+                'subject_description': component_context.get(subject_hub, {}).get(
                     'description'
                 ),
                 'predicate_name': predicate_context.get(predicate_hub, {}).get(
@@ -187,10 +193,10 @@ def build_source_groups(
                 'predicate_description': predicate_context.get(
                     predicate_hub, {}
                 ).get('description'),
-                'object_name': entity_context.get(object_hub, {}).get(
+                'object_name': component_context.get(object_hub, {}).get(
                     'canonical_name', object_hub
                 ),
-                'object_description': entity_context.get(object_hub, {}).get(
+                'object_description': component_context.get(object_hub, {}).get(
                     'description'
                 ),
             }
@@ -302,39 +308,44 @@ def build_triplet_memberships(
     source: str,
     entity_assignments: dict[str, tuple[str, ...]],
     predicate_assignments: dict[str, tuple[str, ...]],
+    event_assignments: dict[str, tuple[str, ...]] | None = None,
 ) -> tuple[models.TripletMembership, ...]:
-    """Builds role-ordered canonical memberships for extracted triplets."""
+    """Build role-ordered memberships for typed extracted triplets."""
+    event_assignments = event_assignments or {}
     memberships = []
     for index, triplet in enumerate(triplets):
         subject_hubs: set[str] = set()
         object_hubs: set[str] = set()
         predicate_hubs: set[str] = set()
         for node_id in triplet.evidence_positions:
+            subject_id = (
+                identity.entity_uuid(source, node_id, triplet.subject)
+                if triplet.subject_kind is models.NodeKind.ENTITY
+                else identity.event_uuid(source, node_id, triplet.subject)
+            )
+            object_id = (
+                identity.entity_uuid(source, node_id, triplet.object)
+                if triplet.object_kind is models.NodeKind.ENTITY
+                else identity.event_uuid(source, node_id, triplet.object)
+            )
             subject_hubs.update(
-                entity_assignments.get(
-                    identity.entity_uuid(source, node_id, triplet.subject), ()
-                )
+                (entity_assignments if triplet.subject_kind is models.NodeKind.ENTITY
+                 else event_assignments).get(subject_id, ())
             )
             object_hubs.update(
-                entity_assignments.get(
-                    identity.entity_uuid(source, node_id, triplet.object), ()
-                )
+                (entity_assignments if triplet.object_kind is models.NodeKind.ENTITY
+                 else event_assignments).get(object_id, ())
             )
             predicate_hubs.update(
-                predicate_assignments.get(
-                    triplet.predicate_uuids[node_id],
-                    (),
-                )
+                predicate_assignments.get(triplet.predicate_uuids[node_id], ())
             )
-        memberships.append(
-            models.TripletMembership(
-                triplet_index=index,
-                source=source,
-                subject_hubs=tuple(sorted(subject_hubs)),
-                predicate_hubs=tuple(sorted(predicate_hubs)),
-                object_hubs=tuple(sorted(object_hubs)),
-            )
-        )
+        memberships.append(models.TripletMembership(
+            triplet_index=index,
+            source=source,
+            subject_hubs=tuple(sorted(subject_hubs)),
+            predicate_hubs=tuple(sorted(predicate_hubs)),
+            object_hubs=tuple(sorted(object_hubs)),
+        ))
     return tuple(memberships)
 
 
@@ -360,17 +371,21 @@ async def build_source(
     triplets: list[models.Triplet],
     entity_assignments: list[dict],
     predicate_assignments: list[dict],
+    event_assignments: list[dict] | None = None,
     entity_hubs: list[dict] | None = None,
+    event_hubs: list[dict] | None = None,
     predicate_hubs: list[dict] | None = None,
     max_concurrency: int | None = None,
 ) -> dict:
-    """Builds source-local TripletHubs from in-memory memberships."""
+    """Build source-local TripletHubs from typed endpoint memberships."""
     groups = build_source_groups(
         triplets,
         source=source,
         entity_assignments=entity_assignments,
+        event_assignments=event_assignments,
         predicate_assignments=predicate_assignments,
         entity_hubs=entity_hubs,
+        event_hubs=event_hubs,
         predicate_hubs=predicate_hubs,
     )
     groups = await _synthesize_groups(
@@ -416,32 +431,5 @@ async def rebuild(
     )
     return {
         'triplet_hubs': len(groups),
-        'triplets': sum(len(group['triplets']) for group in groups),
-    }
-
-
-async def rebuild_meta(
-    *,
-    language_model: dspy.LM,
-    session_factory: Callable,
-    max_concurrency: int | None = None,
-) -> dict:
-    """Rebuilds qualified cross-source MetaTripletHub nodes."""
-    rows = await queries.triplet_hub_groups(session_factory, 'meta')
-    groups = _prepare_groups(rows, 'meta')
-    groups = await _synthesize_groups(
-        groups,
-        language_model=language_model,
-        max_concurrency=max_concurrency,
-        tier='meta',
-    )
-    await writer.clear_triplet_hubs('meta', session_factory=session_factory)
-    await writer.persist_triplet_hubs(
-        groups,
-        tier='meta',
-        session_factory=session_factory,
-    )
-    return {
-        'meta_triplet_hubs': len(groups),
         'triplets': sum(len(group['triplets']) for group in groups),
     }

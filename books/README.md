@@ -39,6 +39,14 @@ offset). Gold records' `page` fields are *fixture-relative*.
 | `ode_lebl_diffyqs.pdf` | Lebl *Notes on Diffy Qs* | undergrad | printed 29–32 | **Slope fields** with embedded figures, display math, and the Picard theorem discussion. The corrector gold's perturbed records inject polarity/substitution errors into the equations here. |
 | `prob_grinstead_snell.pdf` | Grinstead & Snell *Introduction to Probability* | undergrad | printed 17–21 | Simulation of discrete probabilities, narrative prose with inline math and tables — a probability-table layout beyond the algebra books. |
 | `topology_morris.pdf` | Morris *Topology without Tears* | undergrad | printed 42–45 | Topological spaces, inverse images, the finite-closed topology. Proof-style prose (`Proof.` misread as an H1 in the gold) and exercise lists. ⚠️ licence, see below. |
+| `active_calculus_limits.pdf` | Active Calculus — Single Variable, 2nd ed. | undergrad | src 33–36 | Limits, functions, and continuity exposition selected to overlap Lebl's sequences/limits material while using a different instructional presentation. |
+| `active_calculus_derivative.pdf` | Active Calculus — Single Variable, 2nd ed. | undergrad | src 20–23 | Introductory derivative and function exposition selected to overlap Lebl's differential-equations material with a different presentation. |
+| `calculus_in_context_derivative.pdf` | *Calculus in Context* (Five College Calculus Project, 2008) | undergrad | src 121–124 | Independent CC BY calculus exposition on derivatives and functions for cross-author comparison with Active Calculus. |
+| `calculus_in_context_derivative_function.pdf` | *Calculus in Context* (Five College Calculus Project, 2008) | undergrad | src 135–138 | Derivative-as-function and local-linearity exposition for independent-source comparison with Active Calculus. |
+
+
+
+
 
 ## Sources & licences
 
@@ -67,6 +75,15 @@ alternatives when time allows; until then their status is explicit:
 - **Charles Grinstead & J. Laurie Snell**, *Introduction to Probability*
   (AMS, 2nd ed.) — **GNU Free Documentation License (GFDL)**.
   https://chance.dartmouth.edu/teaching_aids/books_articles/probability_book/book.html
+- **Active Calculus — Single Variable, 2nd ed.** — CC BY-SA 4.0.
+  - https://activecalculus.org/acs/
+  - PDF: https://activecalculus.org/wp-content/uploads/2025/08/acs2e-8-7-25.pdf
+  - Selected source-PDF pages: 33–36 (0-based).
+- Active Calculus derivative slice: source-PDF pages 20–23 (0-based), from the same CC BY-SA 4.0 PDF above.
+- **Calculus in Context** PDF: https://www.science.smith.edu/~callahan/cic/book.pdf
+  - Open Textbook Library record and CC BY terms: https://open.umn.edu/opentextbooks/textbooks/calculus-in-context
+  - Selected source-PDF pages: 121–124 (0-based).
+- Calculus in Context derivative-function slice: source-PDF pages 135–138 (0-based).
 
 ### ⚠️ Licence exceptions (do not extend)
 

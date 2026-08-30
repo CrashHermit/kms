@@ -6,27 +6,29 @@ from uuid import NAMESPACE_URL, uuid5
 from kms.graph import nodes
 
 ENTITY_NAME_LABEL = 'EntityName'
+EVENT_NAME_LABEL = 'EventName'
 PREDICATE_NAME_LABEL = 'PredicateName'
 LOCAL_ENTITY_NAME_HUB_LABEL = 'LocalEntityNameHub'
+LOCAL_EVENT_NAME_HUB_LABEL = 'LocalEventNameHub'
 LOCAL_PREDICATE_NAME_HUB_LABEL = 'LocalPredicateNameHub'
 GLOBAL_ENTITY_NAME_HUB_LABEL = 'GlobalEntityNameHub'
+GLOBAL_EVENT_NAME_HUB_LABEL = 'GlobalEventNameHub'
 GLOBAL_PREDICATE_NAME_HUB_LABEL = 'GlobalPredicateNameHub'
-ENTITY_NAME_HUB_LABEL = LOCAL_ENTITY_NAME_HUB_LABEL
-PREDICATE_NAME_HUB_LABEL = LOCAL_PREDICATE_NAME_HUB_LABEL
-META_ENTITY_NAME_HUB_LABEL = GLOBAL_ENTITY_NAME_HUB_LABEL
-META_PREDICATE_NAME_HUB_LABEL = GLOBAL_PREDICATE_NAME_HUB_LABEL
 
 _NAME_LABELS = {
     'entity': ENTITY_NAME_LABEL,
+    'event': EVENT_NAME_LABEL,
     'predicate': PREDICATE_NAME_LABEL,
 }
-_NAME_HUB_LABELS = {
-    'entity': ENTITY_NAME_HUB_LABEL,
-    'predicate': PREDICATE_NAME_HUB_LABEL,
+_LOCAL_NAME_HUB_LABELS = {
+    'entity': LOCAL_ENTITY_NAME_HUB_LABEL,
+    'event': LOCAL_EVENT_NAME_HUB_LABEL,
+    'predicate': LOCAL_PREDICATE_NAME_HUB_LABEL,
 }
-_META_NAME_HUB_LABELS = {
-    'entity': META_ENTITY_NAME_HUB_LABEL,
-    'predicate': META_PREDICATE_NAME_HUB_LABEL,
+_GLOBAL_NAME_HUB_LABELS = {
+    'entity': GLOBAL_ENTITY_NAME_HUB_LABEL,
+    'event': GLOBAL_EVENT_NAME_HUB_LABEL,
+    'predicate': GLOBAL_PREDICATE_NAME_HUB_LABEL,
 }
 
 
@@ -38,10 +40,13 @@ def name_label(kind: str) -> str:
         raise ValueError(f'unknown name kind: {kind}') from error
 
 
-def name_hub_label(kind: str, tier: str = 'source') -> str:
+def name_hub_label(kind: str, tier: str = 'local') -> str:
     """Returns the local or global lexical hub label."""
-    labels = _NAME_HUB_LABELS if tier == 'source' else _META_NAME_HUB_LABELS
-    if tier not in {'source', 'meta'}:
+    if tier in {'local', 'source'}:
+        labels = _LOCAL_NAME_HUB_LABELS
+    elif tier in {'global', 'meta'}:
+        labels = _GLOBAL_NAME_HUB_LABELS
+    else:
         raise ValueError(f'unknown name-hub tier: {tier}')
     try:
         return labels[kind]
@@ -51,12 +56,12 @@ def name_hub_label(kind: str, tier: str = 'source') -> str:
 
 def local_name_hub_label(kind: str) -> str:
     """Returns the local lexical hub label."""
-    return name_hub_label(kind, tier='source')
+    return name_hub_label(kind, tier='local')
 
 
 def global_name_hub_label(kind: str) -> str:
     """Returns the global lexical hub label."""
-    return name_hub_label(kind, tier='meta')
+    return name_hub_label(kind, tier='global')
 
 
 def normalize_text(text: str) -> str:
@@ -102,7 +107,7 @@ def name_hub_uuid(kind: str, source: str, member_ids: list[str]) -> str:
     ).hex
 
 
-def meta_name_hub_uuid(kind: str, member_ids: list[str]) -> str:
+def global_name_hub_uuid(kind: str, member_ids: list[str]) -> str:
     """Returns a stable id for a cross-source lexical cluster."""
     identity = '|'.join(sorted(member_ids))
     return uuid5(
@@ -111,7 +116,7 @@ def meta_name_hub_uuid(kind: str, member_ids: list[str]) -> str:
     ).hex
 
 
-def meta_name_hub_properties(
+def global_name_hub_properties(
     kind: str,
     canonical_form: str,
     aliases: list[str],

@@ -3,7 +3,7 @@ import os
 
 import pytest
 
-from kms.construction import entity_hubs, name_hubs, predicate_hubs
+from kms.construction import local_entity_hubs, local_predicate_hubs, name_hubs
 from kms.core import models
 from kms.graph import db, nodes, schema, writer
 
@@ -144,7 +144,6 @@ def test_meta_rebuild_preserves_durable_components_and_source_hubs(monkeypatch):
                     'members': source_hubs['entity'],
                 }
             ],
-            'subsumption_edges': [],
         }
 
     async def fake_build_hubs_predicate(*args, **kwargs):
@@ -159,14 +158,13 @@ def test_meta_rebuild_preserves_durable_components_and_source_hubs(monkeypatch):
                     'members': source_hubs['predicate'],
                 }
             ],
-            'subsumption_edges': [],
         }
 
-    monkeypatch.setattr(entity_hubs, 'build_hubs', fake_build_hubs)
-    monkeypatch.setattr(predicate_hubs, 'build_hubs', fake_build_hubs_predicate)
+    monkeypatch.setattr(local_entity_hubs, 'build_hubs', fake_build_hubs)
+    monkeypatch.setattr(local_predicate_hubs, 'build_hubs', fake_build_hubs_predicate)
     monkeypatch.setattr(
         name_hubs,
-        'rebuild_meta',
+        'rebuild_global',
         lambda *args, **kwargs: asyncio.sleep(
             0, result={'name_hubs': 0, 'source_name_hubs': 0}
         ),
@@ -256,9 +254,9 @@ def test_meta_rebuild_preserves_durable_components_and_source_hubs(monkeypatch):
 
             for kind in ('entity', 'predicate'):
                 await (
-                    entity_hubs.rebuild_meta
+                    local_entity_hubs.rebuild_global
                     if kind == 'entity'
-                    else predicate_hubs.rebuild_meta
+                    else local_predicate_hubs.rebuild_global
                 )(
                     language_model=object(),
                     adjudicator=object(),
@@ -292,8 +290,8 @@ def test_meta_rebuild_preserves_durable_components_and_source_hubs(monkeypatch):
                         'AS meta_predicates',
                         entities=entity_components,
                         predicates=predicate_components,
-                        entity_hubs=source_hubs['entity'],
-                        predicate_hubs=source_hubs['predicate'],
+                        local_entity_hubs=source_hubs['entity'],
+                        local_predicate_hubs=source_hubs['predicate'],
                         meta_entity=meta_hubs['entity'],
                         meta_predicate=meta_hubs['predicate'],
                     )

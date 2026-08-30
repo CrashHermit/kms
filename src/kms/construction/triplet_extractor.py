@@ -24,74 +24,71 @@ from kms.core import (
 )
 
 logger = logging.getLogger(__name__)
-class FactNodeInput(BaseModel):
-    """Text-only local input for fact extraction."""
-
-    local_index: int = Field(
-        description='Zero-based position in the supplied node list.'
-    )
-    node_type: str = Field(
-        description='Canonical node type for the projected source node.'
-    )
-    node_text: str = Field(
-        description=(
-            'Canonical node text; numbers here are content, not positions.'
-        )
-    )
-
-
 
 
 class _FactSignature(dspy.Signature):
     r"""
-    Extract explicit, durable facts from the node marked ``<anchor>``.
-    Nearby nodes are context only: use them to resolve references, but never
-    extract facts from them or assign them provenance.
+    Extract explicit, durable subject-matter facts from the supplied request.
+    The target node contains the authoritative source text. Use neighboring
+    nodes only to resolve an otherwise explicit reference; never copy a claim
+    that appears only in neighboring context.
 
-    A fact is one independent claim or relation. Split combined claims. Each
-    result must be a short, complete, standalone sentence with its subject,
-    conditions, qualifiers, and resolved pronouns included. Preserve explicit
-    premises, including premises inside exercises, but omit task instructions,
-    inferred answers, and calculations.
+    A durable fact is an assertion about the subject matter, such as a
+    definition, theorem, stated property, explicit relationship, event,
+    state transition, or mathematical condition. Preserve the source's
+    notation, participants, temporal expressions, causal wording, and
+    qualifiers. Return the smallest faithful claim that can stand alone.
+    Resolve a pronoun only when its referent is explicit in the target or
+    unambiguous from the supplied context; do not add an explanation.
 
-    Do not invent, generalize, duplicate, or solve anything. Skip headers,
-    captions, bibliography entries, navigation, document meta-text, rhetorical
-    framing, and scratch work. Preserve mathematical and technical notation
-    with the source's LaTeX delimiters (``$...$`` or ``$$...$$``).
+    Preserve explicit actions, occurrences, transitions, participants, time,
+    sequence, duration, negation, and causal wording. Keep an event separate
+    from its result or consequence when both are stated. Do not infer
+    causation. Split independent assertions, but do not split an event from
+    its participants or temporal qualifiers.
 
-    Return [] when the anchor contains no explicit subject-matter fact.
+    Return no fact for headings, captions, references, metadata, navigation,
+    layout text, questions, answer requests, exercise numbers, worked-example
+    labels, problem specifications, or imperatives and task directions such
+    as ``find``, ``compute``, ``determine``, ``show``, ``prove``, ``sketch``,
+    ``draw``, ``use technology``, ``evaluate``, or ``let``.
+
+    Do not return inferred answers, calculations, explanations, or claims
+    copied only from context. A formula is a fact only when the target
+    explicitly asserts it as subject matter, rather than presenting it as
+    part of a task. Preserve formulas and mathematical relationships when
+    they are explicitly asserted.
+
+    Output one short, natural-language fact for each independent assertion.
+    Each fact must express one subject–predicate–object relation. Return an
+    empty list when the target contains no qualifying assertion.
     """
 
-    context_before: list[FactNodeInput] = dspy.InputField(
-        description='Ordered preceding context records; reference only.'
-    )
-    target_node: FactNodeInput = dspy.InputField(
+    request: models.FactExtractionInput = dspy.InputField(
         description=(
-            'The only evidence record. Extract facts only from target_node; '
-            'image descriptions appear as node_text.'
+            'The extraction request. Extract only from target_node.text. '
+            'context_before and context_after provide reference context only.'
         )
     )
-    context_after: list[FactNodeInput] = dspy.InputField(
-        description='Ordered following context records; reference only.'
-    )
-    facts: list[str] = dspy.OutputField(
+    facts: list[models.AtomicFact] = dspy.OutputField(
         description=(
-            'Every atomic fact found in the anchor; each must be a short, '
-            'self-contained rendering of one explicit source-level claim or '
-            'relation. Preserve the fact; do not infer an answer, canonical '
-            'definition, or generalization. Empty if none.'
+            'Structured source-faithful natural-language atomic facts. '
+            'Return an empty list when the target contains no qualifying '
+            'assertion.'
         )
     )
 
 
 def _fact_input(
     node: context_window.ContextNode, local_index: int | None = None
-) -> FactNodeInput:
-    """Projects one context node without exposing assets or source identity."""
-    return FactNodeInput(
-        local_index=node.position if local_index is None else local_index,
+) -> models.NodeInput:
+    """Projects one context node into a one-based structured record."""
+    return models.NodeInput(
+        index=(local_index + 1)
+        if local_index is not None
+        else node.position + 1,
         node_type=node.type or '',
-        node_text=node.content or '',
+        text=node.content or '',
     )
 
 
@@ -102,33 +99,17 @@ class _FactExtractor(module.Module):
     record_name = 'atomic_fact_extractor'
 
     def encode(
-        self,
-        context_before: list[context_window.ContextNode],
-        target_node: context_window.ContextNode,
-        context_after: list[context_window.ContextNode],
+        self, request: models.FactExtractionInput
     ) -> dict[str, object]:
-        """Projects independent document-order context fields."""
-        return {
-            'context_before': [
-                _fact_input(node, index)
-                for index, node in enumerate(context_before)
-            ],
-            'target_node': _fact_input(target_node, 0),
-            'context_after': [
-                _fact_input(node, index)
-                for index, node in enumerate(context_after)
-            ],
-        }
+        """Passes the validated extraction request to the signature."""
+        return {'request': request}
 
     def decode(self, prediction, **inputs) -> list[dict]:
         """Returns validated fact text; provenance is assigned by caller."""
-        facts = module.as_list(prediction.facts)
-        for index, fact in enumerate(facts):
-            if not isinstance(fact, str):
-                raise TypeError('facts must contain string values')
-            if not fact.strip():
-                raise ValueError(f'facts[{index}] must be non-empty')
-        return [{'text': fact} for fact in facts]
+        facts = models.FactExtractionOutput(
+            facts=module.as_list(prediction.facts)
+        ).facts
+        return [{'text': fact.text} for fact in facts]
 
 
 class _TripletInput(BaseModel):
@@ -137,89 +118,107 @@ class _TripletInput(BaseModel):
     subject: str = Field(
         description=(
             'The subject of the relation — an exact verbatim substring '
-            'of the fact text. When the subject is a local variable '
-            '(a single letter or symbol with no inherent meaning outside '
-            'the fact), append a brief parenthetical role: '
-            '"$f$ (a function)", "$G$ (a graph)", "$c$ (a point)". '
-            r'For named entities with inherent meaning '
-            r'("$\mathbb{R}$", "the derivative of $\sin x$"), '
-            'no annotation is needed.'
+            'of the fact text.'
         )
     )
     predicate: str = Field(
-        description=(
-            'The relation connecting subject to object — a short verb '
-            'phrase, typically a verb or verb+preposition (e.g. "is", '
-            '"has", "equals", "implies", "is defined as", "is a property '
-            'of"). Not a full sentence.'
-        )
+        description='A concise source-grounded relation phrase of 1–5 words.'
     )
     object: str = Field(
         description=(
             'The object of the relation — an exact verbatim substring '
-            'of the fact text. Same annotation rule as subject: append '
-            'a brief parenthetical role for local variables '
-            '"$c$ (a point)", "$G_1$ (a graph)", "$E_1$ (an edge set)", '
-            '"$[0,1]$ (an interval)"), '
-            'omit for named entities. The annotation must be '
-            'CONSISTENT with how the same variable is annotated '
-            'when it appears as subject elsewhere in the fact.'
+            'of the fact text.'
         )
+    )
+    subject_kind: models.NodeKind = Field(
+        description='Whether the subject is an entity or event.'
+    )
+    object_kind: models.NodeKind = Field(
+        description='Whether the object is an entity or event.'
     )
 
 
 class _TripletSignature(dspy.Signature):
     r"""
-    Given one atomic source fact, extract every explicit, independent
-    (subject, predicate, object) relation it expresses.
+    Decompose one atomic source fact into one or more explicit
+    subject–predicate–object relations. The fact has already passed a
+    source-fact filter. Reject only directives, questions, answer requests,
+    unsupported implications, or text that contains no defensible relation.
 
-    Use source evidence only. Do not infer, solve, generalize, merge
-    mentions, or invent entities. A fact may yield several triplets, one per
-    independent relation. If no complete relation is decomposable, return [].
+    ACCEPT THESE AS RELATIONS:
+    - definitions: "A group is a set with an operation" →
+      group | is defined as | a set with an operation
+    - measurements: "Velocity measures how fast an object is moving" →
+      velocity | measures | how fast an object is moving
+    - mathematical objects and quantities: preserve symbols, formulas,
+      intervals, coordinates, and units as written when they are part of an
+      explicit assertion;
+    - rules and operations stated by the source: "Dividing miles traveled by
+      time elapsed gives velocity" → miles traveled divided by time elapsed |
+      gives | velocity;
+    - possession, membership, location, comparison, and other explicit
+      relations, even when the object is an abstract phrase or quantity.
+    A mathematical expression inside an assertion is evidence for a relation;
+    do not reject it merely because it involves calculation.
 
     SUBJECT AND OBJECT:
-    - Select source substrings; do not rephrase or change their meaning.
-    - Lowercase text outside `$...$` math delimiters. Preserve math content
-      and all LaTeX delimiters exactly.
-    - For a bare local variable, append one short role annotation such as
-      `$f$ (a function)` or `$G$ (a graph)`. Use the same annotation for that
-      variable throughout the fact.
-    - Use complete noun phrases, not dangling fragments, pronouns, generic
-      placeholders, or invented referents.
+    - Use the shortest complete source phrase that preserves the meaning.
+    - Classify a persistent thing, person, place, document, concept, or
+      quantity as entity.
+    - Classify a named occurrence, action, transition, or state change as
+      event.
+    - Use entity endpoints for abstract descriptions and quantities. Do not
+      require every endpoint to be a simple concrete noun.
+    - Use event endpoints only for explicitly named occurrences or changes.
+      Never invent an event from tense, chronology, or causality.
+    - Subject and object must be different spans unless the source explicitly
+      states a reflexive relation.
+    - Preserve source mathematical notation and LaTeX exactly.
 
     PREDICATE:
-    - Use a short verb or verb phrase, not a clause or sentence.
-    - Keep negation in the predicate: "X is NOT a subgraph of Y" has
-      predicate "is NOT a subgraph of".
-    - Split independent relations and emit each distinct relation once.
+    - Use one concise relation phrase of 1–5 words.
+    - Preserve explicit direction, negation, temporal order, and causality.
+    - Never output a sentence, clause, explanation, quotation, or predicate
+      containing another subject or object.
 
-    SPEECH ACTS AND FILTERING:
-    - Extract relations explicitly asserted, asked about, or framed by
-      "prove that"; do not infer the requested answer.
-    - Do not emit a value request ("what is ...?", "find ...", "compute ...")
-      as a relation. If its only relation is in an if/assuming/given premise,
-      omit that premise relation.
-    - Skip relations found only in reason clauses, notation conventions, or
-      document meta-text.
+    REJECT:
+    - imperatives, questions, exercise specifications, answer requests, and
+      requested operations: "Find the gradient of $f$ at $P$." → [];
+    - a displayed formula or value that is only an exercise input or answer;
+    - explanations or consequences not explicitly asserted by the fact;
+    - a fact for which no subject, predicate, and distinct object can be
+      identified without guessing.
 
-    OUTPUT CONTRACT:
-    - Return a finite list and close it after every relation in the fact has
-      been represented.
-    - Emit only complete triplets with non-empty subject, predicate, and
-      object. Never emit a partial triplet, empty field, or placeholder.
-    - Return [] when no complete relation remains.
+    Examples:
+    - "Alice works for Acme." → entity, works for, entity.
+    - "A moving object has a velocity at any given moment." → entity, has,
+      entity.
+    - "The fixed point $(s, T) = (50, 8)$ sits at the center of the window."
+      → entity, sits at, entity.
+    - "The election preceded the appointment." → event, preceded, event.
+    Return [] rather than guessing; use [] only when the fact is not an
+    explicit relational assertion.
     """
 
     fact_text: str = dspy.InputField(
         description=(
-            'One source-level atomic fact — a single self-contained '
-            'sentence. Preserve its explicit relation; do not generalize it '
-            'into a canonical hub fact.'
+            'One filtered source assertion. It must not be an instruction, '
+            'question, exercise specification, calculation, or answer request.'
         )
     )
     triplets: list[_TripletInput] = dspy.OutputField(
-        description='Every (subject, predicate, object) triplet found in '
-        'the fact; empty if none.'
+        description=(
+            'Concise source-grounded relations with entity/event endpoint kinds. '
+            'Predicates are 1–5-word phrases, never explanatory sentences; empty if none.'
+        )
+    )
+
+
+def _is_concise_predicate(predicate: str) -> bool:
+    """Accepts only compact relation phrases at the graph boundary."""
+    words = predicate.split()
+    return 1 <= len(words) <= 5 and not any(
+        mark in predicate for mark in '.!?;:'
     )
 
 
@@ -234,8 +233,9 @@ class _TripletDecomposer(module.Module):
         return {'fact_text': fact_text}
 
     def decode(self, prediction, **inputs) -> list[models.Triplet]:
-        """Returns validated triplets extracted from one fact."""
+        """Returns only complete triplets with compact relation phrases."""
         triplets = module.as_list(prediction.triplets)
+        accepted: list[models.Triplet] = []
         for index, triplet in enumerate(triplets):
             if not isinstance(triplet, _TripletInput):
                 raise TypeError('triplets must contain _TripletInput values')
@@ -250,14 +250,23 @@ class _TripletDecomposer(module.Module):
                 raise ValueError(
                     f'triplets[{index}] must have non-empty fields'
                 )
-        return [
-            models.Triplet(
-                subject=triplet.subject,
-                predicate=triplet.predicate,
-                object=triplet.object,
+            if not _is_concise_predicate(triplet.predicate):
+                logger.warning(
+                    'discarding non-concise triplet predicate at index %d: %s',
+                    index,
+                    logs.elide(triplet.predicate),
+                )
+                continue
+            accepted.append(
+                models.Triplet(
+                    subject=triplet.subject,
+                    predicate=triplet.predicate,
+                    object=triplet.object,
+                    subject_kind=triplet.subject_kind,
+                    object_kind=triplet.object_kind,
+                )
             )
-            for triplet in triplets
-        ]
+        return accepted
 
 
 async def _extract_triplets(
@@ -313,11 +322,18 @@ async def _extract_triplets(
             )
         )
         async with gate:
-            facts = await fact_module.aforward(
-                context_before=context_before,
-                target_node=target_node,
-                context_after=context_after,
+            request = models.FactExtractionInput(
+                context_before=[
+                    _fact_input(node, index)
+                    for index, node in enumerate(context_before)
+                ],
+                target_node=_fact_input(target_node, 0),
+                context_after=[
+                    _fact_input(node, index)
+                    for index, node in enumerate(context_after)
+                ],
             )
+            facts = await fact_module.aforward(request=request)
         return [
             {'text': fact['text'], 'node_positions': [node_index]}
             for fact in facts
@@ -327,12 +343,6 @@ async def _extract_triplets(
         *(_extract_one_anchor(index) for index in eligible_indices)
     )
     facts = [fact for anchor_facts in per_anchor for fact in anchor_facts]
-
-    logger.info(
-        'triplet extraction: %d node(s) -> %d fact(s)',
-        len(nodes),
-        len(facts),
-    )
 
     if not facts:
         return []
@@ -399,9 +409,7 @@ class TripletNode:
             A ``triplets`` update for the state.
         """
         nodes = state.get('nodes', [])
-        source = state.get('source_key', '').strip()
-        if not source:
-            source = models.source_key(state.get('source')) or ''
+        source = state['source'].key
         triplets = await _extract_triplets(
             nodes,
             fact_module=self._fact_module,

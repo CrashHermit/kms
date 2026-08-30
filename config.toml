@@ -21,168 +21,245 @@
 
 [models.modules.corrector]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-vision"
+max_tokens = 2048
 
 [models.modules.formatter_router]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.formatter_editor]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.formatter]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.text_seam_merger]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
+ 
 
 [models.modules.text_seam_rewriter]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.image_seam_merger]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-vision"
+max_tokens = 2048
 
 [models.modules.image_enricher]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
-
+model = "openai/gemma-4-e4b-qat-vision"
+max_tokens = 2048
 [models.modules.splitter]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.instruction_router]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.instruction_grower]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.pedagogical_component_finder]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.role_typer]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.statement_partitioner]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.procedure_partitioner]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.atomic_fact_extractor]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
+
+[models.modules.exercise_strip_router]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.governance_judge]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.triplet_extractor]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.entity_enrichment]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.predicate_enrichment]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.statement_enrichment]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.procedure_enrichment]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.statement_hub_builder]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.procedure_hub_builder]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.entity_hub_builder]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
+[models.modules.event_hub_adjudicator]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
+[models.modules.event_hub_synthesizer]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
+
+[models.modules.event_hub_builder]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.predicate_hub_builder]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.triplet_hub_builder]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.search_judge]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.decompose_judge]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
 [models.modules.query_decomposer]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
 
-[models.modules.entity_card_router]
+[models.modules.entity_card_suitability]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
-
-[models.modules.entity_fact_generator]
-base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 256
 
 [models.modules.entity_card_generator]
 base_url = "http://127.0.0.1:8080/v1"
-model = "openai/qwen3.5-9b"
-max_tokens = 8192
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
+
+[models.modules.entity_card_verifier]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 256
+
+[models.modules.event_card_suitability]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 256
+
+[models.modules.event_card_generator]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
+
+[models.modules.event_card_verifier]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 256
+
+[models.modules.triplet_card_suitability]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 256
+
+[models.modules.triplet_card_generator]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
+
+[models.modules.triplet_card_verifier]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 256
+
+[models.modules.procedure_card_suitability]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 256
+
+[models.modules.procedure_card_generator]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
+
+[models.modules.procedure_card_verifier]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 256
+# Training optimization models use the remote OpenRouter endpoint so they
+# remain independent of the local router's model lifecycle.
+[models.modules.training_judge]
+api_key_source = "openrouter"
+model = "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
+temperature = 0.0
+max_tokens = 2048
+
+[models.modules.training_teacher]
+api_key_source = "openrouter"
+model = "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
+temperature = 0.0
+max_tokens = 4096
+
 
 # ── local model serving (router-mode llama-server) ───────────────────
 
@@ -197,52 +274,56 @@ request_timeout = 30.0
 terminate_timeout = 15.0
 
 [serving.module_models]
-corrector = "qwen3.5-9b"
-formatter = "qwen3.5-9b"
-image_enricher = "qwen3.5-9b"
-formatter_router = "qwen3.5-9b"
-formatter_editor = "qwen3.5-9b"
-text_seam_merger = "qwen3.5-9b"
-text_seam_rewriter = "qwen3.5-9b"
-image_seam_merger = "qwen3.5-9b"
-splitter = "qwen3.5-9b"
-instruction_router = "qwen3.5-9b"
-instruction_grower = "qwen3.5-9b"
-pedagogical_component_finder = "qwen3.5-9b"
-role_typer = "qwen3.5-9b"
-statement_partitioner = "qwen3.5-9b"
-procedure_partitioner = "qwen3.5-9b"
-atomic_fact_extractor = "qwen3.5-9b"
-triplet_extractor = "qwen3.5-9b"
-entity_enrichment = "qwen3.5-9b"
-predicate_enrichment = "qwen3.5-9b"
-statement_enrichment = "qwen3.5-9b"
-procedure_enrichment = "qwen3.5-9b"
-statement_hub_builder = "qwen3.5-9b"
-procedure_hub_builder = "qwen3.5-9b"
-entity_hub_builder = "qwen3.5-9b"
-predicate_hub_builder = "qwen3.5-9b"
-triplet_hub_builder = "qwen3.5-9b"
-search_judge = "qwen3.5-9b"
-decompose_judge = "qwen3.5-9b"
-query_decomposer = "qwen3.5-9b"
-governance_judge = "qwen3.5-9b"
-entity_card_router = "qwen3.5-9b"
-entity_fact_generator = "qwen3.5-9b"
-entity_card_generator = "qwen3.5-9b"
+corrector = "gemma-4-e4b-qat-vision"
+formatter = "gemma-4-e4b-qat-text"
+image_enricher = "gemma-4-e4b-qat-vision"
+formatter_router = "gemma-4-e4b-qat-text"
+splitter = "gemma-4-e4b-qat-text"
+exercise_strip_router = "gemma-4-e4b-qat-text"
+formatter_editor = "gemma-4-e4b-qat-text"
+text_seam_merger = "gemma-4-e4b-qat-text"
+text_seam_rewriter = "gemma-4-e4b-qat-text"
+image_seam_merger = "gemma-4-e4b-qat-vision"
+instruction_router = "gemma-4-e4b-qat-text"
+instruction_grower = "gemma-4-e4b-qat-text"
+pedagogical_component_finder = "gemma-4-e4b-qat-text"
+role_typer = "gemma-4-e4b-qat-text"
+statement_partitioner = "gemma-4-e4b-qat-text"
+procedure_partitioner = "gemma-4-e4b-qat-text"
+atomic_fact_extractor = "gemma-4-e4b-qat-text"
+triplet_extractor = "gemma-4-e4b-qat-text"
+entity_enrichment = "gemma-4-e4b-qat-text"
+predicate_enrichment = "gemma-4-e4b-qat-text"
+statement_enrichment = "gemma-4-e4b-qat-text"
+procedure_enrichment = "gemma-4-e4b-qat-text"
+statement_hub_builder = "gemma-4-e4b-qat-text"
+procedure_hub_builder = "gemma-4-e4b-qat-text"
+entity_hub_builder = "gemma-4-e4b-qat-text"
+event_hub_builder = "gemma-4-e4b-qat-text"
+predicate_hub_builder = "gemma-4-e4b-qat-text"
+event_hub_adjudicator = "gemma-4-e4b-qat-text"
+event_hub_synthesizer = "gemma-4-e4b-qat-text"
+triplet_hub_builder = "gemma-4-e4b-qat-text"
+search_judge = "gemma-4-e4b-qat-text"
+decompose_judge = "gemma-4-e4b-qat-text"
+governance_judge = "gemma-4-e4b-qat-text"
+query_decomposer = "gemma-4-e4b-qat-text"
+entity_card_suitability = "gemma-4-e4b-qat-text"
+entity_card_generator = "gemma-4-e4b-qat-text"
+entity_card_verifier = "gemma-4-e4b-qat-text"
+event_card_suitability = "gemma-4-e4b-qat-text"
+event_card_generator = "gemma-4-e4b-qat-text"
+event_card_verifier = "gemma-4-e4b-qat-text"
+triplet_card_suitability = "gemma-4-e4b-qat-text"
+triplet_card_generator = "gemma-4-e4b-qat-text"
+triplet_card_verifier = "gemma-4-e4b-qat-text"
+procedure_card_suitability = "gemma-4-e4b-qat-text"
+procedure_card_generator = "gemma-4-e4b-qat-text"
+procedure_card_verifier = "gemma-4-e4b-qat-text"
 
-[serving.presets."glm-ocr"]
-model = "~/models/glm-ocr/GLM-OCR-Q8_0.gguf"
-mmproj = "~/models/glm-ocr/mmproj-GLM-OCR-Q8_0.gguf"
+[serving.presets."gemma-4-e4b-qat-text"]
+model = "~/models/gemma-4-e4b-qat/gemma-4-E4B_q4_0-it.gguf"
 ctx_size = 32768
-n_gpu_layers = 999
-no_warmup = true
-parallel = 1
-
-[serving.presets."qwen3.5-9b"]
-model = "~/models/qwen3.5-9b/Qwen3.5-9B-Q4_K_M.gguf"
-mmproj = "~/models/qwen3.5-9b/mmproj-F16.gguf"
-ctx_size = 16384
 cache_type_k = "q4_0"
 flash_attn = "on"
 cache_type_v = "q4_0"
@@ -250,21 +331,10 @@ n_gpu_layers = 999
 no_warmup = true
 parallel = 1
 reasoning = "off"
-
-[serving.presets."qwen3-vl-4b"]
-model = "~/models/qwen3-vl-4b/Qwen3VL-4B-Instruct-Q4_K_M.gguf"
-mmproj = "~/models/qwen3-vl-4b/mmproj-Qwen3VL-4B-Instruct-F16.gguf"
+[serving.presets."gemma-4-e4b-qat-vision"]
+model = "~/models/gemma-4-e4b-qat/gemma-4-E4B_q4_0-it.gguf"
+mmproj = "~/models/gemma-4-e4b-qat/gemma-4-E4B-it-mmproj.gguf"
 ctx_size = 8192
-n_gpu_layers = 999
-no_warmup = true
-parallel = 1
-temperature = 0.0
-threads = 12
-
-[serving.presets."gemma-4-e4b-it"]
-model = "~/.local/share/ramalama/store/huggingface/unsloth/gemma-4-e4b-it-GGUF/snapshots/sha256-85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87/gemma-4-E4B-it-Q4_K_M.gguf"
-mmproj = "~/.local/share/ramalama/store/huggingface/unsloth/gemma-4-e4b-it-GGUF/snapshots/sha256-85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87/mmproj-F16.gguf"
-ctx_size = 16384
 cache_type_k = "q4_0"
 flash_attn = "on"
 cache_type_v = "q4_0"
@@ -280,7 +350,7 @@ temperature = 0.0
 manage = true
 host = "127.0.0.1"
 port = 8081
-model = "~/models/qwen3-embedding-8b/Qwen3-Embedding-8B-Q4_K_M.gguf"
+model = "~/models/qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-Q4_K_M.gguf"
 threads = 12
 threads_batch = 12
 ctx_size = 32768
@@ -295,7 +365,7 @@ request_timeout = 30.0
 manage = true
 host = "127.0.0.1"
 port = 8082
-model = "~/models/qwen3-reranker-4b/Qwen3-Reranker-4B-Q4_K_M.gguf"
+model = "~/models/qwen3-reranker-0.6b/Qwen3-Reranker-0.6B-Q4_K_M.gguf"
 threads = 4
 threads_batch = 4
 device = "none"
@@ -308,14 +378,14 @@ poll_interval = 1.0
 request_timeout = 30.0
 
 [embeddings]
-model = "Qwen3-Embedding-8B"
-dimension = 4096
+model = "Qwen3-Embedding-0.6B"
+dimension = 1024
 batch_size = 32
 base_url = "http://127.0.0.1:8081/v1"
 timeout_seconds = 120.0
 
 [reranker]
-model = "Qwen3-Reranker-4B"
+model = "Qwen3-Reranker-0.6B"
 batch_size = 8
 base_url = "http://127.0.0.1:8082/v1"
 timeout_seconds = 120.0
@@ -350,10 +420,11 @@ enabled = true
 [stages.splitter]
 backward_context_budget = 200
 lookahead_budget = 2000
+router_context_budget = 300
 
 [stages.finders]
 lookahead_budget = 2000
-max_lookahead_budget = 8000
+max_lookahead_budget = 16000
 
 [stages.finders.instruction_finder]
 context_budget = 300
@@ -375,15 +446,26 @@ forward_context_budget = 400
 
 [stages.entity_hubs]
 recall_threshold = 0.55
-merge_above = 0.85
-separate_below = 0.35
+merge_above = 0.78
+separate_below = 0.42
 max_concurrent_calls = 16
+comparison_token_budget = 4096
+rerank_top_n = 5
+[stages.event_hubs]
+recall_threshold = 0.55
+merge_above = 0.78
+separate_below = 0.42
+max_concurrent_calls = 16
+comparison_token_budget = 4096
+rerank_top_n = 5
 
 [stages.predicate_hubs]
 recall_threshold = 0.55
-merge_above = 0.85
-separate_below = 0.35
+merge_above = 0.78
+separate_below = 0.42
 max_concurrent_calls = 16
+comparison_token_budget = 4096
+rerank_top_n = 5
 
 [stages.image_enrichment]
 before_budget = 200
@@ -413,12 +495,19 @@ entity_definition_top_k = 10
 
 [stages.statement_hubs]
 recall_threshold = 0.55
-merge_above = 0.85
-separate_below = 0.35
+merge_above = 0.78
+separate_below = 0.42
 max_concurrent_calls = 16
+comparison_token_budget = 4096
+rerank_top_n = 5
 
 [stages.procedure_hubs]
 recall_threshold = 0.55
-merge_above = 0.85
-separate_below = 0.35
+merge_above = 0.78
+separate_below = 0.42
+max_concurrent_calls = 16
+comparison_token_budget = 4096
+rerank_top_n = 5
+
+[stages.card_creation]
 max_concurrent_calls = 16

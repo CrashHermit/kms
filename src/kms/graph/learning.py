@@ -8,20 +8,9 @@ CARD_LABEL = 'Card'
 REVIEW_LABEL = 'Review'
 
 
-def card_uuid(
-    hub_uuid: str,
-    *,
-    content_key: str | None = None,
-) -> str:
-    """Returns the deterministic uuid for one hub card variant.
-
-    A hub may produce multiple cards in response to different atomic facts,
-    so the fact content participates in the identity.
-    """
-    suffix = 'default'
-    if content_key is not None:
-        suffix = f'{suffix}#{content_key}'
-    return uuid5(NAMESPACE_URL, f'{hub_uuid}#card#{suffix}').hex
+def card_uuid(target_uuid: str, *, content_key: str) -> str:
+    """Returns the deterministic UUID for one component card variant."""
+    return uuid5(NAMESPACE_URL, f'{target_uuid}#card#{content_key}').hex
 
 
 def review_uuid(card_uuid: str, timestamp: str) -> str:
@@ -30,15 +19,14 @@ def review_uuid(card_uuid: str, timestamp: str) -> str:
 
 
 def card_properties(card: models.Card) -> dict:
-    """Builds the property dict for a Card node."""
+    """Build the property dict for a Card node."""
     fsrs = card.fsrs
     properties = {
         'uuid': card.uuid,
-        'hub_uuid': card.hub_uuid,
-        'hub_kind': card.hub_kind,
+        'target_uuid': card.target_uuid,
+        'target_kind': card.target_kind,
         'prompt': card.prompt,
         'response': card.response,
-        'status': card.status,
         'fsrs_stability': fsrs.stability,
         'fsrs_difficulty': fsrs.difficulty,
         'fsrs_due': fsrs.due,
@@ -47,7 +35,6 @@ def card_properties(card: models.Card) -> dict:
         'fsrs_lapses': fsrs.lapses,
         'fsrs_last_review': fsrs.last_review,
         'created_at': card.created_at,
-        'source': card.source,
     }
     return {k: v for k, v in properties.items() if v is not None}
 

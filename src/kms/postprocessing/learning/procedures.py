@@ -28,7 +28,6 @@ class ProcedureNeedRouter(module.Module):
 
     signature = ProcedureNeedRouterSignature
     record_name = 'procedure_need_router'
-    use_chain_of_thought = True
 
     def encode(self, statement: list[models.TextNodeInput]) -> dict:
         return {'statement': statement}
@@ -124,6 +123,7 @@ class SolutionProcedureGenerator:
             [],
             0,
             statement_uuid_value=item.statement_uuid,
+            kind=models.ProcedureKind.GENERATED.value,
         )
         return models.Procedure(
             block=[],

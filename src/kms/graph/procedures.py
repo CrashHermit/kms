@@ -11,20 +11,21 @@ def procedure_uuid(
     block: list[int],
     index: int,
     statement_uuid: str | None = None,
+    *,
+    kind: models.ProcedureKind = models.ProcedureKind.SOURCE,
+    member_positions: list[int] | None = None,
+    generation_slot: str = '0',
 ) -> str:
-    """Returns the deterministic uuid for a procedure.
-
-    Args:
-        source: The source key.
-        block: The member node block.
-        index: The procedure's index within the source.
-        statement_uuid: Optional statement uuid to disambiguate a
-            procedure that also exists as a statement.
-    """
+    """Returns the deterministic UUID for a source or generated procedure."""
     return identity.procedure_uuid(
-        source, block, index, statement_uuid_value=statement_uuid
+        source,
+        block,
+        index,
+        statement_uuid_value=statement_uuid,
+        kind=kind.value,
+        member_positions=member_positions,
+        generation_slot=generation_slot,
     )
-
 
 def _procedure_id(source: str, procedure: models.Procedure) -> str:
     """Returns and verifies the persisted UUID for a procedure model."""
@@ -33,6 +34,8 @@ def _procedure_id(source: str, procedure: models.Procedure) -> str:
         procedure.block,
         procedure.index,
         statement_uuid=procedure.statement_uuid,
+        kind=procedure.kind,
+        member_positions=procedure.member_positions,
     )
     if procedure.uuid is None:
         raise ValueError('procedure is missing its assigned uuid')

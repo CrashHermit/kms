@@ -283,7 +283,7 @@ async def _merge_pair(
     }
     is_split = await module.aforward(**edges)
     logger.debug(
-        'seam %d/%d: %s | tail %r + head %r',
+        'seam %d: %s | tail %r + head %r',
         bottom.index,
         'merged' if is_split else 'left split',
         logs.elide(tail.content, 40),

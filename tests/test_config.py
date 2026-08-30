@@ -11,10 +11,10 @@ def test_nested_env_var_overrides_toml_default(monkeypatch):
 
 def test_toml_provides_the_defaults():
     settings = config.load_settings()
-    assert settings.embeddings.model == 'Qwen3-Embedding-8B'
-    assert settings.embeddings.dimension == 4096
+    assert settings.embeddings.model == 'Qwen3-Embedding-0.6B'
+    assert settings.embeddings.dimension == 1024
     assert settings.embeddings.base_url == 'http://127.0.0.1:8081/v1'
-    assert settings.reranker.model == 'Qwen3-Reranker-4B'
+    assert settings.reranker.model == 'Qwen3-Reranker-0.6B'
     assert settings.reranker.base_url == 'http://127.0.0.1:8082/v1'
     assert settings.serving.retrieval.embedding.port == 8081
     assert settings.serving.retrieval.reranker.port == 8082
@@ -28,18 +28,20 @@ def test_toml_provides_the_defaults():
     assert settings.stages.finders.instruction_finder.context_budget == 300
     assert settings.stages.statement_hubs.max_concurrent_calls == 16
     assert settings.stages.statement_hubs.recall_threshold == 0.55
-    assert settings.serving.module_models['entity_enrichment'] == 'qwen3.5-9b'
+    assert settings.serving.module_models['entity_enrichment'] == (
+        'gemma-4-e4b-qat-text'
+    )
     assert settings.models.modules['statement_enrichment'].model == (
-        'openai/qwen3.5-9b'
+        'openai/gemma-4-e4b-qat-text'
     )
     assert settings.models.modules['procedure_enrichment'].model == (
-        'openai/qwen3.5-9b'
+        'openai/gemma-4-e4b-qat-text'
     )
     assert settings.serving.module_models['statement_enrichment'] == (
-        'qwen3.5-9b'
+        'gemma-4-e4b-qat-text'
     )
     assert settings.serving.module_models['procedure_enrichment'] == (
-        'qwen3.5-9b'
+        'gemma-4-e4b-qat-text'
     )
 
 
@@ -49,9 +51,11 @@ def test_image_enrichment_defaults_and_routing():
     assert settings.stages.image_enrichment.after_budget == 200
     assert settings.stages.image_enrichment.max_concurrent_calls == 16
     assert settings.models.modules['image_enricher'].model == (
-        'openai/qwen3.5-9b'
+        'openai/gemma-4-e4b-qat-vision'
     )
-    assert settings.serving.module_models['image_enricher'] == 'qwen3.5-9b'
+    assert settings.serving.module_models['image_enricher'] == (
+        'gemma-4-e4b-qat-vision'
+    )
 
 
 def test_instruction_finder_context_budget_can_be_overridden(monkeypatch):
@@ -73,9 +77,9 @@ def test_statement_hub_settings_can_be_overridden(monkeypatch):
 
 def test_presets_are_loaded_from_toml():
     presets = config.load_settings().serving.presets
-    assert 'qwen3.5-9b' in presets
-    assert presets['qwen3.5-9b'].ctx_size == 16384
-    assert presets['qwen3.5-9b'].reasoning == 'off'
+    assert 'gemma-4-e4b-qat-text' in presets
+    assert presets['gemma-4-e4b-qat-text'].ctx_size == 8192
+    assert presets['gemma-4-e4b-qat-text'].reasoning == 'off'
 
 
 def test_local_model_must_match_serving_preset():
@@ -123,14 +127,14 @@ def test_local_model_budget_must_fit_server_context():
                 'modules': {
                     'formatter': {
                         'base_url': 'http://127.0.0.1:8080/v1',
-                        'model': 'openai/qwen3.5-9b',
+                        'model': 'openai/qwen3.5-9b-text',
                         'max_tokens': 32768,
                     }
                 }
             },
             serving={
-                'module_models': {'formatter': 'qwen3.5-9b'},
-                'presets': {'qwen3.5-9b': {'ctx_size': 32768}},
+                'module_models': {'formatter': 'qwen3.5-9b-text'},
+                'presets': {'qwen3.5-9b-text': {'ctx_size': 32768}},
             },
         )
 

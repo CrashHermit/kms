@@ -79,17 +79,11 @@ def test_require_positions_validates_local_contract():
         [0, 2], field_name='positions', upper_bound=3, ordered=True
     ) == [0, 2]
     with pytest.raises(TypeError, match=r'positions\[0\] must be an int'):
-        module.require_positions(
-            ['0'], field_name='positions', upper_bound=1
-        )
+        module.require_positions(['0'], field_name='positions', upper_bound=1)
     with pytest.raises(ValueError, match='outside'):
-        module.require_positions(
-            [3], field_name='positions', upper_bound=3
-        )
+        module.require_positions([3], field_name='positions', upper_bound=3)
     with pytest.raises(ValueError, match='duplicate'):
-        module.require_positions(
-            [1, 1], field_name='positions', upper_bound=2
-        )
+        module.require_positions([1, 1], field_name='positions', upper_bound=2)
     with pytest.raises(ValueError, match='document order'):
         module.require_positions(
             [1, 0], field_name='positions', upper_bound=2, ordered=True

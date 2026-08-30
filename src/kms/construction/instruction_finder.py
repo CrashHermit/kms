@@ -3,7 +3,6 @@
 import logging
 
 import dspy
-from pydantic import BaseModel, Field
 
 from kms import config
 from kms.core import (
@@ -18,18 +17,6 @@ from kms.core import (
 logger = logging.getLogger(__name__)
 
 
-class InstructionNodeInput(BaseModel):
-    """Text-only local input for instruction routing and growth."""
-
-    local_index: int = Field(
-        description='Zero-based position in this input list; never infer positions from node_text.'
-    )
-    node_type: str = Field(
-        description='Canonical node type for the projected source node.'
-    )
-    node_text: str = Field(
-        description='Canonical node text; numbers here are content, not positions.'
-    )
 
 class InstructionRouterSignature(dspy.Signature):
     r"""
@@ -43,14 +30,14 @@ class InstructionRouterSignature(dspy.Signature):
     Answer only the boolean True or False.
     """
 
-    context_before: list[InstructionNodeInput] = dspy.InputField(
-        description='Ordered text records immediately before target_node; context only.',
+    context_before: list[models.NodeInput] = dspy.InputField(
+        description='Ordered one-based node records immediately before target_node; context only.',
     )
-    target_node: InstructionNodeInput = dspy.InputField(
-        description='The only node being classified as an instruction start.',
+    target_node: models.NodeInput = dspy.InputField(
+        description='The only one-based node record being classified as an instruction start.',
     )
-    context_after: list[InstructionNodeInput] = dspy.InputField(
-        description='Ordered text records immediately after target_node; context only.',
+    context_after: list[models.NodeInput] = dspy.InputField(
+        description='Ordered one-based node records immediately after target_node; context only.',
     )
     is_instruction_start: bool = dspy.OutputField(
         description='True only when the designated node starts a shared exercise instruction.'
@@ -59,27 +46,53 @@ class InstructionRouterSignature(dspy.Signature):
 
 class InstructionGrowerSignature(dspy.Signature):
     r"""
-    Classify only `candidate_node`.
+    Classify only `candidate_node` as part of one shared exercise
+    instruction. The accepted nodes define the instruction currently being
+    grown.
 
-    `accepted_nodes` are the accepted members of one instruction. Return True
-    only when candidate_node continues that same directive. Return False for
-    the first numbered exercise, a new instruction, unrelated prose, or
-    adjacency alone; never resume an instruction after an exercise.
+    INCLUDE the candidate only when it is a grammatical fragment of the
+    shared directive itself. Examples of continuations:
 
+    - "find equations of" → "a. the tangent plane and"
+    - "identify the extrema" → "using the diagram below"
+    - "find equations of" → "a. the tangent plane and" → "b. the normal line"
+
+    EXCLUDE the candidate when it starts, states, or supplies an individual
+    exercise. An exercise may be numbered, lettered, unnumbered, imperative,
+    interrogative, formula-only, or split across several nodes. Examples of
+    exclusions:
+
+    - "For the following exercises, simplify" → "925. 4 + 7"
+    - "For the following exercises, find the gradient" →
+      "Find the gradient of f(x, y)."
+    - "For the following exercises, determine convergence" →
+      "Does the series converge?"
+    - "For the following exercises, find the prime factorization" →
+      "420"
+
+    The words "for the following exercises" announce the instruction; they do
+    not make the following exercise text part of the instruction. A candidate
+    that contains a specific exercise number, expression, quantity, point,
+    equation, question, or requested operation is normally an exercise, not
+    instruction continuation. Do not use numbering as the sole criterion:
+    apply the same boundary to unlabeled tasks.
+
+    Once a candidate is excluded as an exercise, return False. Never absorb
+    that exercise or its continuation nodes into the shared instruction.
     Return only a boolean. Answer only True or False.
     """
 
-    accepted_nodes: list[InstructionNodeInput] = dspy.InputField(
-        description='Accepted text records in document order; no assets or bytes.',
+    accepted_nodes: list[models.NodeInput] = dspy.InputField(
+        description='Accepted one-based node records in document order; no assets or bytes.',
     )
-    context_before: list[InstructionNodeInput] = dspy.InputField(
-        description='Text records immediately before candidate_node; context only.',
+    context_before: list[models.NodeInput] = dspy.InputField(
+        description='One-based node records immediately before candidate_node; context only.',
     )
-    candidate_node: InstructionNodeInput = dspy.InputField(
-        description='The only node being classified for inclusion.',
+    candidate_node: models.NodeInput = dspy.InputField(
+        description='The only one-based node record being classified for inclusion.',
     )
-    context_after: list[InstructionNodeInput] = dspy.InputField(
-        description='Text records immediately after candidate_node; context only.',
+    context_after: list[models.NodeInput] = dspy.InputField(
+        description='One-based node records immediately after candidate_node; context only.',
     )
     include_next_node: bool = dspy.OutputField(
         description='True only when candidate_node continues the anchored instruction.'
@@ -87,18 +100,18 @@ class InstructionGrowerSignature(dspy.Signature):
 
 def _instruction_input(
     node: context_window.ContextNode, local_index: int = 0
-) -> InstructionNodeInput:
-    return InstructionNodeInput(
-        local_index=local_index,
+) -> models.NodeInput:
+    return models.NodeInput(
+        index=local_index + 1,
         node_type=node.type or '',
-        node_text=node.content or '',
+        text=node.content or '',
     )
 
 
 def _instruction_lists(
     nodes: list[context_window.ContextNode],
 ) -> tuple[
-    list[InstructionNodeInput], InstructionNodeInput, list[InstructionNodeInput]
+    list[models.NodeInput], models.NodeInput, list[models.NodeInput]
 ]:
     target_index = next(
         index for index, node in enumerate(nodes) if node.marker is not None
@@ -143,7 +156,7 @@ def _grower_demo(
     candidate_type: str = 'paragraph',
 ) -> dspy.Example:
     accepted_nodes = [
-        InstructionNodeInput(local_index=index, node_type='paragraph', node_text=text)
+        models.NodeInput(index=index + 1, node_type='paragraph', text=text)
         for index, text in enumerate(accepted)
     ]
     candidate_context = [
@@ -204,9 +217,9 @@ class InstructionRouter(module.Module):
 
     def encode(
         self,
-        context_before: list[InstructionNodeInput],
-        target_node: InstructionNodeInput,
-        context_after: list[InstructionNodeInput],
+        context_before: list[models.NodeInput],
+        target_node: models.NodeInput,
+        context_after: list[models.NodeInput],
     ) -> dict[str, object]:
         """Passes document-ordered target and context to DSPy."""
         return {
@@ -270,6 +283,16 @@ class InstructionGrower(module.Module):
                 False,
             ),
             _grower_demo(
+                ['For the following exercises, find the gradient.'],
+                'Find the gradient of f(x, y).',
+                False,
+            ),
+            _grower_demo(
+                ['For the following exercises, determine convergence.'],
+                'Does the series converge?',
+                False,
+            ),
+            _grower_demo(
                 ['For the following exercises, identify the extrema.'],
                 'Decorative publisher illustration.',
                 False,
@@ -287,10 +310,10 @@ class InstructionGrower(module.Module):
 
     def encode(
         self,
-        accepted_nodes: list[InstructionNodeInput],
-        context_before: list[InstructionNodeInput],
-        candidate_node: InstructionNodeInput,
-        context_after: list[InstructionNodeInput],
+        accepted_nodes: list[models.NodeInput],
+        context_before: list[models.NodeInput],
+        candidate_node: models.NodeInput,
+        context_after: list[models.NodeInput],
     ) -> dict[str, object]:
         """Passes document-ordered target and context to DSPy."""
         return {
@@ -308,6 +331,8 @@ class InstructionGrower(module.Module):
 def _strict_bool(value: object, field_name: str) -> bool:
     """Rejects model values that are not actual booleans."""
     return module.require_bool(value, field_name)
+
+
 
 
 async def find_instruction_spans(
@@ -410,9 +435,7 @@ class InstructionFinderNode:
         spans = await find_instruction_spans(
             state.get('nodes', []), router=self.router, grower=self.grower
         )
-        source = state.get('source_key', '').strip()
-        if not source:
-            source = models.source_key(state.get('source')) or ''
+        source = state['source'].key
         if not source:
             raise ValueError('instruction detection requires a source')
         instructions = [

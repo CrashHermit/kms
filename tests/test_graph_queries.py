@@ -108,7 +108,7 @@ def test_qualified_meta_hub_query_requires_two_source_values():
     captured = {}
 
     async def scenario():
-        await queries.qualified_entity_meta_hub_uuids(
+        await queries.qualified_entity_global_hub_uuids(
             lambda: _capturing_session(captured)
         )
 

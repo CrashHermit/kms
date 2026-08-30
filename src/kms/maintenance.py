@@ -3,17 +3,35 @@
 import argparse
 import asyncio
 import json
+from importlib import import_module
 
 from kms import runtime
 from kms.construction import (
-    entity_hubs,
+    local_entity_hubs,
+    local_event_hubs,
+    local_predicate_hubs,
     local_procedure_hubs,
     local_statement_hubs,
     maintenance,
-    predicate_hubs,
 )
-from kms.core import llm
+from kms.core import llm, serve
+from kms.core import models as core_models
 from kms.graph import maintenance as graph_maintenance
+from kms.postprocessing.learning import (
+    cards,
+    entity_cards,
+    event_cards,
+    procedure_cards,
+    triplet_cards,
+)
+
+global_maintenance = import_module('kms.postprocessing.global.maintenance')
+global_statement_hubs = import_module(
+    'kms.postprocessing.global.statement_hubs'
+)
+global_procedure_hubs = import_module(
+    'kms.postprocessing.global.procedure_hubs'
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -46,6 +64,12 @@ def _parser() -> argparse.ArgumentParser:
         action='store_true',
         help='Rebuild the GlobalProcedureHub layer.',
     )
+    for command in ('entity', 'event', 'triplet', 'procedure'):
+        card = subparsers.add_parser(
+            f'generate-{command}-cards',
+            help=f'Generate {command} component-owned cards for one local hub.',
+        )
+        card.add_argument('hub_uuid')
     subparsers.add_parser(
         'rebuild-embeddings',
         help='Re-embed all persisted vector-indexed graph records.',
@@ -53,25 +77,92 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _card_designer(
+    kind: core_models.CardTargetKind,
+) -> cards.ComponentCardDesigner:
+    """Build the card designer for one component type."""
+    modules = {
+        core_models.CardTargetKind.ENTITY: (
+            entity_cards.EntityCardSuitability,
+            entity_cards.EntityCardGenerator,
+            entity_cards.EntityCardVerifier,
+            (
+                'entity_card_suitability',
+                'entity_card_generator',
+                'entity_card_verifier',
+            ),
+        ),
+        core_models.CardTargetKind.EVENT: (
+            event_cards.EventCardSuitability,
+            event_cards.EventCardGenerator,
+            event_cards.EventCardVerifier,
+            (
+                'event_card_suitability',
+                'event_card_generator',
+                'event_card_verifier',
+            ),
+        ),
+        core_models.CardTargetKind.TRIPLET: (
+            triplet_cards.TripletCardSuitability,
+            triplet_cards.TripletCardGenerator,
+            triplet_cards.TripletCardVerifier,
+            (
+                'triplet_card_suitability',
+                'triplet_card_generator',
+                'triplet_card_verifier',
+            ),
+        ),
+        core_models.CardTargetKind.PROCEDURE: (
+            procedure_cards.ProcedureCardSuitability,
+            procedure_cards.ProcedureCardGenerator,
+            procedure_cards.ProcedureCardVerifier,
+            (
+                'procedure_card_suitability',
+                'procedure_card_generator',
+                'procedure_card_verifier',
+            ),
+        ),
+    }
+    suitability, generator, verifier, lm_names = modules[kind]
+    return {
+        core_models.CardTargetKind.ENTITY: entity_cards.EntityCardDesigner,
+        core_models.CardTargetKind.EVENT: event_cards.EventCardDesigner,
+        core_models.CardTargetKind.TRIPLET: triplet_cards.TripletCardDesigner,
+        core_models.CardTargetKind.PROCEDURE: procedure_cards.ProcedureCardDesigner,
+    }[kind](
+        suitability(llm.module_lm(lm_names[0])),
+        generator(llm.module_lm(lm_names[1])),
+        verifier(llm.module_lm(lm_names[2])),
+    )
+
+
 def _models() -> dict[str, object]:
-    """Build the model objects required by maintenance operations."""
+    """Build the model objects required by aggregate rebuild operations."""
     entity_language_model = llm.module_lm('entity_hub_builder')
     predicate_language_model = llm.module_lm('predicate_hub_builder')
     statement_language_model = llm.module_lm('statement_hub_builder')
     procedure_language_model = llm.module_lm('procedure_hub_builder')
+    event_language_model = llm.module_lm('event_hub_builder')
     return {
         'entity_language_model': entity_language_model,
-        'entity_adjudicator': entity_hubs.EntityHubAdjudicator(
+        'entity_adjudicator': local_entity_hubs.EntityHubAdjudicator(
             language_model=entity_language_model
         ),
-        'entity_synthesizer': entity_hubs.EntityHubSynthesizer(
+        'entity_synthesizer': local_entity_hubs.EntityHubSynthesizer(
             language_model=entity_language_model
         ),
+        'event_adjudicator': local_event_hubs.EventHubAdjudicator(
+            language_model=event_language_model
+        ),
+        'event_synthesizer': local_event_hubs.EventHubSynthesizer(
+            language_model=event_language_model
+        ),
+        'event_language_model': event_language_model,
         'predicate_language_model': predicate_language_model,
-        'predicate_adjudicator': predicate_hubs.PredicateHubAdjudicator(
+        'predicate_adjudicator': local_predicate_hubs.PredicateHubAdjudicator(
             language_model=predicate_language_model
         ),
-        'predicate_synthesizer': predicate_hubs.PredicateHubSynthesizer(
+        'predicate_synthesizer': local_predicate_hubs.PredicateHubSynthesizer(
             language_model=predicate_language_model
         ),
         'statement_adjudicator': local_statement_hubs.LocalStatementHubAdjudicator(
@@ -86,7 +177,37 @@ def _models() -> dict[str, object]:
         'procedure_synthesizer': local_procedure_hubs.LocalProcedureHubSynthesizer(
             language_model=procedure_language_model
         ),
+        'global_statement_adjudicator': global_statement_hubs.GlobalStatementHubAdjudicator(
+            language_model=statement_language_model
+        ),
+        'global_statement_synthesizer': global_statement_hubs.GlobalStatementHubSynthesizer(
+            language_model=statement_language_model
+        ),
+        'global_procedure_adjudicator': global_procedure_hubs.GlobalProcedureHubAdjudicator(
+            language_model=procedure_language_model
+        ),
+        'global_procedure_synthesizer': global_procedure_hubs.GlobalProcedureHubSynthesizer(
+            language_model=procedure_language_model
+        ),
     }
+
+
+async def _generate_cards(
+    *,
+    session_factory,
+    target_kind: core_models.CardTargetKind,
+    hub_uuid: str,
+    designer: cards.ComponentCardDesigner,
+) -> dict:
+    """Generate cards for one explicitly selected component kind."""
+    return await cards.create_cards_for_hub(
+        session_factory=session_factory,
+        target_kind=target_kind,
+        hub_uuid=hub_uuid,
+        designer=designer,
+    )
+
+
 async def _run(arguments: argparse.Namespace) -> dict:
     """Run the selected maintenance operation in a shared runtime."""
     async with runtime.Runtime() as application:
@@ -98,32 +219,77 @@ async def _run(arguments: argparse.Namespace) -> dict:
                 session_factory=session_factory
             )
 
-        models = _models()
-        if arguments.command == 'rebuild-meta':
-            return await maintenance.rebuild_meta(
-                session_factory=session_factory,
-                entity_language_model=models['entity_language_model'],
-                entity_adjudicator=models['entity_adjudicator'],
-                entity_synthesizer=models['entity_synthesizer'],
-                predicate_language_model=models['predicate_language_model'],
-                predicate_adjudicator=models['predicate_adjudicator'],
-                predicate_synthesizer=models['predicate_synthesizer'],
-                statement_adjudicator=models['statement_adjudicator'],
-                statement_synthesizer=models['statement_synthesizer'],
-                procedure_adjudicator=models['procedure_adjudicator'],
-                procedure_synthesizer=models['procedure_synthesizer'],
-                include_statement_learning=(
-                    arguments.learning or arguments.statements
-                ),
-                include_procedure_learning=(
-                    arguments.learning or arguments.procedures
-                ),
+        with serve.model_manager_context(application.model_manager):
+            card_commands = {
+                'generate-entity-cards': core_models.CardTargetKind.ENTITY,
+                'generate-event-cards': core_models.CardTargetKind.EVENT,
+                'generate-triplet-cards': core_models.CardTargetKind.TRIPLET,
+                'generate-procedure-cards': core_models.CardTargetKind.PROCEDURE,
+            }
+            if arguments.command in card_commands:
+                target_kind = card_commands[arguments.command]
+                return await _generate_cards(
+                    session_factory=session_factory,
+                    target_kind=target_kind,
+                    hub_uuid=arguments.hub_uuid,
+                    designer=_card_designer(target_kind),
+                )
+            models = _models()
+            if arguments.command == 'rebuild-meta':
+                return await global_maintenance.rebuild(
+                    session_factory=session_factory,
+                    entity_language_model=models['entity_language_model'],
+                    entity_adjudicator=models['entity_adjudicator'],
+                    entity_synthesizer=models['entity_synthesizer'],
+                    event_language_model=models['event_language_model'],
+                    event_adjudicator=models['event_adjudicator'],
+                    event_synthesizer=models['event_synthesizer'],
+                    predicate_language_model=models['predicate_language_model'],
+                    predicate_adjudicator=models['predicate_adjudicator'],
+                    predicate_synthesizer=models['predicate_synthesizer'],
+                    statement_adjudicator=models[
+                        'global_statement_adjudicator'
+                    ],
+                    statement_synthesizer=models[
+                        'global_statement_synthesizer'
+                    ],
+                    procedure_adjudicator=models[
+                        'global_procedure_adjudicator'
+                    ],
+                    procedure_synthesizer=models[
+                        'global_procedure_synthesizer'
+                    ],
+                    include_statements=arguments.learning
+                    or arguments.statements,
+                    include_procedures=arguments.learning
+                    or arguments.procedures,
+                )
+            if arguments.command == 'rebuild-source':
+                result = await maintenance.rebuild_source(
+                    arguments.source,
+                    session_factory=session_factory,
+                    entity_language_model=models['entity_language_model'],
+                    entity_adjudicator=models['entity_adjudicator'],
+                    entity_synthesizer=models['entity_synthesizer'],
+                    predicate_language_model=models['predicate_language_model'],
+                    predicate_adjudicator=models['predicate_adjudicator'],
+                    predicate_synthesizer=models['predicate_synthesizer'],
+                    statement_adjudicator=models['statement_adjudicator'],
+                    statement_synthesizer=models['statement_synthesizer'],
+                    procedure_adjudicator=models['procedure_adjudicator'],
+                    procedure_synthesizer=models['procedure_synthesizer'],
+                )
+                result['event_hubs'] = await local_event_hubs.rebuild(
+                    arguments.source,
+                    session_factory=session_factory,
+                    language_model=models['event_language_model'],
+                    adjudicator=models['event_adjudicator'],
+                    synthesizer=models['event_synthesizer'],
+                )
+                return result
+            raise ValueError(
+                f'unknown maintenance command: {arguments.command}'
             )
-        return await maintenance.rebuild_source(
-            arguments.source,
-            session_factory=session_factory,
-            **models,
-        )
 
 
 def run() -> None:

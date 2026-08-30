@@ -12,7 +12,7 @@ from kms.construction import (
     entity_enrichment,
     triplet_extractor,
 )
-from kms.core import loading, recording, semantic
+from kms.core import loading, models, recording
 
 
 def _png_bytes() -> bytes:
@@ -65,7 +65,7 @@ def test_loads_a_dspy_image_input(tmp_path):
         {
             'block_crop': dspy.Image(url=_data_url(_png_bytes())),
             'block_type': 'text',
-            'lines': '[1] hi',
+            'lines': [{'index': 1, 'text': 'hi'}],
         },
         dspy.Prediction(edits=[]),
     )
@@ -102,35 +102,37 @@ def test_loads_structured_entity_context_input(tmp_path):
         'entity_enrichment',
         entity_enrichment.EntityEnrichmentSignature,
         {
-            'context_before': [
-                semantic.TermContextNodeInput(
-                    local_index=0,
-                    node_type='paragraph',
-                    node_text='Before',
-                )
-            ],
-            'target_node': semantic.TermContextNodeInput(
-                local_index=0,
-                node_type='image',
-                node_text='A diagram',
-            ),
-            'context_after': [
-                semantic.TermContextNodeInput(
-                    local_index=0,
-                    node_type='paragraph',
-                    node_text='After',
-                )
-            ],
-            'terms': ['vector space'],
+            'request': models.TermEnrichmentInput(
+                context_before=[
+                    models.NodeInput(
+                        index=1,
+                        node_type='paragraph',
+                        text='Before',
+                    )
+                ],
+                target_node=models.NodeInput(
+                    index=1,
+                    node_type='image',
+                    text='A diagram',
+                ),
+                context_after=[
+                    models.NodeInput(
+                        index=1,
+                        node_type='paragraph',
+                        text='After',
+                    )
+                ],
+                terms=['vector space'],
+            )
         },
         dspy.Prediction(description='A directed quantity.'),
     )
 
     example = _by_stage(tmp_path / 'ex')['entity_enrichment'].examples[0]
-    assert example.target_node.node_text == 'A diagram'
-    assert example.context_before[0].node_text == 'Before'
-    assert example.context_after[0].node_text == 'After'
-    assert example.terms == ['vector space']
+    assert example.request.target_node.text == 'A diagram'
+    assert example.request.context_before[0].text == 'Before'
+    assert example.request.context_after[0].text == 'After'
+    assert example.request.terms == ['vector space']
 
 
 def test_loads_structured_fact_context_inputs(tmp_path):
@@ -139,39 +141,32 @@ def test_loads_structured_fact_context_inputs(tmp_path):
         'atomic_fact_extractor',
         triplet_extractor._FactSignature,
         {
-            'context_before': [
-                triplet_extractor.FactNodeInput(
-                    local_index=0,
-                    node_type='paragraph',
-                    node_text='Before',
-                )
-            ],
-            'target_node': triplet_extractor.FactNodeInput(
-                local_index=0,
-                node_type='image',
-                node_text='A diagram',
-            ),
-            'context_after': [],
+            'request': models.FactExtractionInput(
+                context_before=[
+                    models.NodeInput(index=1, node_type='paragraph', text='Before')
+                ],
+                target_node=models.NodeInput(
+                    index=1, node_type='image', text='A diagram'
+                ),
+                context_after=[],
+            )
         },
         dspy.Prediction(facts=[]),
     )
 
     example = _by_stage(tmp_path / 'ex')['atomic_fact_extractor'].examples[0]
-    assert example.context_before[0].node_text == 'Before'
-    assert example.target_node.node_type == 'image'
-    assert example.target_node.node_text == 'A diagram'
-    assert example.context_after == []
-
-
-def test_round_trip_through_a_module(tmp_path):
-    recorder = recording.Recorder('src', output_dir=str(tmp_path / 'ex'))
+    request = example.request
+    assert request.context_before[0].text == 'Before'
+    assert request.target_node.node_type == 'image'
+    assert request.target_node.text == 'A diagram'
+    assert request.context_after == []
 
     class _Fake:
         def __init__(self, **values):
             self.values = values
 
         async def acall(self, **kwargs):
-            assert kwargs['lines'] == '[1] hi'
+            assert kwargs['lines'] == [models.LineInput(index=1, text='hi')]
             return dspy.Prediction(**self.values)
 
     module = block_corrector.BlockCorrector(
@@ -179,6 +174,9 @@ def test_round_trip_through_a_module(tmp_path):
         recorder=recorder,
     )
     module.router.predictor = _Fake(needs_correction=True)
+    module.locator.predictor = _Fake(
+        locations=[models.LineSelection(index=1)]
+    )
     module.editor.predictor = _Fake(edits=[])
     image_path = tmp_path / 'block.png'
     image_path.write_bytes(_png_bytes())
@@ -199,4 +197,4 @@ def test_round_trip_through_a_module(tmp_path):
 
     example = _by_stage(tmp_path / 'ex')['corrector_block_editor'].examples[0]
     assert isinstance(example.block_crop, dspy.Image)
-    assert example.lines == '[1] hi'
+    assert example.lines == [models.LineInput(index=1, text='hi')]

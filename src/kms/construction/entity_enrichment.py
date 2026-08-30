@@ -3,7 +3,6 @@ from pydantic import BaseModel, Field
 
 from kms import config
 from kms.core import (
-    context_window,
     identity,
     models,
     module,
@@ -27,16 +26,12 @@ class EntityEnrichmentSignature(dspy.Signature):
     facts. Return exactly one description per input term in order.
     """
 
-    context_before: list[semantic.TermContextNodeInput] = dspy.InputField(
-        description='Ordered preceding text context; reference only.'
+    request: models.TermEnrichmentInput = dspy.InputField(
+        description=(
+            'The enrichment request. Describe only target_node.text. '
+            'context_before and context_after provide reference context only.'
+        )
     )
-    target_node: semantic.TermContextNodeInput = dspy.InputField(
-        description='The target node containing the local entity term context.'
-    )
-    context_after: list[semantic.TermContextNodeInput] = dspy.InputField(
-        description='Ordered following text context; reference only.'
-    )
-    terms: list[str] = dspy.InputField(description='Exact entity terms.')
     description: str = dspy.OutputField(
         description='One local description for the supplied term.'
     )
@@ -47,31 +42,17 @@ class EntityEnricher(module.Module):
     record_name = 'entity_enrichment'
 
     def encode(
-        self,
-        context_before: list[context_window.ContextNode],
-        target_node: context_window.ContextNode,
-        context_after: list[context_window.ContextNode],
-        terms: list[str],
+        self, request: models.TermEnrichmentInput
     ) -> dict[str, object]:
-        return {
-            'context_before': [
-                semantic.term_context_input(node, index)
-                for index, node in enumerate(context_before)
-            ],
-            'target_node': semantic.term_context_input(target_node),
-            'context_after': [
-                semantic.term_context_input(node, index)
-                for index, node in enumerate(context_after)
-            ],
-            'terms': terms,
-        }
+        """Passes the validated enrichment request to the signature."""
+        return {'request': request}
 
     def decode(self, prediction, **inputs) -> list[TermDescription]:
         """Returns one validated description for the singleton input term."""
         description = module.require_text(
             prediction.description, 'description'
         )
-        terms = inputs['terms']
+        terms = inputs['request'].terms
         if len(terms) != 1:
             raise ValueError(
                 f'entity enrichment expects one input term, got {len(terms)}'

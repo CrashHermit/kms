@@ -72,7 +72,6 @@ def _dspy():
     module.LM = LM
     module.InputField = lambda *a, **k: None
     module.OutputField = lambda *a, **k: None
-    module.ChainOfThought = lambda *a, **k: None
     module.Predict = lambda *a, **k: None
     return {'dspy': module}
 

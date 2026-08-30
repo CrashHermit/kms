@@ -1,12 +1,13 @@
-"""Canonical deterministic identities for the construction data model."""
+"""Deterministic identities for durable construction and derived records.
 
-from __future__ import annotations
+Execution records use separate random identities; knowledge nodes do not.
+"""
 
-from typing import TYPE_CHECKING
+
+
 from uuid import NAMESPACE_URL, uuid5
 
-if TYPE_CHECKING:
-    from kms.core import models
+from kms.core import models
 
 
 def _source(source: str) -> str:
@@ -20,7 +21,7 @@ def _block_key(block: list[int]) -> str:
     return '#'.join(str(node_id) for node_id in block)
 
 
-def _node_provenance_key(node: models.SourceNode) -> str:
+def _node_provenance_key(node: 'models.SourceNode') -> str:
     """Build a stable provenance key for a node from its source attributes."""
     doc_idx = node.document_index if node.document_index is not None else 0
     prov_idx = node.index
@@ -66,10 +67,37 @@ def procedure_uuid(
     block: list[int],
     index: int,
     statement_uuid_value: str | None = None,
+    *,
+    kind: str = 'source',
+    member_positions: list[int] | None = None,
+    generation_slot: str = '0',
 ) -> str:
-    key = f'{_source(source)}#procedure#{_block_key(block)}#{index}'
-    if statement_uuid_value is not None:
-        key = f'{key}#{statement_uuid_value}'
+    """Return a deterministic identity for one source or generated procedure.
+
+    Source procedures use their selected source-member positions when
+    available. Generated procedures use their owning statement and slot.
+    ``index`` remains as a compatibility fallback for incomplete legacy
+    records.
+    """
+    source_key = _source(source)
+    if kind == 'source':
+        occurrence = (
+            f'members#{_block_key(member_positions)}'
+            if member_positions
+            else f'index#{index}'
+        )
+        key = f'{source_key}#procedure#source#{_block_key(block)}#{occurrence}'
+        if statement_uuid_value is not None:
+            key = f'{key}#{statement_uuid_value}'
+    elif kind == 'generated':
+        if statement_uuid_value is None:
+            raise ValueError('generated procedures require a statement uuid')
+        key = (
+            f'{source_key}#procedure#generated#'
+            f'{statement_uuid_value}#{generation_slot}'
+        )
+    else:
+        raise ValueError(f'unknown procedure kind: {kind}')
     return uuid5(NAMESPACE_URL, key).hex
 
 
@@ -90,10 +118,31 @@ def entity_uuid(source: str, node_position: int, name: str) -> str:
     return uuid5(
         NAMESPACE_URL, f'{_source(source)}#entity#{node_position}#{name}'
     ).hex
+def event_uuid(source: str, node_position: int, name: str) -> str:
+    """Return a deterministic node-local event identity."""
+    return uuid5(
+        NAMESPACE_URL, f'{_source(source)}#event#{node_position}#{name}'
+    ).hex
+
 
 
 def predicate_uuid(triplet_occurrence_uuid: str) -> str:
     return uuid5(NAMESPACE_URL, f'{triplet_occurrence_uuid}#predicate').hex
+
+
+def visual_asset_uuid(
+    source: str,
+    node_uuid_value: str,
+    asset_index: int,
+    path: str,
+) -> str:
+    """Returns a deterministic UUID for one node-attached visual asset."""
+    if asset_index < 0:
+        raise ValueError('visual asset index must be non-negative')
+    return uuid5(
+        NAMESPACE_URL,
+        f'{_source(source)}#asset#{node_uuid_value}#{asset_index}#{path}',
+    ).hex
 
 
 def assign_node_uuids(nodes: list[models.SourceNode], source: str) -> None:
@@ -142,36 +191,49 @@ def assign_statement_procedure_ids(
                 procedure.block,
                 index,
                 statement_uuid_value=statement_id,
+                kind=procedure.kind.value,
+                member_positions=procedure.member_positions,
             )
 
 
 def assign_triplet_ids(triplets: list[models.Triplet], source: str) -> None:
-    """Assign triplet, entity, and predicate occurrence identities."""
+    """Assign triplet, endpoint, and predicate occurrence identities."""
     _source(source)
     for triplet in triplets:
         if not triplet.evidence_positions:
             raise ValueError('triplets require at least one evidence node')
         triplet.occurrence_uuids = {}
         triplet.entity_uuids = {}
+        triplet.event_uuids = {}
         triplet.predicate_uuids = {}
         for node_position in triplet.evidence_positions:
             occurrence_id = triplet_uuid(
-                source,
-                node_position,
-                triplet.subject,
-                triplet.predicate,
-                triplet.object,
+                source, node_position, triplet.subject,
+                triplet.predicate, triplet.object
             )
             triplet.occurrence_uuids[node_position] = occurrence_id
-            triplet.entity_uuids[(node_position, triplet.subject)] = (
-                entity_uuid(source, node_position, triplet.subject)
-            )
-            triplet.entity_uuids[(node_position, triplet.object)] = entity_uuid(
-                source, node_position, triplet.object
-            )
-            triplet.predicate_uuids[node_position] = predicate_uuid(
-                occurrence_id
-            )
+            for name, kind in (
+                (
+                    triplet.subject,
+                    getattr(triplet, 'subject_kind', models.NodeKind.ENTITY),
+                ),
+                (
+                    triplet.object,
+                    getattr(triplet, 'object_kind', models.NodeKind.ENTITY),
+                ),
+            ):
+                endpoint_id = (
+                    entity_uuid(source, node_position, name)
+                    if kind is models.NodeKind.ENTITY
+                    else event_uuid(source, node_position, name)
+                )
+                endpoint_map = (
+                    triplet.entity_uuids
+                    if kind is models.NodeKind.ENTITY
+                    else triplet.event_uuids
+                )
+                endpoint_map[(node_position, name)] = endpoint_id
+            triplet.predicate_uuids[node_position] = predicate_uuid(occurrence_id)
 
 
 def validate_assigned_ids(bundle: models.ConstructionBundle) -> None:
@@ -191,6 +253,8 @@ def validate_assigned_ids(bundle: models.ConstructionBundle) -> None:
             procedure.block,
             procedure.index,
             statement_uuid_value=procedure.statement_uuid,
+            kind=procedure.kind.value,
+            member_positions=procedure.member_positions,
         )
         if procedure.uuid != expected:
             errors.append(f'procedure {index} has invalid uuid')

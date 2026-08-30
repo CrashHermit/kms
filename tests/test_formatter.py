@@ -3,8 +3,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from kms.construction import formatter
-from kms.core import models
+from kms.construction import formatter, formatting_stages
+from kms.core import edits, models
 
 SENTINEL = object()
 
@@ -189,6 +189,17 @@ def test_formatter_editor_rejects_duplicate_line_indices():
             SimpleNamespace(edits=edits),
             lines='a\nb',
         )
+def test_formatter_editor_reports_input_for_out_of_range_edit():
+    edits = [formatter.LineEdit(index=2, replacement='B')]
+    with pytest.raises(
+        ValueError,
+        match=r"index=2, max_line=1, lines='\[1\] a'",
+    ):
+        formatter.FormatterEditor.decode(
+            None,
+            SimpleNamespace(edits=edits),
+            lines='[1] a',
+        )
 
 
 def test_apply_line_edits_rejects_zero_index():
@@ -204,3 +215,76 @@ def test_apply_line_edits_rejects_duplicate_index():
     ]
     with pytest.raises(RuntimeError, match='duplicate'):
         formatter.apply_line_edits('a\nb\nc', edits)
+
+
+def test_apply_line_replacements_validates_coordinates_and_preserves_order():
+    assert edits.numbered_lines('a\nb') == [
+        models.LineInput(index=1, text='a'),
+        models.LineInput(index=2, text='b'),
+    ]
+    assert edits.apply_line_replacements(
+        'a\nb',
+        [edits.LineReplacement(index=2, replacement='B')],
+    ) == 'a\nB'
+    with pytest.raises(RuntimeError, match='duplicate'):
+        edits.apply_line_replacements(
+            'a\nb',
+            [
+                edits.LineReplacement(index=1, replacement='A'),
+                edits.LineReplacement(index=1, replacement='AA'),
+            ],
+        )
+    with pytest.raises(RuntimeError, match='out of range'):
+        edits.apply_line_replacements(
+            'a\nb', [edits.LineReplacement(index=0, replacement='bad')]
+        )
+    with pytest.raises(RuntimeError, match='out of range'):
+        edits.apply_line_replacements(
+            'a\nb', [edits.LineReplacement(index=3, replacement='bad')]
+        )
+
+
+def test_structured_formatter_replacement_applies_one_based_line():
+    rewriter = object.__new__(formatting_stages._BlockRewriter)
+    output = rewriter.decode(
+        SimpleNamespace(
+            replacements=[edits.LineReplacement(index=1, replacement='The value is $x^2$.')]
+        ),
+        node_content=r'The value is \(x^2\).',
+    )
+    assert output == 'The value is $x^2$.'
+
+
+def test_structured_formatter_one_line_index_two_is_rejected_with_input():
+    rewriter = object.__new__(formatting_stages._BlockRewriter)
+    with pytest.raises(ValueError, match='lines='):
+        rewriter.decode(
+            SimpleNamespace(
+                replacements=[edits.LineReplacement(index=2, replacement='bad')]
+            ),
+            node_content='Output Format',
+        )
+
+
+def test_structured_formatter_empty_replacements_preserve_input():
+    rewriter = object.__new__(formatting_stages._BlockRewriter)
+    assert (
+        rewriter.decode(SimpleNamespace(replacements=[]), node_content='Output Format')
+        == 'Output Format'
+    )
+
+
+def test_structured_formatter_supports_deletion_and_multiline_replacement():
+    rewriter = object.__new__(formatting_stages._BlockRewriter)
+    assert (
+        rewriter.decode(
+            SimpleNamespace(
+                replacements=[
+                    edits.LineReplacement(index=1, replacement='A1\nA2'),
+                    edits.LineReplacement(index=2, replacement=''),
+                ]
+            ),
+            node_content='a\nb\nc',
+        )
+        == 'A1\nA2\nc'
+    )

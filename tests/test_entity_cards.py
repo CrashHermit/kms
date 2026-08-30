@@ -1,129 +1,106 @@
 import asyncio
-from types import SimpleNamespace
 
 import pytest
 
-from kms.construction import entity_cards
+from kms.postprocessing.learning import entity_cards
 
 
 class _Router:
     def __init__(self, result):
         self.result = result
-        self.calls = []
 
     async def aforward(self, **kwargs):
-        self.calls.append(kwargs)
         return self.result
 
 
 class _FactGenerator:
     def __init__(self, facts):
         self.facts = facts
-        self.calls = []
 
     async def aforward(self, **kwargs):
-        self.calls.append(kwargs)
         return self.facts
 
 
 class _CardGenerator:
-    def __init__(self):
+    async def aforward(self, **kwargs):
+        return [entity_cards.EntityCardDraft(
+            prompt='What is the fact?', response='Paraphrased fact.', fact_index=kwargs['fact_index']
+        )]
+
+
+class _Verifier:
+    def __init__(self, supported=True):
+        self.supported = supported
         self.calls = []
 
     async def aforward(self, **kwargs):
         self.calls.append(kwargs)
-        fact = kwargs['fact']
-        return [
-            entity_cards.EntityCardDraft(
-                prompt='What property does it have?',
-                response=fact,
-            ),
-        ]
+        return entity_cards.EntityCardVerification(supported=self.supported)
 
 
-def test_entity_card_router_decodes_boolean_prediction():
-    prediction = SimpleNamespace(has_testable_knowledge=True)
-    assert entity_cards.EntityCardRouter.decode(None, prediction) is True
-
-
-def test_entity_fact_generator_rejects_empty_facts():
-    prediction = SimpleNamespace(facts=[' Fact one. ', '', 'Fact two. '])
-    with pytest.raises(ValueError, match=r'facts\[1\]'):
-        entity_cards.EntityFactGenerator.decode(
-            None, prediction, canonical_name='Group', description='description'
-        )
-
-
-def test_entity_card_generator_preserves_fact():
-    fact = 'A group has an identity element.'
-    prediction = SimpleNamespace(
-        card={
-            'prompt': 'What element must a group have?',
-            'response': fact,
-        }
-    )
-    cards = entity_cards.EntityCardGenerator.decode(
-        None, prediction, canonical_name='Group', fact=fact
-    )
-    assert len(cards) == 1
-    assert cards[0].prompt == 'What element must a group have?'
-    assert cards[0].response == fact
-
-
-def test_create_entity_cards_routes_facts_and_creates_one_card_per_fact():
-    router = _Router(True)
-    fact_generator = _FactGenerator(
-        [
-            'A group has an identity element.',
-            'A group operation is associative.',
-        ]
-    )
-    card_generator = _CardGenerator()
-
-    cards = asyncio.run(
-        entity_cards.create_entity_cards(
-            'hub-1',
-            'Group',
-            'A group has an identity element and an associative operation.',
-            router=router,
-            fact_generator=fact_generator,
-            card_generator=card_generator,
-        )
+def candidate():
+    return entity_cards.EntityCardCandidateInput(
+        global_hub=entity_cards.EntityLearningGlobalContext(
+            uuid='g', name='Global', description='Context'
+        ),
+        local_hub=entity_cards.EntityLearningCandidateInput(
+            index=1, local_uuid='l', name='Group', description='A group has identity.'
+        ),
+        source='book',
+        evidence=[entity_cards.EntityCardEvidenceInput(
+            index=1, uuid='e1', name='Group', description='A group has identity.'
+        )],
     )
 
-    assert len(cards) == 2
-    assert router.calls == [
-        {
-            'canonical_name': 'Group',
-            'description': (
-                'A group has an identity element and an associative operation.'
-            ),
-        }
-    ]
-    assert len(fact_generator.calls) == 1
-    assert len(card_generator.calls) == 2
-    assert all(card.hub_uuid == 'hub-1' for card in cards)
-    assert all(card.hub_kind == 'entity' for card in cards)
-    assert cards[0].prompt == 'What property does it have?'
-    assert cards[0].response == 'A group has an identity element.'
 
 
-def test_create_entity_cards_skips_fact_generation_when_router_rejects():
-    router = _Router(False)
-    fact_generator = _FactGenerator(['should not be used'])
-    card_generator = _CardGenerator()
+def test_fact_evidence_indexes_are_strict():
+    with pytest.raises(ValueError):
+        entity_cards.EntityCardFact(text='Fact.', evidence_indexes=[1, 1])
 
-    cards = asyncio.run(
-        entity_cards.create_entity_cards(
-            'hub-1',
-            'Group',
-            'A vague description.',
-            router=router,
-            fact_generator=fact_generator,
-            card_generator=card_generator,
-        )
-    )
 
+def test_create_entity_cards_generates_grounded_card():
+    verifier = _Verifier()
+    cards = asyncio.run(entity_cards.create_entity_cards(
+        candidate(), router=_Router(True),
+        fact_generator=_FactGenerator([
+            entity_cards.EntityCardFact(text='A group has identity.', evidence_indexes=[1])
+        ]),
+        card_generator=_CardGenerator(), verifier=verifier,
+    ))
+    assert cards[0].uuid == entity_cards.learning.card_uuid('l', content_key='A group has identity.')
+    assert cards[0].evidence_uuids == ('e1',)
+    assert verifier.calls[0]['response'] == 'Paraphrased fact.'
+
+
+def test_rejected_verification_creates_no_card():
+    cards = asyncio.run(entity_cards.create_entity_cards(
+        candidate(), router=_Router(True),
+        fact_generator=_FactGenerator([
+            entity_cards.EntityCardFact(text='Fact.', evidence_indexes=[1])
+        ]),
+        card_generator=_CardGenerator(), verifier=_Verifier(False),
+    ))
     assert cards == []
-    assert fact_generator.calls == []
-    assert card_generator.calls == []
+
+
+def test_router_rejection_skips_fact_generation():
+    facts = _FactGenerator([])
+    cards = asyncio.run(entity_cards.create_entity_cards(
+        candidate(), router=_Router(False), fact_generator=facts,
+        card_generator=_CardGenerator(), verifier=_Verifier(),
+    ))
+    assert cards == []
+    assert facts.facts == []
+
+
+
+
+def test_verification_requires_entailment_flag():
+    decision = entity_cards.EntityCardVerification(
+        supported=True, evidence_entails_response=False
+    )
+    assert not all((
+        decision.supported, decision.evidence_entails_response, decision.single_fact,
+        decision.prompt_is_recall, decision.no_answer_leakage, decision.complete_answer,
+    ))

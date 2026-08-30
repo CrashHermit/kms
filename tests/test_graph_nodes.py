@@ -45,6 +45,32 @@ def test_node_properties_omits_role_field():
     assert 'role' not in nodes.node_properties(node, 'book.pdf')
 
 
+def test_visual_assets_are_graph_rows_and_node_edges():
+    node = models.SourceNode(
+        uuid='node-asset',
+        assets=[
+            models.VisualAsset(path='page-1.png'),
+            models.VisualAsset(path='page-2.png'),
+        ],
+    )
+    rows = nodes.visual_asset_rows([node], 'book.pdf')
+    pairs = nodes.visual_asset_pairs([node], 'book.pdf')
+    assert [row['path'] for row in rows] == ['page-1.png', 'page-2.png']
+    assert [row['index'] for row in rows] == [0, 1]
+    assert [pair['node'] for pair in pairs] == ['node-asset', 'node-asset']
+    assert [pair['asset'] for pair in pairs] == [
+        row['uuid'] for row in rows
+    ]
+
+
+def test_node_properties_do_not_duplicate_visual_asset_paths():
+    node = models.SourceNode(
+        uuid='node-asset',
+        assets=[models.VisualAsset(path='page-1.png')],
+    )
+    assert 'image_paths' not in nodes.node_properties(node, 'book.pdf')
+
+
 def test_node_label_derives_from_class_name():
     assert (
         nodes.node_label(

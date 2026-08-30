@@ -47,20 +47,20 @@ def test_specialized_prompts_and_demos_cover_boundary_contract():
     grower = instruction_finder.InstructionGrower(language_model)
 
     assert len(router.predictor.demos) == 5
-    assert len(grower.predictor.demos) == 7
+    assert len(grower.predictor.demos) == 9
     assert 'Answer only the boolean True or False.' in (
         instruction_finder.InstructionRouterSignature.__doc__
     )
     assert 'target_node' in instruction_finder.InstructionRouterSignature.__doc__
     assert 'candidate_node' in instruction_finder.InstructionGrowerSignature.__doc__
     router_text = '\n'.join(
-        demo.target_node.node_text for demo in router.predictor.demos
+        demo.target_node.text for demo in router.predictor.demos
     )
     assert '185. Determine whether the series converges.' in router_text
     assert 'a. Find the tangent plane.' in router_text
     assert 'For Exercises 8–10' in router_text
     grower_text = '\n'.join(
-        item.node_text
+        item.text
         for demo in grower.predictor.demos
         for item in (
             demo.accepted_nodes
@@ -71,9 +71,10 @@ def test_specialized_prompts_and_demos_cover_boundary_contract():
     )
     assert '302. $z = 4x^2 + y^2$' in grower_text
     assert 'Decorative publisher illustration.' in grower_text
+    assert 'Find the gradient of f(x, y).' in grower_text
     assert 'Diagram of the curve and its marked extrema.' in grower_text
     assert [demo.include_next_node for demo in grower.predictor.demos] == [
-        True, True, False, False, False, False, True
+        True, True, False, False, False, False, False, False, True
     ]
 
 
@@ -106,21 +107,16 @@ def test_router_and_grower_return_only_strict_booleans():
         )
 
 
-def test_router_and_grower_encode_text_only_structured_inputs():
-    target = instruction_finder.InstructionNodeInput(
-        local_index=0,
+    target = models.NodeInput(
+        index=1,
         node_type='image',
-        node_text='A diagram of the curve.',
+        text='A diagram of the curve.',
     )
     before = [
-        instruction_finder.InstructionNodeInput(
-            local_index=0, node_type='paragraph', node_text='Before'
-        )
+        models.NodeInput(index=1, node_type='paragraph', text='Before')
     ]
     after = [
-        instruction_finder.InstructionNodeInput(
-            local_index=0, node_type='paragraph', node_text='After'
-        )
+        models.NodeInput(index=1, node_type='paragraph', text='After')
     ]
 
     router_inputs = instruction_finder.InstructionRouter.encode(
@@ -130,7 +126,7 @@ def test_router_and_grower_encode_text_only_structured_inputs():
         object(), [], before, target, after
     )
 
-    assert router_inputs['target_node'].node_text == (
+    assert router_inputs['target_node'].text == (
         'A diagram of the curve.'
     )
     assert router_inputs['context_before'] == before
@@ -151,24 +147,24 @@ def test_scan_routes_designated_nodes_and_grows_one_node_at_a_time():
 
     assert result == [[0, 1]]
     assert [
-        [node.local_index for node in call['context_after']]
+        [node.index for node in call['context_after']]
         for call in router.calls
-    ] == [[0, 1, 2], [0], []]
+    ] == [[1, 2, 3], [1], []]
     assert [
-        call['target_node'].local_index for call in router.calls
-    ] == [0, 0, 0]
+        call['target_node'].index for call in router.calls
+    ] == [1, 1, 1]
     assert all(call['context_before'] == [] for call in router.calls)
     assert [
-        [node.local_index for node in call['accepted_nodes']]
+        [node.index for node in call['accepted_nodes']]
         for call in grower.calls
-    ] == [[0], [0, 1]]
+    ] == [[1], [1, 2]]
     assert [
-        call['candidate_node'].local_index for call in grower.calls
-    ] == [0, 0]
+        call['candidate_node'].index for call in grower.calls
+    ] == [1, 1]
     assert [
-        [node.local_index for node in call['context_after']]
+        [node.index for node in call['context_after']]
         for call in grower.calls
-    ] == [[0, 1], [0]]
+    ] == [[1, 2], [1]]
 
 
 def test_context_windows_keep_context_within_the_configured_token_budget():
@@ -198,12 +194,12 @@ def test_context_windows_keep_context_within_the_configured_token_budget():
     for context_after in context_lists:
         assert (
             sum(
-                context_window.estimate_text_tokens(node.node_text)
+                context_window.estimate_text_tokens(node.text)
                 for node in context_after
             )
             <= context_budget
         )
-    assert router.calls[0]['target_node'].node_text.startswith('context')
+    assert router.calls[0]['target_node'].text.startswith('context')
 
 
 def test_scan_finds_multiple_instructions_in_document_order():
@@ -230,10 +226,10 @@ def test_false_growth_banks_only_the_anchor_and_reconsiders_candidate():
     )
 
     assert grower.calls[0]['candidate_node'].node_type == 'image'
-    assert grower.calls[0]['candidate_node'].node_text == ''
+    assert grower.calls[0]['candidate_node'].text == ''
     assert [
-        call['target_node'].local_index for call in router.calls
-    ] == [0, 0, 0, 0, 0]
+        call['target_node'].index for call in router.calls
+    ] == [1, 1, 1, 1, 1]
 
 
 def test_instruction_growth_fails_at_shared_finder_budget(monkeypatch):
@@ -293,7 +289,11 @@ def test_finder_node_emits_instruction_hubs_without_mutating_nodes():
         grower=_ScriptedModule([True, False]),
     )
     nodes = _nodes()
-    out = asyncio.run(node.run({'nodes': nodes, 'source_key': 'book.pdf'}))
+    out = asyncio.run(
+        node.run(
+            {'nodes': nodes, 'source': models.Source(key='book.pdf')}
+        )
+    )
 
     assert set(out) == {'instructions'}
     assert len(out['instructions']) == 1

@@ -16,7 +16,7 @@ os.environ['KMS_MODELS__MODULES__PROCEDURE_CREATOR__BASE_URL'] = (
     'http://127.0.0.1:8080/v1'
 )
 os.environ['KMS_MODELS__MODULES__PROCEDURE_CREATOR__MODEL'] = (
-    'openai/qwen3.5-9b'
+    'openai/qwen3.5-9b-text'
 )
 os.environ['KMS_MODELS__MODULES__PROCEDURE_CREATOR__API_KEY'] = 'not-needed'
 os.environ['KMS_SERVING__MANAGE'] = '1'

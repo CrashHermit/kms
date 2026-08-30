@@ -37,7 +37,9 @@ def perturb_region(region, edits: list[dict]) -> list[dict]:
 async def run_case(record: dict, output_name: str) -> None:
     pdf_path = Path(record['source_pdf'])
     response = ocr.ocr_pdf(
-        pdf_path.read_bytes(), pages=[record['page']], include_blocks=True
+        pdf_path.read_bytes(),
+        pages=[record['page']],
+        options=ocr.OCRRequestOptions(include_blocks=True),
     )
     document_dir = OUTPUT / output_name
     document = ocr.materialize_document(

@@ -2,7 +2,7 @@ import asyncio
 
 from kms.construction import (
     entity_enrichment,
-    entity_hubs,
+    local_entity_hubs,
     predicate_enrichment,
 )
 from kms.construction.triplet_extractor import (
@@ -62,11 +62,20 @@ async def main():
     await schema.ensure_schema(_session)
 
     lm = llm.module_lm('entity_enrichment')
-    nodes = [models.SourceNode(id=0, type='paragraph', content=CONTENT)]
+    nodes = [
+        models.SourceNode(
+            uuid='graph-theory-page-node-0',
+            index=0,
+            type='paragraph',
+            content=CONTENT,
+        )
+    ]
     triplet_node = TripletNode(
         fact_module=_FactExtractor(lm), triplet_module=_TripletDecomposer(lm)
     )
-    result = await triplet_node.run({'nodes': nodes, 'source': SOURCE})
+    result = await triplet_node.run(
+        {'nodes': nodes, 'source': models.Source(key=SOURCE)}
+    )
     triplets = result.get('triplets', [])
 
     print(f'{len(triplets)} triplets:')
@@ -105,11 +114,11 @@ async def main():
     print('ENTITY HUB BUILD (maintenance rebuild)')
     print('=' * 60)
 
-    result = await entity_hubs.rebuild_source(
+    result = await local_entity_hubs.rebuild(
         SOURCE,
         language_model=lm,
-        adjudicator=entity_hubs.EntityHubAdjudicator(language_model=lm),
-        synthesizer=entity_hubs.EntityHubSynthesizer(language_model=lm),
+        adjudicator=local_entity_hubs.EntityHubAdjudicator(language_model=lm),
+        synthesizer=local_entity_hubs.EntityHubSynthesizer(language_model=lm),
         session_factory=_session,
     )
     print(f'\nRecords: {result["records"]}')

@@ -62,3 +62,35 @@ def instruction_member_pairs(
                 }
             )
     return pairs
+
+
+def instruction_governance_pairs(
+    statements: list[models.Statement],
+    instructions: list[models.Instruction],
+    source: str,
+) -> list[dict]:
+    """Builds instruction→statement governance edge pairs."""
+    instruction_ids = {
+        instruction.uuid
+        for instruction in instructions
+        if instruction.uuid is not None
+    }
+    pairs: list[dict] = []
+    for statement in statements:
+        if statement.uuid is None:
+            raise ValueError('statement is missing its assigned uuid')
+        for instruction_uuid_value in statement.instruction_uuids:
+            if instruction_uuid_value not in instruction_ids:
+                raise ValueError(
+                    f'statement {statement.uuid} references unknown '
+                    f'instruction {instruction_uuid_value}'
+                )
+            pairs.append(
+                {
+                    'instruction': instruction_uuid_value,
+                    'statement': statement.uuid,
+                }
+            )
+    return pairs
+
+

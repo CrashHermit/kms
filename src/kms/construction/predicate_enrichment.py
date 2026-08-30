@@ -1,15 +1,18 @@
+import logging
+
 import dspy
 from pydantic import BaseModel, Field
 
 from kms import config
 from kms.core import (
-    context_window,
     identity,
     models,
     module,
     semantic,
     state,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class TermDescription(BaseModel):
@@ -19,29 +22,48 @@ class TermDescription(BaseModel):
     )
 
 
+def _is_compact_description(description: str) -> bool:
+    """Checks the model-facing description size and source leakage."""
+    words = description.split()
+    return (
+        2 <= len(words) <= 12
+        and not any(mark in description for mark in ('$', '\\', '\n', ':', ';'))
+    )
+
+
 class PredicateEnrichmentSignature(dspy.Signature):
     r"""
-    Describe each predicate term in the supplied technical passage.
+    Give each supplied predicate term a compact, source-grounded meaning.
 
-    Explain the local relation represented by each verb phrase. Preserve its
-    direction, subject and object roles, negation, conditions, causality, and
-    temporal meaning. Do not create a general relation, merge synonyms, or
-    invent unsupported facts. Return exactly one description per input term in
-    order.
+    The predicate is already the graph relation. Describe only the relation's
+    semantics, not the whole source sentence. Preserve direction, negation,
+    modality, causality, and temporal meaning when explicitly present. Do not
+    restate the subject, object, formula, point, vector, or surrounding
+    exercise.
+
+    Output one short description for the one supplied term:
+    - 2–12 plain-language words;
+    - no LaTeX, equations, names, values, or source-specific details;
+    - no sentence with a subject and object copied from the passage;
+    - no new facts, examples, explanations, or generic textbook commentary.
+
+    Examples:
+    - term: `is defined as` → `Defines a term by its expression.`
+    - term: `is orthogonal to` → `Expresses orthogonality between objects.`
+    - term: `equals` → `States equality between two values.`
     """
 
-    context_before: list[semantic.TermContextNodeInput] = dspy.InputField(
-        description='Ordered preceding text context; reference only.'
+    request: models.TermEnrichmentInput = dspy.InputField(
+        description=(
+            'The enrichment request. Describe only target_node.text. '
+            'context_before and context_after provide reference context only.'
+        )
     )
-    target_node: semantic.TermContextNodeInput = dspy.InputField(
-        description='The target node containing the local predicate context.'
-    )
-    context_after: list[semantic.TermContextNodeInput] = dspy.InputField(
-        description='Ordered following text context; reference only.'
-    )
-    terms: list[str] = dspy.InputField(description='Exact predicate terms.')
     description: str = dspy.OutputField(
-        description='One local description for the supplied term.'
+        description=(
+            'A compact 2–12-word semantic description of the relation. '
+            'Do not include formulas, entities, values, or source details.'
+        )
     )
 
 
@@ -50,35 +72,29 @@ class PredicateEnricher(module.Module):
     record_name = 'predicate_enrichment'
 
     def encode(
-        self,
-        context_before: list[context_window.ContextNode],
-        target_node: context_window.ContextNode,
-        context_after: list[context_window.ContextNode],
-        terms: list[str],
+        self, request: models.TermEnrichmentInput
     ) -> dict[str, object]:
-        return {
-            'context_before': [
-                semantic.term_context_input(node, index)
-                for index, node in enumerate(context_before)
-            ],
-            'target_node': semantic.term_context_input(target_node),
-            'context_after': [
-                semantic.term_context_input(node, index)
-                for index, node in enumerate(context_after)
-            ],
-            'terms': terms,
-        }
+        """Passes the validated enrichment request to the signature."""
+        return {'request': request}
 
     def decode(self, prediction, **inputs) -> list[TermDescription]:
-        """Returns one validated description for the singleton input term."""
+        """Returns one compact description for the singleton input term."""
         description = module.require_text(
             prediction.description, 'description'
         )
-        terms = inputs['terms']
+        terms = inputs['request'].terms
         if len(terms) != 1:
             raise ValueError(
-                f'predicate enrichment expects one input term, got {len(terms)}'
+                f'predicate enrichment expects one input term, '
+                f'got {len(terms)}'
             )
+        if not _is_compact_description(description):
+            logger.warning(
+                'discarding verbose predicate description for %r: %s',
+                terms[0],
+                description,
+            )
+            description = terms[0]
         return [TermDescription(term=terms[0], description=description)]
 
 

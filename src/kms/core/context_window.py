@@ -25,6 +25,21 @@ def estimate_tokens(node: models.SourceNode) -> int:
     return estimate_text_tokens(node.content)
 
 
+
+def node_input(node: ContextNode, local_index: int = 0) -> models.NodeInput:
+    """Projects one context node into a one-based model-facing record.
+
+    Exposes only the text-only fields a DSPy signature may reference; it
+    never surfaces ``ContextNode`` internals such as ``assets``,
+    ``marker``, or source-global positions.
+    """
+    return models.NodeInput(
+        index=local_index + 1,
+        node_type=node.type or '',
+        text=node.content or '',
+    )
+
+
 def project_nodes(nodes: list[models.SourceNode]) -> list[ContextNode]:
     """Projects source nodes into ordered local context nodes."""
     return [

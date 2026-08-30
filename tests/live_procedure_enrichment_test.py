@@ -5,7 +5,7 @@ sys.path.insert(0, '.')
 
 from kms.construction import (
     entity_enrichment,
-    entity_hubs,
+    local_entity_hubs,
     predicate_enrichment,
     triplet_extractor,
 )
@@ -86,13 +86,13 @@ async def main():
     await writer.persist_chain(nodes, SOURCE, session_factory=_session)
 
     print('\nRunning hub building...')
-    hub_result = await entity_hubs.rebuild_source(
+    hub_result = await local_entity_hubs.rebuild_source(
         SOURCE,
         language_model=language_model,
-        adjudicator=entity_hubs.EntityHubAdjudicator(
+        adjudicator=local_entity_hubs.EntityHubAdjudicator(
             language_model=language_model
         ),
-        synthesizer=entity_hubs.EntityHubSynthesizer(
+        synthesizer=local_entity_hubs.EntityHubSynthesizer(
             language_model=language_model
         ),
         session_factory=_session,

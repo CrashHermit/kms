@@ -91,9 +91,20 @@ def test_workflow_runs_image_seams_after_text_seams(monkeypatch):
     edges = {(edge.source, edge.target) for edge in graph.edges}
 
     assert ('formatter_collect', 'text_seam_even_worker') in edges
-    assert ('text_seam_odd_collect', 'image_seam_even_worker') in edges
+    assert ('text_seam_even_collect', 'text_seam_odd_dispatch') in edges
+    assert ('text_seam_odd_collect', 'image_seam_even_dispatch') in edges
+    assert ('image_seam_even_collect', 'image_seam_odd_dispatch') in edges
     assert ('image_seam_odd_collect', 'image_enrichment') in edges
     assert ('image_enrichment', 'splitter') in edges
+    assert ('splitter', 'instruction_finder') in edges
+    assert 'exercise_strip_router' not in graph.nodes
+    for collector in (
+        'text_seam_even_collect',
+        'text_seam_odd_collect',
+        'image_seam_even_collect',
+        'image_seam_odd_collect',
+    ):
+        assert (collector, collector) not in edges
 
 
 def test_workflow_defines_the_langgraph_composition():

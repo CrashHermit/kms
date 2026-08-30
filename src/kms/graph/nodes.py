@@ -6,6 +6,7 @@ from kms.core import identity, models
 
 NODE_LABEL = 'Node'
 SOURCE_LABEL = 'Source'
+VISUAL_ASSET_LABEL = 'VisualAsset'
 
 
 def node_uuid(source: str, node: models.SourceNode) -> str:
@@ -68,7 +69,6 @@ def node_properties(
         'type': node.type,
         'content': node.content,
         'document_index': node.document_index,
-        'image_paths': [asset.path for asset in node.assets],
         'embedding': node.embedding if embedding is None else embedding,
     }
     return {
@@ -76,6 +76,48 @@ def node_properties(
     }
 
 
+
+
+def visual_asset_rows(
+    nodes_stream: list[models.SourceNode],
+    source: str,
+) -> list[dict]:
+    """Builds durable rows for all visual assets attached to source nodes."""
+    rows: list[dict] = []
+    for node in nodes_stream:
+        node_id = node_uuid(source, node)
+        for asset_index, asset in enumerate(node.assets):
+            rows.append(
+                {
+                    'uuid': identity.visual_asset_uuid(
+                        source, node_id, asset_index, asset.path
+                    ),
+                    'source': source_uuid(source),
+                    'path': asset.path,
+                    'index': asset_index,
+                }
+            )
+    return rows
+
+
+def visual_asset_pairs(
+    nodes_stream: list[models.SourceNode],
+    source: str,
+) -> list[dict]:
+    """Builds Node→VisualAsset attachment pairs."""
+    pairs: list[dict] = []
+    for node in nodes_stream:
+        node_id = node_uuid(source, node)
+        for asset_index, asset in enumerate(node.assets):
+            pairs.append(
+                {
+                    'node': node_id,
+                    'asset': identity.visual_asset_uuid(
+                        source, node_id, asset_index, asset.path
+                    ),
+                }
+            )
+    return pairs
 def block_key(block: list[int]) -> str:
     """Serializes a member id block into a stable string key."""
     return '#'.join(str(node_id) for node_id in block)

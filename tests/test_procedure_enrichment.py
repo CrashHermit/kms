@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 from kms.construction import procedure_enrichment, statement_enrichment
 from kms.core import models
-from kms.postprocessing import procedure_generation
+from kms.postprocessing.learning import procedures as procedure_generation
 
 
 def test_statement_enricher_emits_the_canonical_statement_field():

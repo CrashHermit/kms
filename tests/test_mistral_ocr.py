@@ -62,7 +62,11 @@ def test_ocr_pdf_requests_blocks_when_enabled(monkeypatch):
     monkeypatch.setattr(ocr, '_require_key', lambda: 'test-key')
     monkeypatch.setattr(ocr.httpx, 'post', fake_post)
 
-    result = ocr.ocr_pdf(b'%PDF', pages=[2], include_blocks=True)
+    result = ocr.ocr_pdf(
+        b'%PDF',
+        pages=[2],
+        options=ocr.OCRRequestOptions(include_blocks=True),
+    )
 
     assert isinstance(result, ocr.OCRResponse)
     assert result.pages == []
@@ -312,7 +316,6 @@ def test_ocr_node_reads_graph_input_and_emits_documents(monkeypatch, tmp_path):
             'pdf_path': 'book.pdf',
             'output_dir': str(tmp_path),
             'pages': [2],
-            'source_key': 'book',
         }
     )
 

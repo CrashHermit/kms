@@ -136,7 +136,9 @@ class ServingConfig(_ConfigModel):
     request_timeout: float = Field(default=30.0, gt=0.0)
     terminate_timeout: float = Field(default=15.0, gt=0.0)
     presets: dict[str, ModelPreset] = Field(default_factory=dict)
-    retrieval: RetrievalServingConfig = Field(default_factory=RetrievalServingConfig)
+    retrieval: RetrievalServingConfig = Field(
+        default_factory=RetrievalServingConfig
+    )
 
 
 class EmbeddingsConfig(_ConfigModel):
@@ -151,6 +153,7 @@ class EmbeddingsConfig(_ConfigModel):
 
 class RerankerConfig(_ConfigModel):
     """OpenAI-compatible local reranking client settings."""
+
     model: str = 'Qwen3-Reranker-4B'
     batch_size: int = Field(default=8, gt=0)
     base_url: str = 'http://127.0.0.1:8082/v1'
@@ -219,6 +222,7 @@ class SplitterConfig(_ConfigModel):
 
     backward_context_budget: int = Field(default=200, ge=0)
     lookahead_budget: int = Field(default=2000, gt=0)
+    router_context_budget: int = Field(default=300, gt=0)
 
 
 class InstructionFinderConfig(_ConfigModel):
@@ -268,6 +272,8 @@ class HubConfig(_ConfigModel):
     merge_above: float = Field(default=0.85, ge=0.0, le=1.0)
     separate_below: float = Field(default=0.35, ge=0.0, le=1.0)
     max_concurrent_calls: int = Field(default=16, gt=0)
+    comparison_token_budget: int = Field(default=4096, gt=0)
+    rerank_top_n: int = Field(default=5, gt=0)
 
 
 class TripletHubConfig(_ConfigModel):
@@ -289,15 +295,19 @@ class ProcedureConfig(_ConfigModel):
     entity_definition_top_k: int = Field(default=10, gt=0)
 
 
+class CardCreationConfig(_ConfigModel):
+    """Hub-scoped component card creation settings."""
+
+    max_concurrent_calls: int = Field(default=16, gt=0)
+
+
 class StagesConfig(_ConfigModel):
     """Settings for module-level processing stages."""
 
     splitter: SplitterConfig = Field(default_factory=SplitterConfig)
     finders: FindersConfig = Field(default_factory=FindersConfig)
     governance: GovernanceConfig = Field(default_factory=GovernanceConfig)
-    image_enrichment: EnrichmentConfig = Field(
-        default_factory=EnrichmentConfig
-    )
+    image_enrichment: EnrichmentConfig = Field(default_factory=EnrichmentConfig)
     entity_enrichment: EnrichmentConfig = Field(
         default_factory=EnrichmentConfig
     )
@@ -311,6 +321,7 @@ class StagesConfig(_ConfigModel):
     statement_enrichment: EnrichmentConfig = Field(
         default_factory=EnrichmentConfig
     )
+    event_hubs: HubConfig = Field(default_factory=HubConfig)
     procedure_enrichment: EnrichmentConfig = Field(
         default_factory=EnrichmentConfig
     )
@@ -318,6 +329,9 @@ class StagesConfig(_ConfigModel):
     procedure: ProcedureConfig = Field(default_factory=ProcedureConfig)
     statement_hubs: HubConfig = Field(default_factory=HubConfig)
     procedure_hubs: HubConfig = Field(default_factory=HubConfig)
+    card_creation: CardCreationConfig = Field(
+        default_factory=CardCreationConfig
+    )
 
 
 class Settings(BaseSettings):

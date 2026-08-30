@@ -1,6 +1,93 @@
 """Tests for core construction data models."""
 
+import pytest
+from pydantic import ValidationError
+
 from kms.core import models
+
+
+def _node(index: int, node_type: str, text: str) -> models.NodeInput:
+    return models.NodeInput(index=index, node_type=node_type, text=text)
+
+
+def test_node_context_input_rejects_extra_fields() -> None:
+    context = models.NodeContextInput(
+        context_before=[_node(1, 'paragraph', 'Before')],
+        target_node=_node(1, 'paragraph', 'Target'),
+        context_after=[_node(1, 'paragraph', 'After')],
+    )
+    assert context.model_dump() == {
+        'context_before': [
+            {'index': 1, 'node_type': 'paragraph', 'text': 'Before'}
+        ],
+        'target_node': {'index': 1, 'node_type': 'paragraph', 'text': 'Target'},
+        'context_after': [
+            {'index': 1, 'node_type': 'paragraph', 'text': 'After'}
+        ],
+    }
+
+
+def test_node_context_input_preserves_context_local_one_based_positions() -> None:
+    context = models.NodeContextInput(
+        context_before=[
+            _node(1, 'header', 'First'),
+            _node(2, 'paragraph', 'Second'),
+        ],
+        target_node=_node(3, 'paragraph', 'Target'),
+        context_after=[_node(1, 'paragraph', 'After')],
+    )
+    assert context.target_node.index == 3
+    assert [n.index for n in context.context_before] == [1, 2]
+    assert [n.index for n in context.context_after] == [1]
+
+
+def test_node_context_rejects_extra_fields() -> None:
+    with pytest.raises(ValidationError):
+        models.NodeContextInput(
+            context_before=[_node(1, 'paragraph', 'Before')],
+            target_node=_node(1, 'paragraph', 'Target'),
+            context_after=[_node(1, 'paragraph', 'After')],
+            extra='not allowed',
+        )
+
+
+def test_fact_extraction_input_subclasses_node_context_input() -> None:
+    context = models.FactExtractionInput(
+        context_before=[_node(1, 'paragraph', 'Before')],
+        target_node=_node(1, 'paragraph', 'Target'),
+        context_after=[_node(1, 'paragraph', 'After')],
+    )
+    assert isinstance(context, models.NodeContextInput)
+
+
+def test_term_enrichment_input_serializes_with_facts_keys() -> None:
+    enrichment = models.TermEnrichmentInput(
+        context_before=[_node(1, 'paragraph', 'Before')],
+        target_node=_node(1, 'paragraph', 'Target'),
+        context_after=[_node(1, 'paragraph', 'After')],
+        terms=['vector'],
+    )
+    assert enrichment.model_dump() == {
+        'context_before': [
+            {'index': 1, 'node_type': 'paragraph', 'text': 'Before'}
+        ],
+        'target_node': {'index': 1, 'node_type': 'paragraph', 'text': 'Target'},
+        'context_after': [
+            {'index': 1, 'node_type': 'paragraph', 'text': 'After'}
+        ],
+        'terms': ['vector'],
+    }
+
+
+def test_term_enrichment_input_rejects_extra_fields() -> None:
+    with pytest.raises(ValidationError):
+        models.TermEnrichmentInput(
+            context_before=[_node(1, 'paragraph', 'Before')],
+            target_node=_node(1, 'paragraph', 'Target'),
+            context_after=[_node(1, 'paragraph', 'After')],
+            terms=['vector'],
+            extra='not allowed',
+        )
 
 
 def test_construction_bundle_has_independent_collection_defaults() -> None:

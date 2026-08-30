@@ -1,5 +1,8 @@
 """Build the document-construction workflow graph."""
 
+import inspect
+import logging
+import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -9,19 +12,20 @@ from kms import config
 from kms.construction import (
     block_corrector,
     entity_enrichment,
-    entity_hubs,
     formatter,
     governance_judge,
     governance_walker,
     image_enricher,
     image_seam_merger,
     instruction_finder,
+    local_entity_hubs,
+    local_predicate_hubs,
     local_procedure_hubs,
     local_statement_hubs,
     ocr,
     pedagogical_component_finder,
+    pedagogical_window_readiness,
     predicate_enrichment,
-    predicate_hubs,
     procedure_enrichment,
     splitter,
     statement_enrichment,
@@ -32,6 +36,8 @@ from kms.construction import (
 )
 from kms.core import llm, recording, state
 from kms.graph import projectors
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
@@ -91,6 +97,10 @@ def _build_modules(
         'splitter': splitter.Splitter(
             language_model=llm.module_lm('splitter'), recorder=recorder
         ),
+        'exercise_strip_router': splitter.ExerciseStripRouter(
+            language_model=llm.module_lm('exercise_strip_router'),
+            recorder=recorder,
+        ),
         'instruction_router': instruction_finder.InstructionRouter(
             language_model=llm.module_lm('instruction_router'),
             recorder=recorder,
@@ -101,6 +111,12 @@ def _build_modules(
         ),
         'component_finder': (
             pedagogical_component_finder.PedagogicalComponentFinder(
+                language_model=llm.module_lm('pedagogical_component_finder'),
+                recorder=recorder,
+            )
+        ),
+        'pedagogical_window_readiness_router': (
+            pedagogical_window_readiness.PedagogicalWindowReadinessRouter(
                 language_model=llm.module_lm('pedagogical_component_finder'),
                 recorder=recorder,
             )
@@ -164,20 +180,74 @@ def _build_modules(
             language_model=llm.module_lm('procedure_hub_builder'),
             recorder=recorder,
         ),
-        'entity_hub_adjudicator': entity_hubs.EntityHubAdjudicator(
+        'entity_hub_adjudicator': local_entity_hubs.EntityHubAdjudicator(
             language_model=llm.module_lm('entity_hub_builder'),
+            recorder=recorder,
         ),
-        'entity_hub_builder': entity_hubs.EntityHubSynthesizer(
+        'entity_hub_builder': local_entity_hubs.EntityHubSynthesizer(
             language_model=llm.module_lm('entity_hub_builder'),
+            recorder=recorder,
         ),
-        'predicate_hub_adjudicator': predicate_hubs.PredicateHubAdjudicator(
+        'predicate_hub_adjudicator': local_predicate_hubs.PredicateHubAdjudicator(
             language_model=llm.module_lm('predicate_hub_builder'),
         ),
-        'predicate_hub_builder': predicate_hubs.PredicateHubSynthesizer(
+        'predicate_hub_builder': local_predicate_hubs.PredicateHubSynthesizer(
             language_model=llm.module_lm('predicate_hub_builder'),
         ),
         'triplet_hub_builder': llm.module_lm('triplet_hub_builder'),
     }
+
+
+async def _timed_stage(
+    name: str,
+    node,
+    current_state: state.State,
+    recorder: recording.Recorder | None,
+) -> dict:
+    """Runs one workflow stage with console and recording progress."""
+    started = time.perf_counter()
+    logger.info('pipeline stage started: %s', name)
+    try:
+        result = node(current_state)
+        if inspect.isawaitable(result):
+            result = await result
+    except Exception:
+        duration_ms = round((time.perf_counter() - started) * 1000, 2)
+        logger.exception(
+            'pipeline stage failed: %s (%s ms)',
+            name,
+            duration_ms,
+        )
+        if recorder is not None:
+            recorder.record_progress(
+                name,
+                status='failed',
+                duration_ms=duration_ms,
+            )
+        raise
+    duration_ms = round((time.perf_counter() - started) * 1000, 2)
+    logger.info('pipeline stage completed: %s (%s ms)', name, duration_ms)
+    if recorder is not None:
+        recorder.record_progress(
+            name,
+            status='completed',
+            duration_ms=duration_ms,
+            output_keys=list(result),
+        )
+    return result
+
+
+def _timed_node(
+    name: str,
+    node,
+    recorder: recording.Recorder | None,
+):
+    """Returns a graph node wrapper with stage timing."""
+
+    async def run(current_state: state.State) -> dict:
+        return await _timed_stage(name, node, current_state, recorder)
+
+    return run
 
 
 def build_workflow(
@@ -204,9 +274,11 @@ def build_workflow(
     image_seam_module = modules['image_seam_merger']
     image_enricher_module = modules['image_enricher']
     splitter_module = modules['splitter']
+    exercise_strip_router_module = modules['exercise_strip_router']
     instruction_router_module = modules['instruction_router']
     instruction_grower_module = modules['instruction_grower']
     component_finder_module = modules['component_finder']
+    readiness_module = modules['pedagogical_window_readiness_router']
     role_typer_module = modules['role_typer']
     statement_partitioner_module = modules['statement_partitioner']
     procedure_partitioner_module = modules['procedure_partitioner']
@@ -235,14 +307,18 @@ def build_workflow(
     image_enrichment_node = image_enricher.ImageEnrichmentNode(
         enricher=image_enricher_module,
     )
-    splitter_node = splitter.SplitterNode(module=splitter_module)
+    splitter_node = splitter.SplitterNode(
+        module=splitter_module,
+        router=exercise_strip_router_module,
+    )
     instruction_finder_node = instruction_finder.InstructionFinderNode(
         router=instruction_router_module,
         grower=instruction_grower_module,
     )
     component_finder_node = (
         pedagogical_component_finder.PedagogicalComponentFinderNode(
-            module=component_finder_module
+            module=component_finder_module,
+            readiness_module=readiness_module,
         )
     )
     governance_config = config.get_settings().stages.governance
@@ -272,11 +348,11 @@ def build_workflow(
         session_factory=neo4j_session_factory,
         neo4j_configured=neo4j_configured,
     )
-    entity_hub_node = entity_hubs.EntityHubNode(
+    entity_hub_node = local_entity_hubs.EntityHubNode(
         modules['entity_hub_adjudicator'],
         modules['entity_hub_builder'],
     )
-    predicate_hub_node = predicate_hubs.PredicateHubNode(
+    predicate_hub_node = local_predicate_hubs.PredicateHubNode(
         modules['predicate_hub_adjudicator'],
         modules['predicate_hub_builder'],
     )
@@ -297,47 +373,122 @@ def build_workflow(
         synthesizer=procedure_hub_module,
     )
     graph = StateGraph(state.State)
-    graph.add_node('ocr', ocr.OCRNode().run)
+    graph.add_node('ocr', _timed_node('ocr', ocr.OCRNode().run, recorder))
     graph.add_node('block_corrector_worker', block_corrector_node.worker)
     graph.add_node('block_corrector_collect', block_corrector_node.collect)
     graph.add_node('formatter_worker', formatter_node.worker)
     graph.add_node('formatter_collect', formatter_node.collect)
     graph.add_node('text_seam_even_worker', text_seam_node.even_worker)
     graph.add_node('text_seam_even_collect', text_seam_node.even_collect)
+    graph.add_node(
+        'text_seam_odd_dispatch',
+        lambda current_state: {},
+    )
     graph.add_node('text_seam_odd_worker', text_seam_node.odd_worker)
     graph.add_node('text_seam_odd_collect', text_seam_node.odd_collect)
+    graph.add_node(
+        'image_seam_even_dispatch',
+        lambda current_state: {},
+    )
     graph.add_node('image_seam_even_worker', image_seam_node.even_worker)
     graph.add_node('image_seam_even_collect', image_seam_node.even_collect)
+    graph.add_node(
+        'image_seam_odd_dispatch',
+        lambda current_state: {},
+    )
     graph.add_node('image_seam_odd_worker', image_seam_node.odd_worker)
     graph.add_node('image_seam_odd_collect', image_seam_node.odd_collect)
-    graph.add_node('image_enrichment', image_enrichment_node.run)
-    graph.add_node('splitter', splitter_node.run)
-    graph.add_node('instruction_finder', instruction_finder_node.run)
-    graph.add_node('governance_walker', governance_walker_node.run)
-    graph.add_node('pedagogical_component_finder', component_finder_node.run)
     graph.add_node(
-        'statement_procedure_builder', statement_procedure_builder_node.run
+        'image_enrichment',
+        _timed_node('image_enrichment', image_enrichment_node.run, recorder),
     )
-    graph.add_node('triplet_extraction', triplet_extractor_node.run)
-    graph.add_node('entity_enrichment', entity_enrichment_node.run)
-    graph.add_node('predicate_enrichment', predicate_enrichment_node.run)
-
-    graph.add_node('entity_hub_builder', entity_hub_node.run)
-    graph.add_node('predicate_hub_builder', predicate_hub_node.run)
-    graph.add_node('triplet_hub_builder', triplet_hub_node.run)
-    graph.add_node('statement_enrichment', statement_enrichment_node.run)
-    graph.add_node('procedure_enrichment', procedure_enrichment_node.run)
-    graph.add_node('statement_hub_builder', statement_hub_node.run)
-    graph.add_node('procedure_hub_builder', procedure_hub_node.run)
-    graph.add_node('final_projector', final_projector_node.run)
-
+    graph.add_node(
+        'splitter',
+        _timed_node('splitter', splitter_node.run, recorder),
+    )
+    graph.add_node(
+        'instruction_finder',
+        _timed_node(
+            'instruction_finder', instruction_finder_node.run, recorder
+        ),
+    )
+    graph.add_node(
+        'governance_walker',
+        _timed_node('governance_walker', governance_walker_node.run, recorder),
+    )
+    graph.add_node(
+        'pedagogical_component_finder',
+        _timed_node(
+            'pedagogical_component_finder',
+            component_finder_node.run,
+            recorder,
+        ),
+    )
+    graph.add_node(
+        'statement_procedure_builder',
+        _timed_node(
+            'statement_procedure_builder',
+            statement_procedure_builder_node.run,
+            recorder,
+        ),
+    )
+    graph.add_node(
+        'triplet_extraction',
+        _timed_node('triplet_extraction', triplet_extractor_node.run, recorder),
+    )
+    graph.add_node(
+        'entity_enrichment',
+        _timed_node('entity_enrichment', entity_enrichment_node.run, recorder),
+    )
+    graph.add_node(
+        'predicate_enrichment',
+        _timed_node(
+            'predicate_enrichment', predicate_enrichment_node.run, recorder
+        ),
+    )
+    graph.add_node(
+        'entity_hub_builder',
+        _timed_node('entity_hub_builder', entity_hub_node.run, recorder),
+    )
+    graph.add_node(
+        'predicate_hub_builder',
+        _timed_node('predicate_hub_builder', predicate_hub_node.run, recorder),
+    )
+    graph.add_node(
+        'triplet_hub_builder',
+        _timed_node('triplet_hub_builder', triplet_hub_node.run, recorder),
+    )
+    graph.add_node(
+        'statement_enrichment',
+        _timed_node(
+            'statement_enrichment', statement_enrichment_node.run, recorder
+        ),
+    )
+    graph.add_node(
+        'procedure_enrichment',
+        _timed_node(
+            'procedure_enrichment', procedure_enrichment_node.run, recorder
+        ),
+    )
+    graph.add_node(
+        'statement_hub_builder',
+        _timed_node('statement_hub_builder', statement_hub_node.run, recorder),
+    )
+    graph.add_node(
+        'procedure_hub_builder',
+        _timed_node('procedure_hub_builder', procedure_hub_node.run, recorder),
+    )
+    graph.add_node(
+        'final_projector',
+        _timed_node('final_projector', final_projector_node.run, recorder),
+    )
     graph.add_edge(START, 'ocr')
     block_corrector_entry = 'ocr'
     formatter_entry = 'block_corrector_collect'
     text_seam_even_entry = 'formatter_collect'
-    text_seam_odd_entry = 'text_seam_even_collect'
-    image_seam_even_entry = 'text_seam_odd_collect'
-    image_seam_odd_entry = 'image_seam_even_collect'
+    text_seam_odd_entry = 'text_seam_odd_dispatch'
+    image_seam_even_entry = 'image_seam_even_dispatch'
+    image_seam_odd_entry = 'image_seam_odd_dispatch'
     splitter_entry = 'splitter'
     instruction_entry = 'instruction_finder'
     component_entry = 'pedagogical_component_finder'
@@ -371,18 +522,21 @@ def build_workflow(
         ['text_seam_even_worker', 'text_seam_even_collect'],
     )
     graph.add_edge('text_seam_even_worker', 'text_seam_even_collect')
+    graph.add_edge('text_seam_even_collect', text_seam_odd_entry)
     graph.add_conditional_edges(
         text_seam_odd_entry,
         text_seam_node.dispatch_odd,
         ['text_seam_odd_worker', 'text_seam_odd_collect'],
     )
     graph.add_edge('text_seam_odd_worker', 'text_seam_odd_collect')
+    graph.add_edge('text_seam_odd_collect', image_seam_even_entry)
     graph.add_conditional_edges(
         image_seam_even_entry,
         image_seam_node.dispatch_even,
         ['image_seam_even_worker', 'image_seam_even_collect'],
     )
     graph.add_edge('image_seam_even_worker', 'image_seam_even_collect')
+    graph.add_edge('image_seam_even_collect', image_seam_odd_entry)
     graph.add_conditional_edges(
         image_seam_odd_entry,
         image_seam_node.dispatch_odd,

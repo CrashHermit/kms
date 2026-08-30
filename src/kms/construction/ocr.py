@@ -449,7 +449,6 @@ def _request_ocr(request: OCRRequest) -> OCRResponse:
 def ocr_pdf(
     pdf_bytes: bytes,
     pages: list[int] | None = None,
-    include_blocks: bool | None = None,
     options: OCRRequestOptions | None = None,
 ) -> OCRResponse:
     """Runs Mistral OCR on a PDF and returns its JSON response.
@@ -457,7 +456,6 @@ def ocr_pdf(
     Args:
         pdf_bytes: The PDF file bytes.
         pages: Optional 0-based page indexes to OCR.
-        include_blocks: Optional compatibility override for ``options``.
         options: Additional typed Mistral OCR request parameters.
 
     Returns:
@@ -470,13 +468,8 @@ def ocr_pdf(
         pdf_bytes
     ).decode('ascii')
     request_options = options or OCRRequestOptions()
-    updates = {}
     if pages is not None:
-        updates['pages'] = pages
-    if include_blocks is not None:
-        updates['include_blocks'] = include_blocks
-    if updates:
-        request_options = request_options.model_copy(update=updates)
+        request_options = request_options.model_copy(update={'pages': pages})
     request = OCRRequest(
         model=config.get_settings().ocr.model,
         document_url=data_url,
@@ -705,17 +698,31 @@ class OCRNode:
     """Runs OCR and stores the canonical source documents in graph state."""
 
     def run(self, current_state: state.State) -> dict[str, Any]:
-        """Extracts one PDF and returns its source and document records."""
-        source = extract(
-            current_state['pdf_path'],
-            output_dir=current_state['output_dir'],
-            pages=current_state.get('pages'),
-        )
-        if isinstance(source, models.Source):
-            source.key = current_state['source_key']
-            source.metadata.update(current_state.get('source_metadata', {}))
+        """Extract or load cached OCR into graph state."""
+        cached_path = current_state.get('ocr_response_path')
+        if cached_path:
+            response = OCRResponse.model_validate(
+                json.loads(Path(cached_path).read_text(encoding='utf-8'))
+            )
+            source = materialize_document(
+                response,
+                output_dir=current_state['output_dir'],
+                pdf_path=current_state['pdf_path'],
+                pages=current_state.get('pages'),
+                render_pages=True,
+            )
         else:
+            source = extract(
+                current_state['pdf_path'],
+                output_dir=current_state['output_dir'],
+                pages=current_state.get('pages'),
+            )
+        if not isinstance(source, models.Source):
             raise TypeError('OCR extract did not return a canonical Source')
+        requested_source = current_state.get('source')
+        if requested_source is not None:
+            source.key = requested_source.key
+            source.metadata.update(requested_source.metadata)
         return {
             'source': source,
             'documents': source.documents,

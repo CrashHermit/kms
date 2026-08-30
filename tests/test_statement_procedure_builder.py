@@ -208,7 +208,7 @@ def test_node_run_writes_the_hub_channels():
             {
                 'nodes': nodes,
                 'spans': [[0], [1]],
-                'source_key': 'book.pdf',
+                'source': models.Source(key='book.pdf'),
             }
         )
     )

@@ -14,19 +14,66 @@ class _ScriptedFinder:
         return self._scripted.pop(0) if self._scripted else []
 
 
+class _Ready:
+    async def aforward(self, current_nodes):
+        return True
+
+
+class _AlwaysUnready:
+    async def aforward(self, current_nodes):
+        return False
+
+
+class _TrackingReady:
+    def __init__(self, values):
+        self.values = list(values)
+        self.calls = []
+
+    async def aforward(self, current_nodes):
+        self.calls.append(len(current_nodes))
+        return self.values.pop(0)
+
+
 def _nodes():
     return [
-        models.SourceNode(type='paragraph', content='intro prose', uuid='node-0'),
+        models.SourceNode(
+            type='paragraph', content='intro prose', uuid='node-0'
+        ),
         models.SourceNode(type='header', content='Example 1', uuid='node-1'),
-        models.SourceNode(type='paragraph', content='solve this', uuid='node-2'),
-        models.SourceNode(type='paragraph', content='more prose', uuid='node-3'),
+        models.SourceNode(
+            type='paragraph', content='solve this', uuid='node-2'
+        ),
+        models.SourceNode(
+            type='paragraph', content='more prose', uuid='node-3'
+        ),
     ]
+
+
+def test_unready_window_grows_before_finder_call():
+    readiness = _TrackingReady([False, True, True, True, True])
+    finder = _ScriptedFinder([[], [], []])
+    assert (
+        asyncio.run(
+            pedagogical_component_finder.find_spans(
+                _nodes(),
+                module=finder,
+                readiness_module=readiness,
+                budget=1,
+                max_budget=4,
+            )
+        )
+        == []
+    )
+    assert readiness.calls[0] == 1
+    assert len(finder._scripted) < 3
 
 
 def test_banks_a_bounded_span_and_emits_member_ids():
     module = _ScriptedFinder([[walker.Span(start=1, end=2)], []])
     spans = asyncio.run(
-        pedagogical_component_finder.find_spans(_nodes(), module=module)
+        pedagogical_component_finder.find_spans(
+            _nodes(), module=module, readiness_module=_Ready()
+        )
     )
     assert spans == [[1, 2]]
 
@@ -42,7 +89,9 @@ def test_banks_multiple_bounded_spans_in_document_order():
         ]
     )
     assert asyncio.run(
-        pedagogical_component_finder.find_spans(_nodes(), module=module)
+        pedagogical_component_finder.find_spans(
+            _nodes(), module=module, readiness_module=_Ready()
+        )
     ) == [[1], [2]]
 
 
@@ -50,7 +99,9 @@ def test_on_prose_only_stream_returns_nothing():
     module = _ScriptedFinder([[]])
     assert (
         asyncio.run(
-            pedagogical_component_finder.find_spans(_nodes(), module=module)
+            pedagogical_component_finder.find_spans(
+                _nodes(), module=module, readiness_module=_Ready()
+            )
         )
         == []
     )
@@ -86,10 +137,56 @@ def test_missing_node_id_fails_instead_of_being_dropped():
     pass
 
 
+def test_decoder_deduplicates_exact_spans():
+    prediction = type(
+        'Prediction',
+        (),
+        {
+            'spans': [
+                walker.Span(start=1, end=1),
+                walker.Span(start=2, end=2),
+                walker.Span(start=2, end=2),
+                walker.Span(start=3, end=3),
+            ]
+        },
+    )()
+    finder = object.__new__(
+        pedagogical_component_finder.PedagogicalComponentFinder
+    )
+    assert finder.decode(prediction, current_nodes=_nodes()) == [
+        walker.Span(start=0, end=0),
+        walker.Span(start=1, end=1),
+        walker.Span(start=2, end=2),
+    ]
+
+
+def test_decoder_keeps_rejecting_non_identical_overlap():
+    prediction = type(
+        'Prediction',
+        (),
+        {
+            'spans': [
+                walker.Span(start=1, end=2),
+                walker.Span(start=2, end=3),
+            ]
+        },
+    )()
+    finder = object.__new__(
+        pedagogical_component_finder.PedagogicalComponentFinder
+    )
+    with pytest.raises(ValueError, match='overlapping'):
+        finder.decode(prediction, current_nodes=_nodes())
+
+
 def test_edge_span_at_lookahead_limit_fails_instead_of_being_banked():
-    module = _ScriptedFinder([[walker.Span(start=0, end=0)]])
+    module = _ScriptedFinder([])
+    readiness = _AlwaysUnready()
     with pytest.raises(ValueError, match='look-ahead limit'):
-        asyncio.run(walker.find_spans(_nodes(), module, budget=1, max_budget=1))
+        asyncio.run(
+            walker.find_spans(
+                _nodes(), module, readiness, budget=1, max_budget=1
+            )
+        )
 
 
 def test_node_run_writes_the_spans_channel():
@@ -102,7 +199,8 @@ def test_node_run_writes_the_spans_channel():
                 ],
                 [],
             ]
-        )
+        ),
+        readiness_module=_Ready(),
     )
     out = asyncio.run(node.run({'nodes': _nodes()}))
     assert set(out) == {'spans'}
@@ -111,9 +209,8 @@ def test_node_run_writes_the_spans_channel():
 
 def test_node_run_maps_spans_back_after_excluding_instruction_members():
     node = pedagogical_component_finder.PedagogicalComponentFinderNode(
-        module=_ScriptedFinder(
-            [[walker.Span(start=0, end=1)], []]
-        )
+        module=_ScriptedFinder([[walker.Span(start=0, end=1)], []]),
+        readiness_module=_Ready(),
     )
     out = asyncio.run(
         node.run(
@@ -125,20 +222,22 @@ def test_node_run_maps_spans_back_after_excluding_instruction_members():
             }
         )
     )
-
     assert out['spans'] == [[1, 2]]
 
 
 def test_node_run_on_empty_stream_yields_an_empty_channel():
     node = pedagogical_component_finder.PedagogicalComponentFinderNode(
-        module=_ScriptedFinder([])
+        module=_ScriptedFinder([]),
+        readiness_module=_Ready(),
     )
     assert asyncio.run(node.run({'nodes': []})) == {'spans': []}
 
 
 def test_projection_is_text_only_and_preserves_image_positions():
     nodes = [
-        context_window.ContextNode(position=0, type='paragraph', content='intro'),
+        context_window.ContextNode(
+            position=0, type='paragraph', content='intro'
+        ),
         context_window.ContextNode(
             position=1,
             type='image',
@@ -151,18 +250,15 @@ def test_projection_is_text_only_and_preserves_image_positions():
         object(), current_nodes=nodes
     )['current_nodes']
 
-    assert all(
-        isinstance(item, pedagogical_component_finder.PedagogicalNodeInput)
-        for item in encoded
-    )
-    assert [item.local_index for item in encoded] == [0, 1]
+    assert all(isinstance(item, models.NodeInput) for item in encoded)
+    assert [item.index for item in encoded] == [1, 2]
     assert encoded[1].node_type == 'image'
-    assert encoded[1].node_text == 'Diagram of the curve.'
+    assert encoded[1].text == 'Diagram of the curve.'
     assert not hasattr(encoded[1], 'assets')
     assert not hasattr(encoded[1], 'path')
 
 
-def test_empty_image_description_remains_position_bearing():
+def test_empty_image_description_uses_local_index():
     nodes = [
         context_window.ContextNode(
             position=3,
@@ -175,10 +271,4 @@ def test_empty_image_description_remains_position_bearing():
         object(), current_nodes=nodes
     )['current_nodes']
 
-    assert encoded == [
-        pedagogical_component_finder.PedagogicalNodeInput(
-            local_index=3,
-            node_type='image',
-            node_text='',
-        )
-    ]
+    assert encoded == [models.NodeInput(index=1, node_type='image', text='')]

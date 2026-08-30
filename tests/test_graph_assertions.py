@@ -3,12 +3,22 @@ from kms.graph import assertions, entities, predicates
 from kms.graph.triplets import triplet_uuid
 
 
-def _triplet(subject, predicate, object, evidence_positions=None):
+def _triplet(
+    subject,
+    predicate,
+    object,
+    evidence_positions=None,
+    *,
+    subject_kind=models.NodeKind.ENTITY,
+    object_kind=models.NodeKind.ENTITY,
+):
     ids = evidence_positions or []
     return models.Triplet(
         subject=subject,
         predicate=predicate,
         object=object,
+        subject_kind=subject_kind,
+        object_kind=object_kind,
         evidence_positions=ids,
         occurrence_uuids={
             node_id: triplet_uuid(
@@ -55,6 +65,8 @@ def test_assertion_rows_builds_components_and_edges():
     assert len(rows['subject_edges']) == 1
     assert len(rows['object_edges']) == 1
     assert len(rows['predicate_edges']) == 1
+    assert rows['subject_edges'][0]['entity'] == rows['entities'][0]['uuid']
+    assert rows['object_edges'][0]['entity'] == rows['entities'][1]['uuid']
     assert len(rows['entity_names']) == 2
     assert len(rows['predicate_names']) == 1
     assert len(rows['entity_name_edges']) == 2
@@ -95,3 +107,30 @@ def test_assertion_rows_include_embeddings_when_provided():
     assert by_name['$G_1$ (a graph)']['embedding'] == [0.1, 0.2]
     assert 'embedding' not in by_name['$G_2$ (a graph)']
     assert rows['predicates'][0]['embedding'] == [0.5, 0.6]
+
+
+def test_assertion_rows_builds_event_endpoints():
+    triplet = _triplet(
+        'Alice',
+        'participates in',
+        'an appointment',
+        evidence_positions=[3],
+        object_kind=models.NodeKind.EVENT,
+    )
+    rows = assertions.assertion_rows(
+        [triplet],
+        'hefferon.pdf',
+        {3: {'Alice': 'A person', 'an appointment': 'An event'}},
+        {3: {'participates in': 'event participation'}},
+    )
+    assert len(rows['entities']) == 1
+    assert rows['events'][0]['name'] == 'an appointment'
+
+
+def test_event_endpoint_uuid_is_disjoint_and_stable():
+    event = assertions.events.event_uuid('hefferon.pdf', 3, 'appointment')
+    entity = entities.entity_uuid('hefferon.pdf', 3, 'appointment')
+    assert event == assertions.events.event_uuid(
+        'hefferon.pdf', 3, 'appointment'
+    )
+    assert event != entity

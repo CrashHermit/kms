@@ -72,7 +72,7 @@ def module_lm(module_name: str) -> dspy.LM:
         model = _require_key(
             module_config.model,
             f'KMS_MODELS__MODULES__{module_name.upper()}__MODEL',
-            'qwen3.5-9b',
+            'qwen3.5-9b-text',
         )
         if not model.startswith('openai/'):
             model = f'openai/{model}'

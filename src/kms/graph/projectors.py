@@ -61,6 +61,12 @@ class FinalProjectorNode:
             source,
             session_factory=self._session_factory,
         )
+        await writer.persist_instruction_governance(
+            bundle.statements,
+            bundle.instructions,
+            source,
+            session_factory=self._session_factory,
+        )
         await writer.persist_assertions(
             bundle.triplets,
             source,
@@ -81,7 +87,6 @@ class FinalProjectorNode:
             await writer.persist_entity_hubs(
                 entity_records,
                 session_factory=self._session_factory,
-                subsumption_edges=[],
                 tier='source',
             )
         if bundle.entity_hub_assignments:
@@ -96,7 +101,6 @@ class FinalProjectorNode:
             await writer.persist_predicate_hubs(
                 predicate_records,
                 session_factory=self._session_factory,
-                subsumption_edges=[],
                 tier='source',
             )
         if bundle.predicate_hub_assignments:

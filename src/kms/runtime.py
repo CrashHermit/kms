@@ -70,6 +70,7 @@ class Runtime:
         source: str | None = None,
         title: str | None = None,
         author: str | None = None,
+        ocr_response_path: str | Path | None = None,
     ) -> dict:
         """Ingest one document using this runtime's shared services."""
         from kms.construction import runner
@@ -81,10 +82,9 @@ class Runtime:
             pages=pages,
             source=source,
             title=title,
+            ocr_response_path=ocr_response_path,
             author=author,
         )
-
-
 async def ingest(
     pdf_path: str | Path,
     output_dir: str | Path = 'output',
@@ -92,6 +92,7 @@ async def ingest(
     source: str | None = None,
     title: str | None = None,
     author: str | None = None,
+    ocr_response_path: str | Path | None = None,
 ) -> dict:
     """Ingest one document in a short-lived runtime context."""
     async with Runtime() as application:
@@ -102,4 +103,5 @@ async def ingest(
             source=source,
             title=title,
             author=author,
+            ocr_response_path=ocr_response_path,
         )

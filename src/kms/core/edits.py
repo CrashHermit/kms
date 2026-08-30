@@ -2,7 +2,28 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from kms.core import models
+
+
+class LineReplacement(BaseModel):
+    """One replacement-only edit returned by the active formatter."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    index: int = Field(
+        strict=True,
+        description='The one-based source line number to replace.',
+    )
+    replacement: str = Field(
+        description=(
+            'Complete replacement text for the source line. Empty text '
+            'deletes the line; embedded newlines create multiple lines.'
+        )
+    )
+
+
 
 
 class LineEdit(BaseModel):
@@ -29,6 +50,40 @@ class LineEdit(BaseModel):
                 'replacement before or after it.'
             ),
         )
+    )
+
+
+def numbered_lines(markdown: str) -> list[models.LineInput]:
+    """Returns source lines as explicit one-based model inputs."""
+    return [
+        models.LineInput(index=index, text=line)
+        for index, line in enumerate(markdown.split('\n'), start=1)
+    ]
+
+
+def apply_line_replacements(
+    markdown: str,
+    replacements: list[LineReplacement],
+) -> str:
+    """Applies validated one-based replacement-only model edits."""
+    line_count = len(markdown.split('\n'))
+    indexes = [replacement.index for replacement in replacements]
+    if len(indexes) != len(set(indexes)):
+        raise RuntimeError(
+            f'duplicate replacement indexes {indexes} for {line_count} lines'
+        )
+    invalid = [index for index in indexes if not 1 <= index <= line_count]
+    if invalid:
+        raise RuntimeError(
+            f'replacement indexes {invalid} out of range for {line_count} lines; '
+            f'input indexes={indexes}'
+        )
+    return apply_line_edits(
+        markdown,
+        [
+            LineEdit(index=replacement.index, replacement=replacement.replacement)
+            for replacement in replacements
+        ],
     )
 
 

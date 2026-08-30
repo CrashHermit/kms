@@ -67,6 +67,39 @@ def test_instruction_member_pairs_empty_without_members():
     assert pairs == []
 
 
+def test_instruction_governance_pairs_link_instruction_to_statement():
+    instruction = _instruction(block=[0], member_positions=[0])
+    statement = models.Statement(
+        block=[1],
+        uuid=identity.statement_uuid('ea2e.pdf', [1]),
+        instruction_uuids=[instruction.uuid],
+    )
+    assert instructions.instruction_governance_pairs(
+        [statement], [instruction], 'ea2e.pdf'
+    ) == [
+        {
+            'instruction': instruction.uuid,
+            'statement': statement.uuid,
+        }
+    ]
+
+
+def test_instruction_governance_pairs_reject_unknown_instruction():
+    statement = models.Statement(
+        block=[1],
+        uuid=identity.statement_uuid('ea2e.pdf', [1]),
+        instruction_uuids=['missing'],
+    )
+    try:
+        instructions.instruction_governance_pairs(
+            [statement], [], 'ea2e.pdf'
+        )
+    except ValueError as exc:
+        assert 'unknown instruction' in str(exc)
+    else:
+        raise AssertionError('unknown instruction was accepted')
+
+
 class _FakeSession:
     def __init__(self, log):
         self._log = log
@@ -114,6 +147,29 @@ def test_persist_instructions_writes_hubs_then_member_edges():
     edge_query, edge_params = fake.queries[1]
     assert 'MEMBER_OF]->(i)' in edge_query
     assert len(edge_params['pairs']) == 2
+
+def test_persist_instruction_governance_writes_governs_edges():
+    fake = _FakeDriver()
+    instruction = _instruction(block=[0], member_positions=[0])
+    statement = models.Statement(
+        block=[1],
+        uuid=identity.statement_uuid('ea2e.pdf', [1]),
+        instruction_uuids=[instruction.uuid],
+    )
+    asyncio.run(
+        writer.persist_instruction_governance(
+            [statement],
+            [instruction],
+            'ea2e.pdf',
+            session_factory=lambda: fake.session(database='neo4j'),
+        )
+    )
+    assert len(fake.queries) == 1
+    query, params = fake.queries[0]
+    assert 'GOVERNS]->(s)' in query
+    assert params['pairs'] == [
+        {'instruction': instruction.uuid, 'statement': statement.uuid}
+    ]
 
 
 def test_persist_instructions_is_a_noop_when_empty():

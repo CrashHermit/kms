@@ -99,7 +99,7 @@ def main() -> None:
         response = ocr.ocr_pdf(
             Path(case['pdf']).read_bytes(),
             pages=[case['page']],
-            include_blocks=True,
+            options=ocr.OCRRequestOptions(include_blocks=True),
         )
         response_path = output_root / f'{case["name"]}.json'
         response_path.write_text(

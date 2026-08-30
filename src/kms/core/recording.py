@@ -91,6 +91,35 @@ class Recorder:
                 exc_info=True,
             )
 
+    def record_progress(
+        self,
+        stage: str,
+        *,
+        status: str,
+        duration_ms: float,
+        output_keys: list[str] | None = None,
+    ) -> None:
+        """Records one workflow-stage timing event."""
+        try:
+            progress_path = self._output_dir / 'progress.jsonl'
+            progress_path.parent.mkdir(parents=True, exist_ok=True)
+            record = {
+                'stage': stage,
+                'status': status,
+                'duration_ms': duration_ms,
+                'timestamp': datetime.now(UTC).isoformat(),
+            }
+            if output_keys is not None:
+                record['output_keys'] = sorted(output_keys)
+            with progress_path.open('a') as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + '\n')
+        except (TypeError, ValueError, OSError):
+            logger.warning(
+                'recorder: failed to record progress for %s',
+                stage,
+                exc_info=True,
+            )
+
     def _ensure_run_dir(
         self,
         module_name: str,

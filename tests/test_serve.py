@@ -40,7 +40,7 @@ def test_ensure_model_rejects_router_without_target_model(monkeypatch):
     monkeypatch.setattr(
         serve,
         '_get_json',
-        lambda url, timeout: _statuses(('qwen3.5-9b', 'unloaded')),
+        lambda url, timeout: _statuses(('qwen3.5-9b-text', 'unloaded')),
     )
     manager = serve.RouterManager(_config())
     with pytest.raises(RuntimeError, match='does not expose model'):
@@ -49,10 +49,10 @@ def test_ensure_model_rejects_router_without_target_model(monkeypatch):
 
 def test_ensure_model_unloads_others_and_loads_target(monkeypatch):
     calls = []
-    loaded = 'qwen3.5-9b'
+    loaded = 'qwen3.5-9b-text'
 
     def fake_get(url, timeout):
-        ids = ('qwen3.5-9b', 'qwen3-vl-4b')
+        ids = ('qwen3.5-9b-text', 'qwen3-vl-4b')
         return _statuses(
             *((mid, 'loaded' if mid == loaded else 'unloaded') for mid in ids)
         )
@@ -69,7 +69,7 @@ def test_ensure_model_unloads_others_and_loads_target(monkeypatch):
     manager.ensure_model('qwen3-vl-4b')
     assert (
         'http://127.0.0.1:8080/models/unload',
-        {'model': 'qwen3.5-9b'},
+        {'model': 'qwen3.5-9b-text'},
     ) in calls
     assert (
         'http://127.0.0.1:8080/models/load',
@@ -82,7 +82,7 @@ def test_ensure_model_skips_load_when_already_loaded(monkeypatch):
     monkeypatch.setattr(
         serve,
         '_get_json',
-        lambda url, timeout: _statuses(('qwen3.5-9b', 'loaded')),
+        lambda url, timeout: _statuses(('qwen3.5-9b-text', 'loaded')),
     )
     monkeypatch.setattr(
         serve,
@@ -90,7 +90,7 @@ def test_ensure_model_skips_load_when_already_loaded(monkeypatch):
         lambda url, body, timeout: calls.append((url, body)),
     )
     manager = serve.RouterManager(_config())
-    manager.ensure_model('qwen3.5-9b')
+    manager.ensure_model('qwen3.5-9b-text')
     assert calls == []
 
 
@@ -190,12 +190,11 @@ def test_aexecute_uses_operation_lease():
     assert calls == [('ensure', 'model-a'), ('operation', 'model-a')]
 
 
-def test_preset_ini_contains_both_models(tmp_path):
+def test_preset_ini_contains_configured_models(tmp_path):
     ini = serve._preset_ini(tmp_path)
-    assert '[qwen3.5-9b]' in ini
-    assert '[qwen3-vl-4b]' in ini
+    assert '[gemma-4-e4b-qat]' in ini
     assert 'mmproj' in ini
-    assert 'ctx-size = 32768' in ini
+    assert 'ctx-size = 8192' in ini
 
 
 def test_default_router_uses_configured_preset_file(monkeypatch, tmp_path):

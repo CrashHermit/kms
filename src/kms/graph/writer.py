@@ -8,16 +8,18 @@ from typing import Any
 from kms.core import models
 from kms.graph import (
     assertions,
-    entity_hubs,
     learning,
+    local_entity_hubs,
+    local_event_hubs,
+    local_predicate_hubs,
     local_procedure_hubs,
     local_statement_hubs,
     names,
-    predicate_hubs,
     queries,
 )
 from kms.graph.hubs import triplet_hub_properties
 from kms.graph.instructions import (
+    instruction_governance_pairs,
     instruction_member_pairs,
     instruction_rows,
 )
@@ -26,6 +28,8 @@ from kms.graph.nodes import (
     node_properties,
     source_properties,
     source_uuid,
+    visual_asset_pairs,
+    visual_asset_rows,
 )
 from kms.graph.procedures import (
     procedure_enrichment_properties,
@@ -93,6 +97,18 @@ async def persist_nodes(
         for label, rows in batches.items():
             await session.run(
                 queries.merge_nodes_query(label), rows=rows, now=now
+            )
+        asset_rows = visual_asset_rows(nodes, source)
+        if asset_rows:
+            await session.run(
+                queries.MERGE_VISUAL_ASSETS,
+                rows=asset_rows,
+                now=now,
+            )
+            await session.run(
+                queries.MERGE_NODE_ASSETS,
+                pairs=visual_asset_pairs(nodes, source),
+                now=now,
             )
 
 
@@ -251,7 +267,7 @@ async def clear_procedure_hubs(
         await session.run(queries.delete_procedure_hubs_query(), source=source)
 
 
-async def _persist_meta_hubs(
+async def _persist_global_hubs(
     hubs: list[dict],
     *,
     session_factory: Callable,
@@ -310,7 +326,7 @@ async def _persist_meta_hubs(
 async def persist_global_statement_hubs(
     hubs: list[dict], *, session_factory: Callable
 ) -> None:
-    await _persist_meta_hubs(
+    await _persist_global_hubs(
         hubs,
         session_factory=session_factory,
         graph_module=local_statement_hubs,
@@ -323,7 +339,7 @@ async def persist_global_statement_hubs(
 async def persist_global_procedure_hubs(
     hubs: list[dict], *, session_factory: Callable
 ) -> None:
-    await _persist_meta_hubs(
+    await _persist_global_hubs(
         hubs,
         session_factory=session_factory,
         graph_module=local_procedure_hubs,
@@ -419,6 +435,25 @@ async def persist_instructions(
             await session.run(
                 queries.MERGE_INSTRUCTION_MEMBERS, pairs=pairs, now=now
             )
+
+
+async def persist_instruction_governance(
+    statements: list[models.Statement],
+    instructions: list[models.Instruction],
+    source: str,
+    *,
+    session_factory: Callable,
+) -> None:
+    """Persists instruction governance edges to statement nodes."""
+    pairs = instruction_governance_pairs(statements, instructions, source)
+    if not pairs:
+        return
+    async with session_factory() as session:
+        await session.run(
+            queries.MERGE_INSTRUCTION_GOVERNANCE,
+            pairs=pairs,
+            now=utcnow_iso(),
+        )
 
 
 async def persist_procedures(
@@ -530,21 +565,34 @@ async def persist_assertions(
             await session.run(
                 queries.MERGE_TRIPLET_EVIDENCE, pairs=pairs, now=now
             )
+        if rows['events']:
+            await session.run(
+                queries.MERGE_EVENTS, rows=rows['events'], now=now
+            )
+        if rows['event_names']:
+            await session.run(
+                queries.MERGE_EVENT_NAMES,
+                rows=rows['event_names'],
+                now=now,
+            )
+        if rows['event_name_edges']:
+            await session.run(
+                queries.MERGE_HAS_EVENT_NAME,
+                pairs=rows['event_name_edges'],
+            )
         if rows['entities']:
             await session.run(
                 queries.MERGE_ENTITIES, rows=rows['entities'], now=now
             )
-        if rows['predicates']:
-            await session.run(
-                queries.MERGE_PREDICATES, rows=rows['predicates'], now=now
-            )
-        if rows['entity_names']:
             await session.run(
                 queries.MERGE_ENTITY_NAMES,
                 rows=rows['entity_names'],
                 now=now,
             )
-        if rows['predicate_names']:
+        if rows['predicates']:
+            await session.run(
+                queries.MERGE_PREDICATES, rows=rows['predicates'], now=now
+            )
             await session.run(
                 queries.MERGE_PREDICATE_NAMES,
                 rows=rows['predicate_names'],
@@ -677,17 +725,17 @@ async def persist_name_hubs(
         )
 
 
-async def clear_meta_name_hubs(
+async def clear_global_name_hubs(
     kind: str,
     *,
     session_factory: Callable,
 ) -> None:
     """Clears the disposable cross-source lexical hub tier."""
     async with session_factory() as session:
-        await session.run(queries.delete_meta_name_hubs_query(kind))
+        await session.run(queries.delete_global_name_hubs_query(kind))
 
 
-async def _validate_meta_name_hubs(
+async def _validate_global_name_hubs(
     kind: str,
     hubs: list[dict],
     session_factory: Callable,
@@ -714,7 +762,7 @@ async def _validate_meta_name_hubs(
             )
 
 
-async def persist_meta_name_hubs(
+async def persist_global_name_hubs(
     kind: str,
     hubs: list[dict],
     *,
@@ -723,9 +771,9 @@ async def persist_meta_name_hubs(
     """Persists qualified meta lexical hubs and ALIGNS_TO edges."""
     if not hubs:
         return
-    await _validate_meta_name_hubs(kind, hubs, session_factory)
+    await _validate_global_name_hubs(kind, hubs, session_factory)
     rows = [
-        names.meta_name_hub_properties(
+        names.global_name_hub_properties(
             kind,
             hub['canonical_form'],
             hub['aliases'],
@@ -741,7 +789,7 @@ async def persist_meta_name_hubs(
     ]
     async with session_factory() as session:
         await session.run(
-            queries.merge_meta_name_hubs_query(kind),
+            queries.merge_global_name_hubs_query(kind),
             rows=rows,
             now=utcnow_iso(),
         )
@@ -752,7 +800,7 @@ async def persist_meta_name_hubs(
         )
 
 
-async def _validate_meta_hubs(
+async def _validate_global_hubs(
     hubs: list[dict],
     session_factory: Callable,
     source_hubs_query: Callable,
@@ -784,16 +832,29 @@ async def persist_entity_hubs(
     hubs: list[dict],
     *,
     session_factory: Callable,
-    subsumption_edges: list[dict] | None = None,
     tier: str,
 ) -> None:
     await _persist_semantic_hubs(
         hubs,
         session_factory=session_factory,
-        graph_module=entity_hubs,
+        graph_module=local_entity_hubs,
         source_hubs_query=queries.all_entity_source_hubs,
         tier=tier,
-        subsumption_edges=subsumption_edges,
+    )
+
+
+async def persist_event_hubs(
+    hubs: list[dict],
+    *,
+    session_factory: Callable,
+    tier: str,
+) -> None:
+    await _persist_semantic_hubs(
+        hubs,
+        session_factory=session_factory,
+        graph_module=local_event_hubs,
+        source_hubs_query=queries.all_event_source_hubs,
+        tier=tier,
     )
 
 
@@ -801,16 +862,14 @@ async def persist_predicate_hubs(
     hubs: list[dict],
     *,
     session_factory: Callable,
-    subsumption_edges: list[dict] | None = None,
     tier: str,
 ) -> None:
     await _persist_semantic_hubs(
         hubs,
         session_factory=session_factory,
-        graph_module=predicate_hubs,
+        graph_module=local_predicate_hubs,
         source_hubs_query=queries.all_predicate_source_hubs,
         tier=tier,
-        subsumption_edges=subsumption_edges,
     )
 
 
@@ -821,7 +880,6 @@ async def _persist_semantic_hubs(
     graph_module,
     source_hubs_query: Callable,
     tier: str,
-    subsumption_edges: list[dict] | None = None,
 ) -> None:
     if not hubs:
         return
@@ -838,7 +896,7 @@ async def _persist_semantic_hubs(
                 'meta hubs require at least two source-hub members: '
                 f'{singleton_hubs}'
             )
-        await _validate_meta_hubs(hubs, session_factory, source_hubs_query)
+        await _validate_global_hubs(hubs, session_factory, source_hubs_query)
 
     hub_rows = [
         graph_module.hub_properties(
@@ -888,12 +946,6 @@ async def _persist_semantic_hubs(
                     pairs=member_pairs,
                     now=now,
                 )
-        if subsumption_edges:
-            await session.run(
-                queries.merge_subsumes_query(label),
-                pairs=subsumption_edges,
-                now=now,
-            )
 
 
 async def persist_triplet_hubs(
@@ -997,8 +1049,8 @@ async def attach_entity_components(
         assignments,
         aliases=aliases,
         session_factory=session_factory,
-        component_node_label=entity_hubs.COMPONENT_LABEL,
-        source_hub_label=entity_hubs.hub_label(),
+        component_node_label=local_entity_hubs.COMPONENT_LABEL,
+        source_hub_label=local_entity_hubs.hub_label(),
     )
 
 
@@ -1009,8 +1061,8 @@ async def attach_predicate_components(
         assignments,
         aliases=aliases,
         session_factory=session_factory,
-        component_node_label=predicate_hubs.COMPONENT_LABEL,
-        source_hub_label=predicate_hubs.hub_label(),
+        component_node_label=local_predicate_hubs.COMPONENT_LABEL,
+        source_hub_label=local_predicate_hubs.hub_label(),
     )
 
 
@@ -1069,9 +1121,9 @@ async def _validate_meta_assignments(
         batch_sources.setdefault(assignment['meta_hub'], set()).add(source)
     qualified = await qualified_meta_hubs_query(session_factory)
     invalid = sorted(
-        meta_hub
-        for meta_hub, sources in batch_sources.items()
-        if meta_hub not in qualified and len(sources) < 2
+        global_hub
+        for global_hub, sources in batch_sources.items()
+        if global_hub not in qualified and len(sources) < 2
     )
     if invalid:
         raise ValueError(
@@ -1080,41 +1132,54 @@ async def _validate_meta_assignments(
         )
 
 
-async def attach_entity_meta_hubs(
+async def attach_entity_global_hubs(
     assignments: list[dict],
     *,
     aliases: list[dict],
-    subsumption_edges: list[dict],
     session_factory: Callable,
 ) -> None:
     await _attach_meta_hubs(
         assignments,
         aliases=aliases,
-        subsumption_edges=subsumption_edges,
         session_factory=session_factory,
         source_hubs_query=queries.all_entity_source_hubs,
-        qualified_meta_hubs_query=queries.qualified_entity_meta_hub_uuids,
-        source_hub_label=entity_hubs.hub_label(),
-        meta_hub_label=entity_hubs.hub_label('meta'),
+        qualified_meta_hubs_query=queries.qualified_entity_global_hub_uuids,
+        source_hub_label=local_entity_hubs.hub_label(),
+        global_hub_label=local_entity_hubs.hub_label('meta'),
     )
 
 
-async def attach_predicate_meta_hubs(
+async def attach_event_global_hubs(
     assignments: list[dict],
     *,
     aliases: list[dict],
-    subsumption_edges: list[dict],
     session_factory: Callable,
 ) -> None:
     await _attach_meta_hubs(
         assignments,
         aliases=aliases,
-        subsumption_edges=subsumption_edges,
+        session_factory=session_factory,
+        source_hubs_query=queries.all_event_source_hubs,
+        qualified_meta_hubs_query=queries.qualified_event_global_hub_uuids,
+        source_hub_label=local_event_hubs.hub_label(),
+        global_hub_label=local_event_hubs.hub_label('meta'),
+    )
+
+
+async def attach_predicate_global_hubs(
+    assignments: list[dict],
+    *,
+    aliases: list[dict],
+    session_factory: Callable,
+) -> None:
+    await _attach_meta_hubs(
+        assignments,
+        aliases=aliases,
         session_factory=session_factory,
         source_hubs_query=queries.all_predicate_source_hubs,
-        qualified_meta_hubs_query=queries.qualified_predicate_meta_hub_uuids,
-        source_hub_label=predicate_hubs.hub_label(),
-        meta_hub_label=predicate_hubs.hub_label('meta'),
+        qualified_meta_hubs_query=queries.qualified_predicate_global_hub_uuids,
+        source_hub_label=local_predicate_hubs.hub_label(),
+        global_hub_label=local_predicate_hubs.hub_label('meta'),
     )
 
 
@@ -1122,14 +1187,13 @@ async def _attach_meta_hubs(
     assignments: list[dict],
     *,
     aliases: list[dict],
-    subsumption_edges: list[dict],
     session_factory: Callable,
     source_hubs_query: Callable,
     qualified_meta_hubs_query: Callable,
     source_hub_label: str,
-    meta_hub_label: str,
+    global_hub_label: str,
 ) -> None:
-    if not assignments and not aliases and not subsumption_edges:
+    if not assignments and not aliases:
         return
     if assignments:
         await _validate_meta_assignments(
@@ -1149,27 +1213,33 @@ async def _attach_meta_hubs(
                 source_hubs=source_hubs,
             )
             await session.run(
-                queries.merge_alignment_query(source_hub_label, meta_hub_label),
+                queries.merge_alignment_query(
+                    source_hub_label, global_hub_label
+                ),
                 pairs=assignments,
                 now=now,
             )
         if aliases:
             await session.run(
-                queries.update_hub_aliases_query(meta_hub_label),
+                queries.update_hub_aliases_query(global_hub_label),
                 rows=aliases,
-                now=now,
-            )
-        if subsumption_edges:
-            await session.run(
-                queries.merge_subsumes_query(meta_hub_label),
-                pairs=subsumption_edges,
                 now=now,
             )
 
 
 async def clear_entity_hubs(source: str, *, session_factory: Callable) -> None:
     await _clear_source_hubs(
-        source, session_factory=session_factory, label=entity_hubs.hub_label()
+        source,
+        session_factory=session_factory,
+        label=local_entity_hubs.hub_label(),
+    )
+
+
+async def clear_event_hubs(source: str, *, session_factory: Callable) -> None:
+    await _clear_source_hubs(
+        source,
+        session_factory=session_factory,
+        label=local_event_hubs.hub_label(),
     )
 
 
@@ -1179,7 +1249,7 @@ async def clear_predicate_hubs(
     await _clear_source_hubs(
         source,
         session_factory=session_factory,
-        label=predicate_hubs.hub_label(),
+        label=local_predicate_hubs.hub_label(),
     )
 
 
@@ -1202,17 +1272,28 @@ async def _clear_source_hubs(
         )
 
 
-async def clear_invalid_entity_meta_hubs(*, session_factory: Callable) -> None:
-    await _clear_invalid_meta_hubs(
-        session_factory=session_factory, label=entity_hubs.hub_label('meta')
-    )
-
-
-async def clear_invalid_predicate_meta_hubs(
+async def clear_invalid_entity_global_hubs(
     *, session_factory: Callable
 ) -> None:
     await _clear_invalid_meta_hubs(
-        session_factory=session_factory, label=predicate_hubs.hub_label('meta')
+        session_factory=session_factory,
+        label=local_entity_hubs.hub_label('meta'),
+    )
+
+
+async def clear_invalid_event_global_hubs(*, session_factory: Callable) -> None:
+    await _clear_invalid_meta_hubs(
+        session_factory=session_factory,
+        label=local_event_hubs.hub_label('meta'),
+    )
+
+
+async def clear_invalid_predicate_global_hubs(
+    *, session_factory: Callable
+) -> None:
+    await _clear_invalid_meta_hubs(
+        session_factory=session_factory,
+        label=local_predicate_hubs.hub_label('meta'),
     )
 
 
@@ -1223,22 +1304,31 @@ async def _clear_invalid_meta_hubs(
 ) -> None:
     """Deletes meta hubs without support from two distinct sources."""
     async with session_factory() as session:
-        await session.run(queries.delete_invalid_meta_hubs_query(label))
+        await session.run(queries.delete_invalid_global_hubs_query(label))
 
 
-async def clear_entity_meta_hubs(*, session_factory: Callable) -> None:
-    await _clear_meta_hubs(
-        session_factory=session_factory, label=entity_hubs.hub_label('meta')
+async def clear_entity_global_hubs(*, session_factory: Callable) -> None:
+    await _clear_global_hubs(
+        session_factory=session_factory,
+        label=local_entity_hubs.hub_label('meta'),
     )
 
 
-async def clear_predicate_meta_hubs(*, session_factory: Callable) -> None:
-    await _clear_meta_hubs(
-        session_factory=session_factory, label=predicate_hubs.hub_label('meta')
+async def clear_event_global_hubs(*, session_factory: Callable) -> None:
+    await _clear_global_hubs(
+        session_factory=session_factory,
+        label=local_event_hubs.hub_label('meta'),
     )
 
 
-async def _clear_meta_hubs(
+async def clear_predicate_global_hubs(*, session_factory: Callable) -> None:
+    await _clear_global_hubs(
+        session_factory=session_factory,
+        label=local_predicate_hubs.hub_label('meta'),
+    )
+
+
+async def _clear_global_hubs(
     *,
     session_factory: Callable,
     label: str,
@@ -1265,20 +1355,17 @@ async def persist_cards(
         await session.run(queries.merge_cards_query(), rows=rows, now=now)
 
 
-async def persist_card_hub_edges(
+async def persist_card_target_edges(
     cards: list[models.Card],
     *,
     session_factory: Callable,
 ) -> None:
-    """Persists HUB->HAS_CARD edges."""
+    """Persists source-local component→HAS_CARD edges."""
     if not cards:
         return
-    pairs = [{'hub': card.hub_uuid, 'card': card.uuid} for card in cards]
-    now = utcnow_iso()
+    pairs = [{'target': card.target_uuid, 'card': card.uuid} for card in cards]
     async with session_factory() as session:
-        await session.run(
-            queries.merge_card_hub_edges_query(), pairs=pairs, now=now
-        )
+        await session.run(queries.merge_card_target_edges_query(), pairs=pairs)
 
 
 async def persist_reviews(

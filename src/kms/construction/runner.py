@@ -4,7 +4,7 @@ from pathlib import Path
 
 from kms import config, runtime
 from kms.construction import workflow
-from kms.core import recording, serve
+from kms.core import models, recording, serve
 
 
 async def ingest(
@@ -15,6 +15,7 @@ async def ingest(
     source: str | None = None,
     title: str | None = None,
     author: str | None = None,
+    ocr_response_path: str | Path | None = None,
 ) -> dict:
     """Invoke the ingestion graph for one document."""
     output_dir = Path(output_dir)
@@ -40,9 +41,14 @@ async def ingest(
             {
                 'pdf_path': str(pdf_path),
                 'output_dir': str(output_dir),
+                'ocr_response_path': (
+                    str(ocr_response_path) if ocr_response_path else None
+                ),
                 'pages': pages,
-                'source_key': source,
-                'source_metadata': {'title': title, 'author': author},
+                'source': models.Source(
+                    key=source,
+                    metadata={'title': title, 'author': author},
+                ),
             },
             {
                 'recursion_limit': (

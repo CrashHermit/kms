@@ -13,7 +13,7 @@ class _RecordingEnricher:
 
     async def aforward(self, **kwargs):
         self.calls.append(kwargs)
-        return self.results_by_term[kwargs['terms'][0]]
+        return self.results_by_term[kwargs['request'].terms[0]]
 
 
 def test_select_term_context_is_directional_and_text_only():
@@ -37,9 +37,9 @@ def test_select_term_context_is_directional_and_text_only():
     assert [node.content for node in after] == ['after']
     assert target.assets[0].path == 'target.png'
 
-    projected = semantic.term_context_input(target)
+    projected = context_window.node_input(target)
     assert projected.node_type == 'image'
-    assert projected.node_text == 'target diagram'
+    assert projected.text == 'target diagram'
     assert not hasattr(projected, 'assets')
 
 
@@ -75,13 +75,8 @@ def test_describe_terms_requires_exact_ordered_one_to_one_results():
         )
     )
     assert result == {0: {'alpha': 'A', 'beta': 'B'}}
-    assert [call['terms'] for call in enricher.calls] == [['alpha'], ['beta']]
-    assert list(enricher.calls[0]) == [
-        'context_before',
-        'target_node',
-        'context_after',
-        'terms',
-    ]
+    assert [call['request'].terms for call in enricher.calls] == [['alpha'], ['beta']]
+    assert list(enricher.calls[0]) == ['request']
 
     cases = [
         [],
@@ -114,9 +109,11 @@ def test_context_node_projection_uses_standard_fields():
         content='A diagram',
         assets=[models.VisualAsset(path='figure.png')],
     )
-    projected = semantic.term_context_input(node)
+    projected = context_window.node_input(node)
     assert projected.model_dump() == {
-        'local_index': 0,
+        'index': 1,
         'node_type': 'image',
-        'node_text': 'A diagram',
+        'text': 'A diagram',
     }
+    assert not hasattr(projected, 'assets')
+    assert not hasattr(projected, 'marker')

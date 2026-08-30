@@ -5,9 +5,11 @@ from collections.abc import Callable
 from kms import config
 from kms.graph import (
     entities,
+    events,
     hubs,
     instructions,
     learning,
+    local_event_hubs,
     local_procedure_hubs,
     local_statement_hubs,
     names,
@@ -54,10 +56,10 @@ def schema_statements() -> list[str]:
         'SET h:GlobalEntityNameHub',
         'MATCH (h:MetaPredicateNameHub) REMOVE h:MetaPredicateNameHub '
         'SET h:GlobalPredicateNameHub',
-        f'CREATE CONSTRAINT node_uuid IF NOT EXISTS '
-        f'FOR (n:{nodes.NODE_LABEL}) REQUIRE n.uuid IS UNIQUE',
-        f'CREATE CONSTRAINT source_uuid IF NOT EXISTS '
-        f'FOR (s:{nodes.SOURCE_LABEL}) REQUIRE s.uuid IS UNIQUE',
+        f'CREATE CONSTRAINT visual_asset_uuid IF NOT EXISTS '
+        f'FOR (a:{nodes.VISUAL_ASSET_LABEL}) REQUIRE a.uuid IS UNIQUE',
+        f'CREATE INDEX visual_asset_source IF NOT EXISTS '
+        f'FOR (a:{nodes.VISUAL_ASSET_LABEL}) ON (a.source)',
         f'CREATE CONSTRAINT statement_uuid IF NOT EXISTS '
         f'FOR (s:{statements.STATEMENT_LABEL}) REQUIRE s.uuid IS UNIQUE',
         f'CREATE CONSTRAINT procedure_uuid IF NOT EXISTS '
@@ -68,20 +70,26 @@ def schema_statements() -> list[str]:
         f'FOR (t:{triplets.TRIPLET_LABEL}) REQUIRE t.uuid IS UNIQUE',
         f'CREATE CONSTRAINT entity_uuid IF NOT EXISTS '
         f'FOR (e:{entities.ENTITY_LABEL}) REQUIRE e.uuid IS UNIQUE',
+        f'CREATE CONSTRAINT event_uuid IF NOT EXISTS '
+        f'FOR (e:{events.EVENT_LABEL}) REQUIRE e.uuid IS UNIQUE',
         f'CREATE CONSTRAINT predicate_uuid IF NOT EXISTS '
         f'FOR (p:{predicates.PREDICATE_LABEL}) REQUIRE p.uuid IS UNIQUE',
         f'CREATE CONSTRAINT entity_name_uuid IF NOT EXISTS '
         f'FOR (n:{names.ENTITY_NAME_LABEL}) REQUIRE n.uuid IS UNIQUE',
+        f'CREATE CONSTRAINT event_name_uuid IF NOT EXISTS '
+        f'FOR (n:{names.EVENT_NAME_LABEL}) REQUIRE n.uuid IS UNIQUE',
         f'CREATE CONSTRAINT predicate_name_uuid IF NOT EXISTS '
         f'FOR (n:{names.PREDICATE_NAME_LABEL}) REQUIRE n.uuid IS UNIQUE',
         f'CREATE CONSTRAINT entity_name_hub_uuid IF NOT EXISTS '
-        f'FOR (h:{names.ENTITY_NAME_HUB_LABEL}) REQUIRE h.uuid IS UNIQUE',
+        f'FOR (h:{names.LOCAL_ENTITY_NAME_HUB_LABEL}) REQUIRE h.uuid IS UNIQUE',
         f'CREATE CONSTRAINT predicate_name_hub_uuid IF NOT EXISTS '
-        f'FOR (h:{names.PREDICATE_NAME_HUB_LABEL}) REQUIRE h.uuid IS UNIQUE',
+        f'FOR (h:{names.LOCAL_PREDICATE_NAME_HUB_LABEL}) REQUIRE h.uuid IS UNIQUE',
         f'CREATE INDEX node_source IF NOT EXISTS '
         f'FOR (n:{nodes.NODE_LABEL}) ON (n.source)',
         f'CREATE INDEX entity_source IF NOT EXISTS '
         f'FOR (e:{entities.ENTITY_LABEL}) ON (e.source)',
+        f'CREATE INDEX event_source IF NOT EXISTS '
+        f'FOR (e:{events.EVENT_LABEL}) ON (e.source)',
         f'CREATE INDEX predicate_source IF NOT EXISTS '
         f'FOR (p:{predicates.PREDICATE_LABEL}) ON (p.source)',
         f'CREATE INDEX entity_name_text IF NOT EXISTS '
@@ -89,31 +97,31 @@ def schema_statements() -> list[str]:
         f'CREATE INDEX predicate_name_text IF NOT EXISTS '
         f'FOR (n:{names.PREDICATE_NAME_LABEL}) ON (n.normalized_text)',
         f'CREATE INDEX entity_name_hub_source IF NOT EXISTS '
-        f'FOR (h:{names.ENTITY_NAME_HUB_LABEL}) ON (h.source)',
+        f'FOR (h:{names.LOCAL_ENTITY_NAME_HUB_LABEL}) ON (h.source)',
         f'CREATE INDEX entity_name_hub_form IF NOT EXISTS '
-        f'FOR (h:{names.ENTITY_NAME_HUB_LABEL}) ON (h.canonical_form)',
+        f'FOR (h:{names.LOCAL_ENTITY_NAME_HUB_LABEL}) ON (h.canonical_form)',
         f'CREATE INDEX entity_name_hub_normalized IF NOT EXISTS '
-        f'FOR (h:{names.ENTITY_NAME_HUB_LABEL}) ON (h.normalized_form)',
+        f'FOR (h:{names.LOCAL_ENTITY_NAME_HUB_LABEL}) ON (h.normalized_form)',
         f'CREATE INDEX predicate_name_hub_source IF NOT EXISTS '
-        f'FOR (h:{names.PREDICATE_NAME_HUB_LABEL}) ON (h.source)',
+        f'FOR (h:{names.LOCAL_PREDICATE_NAME_HUB_LABEL}) ON (h.source)',
         f'CREATE INDEX predicate_name_hub_form IF NOT EXISTS '
-        f'FOR (h:{names.PREDICATE_NAME_HUB_LABEL}) ON (h.canonical_form)',
+        f'FOR (h:{names.LOCAL_PREDICATE_NAME_HUB_LABEL}) ON (h.canonical_form)',
         f'CREATE INDEX predicate_name_hub_normalized IF NOT EXISTS '
-        f'FOR (h:{names.PREDICATE_NAME_HUB_LABEL}) ON (h.normalized_form)',
-        f'CREATE CONSTRAINT meta_entity_name_hub_uuid IF NOT EXISTS '
-        f'FOR (h:{names.META_ENTITY_NAME_HUB_LABEL}) '
+        f'FOR (h:{names.LOCAL_PREDICATE_NAME_HUB_LABEL}) ON (h.normalized_form)',
+        f'CREATE CONSTRAINT global_entity_name_hub_uuid IF NOT EXISTS '
+        f'FOR (h:{names.GLOBAL_ENTITY_NAME_HUB_LABEL}) '
         f'REQUIRE h.uuid IS UNIQUE',
-        f'CREATE INDEX meta_entity_name_hub_form IF NOT EXISTS '
-        f'FOR (h:{names.META_ENTITY_NAME_HUB_LABEL}) ON (h.canonical_form)',
-        f'CREATE INDEX meta_entity_name_hub_normalized IF NOT EXISTS '
-        f'FOR (h:{names.META_ENTITY_NAME_HUB_LABEL}) ON (h.normalized_form)',
-        f'CREATE CONSTRAINT meta_predicate_name_hub_uuid IF NOT EXISTS '
-        f'FOR (h:{names.META_PREDICATE_NAME_HUB_LABEL}) '
+        f'CREATE INDEX global_entity_name_hub_form IF NOT EXISTS '
+        f'FOR (h:{names.GLOBAL_ENTITY_NAME_HUB_LABEL}) ON (h.canonical_form)',
+        f'CREATE INDEX global_entity_name_hub_normalized IF NOT EXISTS '
+        f'FOR (h:{names.GLOBAL_ENTITY_NAME_HUB_LABEL}) ON (h.normalized_form)',
+        f'CREATE CONSTRAINT global_predicate_name_hub_uuid IF NOT EXISTS '
+        f'FOR (h:{names.GLOBAL_PREDICATE_NAME_HUB_LABEL}) '
         f'REQUIRE h.uuid IS UNIQUE',
-        f'CREATE INDEX meta_predicate_name_hub_form IF NOT EXISTS '
-        f'FOR (h:{names.META_PREDICATE_NAME_HUB_LABEL}) ON (h.canonical_form)',
-        f'CREATE INDEX meta_predicate_name_hub_normalized IF NOT EXISTS '
-        f'FOR (h:{names.META_PREDICATE_NAME_HUB_LABEL}) ON (h.normalized_form)',
+        f'CREATE INDEX global_predicate_name_hub_form IF NOT EXISTS '
+        f'FOR (h:{names.GLOBAL_PREDICATE_NAME_HUB_LABEL}) ON (h.canonical_form)',
+        f'CREATE INDEX global_predicate_name_hub_normalized IF NOT EXISTS '
+        f'FOR (h:{names.GLOBAL_PREDICATE_NAME_HUB_LABEL}) ON (h.normalized_form)',
         f'CREATE VECTOR INDEX node_content IF NOT EXISTS '
         f'FOR (n:{nodes.NODE_LABEL}) ON (n.embedding) '
         f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
@@ -130,54 +138,72 @@ def schema_statements() -> list[str]:
         f'FOR (e:{entities.ENTITY_LABEL}) ON (e.embedding) '
         f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
         f'`vector.similarity_function`: "cosine"}}}}',
+        f'CREATE VECTOR INDEX event_embedding IF NOT EXISTS '
+        f'FOR (e:{events.EVENT_LABEL}) ON (e.embedding) '
+        f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
+        f'`vector.similarity_function`: "cosine"}}}}',
         f'CREATE VECTOR INDEX predicate_embedding IF NOT EXISTS '
         f'FOR (p:{predicates.PREDICATE_LABEL}) ON (p.embedding) '
         f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
         f'`vector.similarity_function`: "cosine"}}}}',
         f'CREATE CONSTRAINT entity_hub_uuid IF NOT EXISTS '
-        f'FOR (h:{hubs.ENTITY_HUB_LABEL}) '
+        f'FOR (h:{hubs.LOCAL_ENTITY_HUB_LABEL}) '
         f'REQUIRE h.uuid IS UNIQUE',
         f'CREATE INDEX entity_hub_source IF NOT EXISTS '
-        f'FOR (h:{hubs.ENTITY_HUB_LABEL}) ON (h.source)',
+        f'FOR (h:{hubs.LOCAL_ENTITY_HUB_LABEL}) ON (h.source)',
         f'CREATE VECTOR INDEX entity_hub_embedding IF NOT EXISTS '
-        f'FOR (h:{hubs.ENTITY_HUB_LABEL}) ON (h.embedding) '
+        f'FOR (h:{hubs.LOCAL_ENTITY_HUB_LABEL}) ON (h.embedding) '
+        f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
+        f'`vector.similarity_function`: "cosine"}}}}',
+        f'CREATE CONSTRAINT event_hub_uuid IF NOT EXISTS '
+        f'FOR (h:{local_event_hubs.LOCAL_HUB_LABEL}) REQUIRE h.uuid IS UNIQUE',
+        f'CREATE INDEX event_hub_source IF NOT EXISTS '
+        f'FOR (h:{local_event_hubs.LOCAL_HUB_LABEL}) ON (h.source)',
+        f'CREATE VECTOR INDEX event_hub_embedding IF NOT EXISTS '
+        f'FOR (h:{local_event_hubs.LOCAL_HUB_LABEL}) ON (h.embedding) '
         f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
         f'`vector.similarity_function`: "cosine"}}}}',
         f'CREATE CONSTRAINT predicate_hub_uuid IF NOT EXISTS '
-        f'FOR (h:{hubs.PREDICATE_HUB_LABEL}) '
+        f'FOR (h:{hubs.LOCAL_PREDICATE_HUB_LABEL}) '
         f'REQUIRE h.uuid IS UNIQUE',
         f'CREATE INDEX predicate_hub_source IF NOT EXISTS '
-        f'FOR (h:{hubs.PREDICATE_HUB_LABEL}) ON (h.source)',
+        f'FOR (h:{hubs.LOCAL_PREDICATE_HUB_LABEL}) ON (h.source)',
         f'CREATE VECTOR INDEX predicate_hub_embedding IF NOT EXISTS '
-        f'FOR (h:{hubs.PREDICATE_HUB_LABEL}) ON (h.embedding) '
+        f'FOR (h:{hubs.LOCAL_PREDICATE_HUB_LABEL}) ON (h.embedding) '
         f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
         f'`vector.similarity_function`: "cosine"}}}}',
-        f'CREATE CONSTRAINT meta_entity_hub_uuid IF NOT EXISTS '
-        f'FOR (h:{hubs.META_ENTITY_HUB_LABEL}) '
+        f'CREATE CONSTRAINT global_entity_hub_uuid IF NOT EXISTS '
+        f'FOR (h:{hubs.GLOBAL_ENTITY_HUB_LABEL}) '
         f'REQUIRE h.uuid IS UNIQUE',
-        f'CREATE VECTOR INDEX meta_entity_hub_embedding IF NOT EXISTS '
-        f'FOR (h:{hubs.META_ENTITY_HUB_LABEL}) ON (h.embedding) '
+        f'CREATE VECTOR INDEX global_entity_hub_embedding IF NOT EXISTS '
+        f'FOR (h:{hubs.GLOBAL_ENTITY_HUB_LABEL}) ON (h.embedding) '
         f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
         f'`vector.similarity_function`: "cosine"}}}}',
-        f'CREATE CONSTRAINT meta_predicate_hub_uuid IF NOT EXISTS '
-        f'FOR (h:{hubs.META_PREDICATE_HUB_LABEL}) '
+        f'CREATE CONSTRAINT global_event_hub_uuid IF NOT EXISTS '
+        f'FOR (h:{local_event_hubs.GLOBAL_HUB_LABEL}) REQUIRE h.uuid IS UNIQUE',
+        f'CREATE VECTOR INDEX global_event_hub_embedding IF NOT EXISTS '
+        f'FOR (h:{local_event_hubs.GLOBAL_HUB_LABEL}) ON (h.embedding) '
+        f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
+        f'`vector.similarity_function`: "cosine"}}}}',
+        f'CREATE CONSTRAINT global_predicate_hub_uuid IF NOT EXISTS '
+        f'FOR (h:{hubs.GLOBAL_PREDICATE_HUB_LABEL}) '
         f'REQUIRE h.uuid IS UNIQUE',
-        f'CREATE VECTOR INDEX meta_predicate_hub_embedding IF NOT EXISTS '
-        f'FOR (h:{hubs.META_PREDICATE_HUB_LABEL}) ON (h.embedding) '
+        f'CREATE VECTOR INDEX global_predicate_hub_embedding IF NOT EXISTS '
+        f'FOR (h:{hubs.GLOBAL_PREDICATE_HUB_LABEL}) ON (h.embedding) '
         f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
         f'`vector.similarity_function`: "cosine"}}}}',
         f'CREATE CONSTRAINT triplet_hub_uuid IF NOT EXISTS '
-        f'FOR (h:{hubs.TRIPLET_HUB_LABEL}) REQUIRE h.uuid IS UNIQUE',
+        f'FOR (h:{hubs.LOCAL_TRIPLET_HUB_LABEL}) REQUIRE h.uuid IS UNIQUE',
         f'CREATE INDEX triplet_hub_source IF NOT EXISTS '
-        f'FOR (h:{hubs.TRIPLET_HUB_LABEL}) ON (h.source)',
+        f'FOR (h:{hubs.LOCAL_TRIPLET_HUB_LABEL}) ON (h.source)',
         f'CREATE VECTOR INDEX triplet_hub_embedding IF NOT EXISTS '
-        f'FOR (h:{hubs.TRIPLET_HUB_LABEL}) ON (h.embedding) '
+        f'FOR (h:{hubs.LOCAL_TRIPLET_HUB_LABEL}) ON (h.embedding) '
         f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
         f'`vector.similarity_function`: "cosine"}}}}',
-        f'CREATE CONSTRAINT meta_triplet_hub_uuid IF NOT EXISTS '
-        f'FOR (h:{hubs.META_TRIPLET_HUB_LABEL}) REQUIRE h.uuid IS UNIQUE',
-        f'CREATE VECTOR INDEX meta_triplet_hub_embedding IF NOT EXISTS '
-        f'FOR (h:{hubs.META_TRIPLET_HUB_LABEL}) ON (h.embedding) '
+        f'CREATE CONSTRAINT global_triplet_hub_uuid IF NOT EXISTS '
+        f'FOR (h:{hubs.GLOBAL_TRIPLET_HUB_LABEL}) REQUIRE h.uuid IS UNIQUE',
+        f'CREATE VECTOR INDEX global_triplet_hub_embedding IF NOT EXISTS '
+        f'FOR (h:{hubs.GLOBAL_TRIPLET_HUB_LABEL}) ON (h.embedding) '
         f'OPTIONS {{indexConfig: {{`vector.dimensions`: {dimension}, '
         f'`vector.similarity_function`: "cosine"}}}}',
         f'CREATE VECTOR INDEX procedure_embedding IF NOT EXISTS '
@@ -218,12 +244,8 @@ def schema_statements() -> list[str]:
         f'`vector.similarity_function`: "cosine"}}}}',
         f'CREATE CONSTRAINT card_uuid IF NOT EXISTS '
         f'FOR (c:{learning.CARD_LABEL}) REQUIRE c.uuid IS UNIQUE',
-        f'CREATE INDEX card_hub_uuid IF NOT EXISTS '
-        f'FOR (c:{learning.CARD_LABEL}) ON (c.hub_uuid)',
         f'CREATE INDEX card_due IF NOT EXISTS '
         f'FOR (c:{learning.CARD_LABEL}) ON (c.fsrs_due)',
-        f'CREATE INDEX card_status IF NOT EXISTS '
-        f'FOR (c:{learning.CARD_LABEL}) ON (c.status)',
         f'CREATE CONSTRAINT review_uuid IF NOT EXISTS '
         f'FOR (r:{learning.REVIEW_LABEL}) REQUIRE r.uuid IS UNIQUE',
         f'CREATE INDEX review_card_uuid IF NOT EXISTS '
@@ -237,16 +259,19 @@ _VECTOR_INDEX_NAMES = {
     'node_content',
     'statement_embedding',
     'entity_embedding',
+    'event_embedding',
     'predicate_embedding',
     'entity_hub_embedding',
+    'event_hub_embedding',
     'predicate_hub_embedding',
-    'meta_entity_hub_embedding',
-    'meta_predicate_hub_embedding',
+    'global_entity_hub_embedding',
+    'global_event_hub_embedding',
+    'global_predicate_hub_embedding',
     'triplet_hub_embedding',
-    'meta_triplet_hub_embedding',
+    'global_triplet_hub_embedding',
     'procedure_embedding',
-    'meta_statement_hub_embedding',
-    'meta_procedure_hub_embedding',
+    'global_statement_hub_embedding',
+    'global_procedure_hub_embedding',
     'statement_hub_embedding',
     'procedure_hub_embedding',
 }

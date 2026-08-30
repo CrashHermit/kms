@@ -1,6 +1,20 @@
 """Log-friendly formatting helpers."""
 
+import time
+
 SNIPPET_LIMIT = 80
+
+
+def elapsed_ms(start: float) -> float:
+    """Rounds elapsed milliseconds from a ``time.perf_counter`` start stamp.
+
+    Args:
+        start: A ``time.perf_counter()`` timestamp captured before the span.
+
+    Returns:
+        Elapsed wall-clock time in milliseconds, rounded to hundredths.
+    """
+    return round((time.perf_counter() - start) * 1000, 2)
 
 
 def elide(value: object, limit: int = SNIPPET_LIMIT) -> str:

@@ -1,4 +1,5 @@
 import asyncio
+import logging
 
 import httpx
 import pytest
@@ -163,3 +164,47 @@ def test_local_reranker_orders_scores_and_ties(monkeypatch):
 class _NoopRerankerManager:
     async def aensure_reranker_started(self):
         return None
+
+
+def test_local_reranker_logs_structured_info(monkeypatch, caplog):
+    def handler(request):
+        return httpx.Response(
+            200,
+            json={
+                'results': [
+                    {'index': 0, 'relevance_score': 0.5},
+                    {'index': 1, 'relevance_score': 0.9},
+                ]
+            },
+        )
+
+    monkeypatch.setattr(
+        reranker.serve,
+        'retrieval_server_manager',
+        lambda: _NoopRerankerManager(),
+    )
+    monkeypatch.setattr(
+        reranker,
+        '_http_client',
+        lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), base_url='http://local/v1'
+        ),
+    )
+    with caplog.at_level(logging.INFO, logger='kms.core.reranker'):
+        results = asyncio.run(
+            reranker.Reranker(model='fake').rerank(
+                'test query', ['doc a', 'doc b'], top_n=2
+            )
+        )
+
+    assert results == [
+        {'index': 1, 'relevance_score': 0.9},
+        {'index': 0, 'relevance_score': 0.5},
+    ]
+    # The INFO record carries candidate count, selected count, query, documents,
+    # results, and duration.
+    assert '2 candidates -> 2 selected' in caplog.text
+    assert 'query=test query' in caplog.text
+    assert 'documents=' in caplog.text
+    assert 'results=' in caplog.text
+    assert 'duration=' in caplog.text

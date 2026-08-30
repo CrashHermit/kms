@@ -4,9 +4,11 @@ import logging
 from typing import cast
 
 import dspy
-from pydantic import BaseModel, Field
 
 from kms import config
+from kms.construction.pedagogical_window_readiness import (
+    PedagogicalWindowReadinessRouter,
+)
 from kms.core import (
     context_window,
     models,
@@ -19,27 +21,12 @@ from kms.core import (
 logger = logging.getLogger(__name__)
 
 
-class PedagogicalNodeInput(BaseModel):
-    """Text-only local input for pedagogical boundary detection."""
-
-    local_index: int = Field(
-        description='Zero-based window position; the only valid span endpoint reference.',
-    )
-    node_type: str = Field(
-        description='Canonical node type for the projected source node.',
-    )
-    node_text: str = Field(
-        description='Canonical node text; numbers here are content, not positions.',
-    )
-
-
 class Signature(dspy.Signature):
     r"""
     Find the boundaries of every pedagogical unit in this node run. Return
-    inclusive spans of zero-based local ordinal indices. This is purely
-    structural:
-    do not decide whether a unit is a statement, procedure, or something to
-    skip. A later role-typing pass makes that decision.
+    inclusive spans of one-based local ordinal indices. This is purely
+    structural: do not decide whether a unit is a statement, procedure, or
+    something to skip. A later role-typing pass makes that decision.
 
     FIND EVERY UNIT. Emit one span for each labelled definition, theorem,
     proposition, lemma, corollary, axiom, law, model, rule, or principle; each
@@ -69,48 +56,58 @@ class Signature(dspy.Signature):
       it is nearby. If a fragment cannot be assigned confidently, leave it
       outside every span rather than corrupting a neighbouring unit.
 
-    OUTPUT ONLY spans over the supplied nodes, using local ordinal indices.
-    IMPORTANT: the bracketed number displayed on each node is its zero-based
-    local index in this supplied window. Use that local index for span
-    endpoints. Do not use numbers from the node text—such as exercise numbers,
-    page numbers, years, or quantities—as span endpoints. If the window
-    contains N nodes, every inclusive span must have both endpoints in the
-    range 0 through N-1; a one-node window can only produce span (0, 0) or no
-    span. Never emit an endpoint beyond the final supplied node. Return spans in
-    document order,
-    with no overlap or duplicate ownership. Do not skip a clearly labelled or
-    numbered unit.
-    Include a unit that is unfinished at the end of the window. Return an empty
-    list when no unit is present.
+    OUTPUT ONLY spans over the supplied nodes, using the explicit one-based
+    `index` values. Do not use numbers from node text—such as exercise numbers,
+    page numbers, years, or quantities—as span endpoints. If the window contains
+    N nodes, every inclusive span must have both endpoints in the range 1
+    through N; a one-node window can only produce span (1, 1) or no span.
+    Never emit an endpoint beyond the final supplied node. Return spans in
+    document order, with no overlap or duplicate ownership.
+    Emit each exact span at most once. If uncertain, omit it rather than
+    repeating it.
+    Include a unit unfinished at the end of the window. Return an empty list
+    when no unit is present.
     """
 
-    current_nodes: list[PedagogicalNodeInput] = dspy.InputField(
+    current_nodes: list[models.NodeInput] = dspy.InputField(
         description=(
-            'Ordered local text records. Use only local_index for span '
-            'endpoints; node_text numbers are content. Image descriptions '
-            'appear as node_text, and no image assets or bytes are included.'
+            'Ordered local node records with one-based index, node_type, and '
+            'text. Use only index for span endpoints; text numbers are content.'
         )
     )
     spans: list[walker.Span] = dspy.OutputField(
-        description='Every pedagogical unit found in current_nodes, as position spans, in '
-        'document order — declarative statements, worked examples, exercises, '
-        'and prescribed procedures alike. Boundaries only — do NOT classify '
-        'them. Empty list if none.'
+        description=(
+            'Every pedagogical unit as inclusive one-based spans in document '
+            'order. Empty list if none.'
+        )
     )
 
 
 def _pedagogical_inputs(
     nodes: list[context_window.ContextNode],
-) -> list[PedagogicalNodeInput]:
-    """Projects context nodes without exposing assets or source identity."""
+) -> list[models.NodeInput]:
+    """Projects context nodes as one-based structured model inputs."""
     return [
-        PedagogicalNodeInput(
-            local_index=node.position,
-            node_type=node.type or '',
-            node_text=node.content or '',
-        )
-        for node in nodes
+        context_window.node_input(node, local_index)
+        for local_index, node in enumerate(nodes)
     ]
+
+
+def _deduplicate_spans(
+    spans: list[walker.Span],
+) -> tuple[list[walker.Span], list[walker.Span]]:
+    """Keeps first ownership declaration for each exact span."""
+    unique: list[walker.Span] = []
+    duplicates: list[walker.Span] = []
+    seen: set[tuple[int, int]] = set()
+    for span in spans:
+        key = (span.start, span.end)
+        if key in seen:
+            duplicates.append(span)
+            continue
+        seen.add(key)
+        unique.append(span)
+    return unique, duplicates
 
 
 class PedagogicalComponentFinder(module.Module):
@@ -127,87 +124,127 @@ class PedagogicalComponentFinder(module.Module):
         super().__init__(language_model, recorder)
         self.predictor.demos = [  # pyright: ignore[reportAttributeAccessIssue]
             dspy.Example(
-                current_nodes=_pedagogical_inputs([
-                    context_window.ContextNode(
-                        position=0,
-                        type='paragraph',
-                        content="**Exercise 1.2.1:** Sketch the slope field for $y' = e^{x-y}$.",
-                    ),
-                    context_window.ContextNode(
-                        position=1,
-                        type='paragraph',
-                        content="**Exercise 1.2.2:** Sketch the slope field for $y' = x^2$.",
-                    ),
-                    context_window.ContextNode(
-                        position=2,
-                        type='paragraph',
-                        content="**Exercise 1.2.3:** Sketch the slope field for $y' = y^2$.",
-                    ),
-                ]),
+                current_nodes=_pedagogical_inputs(
+                    [
+                        context_window.ContextNode(
+                            position=0,
+                            type='paragraph',
+                            content="**Exercise 1.2.1:** Sketch the slope field for $y' = e^{x-y}$.",
+                        ),
+                        context_window.ContextNode(
+                            position=1,
+                            type='paragraph',
+                            content="**Exercise 1.2.2:** Sketch the slope field for $y' = x^2$.",
+                        ),
+                        context_window.ContextNode(
+                            position=2,
+                            type='paragraph',
+                            content="**Exercise 1.2.3:** Sketch the slope field for $y' = y^2$.",
+                        ),
+                    ]
+                ),
                 spans=[
-                    walker.Span(start=0, end=0),
                     walker.Span(start=1, end=1),
                     walker.Span(start=2, end=2),
+                    walker.Span(start=3, end=3),
                 ],
             ).with_inputs('current_nodes'),
             dspy.Example(
-                current_nodes=_pedagogical_inputs([
-                    context_window.ContextNode(
-                        position=0,
-                        type='paragraph',
-                        content='**Exercise 1.2.7:** Let $\\{x_n\\}$ be a sequence.',
-                    ),
-                    context_window.ContextNode(
-                        position=1,
-                        type='list',
-                        content='a) Show that $\\lim x_n = 0$ iff $\\lim |x_n| = 0$.',
-                    ),
-                    context_window.ContextNode(
-                        position=2,
-                        type='list',
-                        content='b) Find an example where $\\{|x_n|\\}$ converges and $\\{x_n\\}$ diverges.',
-                    ),
-                ]),
-                spans=[walker.Span(start=0, end=2)],
+                current_nodes=_pedagogical_inputs(
+                    [
+                        context_window.ContextNode(
+                            position=0,
+                            type='paragraph',
+                            content='**Exercise 1.2.7:** Let $\\{x_n\\}$ be a sequence.',
+                        ),
+                        context_window.ContextNode(
+                            position=1,
+                            type='list',
+                            content='a) Show that $\\lim x_n = 0$ iff $\\lim |x_n| = 0$.',
+                        ),
+                        context_window.ContextNode(
+                            position=2,
+                            type='list',
+                            content='b) Find an example where $\\{|x_n|\\}$ converges and $\\{x_n\\}$ diverges.',
+                        ),
+                    ]
+                ),
+                spans=[walker.Span(start=1, end=3)],
             ).with_inputs('current_nodes'),
             dspy.Example(
-                current_nodes=_pedagogical_inputs([
-                    context_window.ContextNode(
-                        position=0,
-                        type='paragraph',
-                        content='**Theorem 2.1.10.** Every bounded monotone sequence converges.',
-                    ),
-                    context_window.ContextNode(
-                        position=1,
-                        type='paragraph',
-                        content='Proof. Assume without loss of generality that the sequence is increasing.',
-                    ),
-                ]),
-                spans=[walker.Span(start=0, end=1)],
+                current_nodes=_pedagogical_inputs(
+                    [
+                        context_window.ContextNode(
+                            position=0,
+                            type='paragraph',
+                            content='**Theorem 2.1.10.** Every bounded monotone sequence converges.',
+                        ),
+                        context_window.ContextNode(
+                            position=1,
+                            type='paragraph',
+                            content='Proof. Assume without loss of generality that the sequence is increasing.',
+                        ),
+                    ]
+                ),
+                spans=[walker.Span(start=1, end=2)],
             ).with_inputs('current_nodes'),
         ]
 
     def encode(self, **inputs: object) -> dict[str, object]:
-        """Projects modality-neutral context into structured text records."""
+        """Projects modality-neutral context into structured node records."""
         current_nodes = cast(
             list[context_window.ContextNode], inputs['current_nodes']
         )
         return {'current_nodes': _pedagogical_inputs(current_nodes)}
 
     def decode(self, prediction, **inputs) -> list[walker.Span]:
-        """Returns validated, non-overlapping local unit spans."""
-        spans = module.as_list(prediction.spans)
-        if any(not isinstance(span, walker.Span) for span in spans):
+        """Converts one-based model spans to validated zero-based spans."""
+        raw_spans = module.as_list(prediction.spans)
+        if any(not isinstance(span, walker.Span) for span in raw_spans):
             raise TypeError('spans must contain walker.Span values')
-        return walker.validate_spans(
-            spans,
-            len(cast(list[context_window.ContextNode], inputs['current_nodes'])),
+        window_nodes = cast(
+            list[context_window.ContextNode], inputs['current_nodes']
         )
+        window_size = len(window_nodes)
+        converted: list[walker.Span] = []
+        for index, span in enumerate(raw_spans):
+            if not 1 <= span.start <= span.end <= window_size:
+                raise ValueError(
+                    f'invalid one-based span {index} '
+                    f'({span.start}, {span.end}) for window of '
+                    f'{window_size} node(s); converted values would be '
+                    f'({span.start - 1}, {span.end - 1})'
+                )
+            converted.append(
+                walker.Span(start=span.start - 1, end=span.end - 1)
+            )
+        unique, duplicates = _deduplicate_spans(converted)
+        if duplicates:
+            logger.warning(
+                'finder removed %d duplicate span(s): %s',
+                len(duplicates),
+                [(span.start, span.end) for span in duplicates],
+            )
+        try:
+            return walker.validate_spans(unique, window_size)
+        except ValueError:
+            logger.error(
+                'finder span validation failed: raw_spans=%s '
+                'converted_spans=%s window_nodes=%s',
+                [span.model_dump() for span in raw_spans],
+                [span.model_dump() for span in unique],
+                [
+                    node.model_dump()
+                    for node in _pedagogical_inputs(window_nodes)
+                ],
+            )
+            raise
 
 
 async def find_spans(
     nodes: list[models.SourceNode],
     module: PedagogicalComponentFinder,
+    readiness_module: PedagogicalWindowReadinessRouter | None = None,
     budget: int | None = None,
     max_budget: int | None = None,
 ) -> list[list[int]]:
@@ -216,6 +253,7 @@ async def find_spans(
     Args:
         nodes: The node stream, with ids assigned.
         module: The finder module.
+        readiness_module: Window-readiness router that gates span extraction.
         budget: Initial look-ahead token budget per window.
         max_budget: Cap on window growth before banking as-is.
 
@@ -226,7 +264,11 @@ async def find_spans(
         budget = config.get_settings().stages.finders.lookahead_budget
     if max_budget is None:
         max_budget = config.get_settings().stages.finders.max_lookahead_budget
-    spans = await walker.find_spans(nodes, module, budget, max_budget)
+    if readiness_module is None:
+        raise TypeError('readiness_module is required')
+    spans = await walker.find_spans(
+        nodes, module, readiness_module, budget, max_budget
+    )
     logger.info(
         'pedagogical component finder: %d nodes -> %d span(s)',
         len(nodes),
@@ -236,10 +278,13 @@ async def find_spans(
 
 
 class PedagogicalComponentFinderNode:
-    """Graph node that finds unit spans outside instruction members."""
-
-    def __init__(self, module: PedagogicalComponentFinder) -> None:
+    def __init__(
+        self,
+        module: PedagogicalComponentFinder,
+        readiness_module: PedagogicalWindowReadinessRouter,
+    ) -> None:
         self.module = module
+        self.readiness_module = readiness_module
 
     async def run(self, state: state.State) -> dict:
         """Finds unit spans over nodes not claimed by an instruction.
@@ -262,7 +307,11 @@ class PedagogicalComponentFinderNode:
             if position not in excluded_positions
         ]
         eligible = [nodes[position] for position in eligible_positions]
-        local_spans = await find_spans(eligible, module=self.module)
+        local_spans = await find_spans(
+            eligible,
+            module=self.module,
+            readiness_module=self.readiness_module,
+        )
         spans = [
             [eligible_positions[position] for position in span]
             for span in local_spans

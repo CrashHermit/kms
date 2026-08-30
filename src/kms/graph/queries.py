@@ -7,20 +7,23 @@ The MERGE_* constants are the idempotent upsert statements used by
 from collections.abc import Callable
 
 from kms import config
+from kms.core import models
 from kms.graph import (
     entities,
-    entity_hubs,
+    events,
     hubs,
     instructions,
     learning,
+    local_event_hubs,
     names,
     nodes,
-    predicate_hubs,
     predicates,
     procedures,
     statements,
     triplets,
 )
+from kms.graph import local_entity_hubs as entity_hubs
+from kms.graph import local_predicate_hubs as predicate_hubs
 from kms.graph import (
     local_procedure_hubs as procedure_hubs,
 )
@@ -104,6 +107,15 @@ MERGE_INSTRUCTION_MEMBERS = (
     f'MATCH (n:{nodes.NODE_LABEL} {{uuid: pair.node}}), '
     f'(i:{instructions.INSTRUCTION_LABEL} {{uuid: pair.instruction}}) '
     f'MERGE (n)-[r:MEMBER_OF]->(i) '
+    f'ON CREATE SET r.created_at = $now '
+    f'SET r.modified_at = $now'
+)
+
+MERGE_INSTRUCTION_GOVERNANCE = (
+    f'UNWIND $pairs AS pair '
+    f'MATCH (i:{instructions.INSTRUCTION_LABEL} {{uuid: pair.instruction}}), '
+    f'(s:{statements.STATEMENT_LABEL} {{uuid: pair.statement}}) '
+    f'MERGE (i)-[r:GOVERNS]->(s) '
     f'ON CREATE SET r.created_at = $now '
     f'SET r.modified_at = $now'
 )
@@ -285,11 +297,15 @@ def merge_global_procedure_alignments_query() -> str:
 
 
 def delete_global_statement_hubs_query() -> str:
-    return f'MATCH (h:{statement_hubs.hub_label(tier="global")}) DETACH DELETE h'
+    return (
+        f'MATCH (h:{statement_hubs.hub_label(tier="global")}) DETACH DELETE h'
+    )
 
 
 def delete_global_procedure_hubs_query() -> str:
-    return f'MATCH (h:{procedure_hubs.hub_label(tier="global")}) DETACH DELETE h'
+    return (
+        f'MATCH (h:{procedure_hubs.hub_label(tier="global")}) DETACH DELETE h'
+    )
 
 
 def delete_statement_hubs_query() -> str:
@@ -434,9 +450,9 @@ def merge_triplet_hub_edges_query(tier: str) -> str:
         f'(s:{hubs.META_ENTITY_HUB_LABEL} {{uuid: row.subject_hub}}), '
         f'(p:{hubs.META_PREDICATE_HUB_LABEL} {{uuid: row.predicate_hub}}), '
         f'(o:{hubs.META_ENTITY_HUB_LABEL} {{uuid: row.object_hub}}) '
-        f'MERGE (h)-[:HAS_META_SUBJECT_HUB]->(s) '
-        f'MERGE (h)-[:HAS_META_PREDICATE_HUB]->(p) '
-        f'MERGE (h)-[:HAS_META_OBJECT_HUB]->(o)'
+        f'MERGE (h)-[:HAS_GLOBAL_SUBJECT_HUB]->(s) '
+        f'MERGE (h)-[:HAS_GLOBAL_PREDICATE_HUB]->(p) '
+        f'MERGE (h)-[:HAS_GLOBAL_OBJECT_HUB]->(o)'
     )
 
 
@@ -445,7 +461,7 @@ def merge_triplet_hub_evidence_query() -> str:
         f'UNWIND $pairs AS pair '
         f'MATCH (t:{triplets.TRIPLET_LABEL} {{uuid: pair.triplet}}), '
         f'(h:{hubs.TRIPLET_HUB_LABEL} {{uuid: pair.hub}}) '
-        f'MERGE (t)-[:INSTANCE_OF]->(h)'
+        f'MERGE (t)-[:CANONICAL]->(h)'
     )
 
 
@@ -468,7 +484,8 @@ def delete_triplet_hubs_query(tier: str, source: str | None = None) -> str:
 MERGE_HAS_SUBJECT = (
     f'UNWIND $pairs AS pair '
     f'MATCH (t:{triplets.TRIPLET_LABEL} {{uuid: pair.triplet}}), '
-    f'(e:{entities.ENTITY_LABEL} {{uuid: pair.entity}}) '
+    f'(e {{uuid: pair.entity}}) '
+    f'WHERE e:{entities.ENTITY_LABEL} OR e:{events.EVENT_LABEL} '
     f'MERGE (t)-[r:HAS_SUBJECT]->(e) '
     f'ON CREATE SET r.created_at = $now '
     f'SET r.modified_at = $now'
@@ -486,7 +503,8 @@ MERGE_HAS_PROCEDURE = (
 MERGE_HAS_OBJECT = (
     f'UNWIND $pairs AS pair '
     f'MATCH (t:{triplets.TRIPLET_LABEL} {{uuid: pair.triplet}}), '
-    f'(e:{entities.ENTITY_LABEL} {{uuid: pair.entity}}) '
+    f'(e {{uuid: pair.entity}}) '
+    f'WHERE e:{entities.ENTITY_LABEL} OR e:{events.EVENT_LABEL} '
     f'MERGE (t)-[r:HAS_OBJECT]->(e) '
     f'ON CREATE SET r.created_at = $now '
     f'SET r.modified_at = $now'
@@ -920,15 +938,12 @@ async def triplet_hub_groups(
         params = {'source': source} if source else {}
         cypher = (
             f'MATCH (t:{triplets.TRIPLET_LABEL})\n'
-            f'MATCH (t)-[:HAS_SUBJECT]->'
-            f'(s:{entities.ENTITY_LABEL})-[:CANONICAL]->'
-            f'(sh:{hubs.ENTITY_HUB_LABEL})\n'
-            f'MATCH (t)-[:HAS_PREDICATE]->'
-            f'(p:{predicates.PREDICATE_LABEL})-[:CANONICAL]->'
+            f'MATCH (t)-[:HAS_SUBJECT]->(s)-[:CANONICAL]->(sh)'
+            f' WHERE sh:{hubs.ENTITY_HUB_LABEL}\n'
+            f'MATCH (t)-[:HAS_PREDICATE]->(p:{predicates.PREDICATE_LABEL})-[:CANONICAL]->'
             f'(ph:{hubs.PREDICATE_HUB_LABEL})\n'
-            f'MATCH (t)-[:HAS_OBJECT]->'
-            f'(o:{entities.ENTITY_LABEL})-[:CANONICAL]->'
-            f'(oh:{hubs.ENTITY_HUB_LABEL})\n'
+            f'MATCH (t)-[:HAS_OBJECT]->(o)-[:CANONICAL]->(oh)'
+            f' WHERE oh:{hubs.ENTITY_HUB_LABEL}\n'
             f'MATCH (src:{nodes.SOURCE_LABEL} {{uuid: t.source}})\n'
             f'{source_filter}'
             f'WITH sh, ph, oh, src.key AS source, t, s, p, o\n'
@@ -1038,8 +1053,8 @@ _VECTOR_INDEX_LABELS = {
     'global_statement_hub_embedding': statement_hubs.GLOBAL_STATEMENT_HUB_LABEL,
     'local_procedure_hub_embedding': procedure_hubs.LOCAL_PROCEDURE_HUB_LABEL,
     'global_procedure_hub_embedding': procedure_hubs.GLOBAL_PROCEDURE_HUB_LABEL,
-    'triplet_hub_embedding': hubs.TRIPLET_HUB_LABEL,
-    'meta_triplet_hub_embedding': hubs.META_TRIPLET_HUB_LABEL,
+    'triplet_hub_embedding': hubs.LOCAL_TRIPLET_HUB_LABEL,
+    'meta_triplet_hub_embedding': hubs.GLOBAL_TRIPLET_HUB_LABEL,
 }
 
 
@@ -1188,11 +1203,11 @@ MERGE_CARDS = (
     f'SET c += row, c.modified_at = $now'
 )
 
-MERGE_CARD_HUB_EDGES = (
+MERGE_CARD_TARGET_EDGES = (
     f'UNWIND $pairs AS pair '
-    f'MATCH (h) WHERE h.uuid = pair.hub '
+    f'MATCH (target {{uuid: pair.target}}) '
     f'MATCH (c:{learning.CARD_LABEL} {{uuid: pair.card}}) '
-    f'MERGE (h)-[:HAS_CARD]->(c)'
+    f'MERGE (target)-[:HAS_CARD]->(c)'
 )
 
 MERGE_REVIEWS = (
@@ -1214,13 +1229,136 @@ def merge_cards_query() -> str:
     return MERGE_CARDS
 
 
-def merge_card_hub_edges_query() -> str:
-    return MERGE_CARD_HUB_EDGES
+def merge_card_target_edges_query() -> str:
+    return MERGE_CARD_TARGET_EDGES
 
 
 def merge_reviews_query() -> str:
     return MERGE_REVIEWS
 
 
+def _card_hub_labels(target_kind: models.CardTargetKind) -> tuple[str, str]:
+    """Returns the local and global hub labels for one card target kind."""
+    if target_kind == models.CardTargetKind.PROCEDURE:
+        return procedure_hubs.hub_label(), procedure_hubs.hub_label(
+            tier='global'
+        )
+    if target_kind == models.CardTargetKind.TRIPLET:
+        return hubs.local_triplet_hub_label(), hubs.global_triplet_hub_label()
+    return hubs.local_hub_label(target_kind), hubs.global_hub_label(target_kind)
+
+
+async def card_hub_context(
+    session_factory: Callable,
+    *,
+    target_kind: models.CardTargetKind,
+    hub_uuid: str,
+) -> dict:
+    """Loads a selected local card hub and optional global context."""
+    local_label, global_label = _card_hub_labels(target_kind)
+    cypher = (
+        f'MATCH (h:{local_label} {{uuid: $hub_uuid}}) '
+        f'MATCH (src:{nodes.SOURCE_LABEL} {{uuid: h.source}}) '
+        f'OPTIONAL MATCH (h)-[:ALIGNS_TO]->(g:{global_label}) '
+        f'RETURN h.uuid AS local_uuid, h.canonical_name AS local_name, '
+        f'h.description AS local_description, g.uuid AS global_uuid, '
+        f'g.canonical_name AS global_name, g.description AS global_description, '
+        f'src.key AS source'
+    )
+    async with session_factory() as session:
+        result = await session.run(cypher, hub_uuid=hub_uuid)
+        record = await result.single()
+    if record is None:
+        raise ValueError(f'card hub not found: {hub_uuid}')
+    return dict(record)
+
+
+def _card_targets_query(target_kind: models.CardTargetKind) -> str:
+    """Builds the source-local component lookup for one hub type."""
+    local_label, _ = _card_hub_labels(target_kind)
+    if target_kind in {
+        models.CardTargetKind.ENTITY,
+        models.CardTargetKind.EVENT,
+    }:
+        label = hubs.component_label(target_kind)
+        return (
+            f'MATCH (target:{label})-[:CANONICAL]->'
+            f'(hub:{local_label} {{uuid: $hub_uuid}}) '
+            f'MATCH (src:{nodes.SOURCE_LABEL} {{uuid: target.source}}) '
+            f'RETURN target.uuid AS uuid, $kind AS kind, src.key AS source, '
+            f'target.name + CASE WHEN target.description IS NULL THEN "" '
+            f'ELSE ": " + target.description END AS content, {{}} AS context '
+        )
+    if target_kind == models.CardTargetKind.TRIPLET:
+        return (
+            f'MATCH (target:{triplets.TRIPLET_LABEL})-[:CANONICAL]->'
+            f'(hub:{local_label} {{uuid: $hub_uuid}}) '
+            f'MATCH (target)-[:HAS_SUBJECT]->(subject:{entities.ENTITY_LABEL}) '
+            f'MATCH (target)-[:HAS_PREDICATE]->(predicate:{predicates.PREDICATE_LABEL}) '
+            f'MATCH (target)-[:HAS_OBJECT]->(object:{entities.ENTITY_LABEL}) '
+            f'MATCH (src:{nodes.SOURCE_LABEL} {{uuid: target.source}}) '
+            f'RETURN target.uuid AS uuid, $kind AS kind, src.key AS source, '
+            f'subject.name + " --" + predicate.predicate + "--> " + object.name AS content, '
+            f'{{subject: {{uuid: subject.uuid, name: subject.name, description: subject.description}}, '
+            f'predicate: {{uuid: predicate.uuid, name: predicate.predicate, description: predicate.description}}, '
+            f'object: {{uuid: object.uuid, name: object.name, description: object.description}}}} AS context '
+            f'ORDER BY target.uuid'
+        )
+    return (
+        f'MATCH (target:{procedures.PROCEDURE_LABEL})-[:CANONICAL]->'
+        f'(hub:{local_label} {{uuid: $hub_uuid}}) '
+        f'MATCH (src:{nodes.SOURCE_LABEL} {{uuid: target.source}}) '
+        f'OPTIONAL MATCH (statement:{statements.STATEMENT_LABEL})-[:HAS_PROCEDURE]->(target) '
+        f'RETURN target.uuid AS uuid, $kind AS kind, src.key AS source, '
+        f'coalesce(target.procedure, target.description) AS content, '
+        f'{{statement_uuid: statement.uuid, kind: target.kind}} AS context '
+        f'ORDER BY target.uuid'
+    )
+
+
+async def card_targets_for_hub(
+    session_factory: Callable,
+    *,
+    target_kind: models.CardTargetKind,
+    hub_uuid: str,
+) -> list[dict]:
+    """Loads non-empty source-local targets connected to one local hub."""
+    cypher = _card_targets_query(target_kind)
+    async with session_factory() as session:
+        result = await session.run(cypher, hub_uuid=hub_uuid, kind=target_kind)
+        rows = [dict(record) async for record in result]
+    targets: list[dict] = []
+    for row in rows:
+        content = row.get('content')
+        if not isinstance(content, str) or not content.strip():
+            if target_kind == models.CardTargetKind.PROCEDURE:
+                raise ValueError(
+                    f'procedure target has no content: {row["uuid"]}'
+                )
+            continue
+        targets.append(row)
+    return targets
+
+
 def merge_card_review_edges_query() -> str:
     return MERGE_CARD_REVIEW_EDGES
+
+
+async def event_learning_candidates(session_factory: Callable) -> list[dict]:
+    """Reads global event hubs with local hubs and source evidence."""
+    cypher = (
+        f'MATCH (g:{local_event_hubs.hub_label("meta")})'
+        f'<-[:ALIGNS_TO]-(h:{local_event_hubs.hub_label()})\n'
+        f'MATCH (src:{nodes.SOURCE_LABEL} {{uuid: h.source}})\n'
+        f'OPTIONAL MATCH (e:{events.EVENT_LABEL})-[:CANONICAL]->(h)\n'
+        f'WITH g, h, src, collect(DISTINCT {{uuid: e.uuid, name: e.name, '
+        f'description: e.description}}) AS evidence\n'
+        f'RETURN g.uuid AS global_uuid, g.canonical_name AS global_name, '
+        f'g.description AS global_description, h.uuid AS local_uuid, '
+        f'h.canonical_name AS local_name, h.description AS local_description, '
+        f'src.key AS source, [item IN evidence WHERE item.uuid IS NOT NULL] AS evidence\n'
+        f'ORDER BY g.uuid, h.uuid'
+    )
+    async with session_factory() as session:
+        result = await session.run(cypher)
+        return [dict(record) async for record in result]

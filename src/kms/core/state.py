@@ -11,17 +11,16 @@ class State(TypedDict, total=False):
     """The mutable state threaded through every graph node.
 
     All keys are optional; worker results are merged in via the
-    Annotated reducer fields. ``source_key`` and ``source_metadata`` identify
-    the source being ingested, ``documents`` carries mutable page documents,
-    and ``nodes`` carries the flattened parsed stream before persistence.
+    Annotated reducer fields. ``source`` identifies the source being ingested,
+    ``documents`` carries mutable page documents, and ``nodes`` carries the
+    flattened parsed stream before persistence.
     """
 
     pdf_path: str
     output_dir: str
     pages: list[int] | None
+    ocr_response_path: str | None
     source: models.Source
-    source_key: str
-    source_metadata: dict[str, str]
     construction_bundle: Annotated[
         models.ConstructionBundle,
         lambda old, new: new if new is not None else old,
@@ -96,24 +95,8 @@ def to_construction_bundle(current_state: State) -> models.ConstructionBundle:
         return copy.deepcopy(existing_bundle)
 
     source = current_state.get('source')
-    if source is None:
-        source_key = current_state.get('source_key', '').strip()
-        if not source_key:
-            raise ValueError('state must contain a non-empty source')
-        source = models.Source(
-            key=source_key,
-            metadata=dict(current_state.get('source_metadata', {})),
-            documents=list(current_state.get('documents', [])),
-        )
-    elif not source.key:
-        source = models.Source(
-            key=current_state.get('source_key', '').strip(),
-            metadata=dict(source.metadata),
-            ocr_response=source.ocr_response,
-            documents=list(source.documents),
-        )
-        if not source.key:
-            raise ValueError('state must contain a non-empty source')
+    if source is None or not source.key or not source.key.strip():
+        raise ValueError('state must contain a non-empty source')
 
     return models.ConstructionBundle(
         source=copy.deepcopy(source),

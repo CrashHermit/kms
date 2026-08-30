@@ -41,7 +41,9 @@ def validate_spans(spans: list[Span], window_size: int) -> list[Span]:
     return spans
 
 
-def window_from(nodes: list[models.SourceNode], cursor: int, budget: int) -> int:
+def window_from(
+    nodes: list[models.SourceNode], cursor: int, budget: int
+) -> int:
     """Extends a window from cursor until the token budget is filled.
 
     The node at the cursor is always included even if it alone exceeds
@@ -66,25 +68,32 @@ def window_from(nodes: list[models.SourceNode], cursor: int, budget: int) -> int
     return end
 
 
-
-
 async def find_spans(
     nodes: list[models.SourceNode],
     module: Any,
+    readiness_module: Any,
     budget: int,
     max_budget: int,
 ) -> list[list[int]]:
-    """Finds spans across the node stream via growing look-ahead windows.
+    """Finds spans across the node stream via readiness-gated look-ahead windows.
 
-    Walks the stream in growing look-ahead windows; a span that reaches
-    the window edge grows the window before being banked. ``module`` is
-    any finder exposing ``aforward(current_nodes=...) -> list[Span]``.
+    The readiness module certifies whether the current window is sufficient
+    to determine every unit boundary that starts within it. An unready window
+    doubles its token budget and retries from the identical cursor without
+    consulting the span finder; at document end the finder always runs once
+    and its output is authoritative. A ready window runs the finder exactly
+    once, banks its spans, and advances past the final emitted span.
+
+    ``module`` and ``readiness_module`` each expose
+    ``aforward(current_nodes=...)``; the readiness module yields ``is_complete``
+    and the finder yields ``list[Span]`` of zero-based local positions.
 
     Args:
         nodes: The node stream.
-        module: The finder module.
+        module: The span finder module.
+        readiness_module: The window-readiness module.
         budget: Initial look-ahead token budget per window.
-        max_budget: Cap on window growth before banking as-is.
+        max_budget: Cap on window growth before the look-ahead limit fails.
 
     Returns:
         A list of member position lists, one per span.
@@ -99,6 +108,26 @@ async def find_spans(
             window = nodes[cursor:end]
             reached_doc_end = end == node_count
 
+            is_complete = await readiness_module.aforward(
+                current_nodes=context_window.project_nodes(window)
+            )
+
+            if not is_complete and not reached_doc_end:
+                if size >= max_budget:
+                    raise ValueError(
+                        f'window readiness span reaches the window edge at '
+                        f'cursor {cursor} after reaching the '
+                        f'{max_budget}-token look-ahead limit'
+                    )
+                logger.debug(
+                    'grow: unready window at cursor %d; budget %d -> %d',
+                    cursor,
+                    size,
+                    size * 2,
+                )
+                size *= 2
+                continue
+
             spans = await module.aforward(
                 current_nodes=context_window.project_nodes(window)
             )
@@ -107,29 +136,8 @@ async def find_spans(
             if not clean:
                 cursor = end
                 break
-            bounded = [span for span in clean if span.end < len(window) - 1]
 
-            if reached_doc_end:
-                to_bank, advance = clean, end
-            elif size >= max_budget:
-                raise ValueError(
-                    f'finder span reaches the window edge at cursor {cursor} '
-                    f'after reaching the {max_budget}-token look-ahead limit'
-                )
-            elif bounded:
-                to_bank, advance = bounded, cursor + bounded[-1].end + 1
-            else:
-                logger.debug(
-                    'grow: sole span reaches the window edge at cursor %d; '
-                    'budget %d -> %d',
-                    cursor,
-                    size,
-                    size * 2,
-                )
-                size *= 2
-                continue
-
-            for span in to_bank:
+            for span in clean:
                 member_positions = [
                     cursor + position
                     for position in range(span.start, span.end + 1)
@@ -140,7 +148,7 @@ async def find_spans(
                         f'a position outside node stream at cursor {cursor}'
                     )
                 spans_out.append(member_positions)
-            cursor = advance
+            cursor = cursor + clean[-1].end + 1
             break
 
     return spans_out

@@ -8,7 +8,7 @@ from pathlib import Path
 os.environ['KMS_MODELS__MODULES__FORMATTER__BASE_URL'] = (
     'http://127.0.0.1:8080/v1'
 )
-os.environ['KMS_MODELS__MODULES__FORMATTER__MODEL'] = 'openai/qwen3.5-9b'
+os.environ['KMS_MODELS__MODULES__FORMATTER__MODEL'] = 'openai/qwen3.5-9b-text'
 os.environ['KMS_MODELS__MODULES__FORMATTER__API_KEY'] = 'not-needed'
 
 from kms.construction import formatter  # noqa: E402

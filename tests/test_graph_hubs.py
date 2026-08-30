@@ -8,8 +8,8 @@ from kms.graph import hubs, queries, schema, writer
 def test_hub_labels_distinguish_source_and_meta_tiers():
     assert hubs.hub_label('entity', tier='source') == 'LocalEntityHub'
     assert hubs.hub_label('predicate', tier='source') == 'LocalPredicateHub'
-    assert hubs.meta_hub_label('entity') == 'GlobalEntityHub'
-    assert hubs.meta_hub_label('predicate') == 'GlobalPredicateHub'
+    assert hubs.global_hub_label('entity') == 'GlobalEntityHub'
+    assert hubs.global_hub_label('predicate') == 'GlobalPredicateHub'
 
 
 def test_hub_label_rejects_unknown_tier():
@@ -27,8 +27,8 @@ def test_component_label_rejects_unknown_kind():
 
 def test_alignment_query_uses_distinct_relationship_and_labels():
     cypher = queries.merge_alignment_query(
-        hubs.ENTITY_HUB_LABEL,
-        hubs.META_ENTITY_HUB_LABEL,
+        hubs.LOCAL_ENTITY_HUB_LABEL,
+        hubs.GLOBAL_ENTITY_HUB_LABEL,
     )
 
     assert '(s:LocalEntityHub {uuid: pair.source_hub})' in cypher
@@ -42,11 +42,11 @@ def test_schema_contains_meta_hub_constraints_and_indexes():
     statements = schema.schema_statements()
     combined = '\n'.join(statements)
 
-    assert 'meta_entity_hub_uuid' in combined
-    assert 'meta_predicate_hub_uuid' in combined
-    assert 'meta_entity_hub_embedding' in combined
-    assert 'meta_predicate_hub_embedding' in combined
-    assert '`vector.dimensions`: 4096' in combined
+    assert 'global_entity_hub_uuid' in combined
+    assert 'global_predicate_hub_uuid' in combined
+    assert 'global_entity_hub_embedding' in combined
+    assert 'global_predicate_hub_embedding' in combined
+    assert '`vector.dimensions`: 1024' in combined
 
 
 def test_meta_hub_properties_require_stable_id_and_omit_source():
@@ -74,11 +74,11 @@ def test_meta_hub_properties_require_stable_id_and_omit_source():
         )
 
 
-def test_meta_hub_uuid_is_stable_for_identity():
-    assert hubs.meta_hub_uuid('entity', 'source-hub-a') == hubs.meta_hub_uuid(
+def test_global_hub_uuid_is_stable_for_identity():
+    assert hubs.global_hub_uuid('entity', 'source-hub-a') == hubs.global_hub_uuid(
         'entity', 'source-hub-a'
     )
-    assert hubs.meta_hub_uuid('entity', 'source-hub-a') != hubs.meta_hub_uuid(
+    assert hubs.global_hub_uuid('entity', 'source-hub-a') != hubs.global_hub_uuid(
         'entity', 'source-hub-b'
     )
 
@@ -137,12 +137,12 @@ def test_attach_meta_hubs_replaces_alignment_and_updates_aliases(
     monkeypatch.setattr(writer.queries, 'all_entity_source_hubs', fake_source_hubs)
     monkeypatch.setattr(
         writer.queries,
-        'qualified_entity_meta_hub_uuids',
+        'qualified_entity_global_hub_uuids',
         fake_qualified_meta_hubs,
     )
 
     async def scenario():
-        await writer.attach_entity_meta_hubs(
+        await writer.attach_entity_global_hubs(
             [
                 {
                     'source_hub': 'source-hub-a',
@@ -152,7 +152,6 @@ def test_attach_meta_hubs_replaces_alignment_and_updates_aliases(
                 }
             ],
             aliases=[{'hub': 'meta-hub-a', 'aliases': ['graph']}],
-            subsumption_edges=[],
             session_factory=lambda: _Session(),
         )
 
@@ -175,13 +174,13 @@ def test_attach_meta_hubs_rejects_unqualified_new_meta_hubs(monkeypatch):
     monkeypatch.setattr(writer.queries, 'all_entity_source_hubs', fake_source_hubs)
     monkeypatch.setattr(
         writer.queries,
-        'qualified_entity_meta_hub_uuids',
+        'qualified_entity_global_hub_uuids',
         fake_qualified_meta_hubs,
     )
 
     with pytest.raises(ValueError, match='requires two distinct sources'):
         asyncio.run(
-            writer.attach_entity_meta_hubs(
+            writer.attach_entity_global_hubs(
                 [
                     {
                         'source_hub': 'source-hub-a',
@@ -191,7 +190,6 @@ def test_attach_meta_hubs_rejects_unqualified_new_meta_hubs(monkeypatch):
                     }
                 ],
                 aliases=[],
-                subsumption_edges=[],
                 session_factory=lambda: None,
             )
         )
@@ -241,7 +239,7 @@ def test_clear_invalid_meta_hubs_targets_underqualified_meta_nodes():
             captured.append(cypher)
 
     async def scenario():
-        await writer.clear_invalid_entity_meta_hubs(
+        await writer.clear_invalid_entity_global_hubs(
             session_factory=lambda: _Session(),
         )
 
@@ -255,7 +253,7 @@ def test_clear_invalid_meta_hubs_targets_underqualified_meta_nodes():
     ]
 
 
-def test_clear_meta_hubs_targets_only_meta_label():
+def test_clear_global_hubs_targets_only_global_label():
     captured = []
 
     class _Session:
@@ -269,7 +267,7 @@ def test_clear_meta_hubs_targets_only_meta_label():
             captured.append(cypher)
 
     async def scenario():
-        await writer.clear_entity_meta_hubs(
+        await writer.clear_entity_global_hubs(
             session_factory=lambda: _Session(),
         )
 

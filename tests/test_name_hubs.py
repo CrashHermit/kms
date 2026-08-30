@@ -1,7 +1,10 @@
 import asyncio
+from importlib import import_module
 
 from kms.construction import name_hubs
 from kms.graph import names, queries, schema
+
+global_name_hubs = import_module('kms.postprocessing.global.name_hubs')
 
 
 def _row(uuid: str, text: str) -> dict:
@@ -62,9 +65,9 @@ def test_name_hub_ids_are_source_and_membership_stable():
     assert first != names.name_hub_uuid(
         'entity', 'book-b', ['name-a', 'name-b']
     )
-    assert names.meta_name_hub_uuid(
+    assert names.global_name_hub_uuid(
         'entity', ['source-name-a', 'source-name-b']
-    ) == names.meta_name_hub_uuid('entity', ['source-name-b', 'source-name-a'])
+    ) == names.global_name_hub_uuid('entity', ['source-name-b', 'source-name-a'])
 
 
 def test_assertion_query_contains_lexical_occurrence_edges():
@@ -113,9 +116,9 @@ def test_lexical_name_hub_query_uses_exact_normalized_phrase():
 
 
 def test_meta_name_hubs_use_alignment_edges():
-    merge = queries.merge_meta_name_hubs_query('entity')
+    merge = queries.merge_global_name_hubs_query('entity')
     align = queries.merge_name_hub_alignments_query('predicate')
-    delete = queries.delete_meta_name_hubs_query('entity')
+    delete = queries.delete_global_name_hubs_query('entity')
 
     assert 'GlobalEntityNameHub' in merge
     assert 'LocalPredicateNameHub' in align
@@ -173,28 +176,27 @@ def test_meta_name_hubs_rebuild_from_qualified_source_hubs(monkeypatch):
         async def aforward(self, **kwargs):
             calls.append(('llm', kwargs['surface_forms']))
             return 0
-
-    monkeypatch.setattr(name_hubs.queries, 'all_name_hubs', fake_all_name_hubs)
-    monkeypatch.setattr(name_hubs.writer, 'clear_meta_name_hubs', fake_clear)
     monkeypatch.setattr(
-        name_hubs.writer, 'persist_meta_name_hubs', fake_persist
+        global_name_hubs.queries, 'all_name_hubs', fake_all_name_hubs
+    )
+    monkeypatch.setattr(global_name_hubs.writer, 'clear_global_name_hubs', fake_clear)
+    monkeypatch.setattr(
+        global_name_hubs.writer, 'persist_global_name_hubs', fake_persist
     )
     monkeypatch.setattr(
-        name_hubs, '_LexicalDefinitionSynthesizer', lambda lm: _Synth()
+        global_name_hubs, '_LexicalDefinitionSynthesizer', lambda lm: _Synth()
     )
     monkeypatch.setattr(
-        name_hubs.llm, 'gate', lambda max_concurrency: asyncio.Semaphore(1)
+        global_name_hubs.llm, 'gate', lambda max_concurrency: asyncio.Semaphore(1)
     )
 
     async def fake_judged_groups(rows, kind, **kwargs):
         return names.lexical_groups(
             rows, threshold=kwargs['similarity_threshold']
         )
-
-    monkeypatch.setattr(name_hubs, '_judged_groups', fake_judged_groups)
-
+    monkeypatch.setattr(global_name_hubs, '_judged_groups', fake_judged_groups)
     result = asyncio.run(
-        name_hubs.rebuild_meta(
+        global_name_hubs.rebuild_global(
             'entity',
             language_model=object(),
             session_factory=object(),
@@ -202,9 +204,8 @@ def test_meta_name_hubs_rebuild_from_qualified_source_hubs(monkeypatch):
         )
     )
 
-    assert result == {'name_hubs': 1, 'source_name_hubs': 3}
     assert calls[0] == ('clear', 'entity')
-    assert ('llm', ['color', 'colour']) in calls
+    assert result == {'global_name_hubs': 1, 'local_name_hubs': 3}
     persisted = next(call[2] for call in calls if call[0] == 'persist')
     assert persisted[0]['members'] == ['source-name-a', 'source-name-b']
     assert persisted[0]['sources'] == ['book-a', 'book-b']
@@ -224,10 +225,10 @@ def test_schema_contains_lexical_constraints_and_text_indexes():
     assert 'predicate_name_hub_form' in combined
     assert 'entity_name_hub_normalized' in combined
     assert 'predicate_name_hub_normalized' in combined
-    assert 'meta_entity_name_hub_uuid' in combined
-    assert 'meta_predicate_name_hub_uuid' in combined
-    assert 'meta_entity_name_hub_normalized' in combined
-    assert 'meta_predicate_name_hub_normalized' in combined
+    assert 'global_entity_name_hub_uuid' in combined
+    assert 'global_predicate_name_hub_uuid' in combined
+    assert 'global_entity_name_hub_normalized' in combined
+    assert 'global_predicate_name_hub_normalized' in combined
 
 
 def test_exact_lexical_duplicates_merge_without_judgment(monkeypatch):
@@ -241,7 +242,7 @@ def test_exact_lexical_duplicates_merge_without_judgment(monkeypatch):
     class _Judge:
         async def aforward(self, **kwargs):
             calls.append(kwargs)
-            return 'Separate'
+            return False
 
     monkeypatch.setattr(
         name_hubs, '_LexicalMembershipJudge', lambda lm: _Judge()
@@ -278,7 +279,7 @@ def test_lexical_judge_rejects_a_deterministic_candidate_before_naming(
     class _Judge:
         async def aforward(self, **kwargs):
             calls.append(kwargs)
-            return 'Separate'
+            return False
 
     monkeypatch.setattr(
         name_hubs, '_LexicalMembershipJudge', lambda lm: _Judge()

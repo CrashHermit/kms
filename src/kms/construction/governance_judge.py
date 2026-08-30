@@ -1,24 +1,9 @@
 """Binary judge: does an instruction govern a statement?"""
 
 import dspy
-from pydantic import BaseModel, Field
 
 from kms import config
-from kms.core import context_window, module, recording
-
-
-class GovernanceNodeInput(BaseModel):
-    """Text-only local input for governance judging."""
-
-    local_index: int = Field(
-        description='Zero-based position in this input list.'
-    )
-    node_type: str = Field(
-        description='Canonical node type for the projected source node.'
-    )
-    node_text: str = Field(
-        description='Canonical node text; numbers here are content, not positions.'
-    )
+from kms.core import context_window, models, module, recording
 
 
 class GovernanceJudgeSignature(dspy.Signature):
@@ -34,19 +19,19 @@ class GovernanceJudgeSignature(dspy.Signature):
     Return False if the statement is independent or belongs to another section.
     """
 
-    instruction_nodes: list[GovernanceNodeInput] = dspy.InputField(
+    instruction_nodes: list[models.NodeInput] = dspy.InputField(
         description=(
             'Ordered instruction text records. Image descriptions appear as '
-            'node_text; no image assets or bytes are included.'
+            'text; no image assets or bytes are included.'
         )
     )
-    context_before: list[GovernanceNodeInput] = dspy.InputField(
+    context_before: list[models.NodeInput] = dspy.InputField(
         description='Ordered context records before statement_nodes; reference only.',
     )
-    statement_nodes: list[GovernanceNodeInput] = dspy.InputField(
+    statement_nodes: list[models.NodeInput] = dspy.InputField(
         description='Ordered statement records being governed.',
     )
-    context_after: list[GovernanceNodeInput] = dspy.InputField(
+    context_after: list[models.NodeInput] = dspy.InputField(
         description='Ordered context records after statement_nodes; reference only.',
     )
     governs: bool = dspy.OutputField(
@@ -88,17 +73,14 @@ class GovernanceJudge(module.Module):
     def decode(self, prediction, **inputs) -> bool:
         return module.require_bool(prediction.governs, 'governs')
 
+
 def _governance_inputs(
     nodes: list[context_window.ContextNode],
-) -> list[GovernanceNodeInput]:
+) -> list[models.NodeInput]:
     """Projects context nodes without exposing assets or source identity."""
     return [
-        GovernanceNodeInput(
-            local_index=node.position,
-            node_type=node.type or '',
-            node_text=node.content or '',
-        )
-        for node in nodes
+        context_window.node_input(node, index)
+        for index, node in enumerate(nodes)
     ]
 
 

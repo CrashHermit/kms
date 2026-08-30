@@ -93,7 +93,7 @@ def test_statement_procedure_builder_logs_composition(caplog):
             {
                 'nodes': _nodes('a', 'b'),
                 'spans': [[0], [1]],
-                'source_key': 'book.pdf',
+                'source': models.Source(key='book.pdf'),
             }
         )
     )
@@ -114,7 +114,7 @@ def test_statement_procedure_builder_logs_zero_derivations(caplog):
             {
                 'nodes': _nodes('a'),
                 'spans': [[0]],
-                'source_key': 'book.pdf',
+                'source': models.Source(key='book.pdf'),
             }
         )
     )

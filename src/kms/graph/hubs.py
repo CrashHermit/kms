@@ -5,12 +5,13 @@ from uuid import NAMESPACE_URL, uuid5
 from kms.graph import nodes
 
 LOCAL_ENTITY_HUB_LABEL = 'LocalEntityHub'
+LOCAL_EVENT_HUB_LABEL = 'LocalEventHub'
 LOCAL_PREDICATE_HUB_LABEL = 'LocalPredicateHub'
 GLOBAL_ENTITY_HUB_LABEL = 'GlobalEntityHub'
+GLOBAL_EVENT_HUB_LABEL = 'GlobalEventHub'
 GLOBAL_PREDICATE_HUB_LABEL = 'GlobalPredicateHub'
 LOCAL_TRIPLET_HUB_LABEL = 'LocalTripletHub'
 GLOBAL_TRIPLET_HUB_LABEL = 'GlobalTripletHub'
-
 ENTITY_HUB_LABEL = LOCAL_ENTITY_HUB_LABEL
 PREDICATE_HUB_LABEL = LOCAL_PREDICATE_HUB_LABEL
 META_ENTITY_HUB_LABEL = GLOBAL_ENTITY_HUB_LABEL
@@ -18,16 +19,20 @@ META_PREDICATE_HUB_LABEL = GLOBAL_PREDICATE_HUB_LABEL
 TRIPLET_HUB_LABEL = LOCAL_TRIPLET_HUB_LABEL
 META_TRIPLET_HUB_LABEL = GLOBAL_TRIPLET_HUB_LABEL
 
-_SOURCE_LABELS = {
-    'entity': ENTITY_HUB_LABEL,
-    'predicate': PREDICATE_HUB_LABEL,
+
+_LOCAL_LABELS = {
+    'entity': LOCAL_ENTITY_HUB_LABEL,
+    'event': LOCAL_EVENT_HUB_LABEL,
+    'predicate': LOCAL_PREDICATE_HUB_LABEL,
 }
-_META_LABELS = {
-    'entity': META_ENTITY_HUB_LABEL,
-    'predicate': META_PREDICATE_HUB_LABEL,
+_GLOBAL_LABELS = {
+    'entity': GLOBAL_ENTITY_HUB_LABEL,
+    'event': GLOBAL_EVENT_HUB_LABEL,
+    'predicate': GLOBAL_PREDICATE_HUB_LABEL,
 }
 _COMPONENT_LABELS = {
     'entity': 'Entity',
+    'event': 'Event',
     'predicate': 'Predicate',
 }
 
@@ -42,10 +47,10 @@ def component_label(kind: str) -> str:
 
 def hub_label(kind: str, tier: str) -> str:
     """Returns the Neo4j label for a hub kind and tier."""
-    if tier == 'source':
-        labels = _SOURCE_LABELS
-    elif tier == 'meta':
-        labels = _META_LABELS
+    if tier in {'local', 'source'}:
+        labels = _LOCAL_LABELS
+    elif tier in {'global', 'meta'}:
+        labels = _GLOBAL_LABELS
     else:
         raise ValueError(f'unknown hub tier: {tier}')
     try:
@@ -56,25 +61,20 @@ def hub_label(kind: str, tier: str) -> str:
 
 def local_hub_label(kind: str) -> str:
     """Returns the local semantic hub label."""
-    return hub_label(kind, tier='source')
+    return hub_label(kind, tier='local')
 
 
 def global_hub_label(kind: str) -> str:
     """Returns the global semantic hub label."""
-    return hub_label(kind, tier='meta')
-
-
-def meta_hub_label(kind: str) -> str:
-    """Returns the Neo4j label for a cross-source global hub."""
-    return global_hub_label(kind)
+    return hub_label(kind, tier='global')
 
 
 def triplet_hub_label(tier: str) -> str:
-    """Returns the label for a source-local or cross-source triplet hub."""
-    if tier == 'source':
-        return TRIPLET_HUB_LABEL
-    if tier == 'meta':
-        return META_TRIPLET_HUB_LABEL
+    """Returns the local or global triplet hub label."""
+    if tier in {'local', 'source'}:
+        return LOCAL_TRIPLET_HUB_LABEL
+    if tier in {'global', 'meta'}:
+        return GLOBAL_TRIPLET_HUB_LABEL
     raise ValueError(f'unknown triplet hub tier: {tier}')
 
 
@@ -96,9 +96,10 @@ def triplet_hub_uuid(
     object_hub: str,
 ) -> str:
     """Returns the stable id for an ordered canonical triplet tuple."""
-    if tier not in {'source', 'meta'}:
+    if tier not in {'local', 'source', 'global', 'meta'}:
         raise ValueError(f'unknown triplet hub tier: {tier}')
-    scope = source if tier == 'source' else 'meta'
+    is_local = tier in {'local', 'source'}
+    scope = source if is_local else 'meta'
     return uuid5(
         NAMESPACE_URL,
         f'{scope}#triplet_hub#{subject_hub}#{predicate_hub}#{object_hub}',
@@ -118,10 +119,10 @@ def triplet_hub_properties(
     hub_id: str,
 ) -> dict:
     """Builds properties for a derived TripletHub node."""
-    if tier == 'source' and source is None:
-        raise ValueError('source triplet hubs require a source')
-    if tier == 'meta' and source is not None:
-        raise ValueError('meta triplet hubs cannot have a source')
+    if tier in {'local', 'source'} and source is None:
+        raise ValueError('local triplet hubs require a source')
+    if tier in {'global', 'meta'} and source is not None:
+        raise ValueError('global triplet hubs cannot have a source')
     properties = {
         'uuid': hub_id,
         'source': nodes.source_uuid(source) if source else None,
@@ -141,7 +142,7 @@ def hub_uuid(kind: str, source: str, identity: str) -> str:
     return uuid5(NAMESPACE_URL, f'{source}#{kind}_hub#{identity}').hex
 
 
-def meta_hub_uuid(kind: str, identity: str) -> str:
+def global_hub_uuid(kind: str, identity: str) -> str:
     return uuid5(NAMESPACE_URL, f'meta#{kind}_hub#{identity}').hex
 
 

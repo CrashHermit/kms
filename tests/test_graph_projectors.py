@@ -38,7 +38,7 @@ def test_final_projector_is_noop_without_graph():
     result = asyncio.run(
         projectors.FinalProjectorNode(
             session_factory=None, neo4j_configured=False
-        ).run({'source_key': 'book'})
+        ).run({'source': models.Source(key='book')})
     )
     assert result == {'projected': False}
 
@@ -77,7 +77,7 @@ def test_final_projector_writes_complete_state(monkeypatch):
             lambda *args, _name=name, **kwargs: record(_name, *args, **kwargs),
         )
     state = {
-        'source_key': 'book',
+        'source': models.Source(key='book'),
         'nodes': [],
         'statements': [],
         'procedures': [],
@@ -101,7 +101,7 @@ def test_final_projector_persists_procedure_updates(monkeypatch):
     result = asyncio.run(
         projectors.FinalProjectorNode(object(), True).run(
             {
-                'source_key': 'book',
+                'source': models.Source(key='book'),
                 'generated_procedures': [],
                 'procedure_links': [],
             }
@@ -131,7 +131,7 @@ def test_final_projector_forwards_assertions(monkeypatch):
     )
     identity.assign_triplet_ids([triplet], 'book')
     state = {
-        'source_key': 'book',
+        'source': models.Source(key='book'),
         'nodes': [models.SourceNode(uuid='node-0', content='fact')],
         'triplets': [triplet],
         'entity_descriptions': {0: {'entity': 'description'}},

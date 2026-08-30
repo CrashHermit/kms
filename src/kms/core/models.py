@@ -5,7 +5,13 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 
 class TextNodeInput(BaseModel):
@@ -15,6 +21,95 @@ class TextNodeInput(BaseModel):
     node_type: str = Field(description='Canonical node type.')
     node_text: str = Field(description='Canonical node text.')
 
+
+class LineInput(BaseModel):
+    """One source line crossing a model-facing formatting boundary."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    index: int = Field(
+        strict=True,
+        description=(
+            'One-based line number in the supplied input records. '
+            'Numbers inside text are content, not coordinates.'
+        ),
+    )
+    text: str = Field(description='Complete source line text.')
+
+
+class LineSelection(BaseModel):
+    """One source line selected for a visual OCR correction."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    index: int = Field(
+        strict=True,
+        description=(
+            'One-based index of a supplied line containing a directly '
+            'visible OCR error.'
+        ),
+    )
+
+
+class NodeInput(BaseModel):
+    """One source node crossing a model-facing coordinate boundary."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    index: int = Field(
+        strict=True,
+        description=(
+            'One-based local node position in the supplied window. '
+            'Numbers inside text are content, not coordinates.'
+        ),
+    )
+    node_type: str = Field(description='Canonical source node type.')
+    text: str = Field(description='Complete canonical source node text.')
+
+
+class NodeContextInput(BaseModel):
+    """Shared model-facing context around one target document node."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    context_before: list[NodeInput]
+    target_node: NodeInput
+    context_after: list[NodeInput]
+
+
+class FactExtractionInput(NodeContextInput):
+    """Structured source context for atomic fact extraction."""
+
+
+class TermEnrichmentInput(NodeContextInput):
+    """Shared model-facing context with one or more terms to describe."""
+
+    terms: list[str] = Field(
+        description='Exact terms to describe; typically one per call.',
+    )
+
+
+class AtomicFact(BaseModel):
+    """One source-faithful atomic assertion."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    text: str = Field(min_length=1)
+
+    @field_validator('text')
+    @classmethod
+    def require_non_blank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError('fact text must be non-blank')
+        return value
+
+
+class FactExtractionOutput(BaseModel):
+    """Structured atomic facts returned by the extractor."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    facts: list[AtomicFact]
 
 
 class HubMentionInput(BaseModel):
@@ -30,15 +125,59 @@ class HubMentionInput(BaseModel):
     def from_record(cls, record: Mapping[str, Any]) -> 'HubMentionInput':
         name = record['name']
         aliases = [
-            alias
-            for alias in (record.get('aliases') or [])
-            if alias != name
+            alias for alias in (record.get('aliases') or []) if alias != name
         ]
         return cls(
             name=name,
             aliases=aliases,
             description=record.get('description'),
         )
+
+
+class TextPairInput(BaseModel):
+    """Two text values crossing a pairwise adjudication boundary."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    left: str
+    right: str
+    scope: str | None = None
+
+
+class HubMentionComparisonInput(BaseModel):
+    """Two structured hub mentions and their comparison scope."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    left: HubMentionInput
+    right: HubMentionInput
+    scope: str
+
+
+class HubSynthesisInput(BaseModel):
+    """Surface forms and descriptions crossing a synthesis boundary."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    surface_forms: list[str]
+    descriptions: list[str]
+    scope: str | None = None
+
+
+class EvidenceInput(BaseModel):
+    """Evidence texts crossing a synthesis boundary."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    evidence: list[str]
+
+
+class MergeDecision(BaseModel):
+    """Boolean pairwise merge decision."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    should_merge: bool = Field(strict=True)
 
 
 class SearchQuery(BaseModel):
@@ -61,6 +200,7 @@ class SearchQuery(BaseModel):
         if any(not part.node_text.strip() for part in self.parts):
             raise ValueError('search query parts must contain non-blank text')
         return self
+
 
 @dataclass(frozen=True, slots=True)
 class StatementEnrichmentInput:
@@ -262,6 +402,13 @@ class NodeType(StrEnum):
     INSTRUCTION = 'instruction'
 
 
+class NodeKind(StrEnum):
+    """Canonical assertion endpoint kinds."""
+
+    ENTITY = 'entity'
+    EVENT = 'event'
+
+
 @dataclass(frozen=True, slots=True)
 class VisualAsset:
     """One source visual asset in a source node's document order."""
@@ -319,6 +466,7 @@ class Procedure:
     member_positions: list[int] = field(default_factory=list)
     procedure: str | None = None
 
+
 @dataclass(slots=True)
 class FSRSState:
     """Current FSRS algorithm state for a card."""
@@ -355,24 +503,26 @@ class FSRSState:
         )
 
 
+class CardTargetKind(StrEnum):
+    """The durable source-local component type that owns a card."""
+
+    ENTITY = 'entity'
+    EVENT = 'event'
+    TRIPLET = 'triplet'
+    PROCEDURE = 'procedure'
+
+
 @dataclass(slots=True)
 class Card:
-    """A reviewable learning card attached to a hub.
-
-    Cards are the scheduling units. One hub (EntityHub, StatementHub,
-    ProcedureHub) can have multiple cards. Each card maintains its own
-    FSRS state.
-    """
+    """A reviewable learning card owned by one source-local component."""
 
     uuid: str
-    hub_uuid: str  # The hub this card belongs to
-    hub_kind: str  # 'entity' | 'statement' | 'procedure'
+    target_uuid: str
+    target_kind: CardTargetKind
     prompt: str = ''
     response: str = ''
-    status: CardStatus = CardStatus.ACTIVE
     fsrs: FSRSState = field(default_factory=FSRSState)
     created_at: str | None = None  # ISO datetime
-    source: str | None = None  # Source key this card was generated for
 
 
 @dataclass(frozen=True, slots=True)
@@ -411,7 +561,6 @@ class Statement:
     instruction_uuids: list[str] = field(default_factory=list)
 
 
-
 @dataclass(slots=True)
 class Document:
     """One page-level document produced by an ingestion provider."""
@@ -431,13 +580,6 @@ class Source:
     documents: list[Document] = field(default_factory=list)
 
 
-def source_key(source: Source | str | None) -> str | None:
-    """Returns a graph-compatible source key from canonical or legacy state."""
-    if isinstance(source, Source):
-        return source.key
-    return source
-
-
 @dataclass(slots=True)
 class Triplet:
     """A subject-predicate-object fact extracted from the source.
@@ -450,9 +592,12 @@ class Triplet:
     subject: str
     predicate: str
     object: str
+    subject_kind: NodeKind = NodeKind.ENTITY
+    object_kind: NodeKind = NodeKind.ENTITY
     evidence_positions: list[int] = field(default_factory=list)
     occurrence_uuids: dict[int, str] = field(default_factory=dict)
     entity_uuids: dict[tuple[int, str], str] = field(default_factory=dict)
+    event_uuids: dict[tuple[int, str], str] = field(default_factory=dict)
     predicate_uuids: dict[int, str] = field(default_factory=dict)
 
 
@@ -493,13 +638,17 @@ class ConstructionBundle:
         default_factory=list
     )
     entity_hub_bundle: HubBuildBundle | None = None
+    event_hub_bundle: HubBuildBundle | None = None
     predicate_hub_bundle: HubBuildBundle | None = None
     entity_hub_components: list[HubComponent] = field(default_factory=list)
+    event_hub_components: list[HubComponent] = field(default_factory=list)
     predicate_hub_components: list[HubComponent] = field(default_factory=list)
     triplet_memberships: list[TripletMembership] = field(default_factory=list)
     entity_hub_assignments: list[dict] = field(default_factory=list)
+    event_hub_assignments: list[dict] = field(default_factory=list)
     predicate_hub_assignments: list[dict] = field(default_factory=list)
     entity_hub_records: list[dict] = field(default_factory=list)
+    event_hub_records: list[dict] = field(default_factory=list)
     predicate_hub_records: list[dict] = field(default_factory=list)
     triplet_hubs: list[dict] = field(default_factory=list)
     statement_enrichments: list[dict] = field(default_factory=list)
