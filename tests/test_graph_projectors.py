@@ -18,12 +18,15 @@ def _patch_writers(monkeypatch):
         'persist_instructions',
         'persist_assertions',
         'persist_chain',
+        'clear_entity_hubs',
         'persist_entity_hubs',
+        'clear_predicate_hubs',
         'persist_predicate_hubs',
+        'clear_event_hubs',
+        'persist_event_hubs',
+        'attach_event_components',
         'attach_entity_components',
         'attach_predicate_components',
-        'clear_triplet_hubs',
-        'persist_triplet_hubs',
         'persist_statement_enrichment',
         'persist_procedure_enrichment',
         'clear_statement_hubs',
@@ -61,14 +64,20 @@ def test_final_projector_writes_complete_state(monkeypatch):
         'persist_instructions',
         'persist_assertions',
         'persist_chain',
+        'clear_entity_hubs',
         'persist_entity_hubs',
         'persist_predicate_hubs',
+        'clear_predicate_hubs',
         'attach_entity_components',
         'attach_predicate_components',
-        'persist_statement_enrichment',        'persist_procedure_enrichment',
+        'persist_statement_enrichment',
+        'persist_procedure_enrichment',
         'clear_statement_hubs',
         'persist_statement_hubs',
         'clear_procedure_hubs',
+        'clear_event_hubs',
+        'persist_event_hubs',
+        'attach_event_components',
         'persist_procedure_hubs',
     ):
         monkeypatch.setattr(
@@ -87,6 +96,16 @@ def test_final_projector_writes_complete_state(monkeypatch):
         'procedure_enrichments': [],
         'statement_hubs': [],
         'procedure_hubs': [],
+        'entity_hub_records': [{'uuid': 'entity-hub'}],
+        'entity_hub_assignments': [
+            {'component': 'entity', 'hub': 'entity-hub'}
+        ],
+        'predicate_hub_records': [{'uuid': 'predicate-hub'}],
+        'predicate_hub_assignments': [
+            {'component': 'predicate', 'hub': 'predicate-hub'}
+        ],
+        'event_hub_records': [{'uuid': 'event-hub'}],
+        'event_hub_assignments': [{'component': 'event', 'hub': 'event-hub'}],
     }
     result = asyncio.run(
         projectors.FinalProjectorNode(object(), True).run(state)
@@ -94,6 +113,17 @@ def test_final_projector_writes_complete_state(monkeypatch):
     assert result == {'projected': True}
     assert calls[0] == 'schema'
     assert 'persist_assertions' in calls
+    assert calls.index('clear_entity_hubs') < calls.index('persist_entity_hubs')
+    assert calls.index('clear_predicate_hubs') < calls.index(
+        'persist_predicate_hubs'
+    )
+    assert calls.index('clear_event_hubs') < calls.index('persist_event_hubs')
+    assert calls.index('persist_event_hubs') < calls.index(
+        'attach_event_components'
+    )
+    assert calls.index('attach_event_components') < calls.index(
+        'clear_predicate_hubs'
+    )
 
 
 def test_final_projector_persists_procedure_updates(monkeypatch):
@@ -117,7 +147,9 @@ def test_final_projector_forwards_assertions(monkeypatch):
     async def embed_source_nodes(nodes):
         return [[0.0] for _ in nodes]
 
-    monkeypatch.setattr(projectors.embeddings, 'embed_source_nodes', embed_source_nodes)
+    monkeypatch.setattr(
+        projectors.embeddings, 'embed_source_nodes', embed_source_nodes
+    )
 
     async def persist(*args, **kwargs):
         calls.append((args, kwargs))

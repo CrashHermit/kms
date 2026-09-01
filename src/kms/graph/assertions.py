@@ -40,21 +40,23 @@ def assertion_rows(
     predicate_descriptions: dict[int, dict[str, str | None]],
     entity_embeddings: dict[int, dict[str, list[float]]] | None = None,
     predicate_embeddings: dict[int, dict[str, list[float]]] | None = None,
+    event_descriptions: dict[int, dict[str, str | None]] | None = None,
+    event_embeddings: dict[int, dict[str, list[float]]] | None = None,
 ) -> dict:
-    """Builds entity/predicate rows and edge pairs for the assertion layer.
+    """Builds entity/event/predicate rows and edge pairs for assertions.
 
     Args:
         triplets: The extracted triplets.
         source: The raw source key.
-        entity_descriptions: Per-node map of entity name to description.
-        predicate_descriptions: Per-node map of predicate text to
-            description.
-        entity_embeddings: Per-node map of entity name to embedding.
-        predicate_embeddings: Per-node map of predicate text to embedding.
+        entity_descriptions: Per-node entity descriptions.
+        predicate_descriptions: Per-node predicate descriptions.
+        entity_embeddings: Per-node entity embeddings.
+        predicate_embeddings: Per-node predicate embeddings.
+        event_descriptions: Per-node event descriptions.
+        event_embeddings: Per-node event embeddings.
 
     Returns:
-        A dict with 'entities', 'predicates', 'subject_edges',
-        'object_edges', and 'predicate_edges' lists.
+        A dict with typed component rows, names, and assertion edge lists.
     """
     entity_rows: dict[str, dict] = {}
     event_rows: dict[str, dict] = {}
@@ -88,23 +90,47 @@ def assertion_rows(
                     f'triplet occurrence uuid {triplet_id!r} does not match '
                     f'expected {expected_triplet_id!r}'
                 )
+            subject_descriptions = (
+                event_descriptions
+                if triplet.subject_kind is models.NodeKind.EVENT
+                else entity_descriptions
+            )
+            subject_embeddings = (
+                event_embeddings
+                if triplet.subject_kind is models.NodeKind.EVENT
+                else entity_embeddings
+            )
             subject_id, subject_row = _endpoint(
                 triplet.subject_kind,
                 source,
                 node_position,
                 triplet.subject,
-                entity_descriptions.get(node_position, {}).get(triplet.subject),
-                (entity_embeddings or {})
+                (subject_descriptions or {})
                 .get(node_position, {})
                 .get(triplet.subject),
+                (subject_embeddings or {})
+                .get(node_position, {})
+                .get(triplet.subject),
+            )
+            object_descriptions = (
+                event_descriptions
+                if triplet.object_kind is models.NodeKind.EVENT
+                else entity_descriptions
+            )
+            object_embeddings = (
+                event_embeddings
+                if triplet.object_kind is models.NodeKind.EVENT
+                else entity_embeddings
             )
             object_id, object_row = _endpoint(
                 triplet.object_kind,
                 source,
                 node_position,
                 triplet.object,
-                entity_descriptions.get(node_position, {}).get(triplet.object),
-                (entity_embeddings or {})
+                (object_descriptions or {})
+                .get(node_position, {})
+                .get(triplet.object),
+                (object_embeddings or {})
                 .get(node_position, {})
                 .get(triplet.object),
             )

@@ -192,9 +192,9 @@ def test_aexecute_uses_operation_lease():
 
 def test_preset_ini_contains_configured_models(tmp_path):
     ini = serve._preset_ini(tmp_path)
-    assert '[gemma-4-e4b-qat]' in ini
+    assert '[gemma-4-e4b-qat-text]' in ini
     assert 'mmproj' in ini
-    assert 'ctx-size = 8192' in ini
+    assert 'ctx-size = 32768' in ini
 
 
 def test_default_router_uses_configured_preset_file(monkeypatch, tmp_path):
@@ -205,18 +205,19 @@ def test_default_router_uses_configured_preset_file(monkeypatch, tmp_path):
     assert (tmp_path / 'models' / 'kms-models.ini').exists()
 
 
-def test_default_retrieval_servers_are_cpu_only_and_separate():
+def test_default_retrieval_servers_use_configured_devices_and_batch_sizes():
     embedding = serve.default_embedding_server()._config
     reranker = serve.default_reranker_server()._config
     assert embedding.endpoint.endswith(':8081')
     assert reranker.endpoint.endswith(':8082')
     assert '--n-gpu-layers' in embedding.start
-    assert embedding.start[embedding.start.index('--n-gpu-layers') + 1] == '0'
+    assert embedding.start[embedding.start.index('--n-gpu-layers') + 1] == '999'
     assert '--device' in embedding.start
-    assert embedding.start[embedding.start.index('--device') + 1] == 'none'
+    assert embedding.start[embedding.start.index('--device') + 1] == 'CUDA0'
     assert '--device' in reranker.start
-    assert reranker.start[reranker.start.index('--device') + 1] == 'none'
+    assert reranker.start[reranker.start.index('--device') + 1] == 'CUDA0'
     assert '--reranking' in reranker.start
+    assert reranker.start[reranker.start.index('--ubatch-size') + 1] == '1024'
 
 
 def test_dedicated_server_reports_missing_model(monkeypatch, tmp_path):

@@ -38,6 +38,8 @@ def test_all_components_entity_returns_raw_source_key():
     cypher = '\n'.join(captured['queries'])
     assert 'src.key AS source' in cypher
     assert 'c.name AS name' in cypher
+    assert 'c.node_position AS node_position' in cypher
+    assert 'c.node_id' not in cypher
     assert 't.source AS source' not in cypher
 
 
@@ -54,6 +56,22 @@ def test_all_components_predicate_reads_predicate_field():
     cypher = '\n'.join(captured['queries'])
     assert 'src.key AS source' in cypher
     assert 'c.predicate AS name' in cypher
+
+
+def test_all_components_event_reads_event_name_and_label():
+    captured = {}
+
+    async def scenario():
+        await queries.all_event_components(
+            lambda: _capturing_session(captured), source='book-a'
+        )
+
+    asyncio.run(scenario())
+
+    cypher = '\n'.join(captured['queries'])
+    assert 'MATCH (c:Event)' in cypher
+    assert 'c.name AS name' in cypher
+    assert 'WHERE src.key = $source' in cypher
 
 
 def test_unassigned_components_exclude_canonicalized_records():
@@ -108,7 +126,7 @@ def test_qualified_meta_hub_query_requires_two_source_values():
     captured = {}
 
     async def scenario():
-        await queries.qualified_entity_global_hub_uuids(
+        await queries.qualified_entity_meta_hub_uuids(
             lambda: _capturing_session(captured)
         )
 
@@ -143,9 +161,7 @@ def test_all_components_can_filter_to_one_source():
             return _Result()
 
     async def scenario():
-        await queries.all_entity_components(
-            lambda: _Session(), source='book-a'
-        )
+        await queries.all_entity_components(lambda: _Session(), source='book-a')
 
     asyncio.run(scenario())
 

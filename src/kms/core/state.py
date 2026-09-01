@@ -38,21 +38,26 @@ class State(TypedDict, total=False):
     statement_hub_records: list[models.StatementHubRecord]
     procedure_hub_records: list[models.ProcedureHubRecord]
     entity_hub_bundle: models.HubBuildBundle
+    event_hub_bundle: models.HubBuildBundle
     predicate_hub_bundle: models.HubBuildBundle
     entity_hub_components: list[models.HubComponent]
+    event_hub_components: list[models.HubComponent]
     predicate_hub_components: list[models.HubComponent]
-    triplet_memberships: list[models.TripletMembership]
     entity_hub_assignments: list[dict]
+    event_hub_assignments: list[dict]
     predicate_hub_assignments: list[dict]
     entity_hub_records: list[dict]
+    event_hub_records: list[dict]
     predicate_hub_records: list[dict]
     statement_enrichments: list[dict]
     procedure_enrichments: list[dict]
     statement_hubs: list[dict]
     procedure_hubs: list[dict]
     entity_descriptions: dict[int, dict[str, str | None]]
+    event_descriptions: dict[int, dict[str, str | None]]
     predicate_descriptions: dict[int, dict[str, str | None]]
     entity_embeddings: dict[int, dict[str, list[float]]]
+    event_embeddings: dict[int, dict[str, list[float]]]
     predicate_embeddings: dict[int, dict[str, list[float]]]
     generated_procedures: list[models.Procedure]
     procedure_links: list[models.ProcedureLink]
@@ -60,6 +65,10 @@ class State(TypedDict, total=False):
     procedures_enriched: int
     statement_hubs_created: int
     procedure_hubs_created: int
+    triplet_hubs_created: int
+    triplets_clustered: int
+    statement_hub_diagnostics: dict[str, int]
+    procedure_hub_diagnostics: dict[str, int]
     projected: bool
     statements_clustered: int
     procedures_clustered: int
@@ -119,20 +128,24 @@ def to_construction_bundle(current_state: State) -> models.ConstructionBundle:
             current_state.get('procedure_hub_records', [])
         ),
         entity_hub_bundle=copy.deepcopy(current_state.get('entity_hub_bundle')),
+        event_hub_bundle=copy.deepcopy(current_state.get('event_hub_bundle')),
         predicate_hub_bundle=copy.deepcopy(
             current_state.get('predicate_hub_bundle')
         ),
         entity_hub_components=copy.deepcopy(
             current_state.get('entity_hub_components', [])
         ),
+        event_hub_components=copy.deepcopy(
+            current_state.get('event_hub_components', [])
+        ),
         predicate_hub_components=copy.deepcopy(
             current_state.get('predicate_hub_components', [])
         ),
-        triplet_memberships=copy.deepcopy(
-            current_state.get('triplet_memberships', [])
-        ),
         entity_hub_assignments=copy.deepcopy(
             current_state.get('entity_hub_assignments', [])
+        ),
+        event_hub_assignments=copy.deepcopy(
+            current_state.get('event_hub_assignments', [])
         ),
         predicate_hub_assignments=copy.deepcopy(
             current_state.get('predicate_hub_assignments', [])
@@ -140,10 +153,12 @@ def to_construction_bundle(current_state: State) -> models.ConstructionBundle:
         entity_hub_records=copy.deepcopy(
             current_state.get('entity_hub_records', [])
         ),
+        event_hub_records=copy.deepcopy(
+            current_state.get('event_hub_records', [])
+        ),
         predicate_hub_records=copy.deepcopy(
             current_state.get('predicate_hub_records', [])
         ),
-        triplet_hubs=copy.deepcopy(current_state.get('triplet_hubs', [])),
         statement_enrichments=copy.deepcopy(
             current_state.get('statement_enrichments', [])
         ),
@@ -159,11 +174,17 @@ def to_construction_bundle(current_state: State) -> models.ConstructionBundle:
         entity_descriptions=copy.deepcopy(
             current_state.get('entity_descriptions', {})
         ),
+        event_descriptions=copy.deepcopy(
+            current_state.get('event_descriptions', {})
+        ),
         predicate_descriptions=copy.deepcopy(
             current_state.get('predicate_descriptions', {})
         ),
         entity_embeddings=copy.deepcopy(
             current_state.get('entity_embeddings', {})
+        ),
+        event_embeddings=copy.deepcopy(
+            current_state.get('event_embeddings', {})
         ),
         predicate_embeddings=copy.deepcopy(
             current_state.get('predicate_embeddings', {})

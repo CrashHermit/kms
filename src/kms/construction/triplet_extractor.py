@@ -98,9 +98,7 @@ class _FactExtractor(module.Module):
     signature = _FactSignature
     record_name = 'atomic_fact_extractor'
 
-    def encode(
-        self, request: models.FactExtractionInput
-    ) -> dict[str, object]:
+    def encode(self, request: models.FactExtractionInput) -> dict[str, object]:
         """Passes the validated extraction request to the signature."""
         return {'request': request}
 
@@ -171,6 +169,9 @@ class _TripletSignature(dspy.Signature):
       require every endpoint to be a simple concrete noun.
     - Use event endpoints only for explicitly named occurrences or changes.
       Never invent an event from tense, chronology, or causality.
+    - Do not use a bare pronoun or unresolved reference as a subject or
+      object. Use the resolved referent only when it is explicit or
+      unambiguous in the source fact; otherwise return [].
     - Subject and object must be different spans unless the source explicitly
       states a reflexive relation.
     - Preserve source mathematical notation and LaTeX exactly.
@@ -214,14 +215,6 @@ class _TripletSignature(dspy.Signature):
     )
 
 
-def _is_concise_predicate(predicate: str) -> bool:
-    """Accepts only compact relation phrases at the graph boundary."""
-    words = predicate.split()
-    return 1 <= len(words) <= 5 and not any(
-        mark in predicate for mark in '.!?;:'
-    )
-
-
 class _TripletDecomposer(module.Module):
     """Decomposes one source-level fact into relational evidence triplets."""
 
@@ -233,7 +226,7 @@ class _TripletDecomposer(module.Module):
         return {'fact_text': fact_text}
 
     def decode(self, prediction, **inputs) -> list[models.Triplet]:
-        """Returns only complete triplets with compact relation phrases."""
+        """Returns complete validated triplets from the model output."""
         triplets = module.as_list(prediction.triplets)
         accepted: list[models.Triplet] = []
         for index, triplet in enumerate(triplets):
@@ -250,13 +243,6 @@ class _TripletDecomposer(module.Module):
                 raise ValueError(
                     f'triplets[{index}] must have non-empty fields'
                 )
-            if not _is_concise_predicate(triplet.predicate):
-                logger.warning(
-                    'discarding non-concise triplet predicate at index %d: %s',
-                    index,
-                    logs.elide(triplet.predicate),
-                )
-                continue
             accepted.append(
                 models.Triplet(
                     subject=triplet.subject,

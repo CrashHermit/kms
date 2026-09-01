@@ -89,9 +89,6 @@ async def main():
     hub_result = await local_entity_hubs.rebuild_source(
         SOURCE,
         language_model=language_model,
-        adjudicator=local_entity_hubs.EntityHubAdjudicator(
-            language_model=language_model
-        ),
         synthesizer=local_entity_hubs.EntityHubSynthesizer(
             language_model=language_model
         ),
@@ -118,7 +115,9 @@ async def main():
     )
     print('\nCreated 1 Statement (orphan).')
 
-    print('\nProcedure content is now produced by ProcedureEnricher in the workflow.')
+    print(
+        '\nProcedure content is now produced by ProcedureEnricher in the workflow.'
+    )
 
     print('\nDone.')
 

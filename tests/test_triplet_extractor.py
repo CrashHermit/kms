@@ -43,7 +43,7 @@ def test_triplet_prompt_requires_concise_source_relations():
     assert 'Return [] rather than guessing' in prompt
 
 
-def test_triplet_decode_discards_sentence_predicates():
+def test_triplet_decode_retains_verbose_predicates():
     module_instance = triplet_extractor._TripletDecomposer.__new__(
         triplet_extractor._TripletDecomposer
     )
@@ -67,8 +67,11 @@ def test_triplet_decode_discards_sentence_predicates():
     )
     result = module_instance.decode(prediction, fact_text='f is defined by x')
     assert [(item.subject, item.predicate, item.object) for item in result] == [
-        ('f', 'is defined by', 'x')
+        ('f', 'The function is defined by the expression', 'x'),
+        ('f', 'is defined by', 'x'),
     ]
+
+
 def test_fact_encode_passes_canonical_request():
     request = models.FactExtractionInput(
         context_before=[
@@ -130,8 +133,7 @@ def test_extract_triplets_assigns_only_anchor_provenance(monkeypatch) -> None:
     )
     assert [call.target_node.index for call in fact_module.calls] == [1, 1]
     assert [
-        [node.text for node in call.context_after]
-        for call in fact_module.calls
+        [node.text for node in call.context_after] for call in fact_module.calls
     ] == [['Context B'], []]
     assert [triplet.evidence_positions for triplet in result] == [[0], [1]]
     assert all(triplet.occurrence_uuids for triplet in result)
@@ -160,6 +162,8 @@ def test_extract_triplets_allows_an_image_anchor() -> None:
     assert target.text == ''
     assert result[0].evidence_positions == [0]
     assert result[0].occurrence_uuids
+
+
 def test_triplet_decode_preserves_all_endpoint_kind_combinations():
     module_instance = triplet_extractor._TripletDecomposer.__new__(
         triplet_extractor._TripletDecomposer
@@ -182,7 +186,9 @@ def test_triplet_decode_preserves_all_endpoint_kind_combinations():
             for subject_kind, object_kind in combinations
         ]
     )
-    result = module_instance.decode(prediction, fact_text='left relates to right')
+    result = module_instance.decode(
+        prediction, fact_text='left relates to right'
+    )
     assert [
         (item.subject_kind, item.object_kind) for item in result
     ] == combinations

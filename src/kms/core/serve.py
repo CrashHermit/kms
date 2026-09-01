@@ -39,7 +39,9 @@ class DedicatedServer:
     def _model_path(self) -> Path:
         """Extracts the model path from the llama-server command."""
         try:
-            return Path(self._config.start[self._config.start.index('--model') + 1])
+            return Path(
+                self._config.start[self._config.start.index('--model') + 1]
+            )
         except (ValueError, IndexError) as exc:
             raise RuntimeError(
                 f'retrieval server command has no model path: {self._config.start!r}'
@@ -391,6 +393,8 @@ def _dedicated_server(
             str(settings.threads),
             '--threads-batch',
             str(settings.threads_batch),
+            '--ubatch-size',
+            str(settings.ubatch_size),
             '--ctx-size',
             str(settings.ctx_size),
             '--parallel',

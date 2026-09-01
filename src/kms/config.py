@@ -93,6 +93,7 @@ class DedicatedRetrievalServerConfig(_ConfigModel):
     model: str
     threads: int = Field(default=12, gt=0)
     threads_batch: int = Field(default=12, gt=0)
+    ubatch_size: int = Field(default=512, gt=0)
     ctx_size: int = Field(..., gt=0)
     parallel: int = Field(default=1, gt=0)
     n_gpu_layers: int = 0
@@ -222,22 +223,32 @@ class SplitterConfig(_ConfigModel):
 
     backward_context_budget: int = Field(default=200, ge=0)
     lookahead_budget: int = Field(default=2000, gt=0)
-    router_context_budget: int = Field(default=300, gt=0)
 
 
 class InstructionFinderConfig(_ConfigModel):
     """Instruction finder context-window budgets."""
 
     context_budget: int = Field(default=300, gt=0)
+    max_span_budget: int = Field(default=8000, gt=0)
+
+
+class PedagogicalFinderConfig(_ConfigModel):
+    """Pedagogical finder router context-window budgets."""
+
+    start_before_budget: int = Field(default=300, ge=0)
+    start_after_budget: int = Field(default=300, ge=0)
+    end_before_budget: int = Field(default=300, ge=0)
+    end_after_budget: int = Field(default=300, ge=0)
 
 
 class FindersConfig(_ConfigModel):
-    """Instruction/component finder lookahead budgets."""
+    """Instruction and pedagogical finder budgets."""
 
-    lookahead_budget: int = Field(default=2000, gt=0)
-    max_lookahead_budget: int = Field(default=8000, gt=0)
     instruction_finder: InstructionFinderConfig = Field(
         default_factory=InstructionFinderConfig
+    )
+    pedagogical: PedagogicalFinderConfig = Field(
+        default_factory=PedagogicalFinderConfig
     )
 
 
@@ -274,6 +285,7 @@ class HubConfig(_ConfigModel):
     max_concurrent_calls: int = Field(default=16, gt=0)
     comparison_token_budget: int = Field(default=4096, gt=0)
     rerank_top_n: int = Field(default=5, gt=0)
+    rerank_candidate_limit: int = Field(default=32, gt=0)
 
 
 class TripletHubConfig(_ConfigModel):
@@ -311,6 +323,7 @@ class StagesConfig(_ConfigModel):
     entity_enrichment: EnrichmentConfig = Field(
         default_factory=EnrichmentConfig
     )
+    event_enrichment: EnrichmentConfig = Field(default_factory=EnrichmentConfig)
     predicate_enrichment: EnrichmentConfig = Field(
         default_factory=EnrichmentConfig
     )

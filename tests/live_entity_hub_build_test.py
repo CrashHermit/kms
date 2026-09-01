@@ -12,6 +12,7 @@ from kms.construction.triplet_extractor import (
 )
 from kms.core import llm, models, semantic
 from kms.graph import db, schema, writer
+from kms.graph import local_entity_hubs as graph_entity_hubs
 
 CONTENT = """\
 Here both $G_2$ and $G_3$ are subgraphs of $G_1$. But only $G_2$ is an \
@@ -117,7 +118,6 @@ async def main():
     result = await local_entity_hubs.rebuild(
         SOURCE,
         language_model=lm,
-        adjudicator=local_entity_hubs.EntityHubAdjudicator(language_model=lm),
         synthesizer=local_entity_hubs.EntityHubSynthesizer(language_model=lm),
         session_factory=_session,
     )
@@ -126,14 +126,15 @@ async def main():
 
     async with _session() as session:
         hubs = await session.run(
-            'MATCH (h:EntityHub) '
-            'RETURN h.canonical_name AS name, h.description AS description '
-            'ORDER BY name'
+            f'MATCH (h:{graph_entity_hubs.hub_label("source")}) '
+            'OPTIONAL MATCH (c:Entity)-[:CANONICAL]->(h) '
+            'RETURN h.canonical_name AS name, h.description AS description, '
+            'count(c) AS members ORDER BY name'
         )
         records = [r async for r in hubs]
-        print(f'\n{len(records)} EntityHub(s):')
+        print(f'\n{len(records)} LocalEntityHub(s):')
         for r in records:
-            print(f'  {r["name"]}')
+            print(f'  {r["name"]} ({r["members"]} members)')
             print(f'    {r["description"]}')
     print('\nDone.')
 

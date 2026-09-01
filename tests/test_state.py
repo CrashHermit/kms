@@ -16,12 +16,20 @@ def _state() -> state.State:
         'output_dir': 'output',
         'source': source,
         'documents': source.documents,
-        'nodes': [models.SourceNode(uuid='node-10', document_index=0, content='text')],
+        'nodes': [
+            models.SourceNode(uuid='node-10', document_index=0, content='text')
+        ],
         'instructions': [models.Instruction(block=[0], member_positions=[0])],
         'statements': [models.Statement(block=[1], member_positions=[0])],
         'procedures': [models.Procedure(block=[2], member_positions=[0])],
-        'triplets': [models.Triplet('subject', 'predicate', 'object', evidence_positions=[0])],
+        'triplets': [
+            models.Triplet(
+                'subject', 'predicate', 'object', evidence_positions=[0]
+            )
+        ],
         'entity_descriptions': {0: {'term': None}},
+        'event_descriptions': {0: {'event': 'occurrence'}},
+        'event_embeddings': {0: {'event': [5.0, 6.0]}},
         'predicate_descriptions': {0: {'term': 'relation'}},
         'entity_embeddings': {0: {'model': [1.0, 2.0]}},
         'predicate_embeddings': {0: {'model': [3.0, 4.0]}},
@@ -44,6 +52,8 @@ def test_to_construction_bundle_projects_durable_data_only() -> None:
     assert bundle.entity_descriptions == {0: {'term': None}}
     assert bundle.predicate_descriptions == {0: {'term': 'relation'}}
     assert bundle.entity_embeddings == {0: {'model': [1.0, 2.0]}}
+    assert bundle.event_descriptions == {0: {'event': 'occurrence'}}
+    assert bundle.event_embeddings == {0: {'event': [5.0, 6.0]}}
     assert bundle.predicate_embeddings == {0: {'model': [3.0, 4.0]}}
 
 
@@ -67,6 +77,8 @@ def test_to_construction_bundle_uses_empty_defaults() -> None:
     assert bundle.entity_descriptions == {}
     assert bundle.predicate_descriptions == {}
     assert bundle.entity_embeddings == {}
+    assert bundle.event_descriptions == {}
+    assert bundle.event_embeddings == {}
     assert bundle.predicate_embeddings == {}
 
 

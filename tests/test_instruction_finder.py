@@ -232,10 +232,9 @@ def test_false_growth_banks_only_the_anchor_and_reconsiders_candidate():
     ] == [1, 1, 1, 1, 1]
 
 
-def test_instruction_growth_fails_at_shared_finder_budget(monkeypatch):
+def test_instruction_growth_fails_at_instruction_budget(monkeypatch):
     finder_settings = SimpleNamespace(
-        instruction_finder=SimpleNamespace(context_budget=10),
-        max_lookahead_budget=3,
+        instruction_finder=SimpleNamespace(context_budget=10, max_span_budget=3)
     )
     monkeypatch.setattr(
         config,

@@ -246,7 +246,7 @@ class HubBuildBundle:
 
 @dataclass(frozen=True, slots=True)
 class HubComponent:
-    """One source-local entity or predicate occurrence."""
+    """One source-local entity, event, or predicate occurrence."""
 
     uuid: str
     source: str
@@ -254,17 +254,6 @@ class HubComponent:
     name: str
     description: str | None
     embedding: list[float]
-
-
-@dataclass(frozen=True, slots=True)
-class TripletMembership:
-    """Canonical hub memberships for one ordered triplet occurrence."""
-
-    triplet_index: int
-    source: str
-    subject_hubs: tuple[str, ...]
-    predicate_hubs: tuple[str, ...]
-    object_hubs: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -643,14 +632,12 @@ class ConstructionBundle:
     entity_hub_components: list[HubComponent] = field(default_factory=list)
     event_hub_components: list[HubComponent] = field(default_factory=list)
     predicate_hub_components: list[HubComponent] = field(default_factory=list)
-    triplet_memberships: list[TripletMembership] = field(default_factory=list)
     entity_hub_assignments: list[dict] = field(default_factory=list)
     event_hub_assignments: list[dict] = field(default_factory=list)
     predicate_hub_assignments: list[dict] = field(default_factory=list)
     entity_hub_records: list[dict] = field(default_factory=list)
     event_hub_records: list[dict] = field(default_factory=list)
     predicate_hub_records: list[dict] = field(default_factory=list)
-    triplet_hubs: list[dict] = field(default_factory=list)
     statement_enrichments: list[dict] = field(default_factory=list)
     procedure_enrichments: list[dict] = field(default_factory=list)
     statement_hubs: list[dict] = field(default_factory=list)
@@ -658,6 +645,12 @@ class ConstructionBundle:
     generated_procedures: list[Procedure] = field(default_factory=list)
     procedure_links: list[ProcedureLink] = field(default_factory=list)
     entity_descriptions: dict[int, dict[str, str | None]] = field(
+        default_factory=dict
+    )
+    event_descriptions: dict[int, dict[str, str | None]] = field(
+        default_factory=dict
+    )
+    event_embeddings: dict[int, dict[str, list[float]]] = field(
         default_factory=dict
     )
     predicate_descriptions: dict[int, dict[str, str | None]] = field(

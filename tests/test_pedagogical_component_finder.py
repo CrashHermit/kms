@@ -3,215 +3,199 @@ import asyncio
 import pytest
 
 from kms.construction import pedagogical_component_finder
-from kms.core import context_window, models, walker
+from kms.core import context_window, models
 
 
-class _ScriptedFinder:
+class _ScriptedRouter:
     def __init__(self, scripted):
         self._scripted = list(scripted)
-
-    async def aforward(self, current_nodes):
-        return self._scripted.pop(0) if self._scripted else []
-
-
-class _Ready:
-    async def aforward(self, current_nodes):
-        return True
-
-
-class _AlwaysUnready:
-    async def aforward(self, current_nodes):
-        return False
-
-
-class _TrackingReady:
-    def __init__(self, values):
-        self.values = list(values)
         self.calls = []
 
-    async def aforward(self, current_nodes):
-        self.calls.append(len(current_nodes))
-        return self.values.pop(0)
+    async def aforward(self, **inputs):
+        self.calls.append(inputs)
+        return self._scripted.pop(0)
 
 
-def _nodes():
+def _nodes(count=4, tokens=1):
     return [
         models.SourceNode(
-            type='paragraph', content='intro prose', uuid='node-0'
-        ),
-        models.SourceNode(type='header', content='Example 1', uuid='node-1'),
-        models.SourceNode(
-            type='paragraph', content='solve this', uuid='node-2'
-        ),
-        models.SourceNode(
-            type='paragraph', content='more prose', uuid='node-3'
-        ),
+            type='paragraph',
+            content=f'node-{index} ' + 'x' * (4 * (tokens - 1)),
+            uuid=f'node-{index}',
+        )
+        for index in range(count)
     ]
 
 
-def test_unready_window_grows_before_finder_call():
-    readiness = _TrackingReady([False, True, True, True, True])
-    finder = _ScriptedFinder([[], [], []])
-    assert (
-        asyncio.run(
-            pedagogical_component_finder.find_spans(
-                _nodes(),
-                module=finder,
-                readiness_module=readiness,
-                budget=1,
-                max_budget=4,
-            )
-        )
-        == []
-    )
-    assert readiness.calls[0] == 1
-    assert len(finder._scripted) < 3
+def _budgets(value=300):
+    return {
+        'start_before_budget': value,
+        'start_after_budget': value,
+        'end_before_budget': value,
+        'end_after_budget': value,
+    }
 
 
-def test_banks_a_bounded_span_and_emits_member_ids():
-    module = _ScriptedFinder([[walker.Span(start=1, end=2)], []])
+def _find(nodes, start_values, end_values, **budgets):
+    start_router = _ScriptedRouter(start_values)
+    end_router = _ScriptedRouter(end_values)
     spans = asyncio.run(
         pedagogical_component_finder.find_spans(
-            _nodes(), module=module, readiness_module=_Ready()
+            nodes,
+            start_router=start_router,
+            end_router=end_router,
+            **(_budgets() | budgets),
         )
     )
-    assert spans == [[1, 2]]
+    return spans, start_router, end_router
 
 
-def test_banks_multiple_bounded_spans_in_document_order():
-    module = _ScriptedFinder(
-        [
-            [
-                walker.Span(start=1, end=1),
-                walker.Span(start=2, end=2),
-            ],
-            [],
-        ]
-    )
-    assert asyncio.run(
-        pedagogical_component_finder.find_spans(
-            _nodes(), module=module, readiness_module=_Ready()
-        )
-    ) == [[1], [2]]
-
-
-def test_on_prose_only_stream_returns_nothing():
-    module = _ScriptedFinder([[]])
-    assert (
-        asyncio.run(
-            pedagogical_component_finder.find_spans(
-                _nodes(), module=module, readiness_module=_Ready()
-            )
-        )
-        == []
+def test_false_starts_advance_one_node_without_end_calls():
+    spans, start_router, end_router = _find(
+        _nodes(3), [False, False, True], [True]
     )
 
-
-def test_invalid_span_positions_fail_instead_of_being_clamped():
-    for span in (
-        walker.Span(start=-1, end=0),
-        walker.Span(start=0, end=4),
-        walker.Span(start=2, end=1),
-    ):
-        with pytest.raises(ValueError, match='invalid span'):
-            walker.validate_spans([span], 4)
-
-
-def test_overlapping_spans_fail_instead_of_being_repaired():
-    with pytest.raises(ValueError, match='overlapping'):
-        walker.validate_spans(
-            [walker.Span(start=0, end=2), walker.Span(start=1, end=3)], 4
-        )
+    assert spans == [[2]]
+    assert [
+        call['target_node'].text.strip() for call in start_router.calls
+    ] == [
+        'node-0',
+        'node-1',
+        'node-2',
+    ]
+    assert len(end_router.calls) == 1
 
 
-def test_reversed_span_order_fails_instead_of_being_sorted():
-    with pytest.raises(ValueError, match='out-of-order'):
-        walker.validate_spans(
-            [walker.Span(start=2, end=2), walker.Span(start=0, end=0)], 4
-        )
-
-
-def test_missing_node_id_fails_instead_of_being_dropped():
-    # With position-based references, UUIDs are not required during
-    # span finding. This test is kept for documentation of the old behavior.
-    pass
-
-
-def test_decoder_deduplicates_exact_spans():
-    prediction = type(
-        'Prediction',
-        (),
-        {
-            'spans': [
-                walker.Span(start=1, end=1),
-                walker.Span(start=2, end=2),
-                walker.Span(start=2, end=2),
-                walker.Span(start=3, end=3),
-            ]
-        },
-    )()
-    finder = object.__new__(
-        pedagogical_component_finder.PedagogicalComponentFinder
+def test_end_router_advances_candidate_and_resumes_after_committed_span():
+    spans, start_router, end_router = _find(
+        _nodes(4), [True, False], [False, False, True]
     )
-    assert finder.decode(prediction, current_nodes=_nodes()) == [
-        walker.Span(start=0, end=0),
-        walker.Span(start=1, end=1),
-        walker.Span(start=2, end=2),
+
+    assert spans == [[0, 1, 2]]
+    assert [
+        call['candidate_node'].text.strip() for call in end_router.calls
+    ] == [
+        'node-0',
+        'node-1',
+        'node-2',
+    ]
+    assert [
+        call['target_node'].text.strip() for call in start_router.calls
+    ] == [
+        'node-0',
+        'node-3',
     ]
 
 
-def test_decoder_keeps_rejecting_non_identical_overlap():
-    prediction = type(
-        'Prediction',
-        (),
-        {
-            'spans': [
-                walker.Span(start=1, end=2),
-                walker.Span(start=2, end=3),
-            ]
-        },
-    )()
-    finder = object.__new__(
-        pedagogical_component_finder.PedagogicalComponentFinder
+def test_two_units_are_ordered_and_interior_nodes_skip_start_router():
+    spans, start_router, end_router = _find(
+        _nodes(4), [True, False, True], [False, True, True]
     )
-    with pytest.raises(ValueError, match='overlapping'):
-        finder.decode(prediction, current_nodes=_nodes())
+
+    assert spans == [[0, 1], [3]]
+    assert [
+        call['target_node'].text.strip() for call in start_router.calls
+    ] == [
+        'node-0',
+        'node-2',
+        'node-3',
+    ]
 
 
-def test_edge_span_at_lookahead_limit_fails_instead_of_being_banked():
-    module = _ScriptedFinder([])
-    readiness = _AlwaysUnready()
-    with pytest.raises(ValueError, match='look-ahead limit'):
-        asyncio.run(
-            walker.find_spans(
-                _nodes(), module, readiness, budget=1, max_budget=1
+def test_eof_candidate_has_empty_after_context():
+    spans, _, end_router = _find(_nodes(1), [True], [True])
+
+    assert spans == [[0]]
+    assert end_router.calls[0]['context_after'] == []
+    assert end_router.calls[0]['candidate_node'].index == 1
+
+
+def test_false_eof_end_raises_exact_boundary_error():
+    with pytest.raises(
+        ValueError,
+        match=r'^pedagogical unit starting at cursor 0 has no end before the node stream ends$',
+    ):
+        _find(_nodes(1), [True], [False])
+
+
+@pytest.mark.parametrize('value', ['true', 1, None])
+def test_start_decoder_rejects_non_boolean_predictions(value):
+    router = object.__new__(pedagogical_component_finder.PedagogicalStartRouter)
+    prediction = type('Prediction', (), {'is_pedagogical_start': value})()
+
+    with pytest.raises(
+        ValueError, match='is_pedagogical_start must be a boolean'
+    ):
+        router.decode(prediction)
+
+
+@pytest.mark.parametrize('value', ['false', 0, None])
+def test_end_decoder_rejects_non_boolean_predictions(value):
+    router = object.__new__(pedagogical_component_finder.PedagogicalEndRouter)
+    prediction = type('Prediction', (), {'is_pedagogical_end': value})()
+
+    with pytest.raises(
+        ValueError, match='is_pedagogical_end must be a boolean'
+    ):
+        router.decode(prediction)
+
+
+def test_router_contexts_respect_directional_token_budgets_and_local_indexes():
+    spans, start_router, end_router = _find(
+        _nodes(5, tokens=2),
+        [False, False, True, False, False],
+        [True],
+        start_before_budget=2,
+        start_after_budget=2,
+        end_before_budget=2,
+        end_after_budget=2,
+    )
+
+    assert spans == [[2]]
+    start_call = start_router.calls[2]
+    end_call = end_router.calls[0]
+    for call in (start_call, end_call):
+        assert (
+            sum(
+                context_window.estimate_text_tokens(item.text)
+                for item in call['context_before']
             )
+            <= 2
         )
-
-
-def test_node_run_writes_the_spans_channel():
-    node = pedagogical_component_finder.PedagogicalComponentFinderNode(
-        module=_ScriptedFinder(
-            [
-                [
-                    walker.Span(start=1, end=1),
-                    walker.Span(start=2, end=2),
-                ],
-                [],
-            ]
-        ),
-        readiness_module=_Ready(),
+        assert (
+            sum(
+                context_window.estimate_text_tokens(item.text)
+                for item in call['context_after']
+            )
+            <= 2
+        )
+        assert [item.index for item in call['context_before']] == list(
+            range(1, len(call['context_before']) + 1)
+        )
+        assert [item.index for item in call['context_after']] == list(
+            range(1, len(call['context_after']) + 1)
+        )
+        assert (
+            call['target_node']
+            if 'target_node' in call
+            else call['candidate_node']
+        ).index == 1
+    assert end_call['start_node'].index == 1
+    assert all(
+        not hasattr(item, field)
+        for item in [start_call['target_node'], end_call['start_node']]
+        for field in ('assets', 'path')
     )
-    out = asyncio.run(node.run({'nodes': _nodes()}))
-    assert set(out) == {'spans'}
-    assert out['spans'] == [[1], [2]]
 
 
-def test_node_run_maps_spans_back_after_excluding_instruction_members():
+def test_instruction_members_are_excluded_before_span_remapping():
+    start_router = _ScriptedRouter([True, False])
+    end_router = _ScriptedRouter([False, True])
     node = pedagogical_component_finder.PedagogicalComponentFinderNode(
-        module=_ScriptedFinder([[walker.Span(start=0, end=1)], []]),
-        readiness_module=_Ready(),
+        start_router=start_router,
+        end_router=end_router,
     )
+
     out = asyncio.run(
         node.run(
             {
@@ -222,53 +206,38 @@ def test_node_run_maps_spans_back_after_excluding_instruction_members():
             }
         )
     )
-    assert out['spans'] == [[1, 2]]
+
+    assert out == {'spans': [[1, 2]]}
 
 
-def test_node_run_on_empty_stream_yields_an_empty_channel():
+def test_empty_input_yields_empty_spans_channel():
     node = pedagogical_component_finder.PedagogicalComponentFinderNode(
-        module=_ScriptedFinder([]),
-        readiness_module=_Ready(),
+        start_router=_ScriptedRouter([]),
+        end_router=_ScriptedRouter([]),
     )
+
     assert asyncio.run(node.run({'nodes': []})) == {'spans': []}
 
 
-def test_projection_is_text_only_and_preserves_image_positions():
-    nodes = [
-        context_window.ContextNode(
-            position=0, type='paragraph', content='intro'
-        ),
-        context_window.ContextNode(
-            position=1,
-            type='image',
-            content='Diagram of the curve.',
-            assets=[models.VisualAsset(path='figure.png')],
-        ),
-    ]
+def test_router_encoders_keep_text_only_typed_fields():
+    before = [models.NodeInput(index=1, node_type='paragraph', text='before')]
+    target = models.NodeInput(index=1, node_type='paragraph', text='target')
+    after = [models.NodeInput(index=1, node_type='paragraph', text='after')]
+    start_router = object.__new__(
+        pedagogical_component_finder.PedagogicalStartRouter
+    )
+    end_router = object.__new__(
+        pedagogical_component_finder.PedagogicalEndRouter
+    )
 
-    encoded = pedagogical_component_finder.PedagogicalComponentFinder.encode(
-        object(), current_nodes=nodes
-    )['current_nodes']
-
-    assert all(isinstance(item, models.NodeInput) for item in encoded)
-    assert [item.index for item in encoded] == [1, 2]
-    assert encoded[1].node_type == 'image'
-    assert encoded[1].text == 'Diagram of the curve.'
-    assert not hasattr(encoded[1], 'assets')
-    assert not hasattr(encoded[1], 'path')
-
-
-def test_empty_image_description_uses_local_index():
-    nodes = [
-        context_window.ContextNode(
-            position=3,
-            type='image',
-            content=None,
-        )
-    ]
-
-    encoded = pedagogical_component_finder.PedagogicalComponentFinder.encode(
-        object(), current_nodes=nodes
-    )['current_nodes']
-
-    assert encoded == [models.NodeInput(index=1, node_type='image', text='')]
+    assert start_router.encode(before, target, after) == {
+        'context_before': before,
+        'target_node': target,
+        'context_after': after,
+    }
+    assert end_router.encode(target, before, target, after) == {
+        'start_node': target,
+        'context_before': before,
+        'candidate_node': target,
+        'context_after': after,
+    }

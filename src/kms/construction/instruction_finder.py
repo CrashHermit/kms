@@ -17,7 +17,6 @@ from kms.core import (
 logger = logging.getLogger(__name__)
 
 
-
 class InstructionRouterSignature(dspy.Signature):
     r"""
     Classify only `target_node`. The before and after lists are context only.
@@ -98,6 +97,7 @@ class InstructionGrowerSignature(dspy.Signature):
         description='True only when candidate_node continues the anchored instruction.'
     )
 
+
 def _instruction_input(
     node: context_window.ContextNode, local_index: int = 0
 ) -> models.NodeInput:
@@ -110,9 +110,7 @@ def _instruction_input(
 
 def _instruction_lists(
     nodes: list[context_window.ContextNode],
-) -> tuple[
-    list[models.NodeInput], models.NodeInput, list[models.NodeInput]
-]:
+) -> tuple[list[models.NodeInput], models.NodeInput, list[models.NodeInput]]:
     target_index = next(
         index for index, node in enumerate(nodes) if node.marker is not None
     )
@@ -333,8 +331,6 @@ def _strict_bool(value: object, field_name: str) -> bool:
     return module.require_bool(value, field_name)
 
 
-
-
 async def find_instruction_spans(
     nodes: list[models.SourceNode],
     router: InstructionRouter,
@@ -345,7 +341,7 @@ async def find_instruction_spans(
     cursor = 0
     finder_settings = config.get_settings().stages.finders
     context_budget = finder_settings.instruction_finder.context_budget
-    max_span_budget = finder_settings.max_lookahead_budget
+    max_span_budget = finder_settings.instruction_finder.max_span_budget
 
     while cursor < len(nodes):
         selected = context_window.select_around(

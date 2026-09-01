@@ -32,6 +32,10 @@ global_statement_hubs = import_module(
 global_procedure_hubs = import_module(
     'kms.postprocessing.global.procedure_hubs'
 )
+global_event_hubs = import_module('kms.postprocessing.global.event_hubs')
+global_predicate_hubs = import_module(
+    'kms.postprocessing.global.predicate_hubs'
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -143,38 +147,37 @@ def _models() -> dict[str, object]:
     statement_language_model = llm.module_lm('statement_hub_builder')
     procedure_language_model = llm.module_lm('procedure_hub_builder')
     event_language_model = llm.module_lm('event_hub_builder')
+    triplet_language_model = llm.module_lm('triplet_hub_builder')
     return {
         'entity_language_model': entity_language_model,
-        'entity_adjudicator': local_entity_hubs.EntityHubAdjudicator(
-            language_model=entity_language_model
-        ),
         'entity_synthesizer': local_entity_hubs.EntityHubSynthesizer(
             language_model=entity_language_model
-        ),
-        'event_adjudicator': local_event_hubs.EventHubAdjudicator(
-            language_model=event_language_model
         ),
         'event_synthesizer': local_event_hubs.EventHubSynthesizer(
             language_model=event_language_model
         ),
-        'event_language_model': event_language_model,
-        'predicate_language_model': predicate_language_model,
-        'predicate_adjudicator': local_predicate_hubs.PredicateHubAdjudicator(
-            language_model=predicate_language_model
+        'global_event_adjudicator': global_event_hubs.EventHubAdjudicator(
+            language_model=event_language_model
         ),
+        'global_event_synthesizer': global_event_hubs.EventHubSynthesizer(
+            language_model=event_language_model
+        ),
+        'event_language_model': event_language_model,
+        'triplet_language_model': triplet_language_model,
         'predicate_synthesizer': local_predicate_hubs.PredicateHubSynthesizer(
             language_model=predicate_language_model
         ),
-        'statement_adjudicator': local_statement_hubs.LocalStatementHubAdjudicator(
+        'global_predicate_adjudicator': global_predicate_hubs.PredicateHubAdjudicator(
+            language_model=predicate_language_model
+        ),
+        'global_predicate_synthesizer': global_predicate_hubs.PredicateHubSynthesizer(
+            language_model=predicate_language_model
+        ),
+        'predicate_language_model': predicate_language_model,
+        'statement_synthesizer': local_statement_hubs.StatementHubSynthesizer(
             language_model=statement_language_model
         ),
-        'statement_synthesizer': local_statement_hubs.LocalStatementHubSynthesizer(
-            language_model=statement_language_model
-        ),
-        'procedure_adjudicator': local_procedure_hubs.LocalProcedureHubAdjudicator(
-            language_model=procedure_language_model
-        ),
-        'procedure_synthesizer': local_procedure_hubs.LocalProcedureHubSynthesizer(
+        'procedure_synthesizer': local_procedure_hubs.ProcedureHubSynthesizer(
             language_model=procedure_language_model
         ),
         'global_statement_adjudicator': global_statement_hubs.GlobalStatementHubAdjudicator(
@@ -239,14 +242,17 @@ async def _run(arguments: argparse.Namespace) -> dict:
                 return await global_maintenance.rebuild(
                     session_factory=session_factory,
                     entity_language_model=models['entity_language_model'],
-                    entity_adjudicator=models['entity_adjudicator'],
                     entity_synthesizer=models['entity_synthesizer'],
                     event_language_model=models['event_language_model'],
-                    event_adjudicator=models['event_adjudicator'],
-                    event_synthesizer=models['event_synthesizer'],
+                    event_adjudicator=models['global_event_adjudicator'],
+                    event_synthesizer=models['global_event_synthesizer'],
                     predicate_language_model=models['predicate_language_model'],
-                    predicate_adjudicator=models['predicate_adjudicator'],
-                    predicate_synthesizer=models['predicate_synthesizer'],
+                    predicate_adjudicator=models[
+                        'global_predicate_adjudicator'
+                    ],
+                    predicate_synthesizer=models[
+                        'global_predicate_synthesizer'
+                    ],
                     statement_adjudicator=models[
                         'global_statement_adjudicator'
                     ],
@@ -265,28 +271,18 @@ async def _run(arguments: argparse.Namespace) -> dict:
                     or arguments.procedures,
                 )
             if arguments.command == 'rebuild-source':
-                result = await maintenance.rebuild_source(
+                return await maintenance.rebuild_source(
                     arguments.source,
                     session_factory=session_factory,
                     entity_language_model=models['entity_language_model'],
-                    entity_adjudicator=models['entity_adjudicator'],
                     entity_synthesizer=models['entity_synthesizer'],
                     predicate_language_model=models['predicate_language_model'],
-                    predicate_adjudicator=models['predicate_adjudicator'],
                     predicate_synthesizer=models['predicate_synthesizer'],
-                    statement_adjudicator=models['statement_adjudicator'],
+                    event_synthesizer=models['event_synthesizer'],
+                    triplet_language_model=models['triplet_language_model'],
                     statement_synthesizer=models['statement_synthesizer'],
-                    procedure_adjudicator=models['procedure_adjudicator'],
                     procedure_synthesizer=models['procedure_synthesizer'],
                 )
-                result['event_hubs'] = await local_event_hubs.rebuild(
-                    arguments.source,
-                    session_factory=session_factory,
-                    language_model=models['event_language_model'],
-                    adjudicator=models['event_adjudicator'],
-                    synthesizer=models['event_synthesizer'],
-                )
-                return result
             raise ValueError(
                 f'unknown maintenance command: {arguments.command}'
             )

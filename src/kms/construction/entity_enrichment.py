@@ -41,17 +41,13 @@ class EntityEnricher(module.Module):
     signature = EntityEnrichmentSignature
     record_name = 'entity_enrichment'
 
-    def encode(
-        self, request: models.TermEnrichmentInput
-    ) -> dict[str, object]:
+    def encode(self, request: models.TermEnrichmentInput) -> dict[str, object]:
         """Passes the validated enrichment request to the signature."""
         return {'request': request}
 
     def decode(self, prediction, **inputs) -> list[TermDescription]:
         """Returns one validated description for the singleton input term."""
-        description = module.require_text(
-            prediction.description, 'description'
-        )
+        description = module.require_text(prediction.description, 'description')
         terms = inputs['request'].terms
         if len(terms) != 1:
             raise ValueError(
@@ -68,9 +64,16 @@ async def enrich(
     terms_by_position: dict[int, set[str]] = {}
     for triplet in triplets:
         for position in triplet.evidence_positions:
-            terms_by_position.setdefault(position, set()).update(
-                (triplet.subject, triplet.object)
-            )
+            if triplet.subject_kind is models.NodeKind.ENTITY:
+                terms_by_position.setdefault(position, set()).add(
+                    triplet.subject
+                )
+            if triplet.object_kind is models.NodeKind.ENTITY:
+                terms_by_position.setdefault(position, set()).add(
+                    triplet.object
+                )
+    if not terms_by_position:
+        return {}
     stage = config.get_settings().stages.entity_enrichment
     return await semantic.describe_terms(
         nodes,
@@ -107,8 +110,12 @@ class EntityEnrichmentNode:
             )
             for triplet in triplets
             for position in triplet.evidence_positions
-            for name in dict.fromkeys((triplet.subject, triplet.object))
-            if vectors.get(position, {}).get(name) is not None
+            for name, kind in (
+                (triplet.subject, triplet.subject_kind),
+                (triplet.object, triplet.object_kind),
+            )
+            if kind is models.NodeKind.ENTITY
+            and vectors.get(position, {}).get(name) is not None
         ]
         return {
             'entity_descriptions': descriptions,

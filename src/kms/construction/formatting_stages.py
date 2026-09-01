@@ -14,10 +14,12 @@ class MathFormattingSignature(dspy.Signature):
     add, or remove content.
 
     Input records are ordered source lines. Their `index` values are one-based
-    and are the only valid coordinates. Numbers in `text` are content, not
-    coordinates. Return only changed lines. Each replacement must contain the
-    complete replacement text for its original line; an empty replacement
-    deletes that line. Return an empty list when no change is needed.
+    and are the only valid coordinates. Copy indexes only from the supplied
+    records; never derive an index from numbers in the text. Numbers in `text`
+    are content, not coordinates. Return only changed lines. Each replacement
+    must contain the complete replacement text for its original line; an empty
+    replacement deletes that line. Return an empty list when no change is
+    needed.
 
     Positive example:
     Input: [{"index": 1, "text": "The value is \\(x^2\\)."}]
@@ -26,6 +28,11 @@ class MathFormattingSignature(dspy.Signature):
     Negative example:
     Input: [{"index": 1, "text": "Output Format"}]
     Output: []
+
+    Never output an index that is not present in the input. Copy the index
+    from the source record verbatim. If there is one input line, the only
+    valid replacement index is 1; numbers such as years, citations, and
+    equation values are text content and must not be used as indexes.
 
     For a one-line input, index 2 is invalid and must never be returned.
     """

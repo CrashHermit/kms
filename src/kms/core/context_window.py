@@ -25,7 +25,6 @@ def estimate_tokens(node: models.SourceNode) -> int:
     return estimate_text_tokens(node.content)
 
 
-
 def node_input(node: ContextNode, local_index: int = 0) -> models.NodeInput:
     """Projects one context node into a one-based model-facing record.
 
@@ -140,3 +139,25 @@ def nodes_after(
         selected.append(node)
         accumulated += token_count
     return selected
+
+
+def select_target_context(
+    nodes: list[models.SourceNode],
+    position: int,
+    before_budget: int,
+    after_budget: int,
+) -> tuple[
+    list[ContextNode],
+    ContextNode,
+    list[ContextNode],
+]:
+    """Selects directional context around one target node.
+
+    The target is always projected independently of either directional
+    budget. Context nodes are collected in document order and projected with
+    local positions for model-facing callers.
+    """
+    before = project_nodes(nodes_before(nodes, position, before_budget))
+    target = project_nodes([nodes[position]])[0]
+    after = project_nodes(nodes_after(nodes, position, after_budget))
+    return before, target, after

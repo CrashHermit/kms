@@ -3,11 +3,15 @@
 from collections.abc import Callable
 from typing import Any
 
+import dspy
+
 from kms.construction import (
     local_entity_hubs,
+    local_event_hubs,
     local_predicate_hubs,
     local_procedure_hubs,
     local_statement_hubs,
+    triplet_hubs,
 )
 
 
@@ -16,14 +20,12 @@ async def rebuild_source(
     *,
     session_factory: Callable,
     entity_language_model: Any,
-    entity_adjudicator: Any,
     entity_synthesizer: Any,
     predicate_language_model: Any,
-    predicate_adjudicator: Any,
     predicate_synthesizer: Any,
-    statement_adjudicator: Any,
+    event_synthesizer: Any,
+    triplet_language_model: dspy.LM,
     statement_synthesizer: Any,
-    procedure_adjudicator: Any,
     procedure_synthesizer: Any,
     max_concurrency: int | None = None,
 ) -> dict[str, dict]:
@@ -37,15 +39,13 @@ async def rebuild_source(
     Args:
         source: The source key to rebuild.
         session_factory: Async callable returning Neo4j sessions.
-        entity_language_model: Model used by entity triplet-hub synthesis.
-        entity_adjudicator: Entity mention adjudicator.
+        entity_language_model: Model used by entity hub synthesis.
         entity_synthesizer: Entity hub synthesizer.
-        predicate_language_model: Model used by predicate triplet synthesis.
-        predicate_adjudicator: Predicate mention adjudicator.
+        predicate_language_model: Model used by predicate hub synthesis.
         predicate_synthesizer: Predicate hub synthesizer.
-        statement_adjudicator: Statement hub adjudicator.
+        event_synthesizer: Event hub synthesizer.
+        triplet_language_model: Model used by triplet hub synthesis.
         statement_synthesizer: Statement hub synthesizer.
-        procedure_adjudicator: Procedure hub adjudicator.
         procedure_synthesizer: Procedure hub synthesizer.
         max_concurrency: Optional limit for hub-building calls.
 
@@ -55,7 +55,6 @@ async def rebuild_source(
     entity_result = await local_entity_hubs.rebuild(
         source,
         language_model=entity_language_model,
-        adjudicator=entity_adjudicator,
         synthesizer=entity_synthesizer,
         session_factory=session_factory,
         max_concurrency=max_concurrency,
@@ -63,28 +62,39 @@ async def rebuild_source(
     predicate_result = await local_predicate_hubs.rebuild(
         source,
         language_model=predicate_language_model,
-        adjudicator=predicate_adjudicator,
         synthesizer=predicate_synthesizer,
+        session_factory=session_factory,
+        max_concurrency=max_concurrency,
+    )
+    event_result = await local_event_hubs.rebuild(
+        source,
+        synthesizer=event_synthesizer,
+        session_factory=session_factory,
+        max_concurrency=max_concurrency,
+    )
+    triplet_result = await triplet_hubs.rebuild(
+        language_model=triplet_language_model,
+        source=source,
         session_factory=session_factory,
         max_concurrency=max_concurrency,
     )
     statement_result = await local_statement_hubs.rebuild(
         source,
         session_factory=session_factory,
-        adjudicator=statement_adjudicator,
         synthesizer=statement_synthesizer,
+        max_concurrency=max_concurrency,
     )
     procedure_result = await local_procedure_hubs.rebuild(
         source,
         session_factory=session_factory,
-        adjudicator=procedure_adjudicator,
         synthesizer=procedure_synthesizer,
+        max_concurrency=max_concurrency,
     )
     return {
         'entity': entity_result,
         'predicate': predicate_result,
+        'event': event_result,
+        'triplet': triplet_result,
         'statement': statement_result,
         'procedure': procedure_result,
     }
-
-

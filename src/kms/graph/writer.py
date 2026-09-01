@@ -522,12 +522,14 @@ async def persist_assertions(
     predicate_descriptions: dict[int, dict[str, str | None]] | None = None,
     entity_embeddings: dict[int, dict[str, list[float]]] | None = None,
     predicate_embeddings: dict[int, dict[str, list[float]]] | None = None,
+    event_descriptions: dict[int, dict[str, str | None]] | None = None,
+    event_embeddings: dict[int, dict[str, list[float]]] | None = None,
 ) -> None:
-    """Persists the assertion layer: triplets, entities, and predicates.
+    """Persists the assertion layer: triplets, entities, events, and predicates.
 
-    Writes the :Triplet anchors, the node-local :Entity and per-triplet
-    :Predicate components, and the edges that group them, using the
-    per-node descriptions and embeddings when available.
+    Writes the :Triplet anchors, node-local :Entity and :Event components,
+    and per-triplet :Predicate components, using the per-node descriptions
+    and embeddings when available.
     """
     if not triplets:
         return
@@ -551,6 +553,8 @@ async def persist_assertions(
         predicate_descriptions or {},
         entity_embeddings,
         predicate_embeddings,
+        event_descriptions,
+        event_embeddings,
     )
     pairs = evidence_pairs(triplets, source, doc_nodes)
     now = utcnow_iso()
@@ -637,7 +641,7 @@ async def persist_name_occurrences(
             component['source'],
             component['uuid'],
             component['name'],
-            component['node_id'],
+            component['node_position'],
         )
         for component in components
     ]
@@ -732,7 +736,7 @@ async def clear_global_name_hubs(
 ) -> None:
     """Clears the disposable cross-source lexical hub tier."""
     async with session_factory() as session:
-        await session.run(queries.delete_global_name_hubs_query(kind))
+        await session.run(queries.delete_meta_name_hubs_query(kind))
 
 
 async def _validate_global_name_hubs(
@@ -1054,6 +1058,18 @@ async def attach_entity_components(
     )
 
 
+async def attach_event_components(
+    assignments: list[dict], *, aliases: list[dict], session_factory: Callable
+) -> None:
+    await _attach_source_components(
+        assignments,
+        aliases=aliases,
+        session_factory=session_factory,
+        component_node_label=local_event_hubs.COMPONENT_LABEL,
+        source_hub_label=local_event_hubs.hub_label(),
+    )
+
+
 async def attach_predicate_components(
     assignments: list[dict], *, aliases: list[dict], session_factory: Callable
 ) -> None:
@@ -1143,7 +1159,7 @@ async def attach_entity_global_hubs(
         aliases=aliases,
         session_factory=session_factory,
         source_hubs_query=queries.all_entity_source_hubs,
-        qualified_meta_hubs_query=queries.qualified_entity_global_hub_uuids,
+        qualified_meta_hubs_query=queries.qualified_entity_meta_hub_uuids,
         source_hub_label=local_entity_hubs.hub_label(),
         global_hub_label=local_entity_hubs.hub_label('meta'),
     )
@@ -1160,7 +1176,7 @@ async def attach_event_global_hubs(
         aliases=aliases,
         session_factory=session_factory,
         source_hubs_query=queries.all_event_source_hubs,
-        qualified_meta_hubs_query=queries.qualified_event_global_hub_uuids,
+        qualified_meta_hubs_query=queries.qualified_event_meta_hub_uuids,
         source_hub_label=local_event_hubs.hub_label(),
         global_hub_label=local_event_hubs.hub_label('meta'),
     )
@@ -1177,7 +1193,7 @@ async def attach_predicate_global_hubs(
         aliases=aliases,
         session_factory=session_factory,
         source_hubs_query=queries.all_predicate_source_hubs,
-        qualified_meta_hubs_query=queries.qualified_predicate_global_hub_uuids,
+        qualified_meta_hubs_query=queries.qualified_predicate_meta_hub_uuids,
         source_hub_label=local_predicate_hubs.hub_label(),
         global_hub_label=local_predicate_hubs.hub_label('meta'),
     )
@@ -1304,7 +1320,7 @@ async def _clear_invalid_meta_hubs(
 ) -> None:
     """Deletes meta hubs without support from two distinct sources."""
     async with session_factory() as session:
-        await session.run(queries.delete_invalid_global_hubs_query(label))
+        await session.run(queries.delete_invalid_meta_hubs_query(label))
 
 
 async def clear_entity_global_hubs(*, session_factory: Callable) -> None:

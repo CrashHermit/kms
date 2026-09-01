@@ -15,7 +15,6 @@ async def rebuild(
     *,
     session_factory: Callable,
     entity_language_model: Any,
-    entity_adjudicator: Any,
     entity_synthesizer: Any,
     event_language_model: Any,
     event_adjudicator: Any,
@@ -34,7 +33,6 @@ async def rebuild(
     """Rebuild global entity and predicate hubs and optional learning hubs."""
     entity_result = await entity_hubs.rebuild_global(
         language_model=entity_language_model,
-        adjudicator=entity_adjudicator,
         synthesizer=entity_synthesizer,
         session_factory=session_factory,
         max_concurrency=max_concurrency,

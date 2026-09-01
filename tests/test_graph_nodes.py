@@ -1,5 +1,7 @@
+import asyncio
+
 from kms.core import models
-from kms.graph import nodes
+from kms.graph import nodes, queries, writer
 
 
 def test_node_uuid_is_deterministic():
@@ -23,7 +25,9 @@ def test_node_uuid_distinguishes_index_and_source():
 
 
 def test_node_properties_maps_kind_content_and_provenance():
-    node = models.SourceNode(uuid='node-3', type='math', content='$x^2$', document_index=2)
+    node = models.SourceNode(
+        uuid='node-3', type='math', content='$x^2$', document_index=2
+    )
     props = nodes.node_properties(node, 'book.pdf')
     assert props['type'] == 'math'
     assert props['content'] == '$x^2$'
@@ -58,8 +62,48 @@ def test_visual_assets_are_graph_rows_and_node_edges():
     assert [row['path'] for row in rows] == ['page-1.png', 'page-2.png']
     assert [row['index'] for row in rows] == [0, 1]
     assert [pair['node'] for pair in pairs] == ['node-asset', 'node-asset']
-    assert [pair['asset'] for pair in pairs] == [
-        row['uuid'] for row in rows
+    assert [pair['asset'] for pair in pairs] == [row['uuid'] for row in rows]
+
+
+def test_persist_nodes_merges_visual_assets_and_attachment_edges():
+    calls = []
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return None
+
+        async def run(self, query, **kwargs):
+            calls.append((query, kwargs))
+
+    node = models.SourceNode(
+        uuid='node-asset',
+        assets=[models.VisualAsset(path='page-1.png')],
+    )
+
+    asyncio.run(
+        writer.persist_nodes(
+            [node],
+            'book.pdf',
+            session_factory=Session,
+        )
+    )
+
+    asset_rows = next(
+        kwargs['rows']
+        for query, kwargs in calls
+        if query == queries.MERGE_VISUAL_ASSETS
+    )
+    attachment_pairs = next(
+        kwargs['pairs']
+        for query, kwargs in calls
+        if query == queries.MERGE_NODE_ASSETS
+    )
+    assert asset_rows[0]['path'] == 'page-1.png'
+    assert attachment_pairs == [
+        {'node': 'node-asset', 'asset': asset_rows[0]['uuid']}
     ]
 
 
@@ -103,7 +147,9 @@ def test_node_label_for_typeless_node():
 
 
 def test_node_properties_link_back_to_source():
-    node = models.SourceNode(uuid='node-3', type='math', content='$x$', document_index=2)
+    node = models.SourceNode(
+        uuid='node-3', type='math', content='$x$', document_index=2
+    )
     assert nodes.node_properties(node, 'book.pdf')[
         'source'
     ] == nodes.source_uuid('book.pdf')

@@ -75,12 +75,12 @@ def test_meta_hub_properties_require_stable_id_and_omit_source():
 
 
 def test_global_hub_uuid_is_stable_for_identity():
-    assert hubs.global_hub_uuid('entity', 'source-hub-a') == hubs.global_hub_uuid(
+    assert hubs.global_hub_uuid(
         'entity', 'source-hub-a'
-    )
-    assert hubs.global_hub_uuid('entity', 'source-hub-a') != hubs.global_hub_uuid(
-        'entity', 'source-hub-b'
-    )
+    ) == hubs.global_hub_uuid('entity', 'source-hub-a')
+    assert hubs.global_hub_uuid(
+        'entity', 'source-hub-a'
+    ) != hubs.global_hub_uuid('entity', 'source-hub-b')
 
 
 def test_attach_source_components_merges_membership_and_aliases():
@@ -134,10 +134,12 @@ def test_attach_meta_hubs_replaces_alignment_and_updates_aliases(
     async def fake_qualified_meta_hubs(session_factory):
         return {'meta-hub-a'}
 
-    monkeypatch.setattr(writer.queries, 'all_entity_source_hubs', fake_source_hubs)
+    monkeypatch.setattr(
+        writer.queries, 'all_entity_source_hubs', fake_source_hubs
+    )
     monkeypatch.setattr(
         writer.queries,
-        'qualified_entity_global_hub_uuids',
+        'qualified_entity_meta_hub_uuids',
         fake_qualified_meta_hubs,
     )
 
@@ -171,10 +173,12 @@ def test_attach_meta_hubs_rejects_unqualified_new_meta_hubs(monkeypatch):
     async def fake_qualified_meta_hubs(session_factory):
         return set()
 
-    monkeypatch.setattr(writer.queries, 'all_entity_source_hubs', fake_source_hubs)
+    monkeypatch.setattr(
+        writer.queries, 'all_entity_source_hubs', fake_source_hubs
+    )
     monkeypatch.setattr(
         writer.queries,
-        'qualified_entity_global_hub_uuids',
+        'qualified_entity_meta_hub_uuids',
         fake_qualified_meta_hubs,
     )
 
@@ -302,7 +306,9 @@ def test_persist_hubs_rejects_same_source_meta_hubs(monkeypatch):
             {'uuid': 'source-hub-b', 'source': 'book-a'},
         ]
 
-    monkeypatch.setattr(writer.queries, 'all_entity_source_hubs', fake_source_hubs)
+    monkeypatch.setattr(
+        writer.queries, 'all_entity_source_hubs', fake_source_hubs
+    )
 
     with pytest.raises(ValueError, match='two distinct source supports'):
         asyncio.run(
@@ -341,7 +347,9 @@ def test_persist_hubs_uses_alignment_for_meta_members(monkeypatch):
             {'uuid': 'source-hub-b', 'source': 'book-b'},
         ]
 
-    monkeypatch.setattr(writer.queries, 'all_entity_source_hubs', fake_source_hubs)
+    monkeypatch.setattr(
+        writer.queries, 'all_entity_source_hubs', fake_source_hubs
+    )
 
     async def scenario():
         await writer.persist_entity_hubs(

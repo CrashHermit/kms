@@ -31,20 +31,29 @@ async def main() -> None:
     nodes = result.get('nodes') or []
     print(f'Elapsed: {elapsed:.2f}s', flush=True)
     print(f'Nodes: {len(nodes)}', flush=True)
-    print('Node types:', dict(Counter(str(node.type) for node in nodes)), flush=True)
+    print(
+        'Node types:',
+        dict(Counter(str(node.type) for node in nodes)),
+        flush=True,
+    )
     for key in (
         'triplets',
         'statements_enriched',
         'procedures_enriched',
         'statement_hubs_created',
         'procedure_hubs_created',
+        'triplet_hubs_created',
+        'triplets_clustered',
         'entity_assigned',
         'predicate_assigned',
         'procedures_created',
     ):
         if key in result:
             value = result[key]
-            print(f'{key}: {len(value) if isinstance(value, list) else value}', flush=True)
+            print(
+                f'{key}: {len(value) if isinstance(value, list) else value}',
+                flush=True,
+            )
 
 
 if __name__ == '__main__':

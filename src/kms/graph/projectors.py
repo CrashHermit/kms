@@ -76,6 +76,8 @@ class FinalProjectorNode:
             predicate_descriptions=bundle.predicate_descriptions,
             entity_embeddings=bundle.entity_embeddings,
             predicate_embeddings=bundle.predicate_embeddings,
+            event_descriptions=bundle.event_descriptions,
+            event_embeddings=bundle.event_embeddings,
         )
         await writer.persist_chain(
             nodes, source, session_factory=self._session_factory
@@ -84,6 +86,10 @@ class FinalProjectorNode:
     async def _persist_hubs(self, bundle, source: str) -> None:
         entity_records = bundle.entity_hub_records
         if entity_records:
+            await writer.clear_entity_hubs(
+                source,
+                session_factory=self._session_factory,
+            )
             await writer.persist_entity_hubs(
                 entity_records,
                 session_factory=self._session_factory,
@@ -95,9 +101,30 @@ class FinalProjectorNode:
                 aliases=[],
                 session_factory=self._session_factory,
             )
+        event_records = bundle.event_hub_records
+        if event_records:
+            await writer.clear_event_hubs(
+                source,
+                session_factory=self._session_factory,
+            )
+            await writer.persist_event_hubs(
+                event_records,
+                session_factory=self._session_factory,
+                tier='source',
+            )
+        if bundle.event_hub_assignments:
+            await writer.attach_event_components(
+                bundle.event_hub_assignments,
+                aliases=[],
+                session_factory=self._session_factory,
+            )
 
         predicate_records = bundle.predicate_hub_records
         if predicate_records:
+            await writer.clear_predicate_hubs(
+                source,
+                session_factory=self._session_factory,
+            )
             await writer.persist_predicate_hubs(
                 predicate_records,
                 session_factory=self._session_factory,
@@ -107,17 +134,6 @@ class FinalProjectorNode:
             await writer.attach_predicate_components(
                 bundle.predicate_hub_assignments,
                 aliases=[],
-                session_factory=self._session_factory,
-            )
-
-        triplet_hubs = bundle.triplet_hubs
-        if triplet_hubs:
-            await writer.clear_triplet_hubs(
-                'source', session_factory=self._session_factory, source=source
-            )
-            await writer.persist_triplet_hubs(
-                triplet_hubs,
-                tier='source',
                 session_factory=self._session_factory,
             )
 

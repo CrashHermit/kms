@@ -118,6 +118,11 @@ max_tokens = 2048
 base_url = "http://127.0.0.1:8080/v1"
 model = "openai/gemma-4-e4b-qat-text"
 max_tokens = 2048
+[models.modules.event_enrichment]
+base_url = "http://127.0.0.1:8080/v1"
+model = "openai/gemma-4-e4b-qat-text"
+max_tokens = 2048
+
 
 [models.modules.predicate_enrichment]
 base_url = "http://127.0.0.1:8080/v1"
@@ -249,7 +254,6 @@ max_tokens = 256
 # Training optimization models use the remote OpenRouter endpoint so they
 # remain independent of the local router's model lifecycle.
 [models.modules.training_judge]
-api_key_source = "openrouter"
 model = "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
 temperature = 0.0
 max_tokens = 2048
@@ -293,6 +297,8 @@ procedure_partitioner = "gemma-4-e4b-qat-text"
 atomic_fact_extractor = "gemma-4-e4b-qat-text"
 triplet_extractor = "gemma-4-e4b-qat-text"
 entity_enrichment = "gemma-4-e4b-qat-text"
+event_enrichment = "gemma-4-e4b-qat-text"
+
 predicate_enrichment = "gemma-4-e4b-qat-text"
 statement_enrichment = "gemma-4-e4b-qat-text"
 procedure_enrichment = "gemma-4-e4b-qat-text"
@@ -324,7 +330,6 @@ procedure_card_verifier = "gemma-4-e4b-qat-text"
 [serving.presets."gemma-4-e4b-qat-text"]
 model = "~/models/gemma-4-e4b-qat/gemma-4-E4B_q4_0-it.gguf"
 ctx_size = 32768
-cache_type_k = "q4_0"
 flash_attn = "on"
 cache_type_v = "q4_0"
 n_gpu_layers = 999
@@ -353,10 +358,11 @@ port = 8081
 model = "~/models/qwen3-embedding-0.6b/Qwen3-Embedding-0.6B-Q4_K_M.gguf"
 threads = 12
 threads_batch = 12
-ctx_size = 32768
+ubatch_size = 2048
+ctx_size = 4096
 parallel = 1
-n_gpu_layers = 0
-device = "none"
+n_gpu_layers = 999
+device = "CUDA0"
 ready_timeout = 300.0
 poll_interval = 1.0
 request_timeout = 30.0
@@ -368,10 +374,11 @@ port = 8082
 model = "~/models/qwen3-reranker-0.6b/Qwen3-Reranker-0.6B-Q4_K_M.gguf"
 threads = 4
 threads_batch = 4
-device = "none"
+ubatch_size = 2048
+device = "CUDA0"
 ctx_size = 8192
 parallel = 1
-n_gpu_layers = 0
+n_gpu_layers = 999
 cache_ram = 0
 ready_timeout = 300.0
 poll_interval = 1.0
@@ -420,16 +427,23 @@ enabled = true
 [stages.splitter]
 backward_context_budget = 200
 lookahead_budget = 2000
-router_context_budget = 300
-
-[stages.finders]
-lookahead_budget = 2000
-max_lookahead_budget = 16000
 
 [stages.finders.instruction_finder]
 context_budget = 300
+max_span_budget = 16000
+
+[stages.finders.pedagogical]
+start_before_budget = 300
+start_after_budget = 300
+end_before_budget = 300
+end_after_budget = 300
 
 [stages.entity_enrichment]
+before_budget = 200
+after_budget = 200
+max_concurrent_calls = 16
+
+[stages.event_enrichment]
 before_budget = 200
 after_budget = 200
 max_concurrent_calls = 16
@@ -451,6 +465,7 @@ separate_below = 0.42
 max_concurrent_calls = 16
 comparison_token_budget = 4096
 rerank_top_n = 5
+rerank_candidate_limit = 32
 [stages.event_hubs]
 recall_threshold = 0.55
 merge_above = 0.78
@@ -498,16 +513,18 @@ recall_threshold = 0.55
 merge_above = 0.78
 separate_below = 0.42
 max_concurrent_calls = 16
-comparison_token_budget = 4096
+comparison_token_budget = 2048
 rerank_top_n = 5
+rerank_candidate_limit = 32
 
 [stages.procedure_hubs]
 recall_threshold = 0.55
 merge_above = 0.78
 separate_below = 0.42
 max_concurrent_calls = 16
-comparison_token_budget = 4096
+comparison_token_budget = 2048
 rerank_top_n = 5
+rerank_candidate_limit = 32
 
 [stages.card_creation]
 max_concurrent_calls = 16

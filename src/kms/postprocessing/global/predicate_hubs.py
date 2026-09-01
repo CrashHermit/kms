@@ -1,11 +1,14 @@
 """Build cross-source global predicate hubs from persisted local hubs."""
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
+import dspy
+from pydantic import BaseModel, Field
+
 from kms import config
-from kms.construction import local_predicate_hubs as local_hubs
-from kms.core import embeddings, llm
+from kms.core import clustering, embeddings, llm, models, module
 from kms.graph import local_predicate_hubs as graph_predicate_hubs
 from kms.graph import queries, writer
 
@@ -34,12 +37,368 @@ class GlobalPredicateHubSpec:
     clear_invalid_global_hubs: Any
     rebuild_global_names: Any
 
-PredicateHubAdjudicator = local_hubs.PredicateHubAdjudicator
-PredicateHubSynthesizer = local_hubs.PredicateHubSynthesizer
-build_hubs = local_hubs.build_hubs
-_choose_hub = local_hubs._choose_hub
-_new_hub = local_hubs._new_hub
-_aliases = local_hubs._aliases
+
+class PredicateHubDefinition(BaseModel):
+    canonical_name: str = Field(
+        description='The canonical name for the predicate relation.'
+    )
+    description: str = Field(
+        description='A standalone canonical predicate description supported by the supplied evidence.'
+    )
+
+
+class PredicateHubSynthesisSignature(dspy.Signature):
+    r"""
+    Synthesize one source-local canonical predicate concept from supplied
+    relation phrases and their passage-grounded descriptions. Generalize only
+    what the evidence supports. Preserve the supported meaning and do not
+    mention the source or invent facts.
+    """
+
+    request: models.HubSynthesisInput = dspy.InputField()
+    result: PredicateHubDefinition = dspy.OutputField()
+
+
+class PredicateHubAdjudicationSignature(dspy.Signature):
+    r"""
+    Compare two predicate mentions. Return TRUE only for the same canonical
+    relation. Return FALSE for broader, narrower, inverse, or merely related
+    relations.
+    """
+
+    comparison: models.HubMentionComparisonInput = dspy.InputField()
+    result: models.MergeDecision = dspy.OutputField()
+
+
+class PredicateHubSynthesizer(module.Module):
+    signature = PredicateHubSynthesisSignature
+    record_name = 'predicate_hub_synthesizer'
+
+    def encode(
+        self, surface_forms: list[str], descriptions: list[str], scope: str
+    ) -> dict:
+        return {
+            'request': models.HubSynthesisInput(
+                surface_forms=surface_forms,
+                descriptions=descriptions,
+                scope=scope,
+            )
+        }
+
+    def decode(self, prediction, **inputs) -> tuple[str, str]:
+        result = PredicateHubDefinition.model_validate(prediction.result)
+        return (
+            module.require_text(result.canonical_name, 'canonical_name'),
+            module.require_text(result.description, 'description'),
+        )
+
+
+class PredicateHubAdjudicator(module.Module):
+    signature = PredicateHubAdjudicationSignature
+    record_name = 'predicate_hub_adjudicator'
+
+    def encode(
+        self,
+        left: models.HubMentionInput,
+        right: models.HubMentionInput,
+        scope: str,
+    ) -> dict:
+        return {
+            'comparison': models.HubMentionComparisonInput(
+                left=left, right=right, scope=scope
+            )
+        }
+
+    def decode(self, prediction, **inputs) -> bool:
+        result = models.MergeDecision.model_validate(prediction.result)
+        return module.require_bool(result.should_merge, 'should_merge')
+
+
+async def _synthesize_global_definitions(
+    clusters: list[list[dict]],
+    synthesizer: Any,
+    gate: asyncio.Semaphore,
+    scope: str,
+) -> list[dict]:
+    async def synthesize(cluster: list[dict]) -> dict:
+        forms = list(
+            dict.fromkeys(
+                form
+                for member in cluster
+                for form in [member['name'], *member.get('aliases', [])]
+                if form
+            )
+        )
+        descriptions = sorted(
+            {
+                member['description']
+                for member in cluster
+                if member.get('description')
+            }
+        )
+        async with gate:
+            name, description = await synthesizer.aforward(
+                surface_forms=forms, descriptions=descriptions, scope=scope
+            )
+        return {'canonical_name': name, 'description': description}
+
+    return list(
+        await asyncio.gather(*(synthesize(cluster) for cluster in clusters))
+    )
+
+
+def _global_coarse_clusters(
+    mentions: list[dict], recall_threshold: float
+) -> list[list[dict]]:
+    adjacency: dict[int, list[int]] = {i: [] for i in range(len(mentions))}
+    for i in range(len(mentions)):
+        for j in range(i + 1, len(mentions)):
+            if (
+                embeddings.cosine_similarity(
+                    mentions[i]['embedding'], mentions[j]['embedding']
+                )
+                >= recall_threshold
+            ):
+                adjacency[i].append(j)
+                adjacency[j].append(i)
+    visited: set[int] = set()
+    clusters = []
+    for start in range(len(mentions)):
+        if start in visited:
+            continue
+        component = []
+        stack = [start]
+        while stack:
+            index = stack.pop()
+            if index in visited:
+                continue
+            visited.add(index)
+            component.append(mentions[index])
+            stack.extend(adjacency[index])
+        clusters.append(component)
+    return clusters
+
+
+def _global_central_mention(component: list[dict]) -> dict:
+    if len(component) == 1:
+        return component[0]
+    return max(
+        component,
+        key=lambda candidate: sum(
+            embeddings.cosine_similarity(
+                candidate['embedding'], other['embedding']
+            )
+            for other in component
+            if other is not candidate
+        ),
+    )
+
+
+def _global_mention_text(record: dict) -> str:
+    mention = models.HubMentionInput.from_record(record)
+    return ' '.join([mention.name, *mention.aliases, mention.description or ''])
+
+
+async def _global_adjudicate_component(
+    component: list[dict],
+    adjudicator: Any,
+    stage: Any,
+    gate: asyncio.Semaphore,
+    scope: str,
+) -> list[list[dict]]:
+    unassigned = list(component)
+    clusters = []
+    while unassigned:
+        pivot = _global_central_mention(unassigned)
+        unassigned = [member for member in unassigned if member is not pivot]
+        selected = (
+            await clustering.select_reranked_candidates(
+                _global_mention_text(pivot),
+                unassigned,
+                _global_mention_text,
+                top_n=stage.rerank_top_n,
+            )
+            if stage.rerank_top_n
+            else unassigned
+        )
+        selected_ids = {id(member) for member in selected}
+        remaining = [
+            member for member in unassigned if id(member) not in selected_ids
+        ]
+        cluster = [pivot]
+        boundary = []
+        for member in selected:
+            score = embeddings.cosine_similarity(
+                pivot['embedding'], member['embedding']
+            )
+            if score >= stage.merge_above:
+                cluster.append(member)
+            elif score > stage.separate_below:
+                boundary.append(member)
+            else:
+                remaining.append(member)
+
+        async def decide(member: dict, pivot_record: dict = pivot) -> Any:
+            async with gate:
+                return await adjudicator.aforward(
+                    left=models.HubMentionInput.from_record(pivot_record),
+                    right=models.HubMentionInput.from_record(member),
+                    scope=scope,
+                )
+
+        decisions = await asyncio.gather(
+            *(decide(member) for member in boundary)
+        )
+        for member, decision in zip(boundary, decisions, strict=True):
+            (cluster if decision else remaining).append(member)
+        clusters.append(cluster)
+        unassigned = remaining
+    return clusters
+
+
+async def _build_global_predicate_hubs(
+    records: list[dict],
+    *,
+    spec: GlobalPredicateHubSpec,
+    max_concurrency: int | None,
+    adjudicator: Any,
+    synthesizer: Any,
+) -> dict:
+    if not records:
+        return {'clusters': 0, 'records': 0, 'hubs': []}
+    stage = getattr(config.get_settings().stages, spec.stage_name)
+    if any(not record.get('embedding') for record in records):
+        raise RuntimeError('predicate hubs: records must have embeddings')
+    components = _global_coarse_clusters(records, stage.recall_threshold)
+    gate = llm.gate(max_concurrency)
+    clusters = []
+    for component in components:
+        clusters.extend(
+            await _global_adjudicate_component(
+                component, adjudicator, stage, gate, spec.adjudication_context
+            )
+        )
+    definitions = await _synthesize_global_definitions(
+        clusters, synthesizer, gate, spec.synthesis_context
+    )
+    vectors = await embeddings.embedder().embed(
+        [f'{d["canonical_name"]}: {d["description"]}' for d in definitions]
+    )
+    cluster_ids = [
+        spec.hub_id_factory(cluster, definition)
+        for cluster, definition in zip(clusters, definitions, strict=True)
+    ]
+    hubs = []
+    for cluster, definition, vector, hub_uuid in zip(
+        clusters, definitions, vectors, cluster_ids, strict=True
+    ):
+        members = [member['uuid'] for member in cluster]
+        hubs.append(
+            {
+                'uuid': hub_uuid,
+                'source': spec.source_resolver(cluster),
+                'canonical_name': definition['canonical_name'],
+                'aliases': sorted(
+                    {
+                        alias
+                        for member in cluster
+                        for alias in [
+                            member['name'],
+                            *member.get('aliases', []),
+                        ]
+                        if alias
+                    }
+                ),
+                'description': definition['description'],
+                'embedding': vector,
+                'members': members,
+            }
+        )
+    return {'clusters': len(clusters), 'records': len(records), 'hubs': hubs}
+
+
+async def _choose_hub(
+    spec: GlobalPredicateHubSpec,
+    record: dict,
+    candidates: list[dict],
+    adjudicator: Any,
+    gate: asyncio.Semaphore,
+    scope: str,
+) -> tuple[str | None, list[tuple[str, str]], float, str]:
+    """Choose a matching global hub using score and adjudication thresholds."""
+    stage = getattr(config.get_settings().stages, spec.stage_name)
+    for candidate in candidates:
+        score = candidate['score']
+        if score >= stage.merge_above:
+            return candidate['uuid'], [], score, 'Merge'
+        if score <= stage.separate_below:
+            continue
+        async with gate:
+            decision = await adjudicator.aforward(
+                left=models.HubMentionInput.from_record(record),
+                right=models.HubMentionInput.from_record(candidate),
+                scope=scope,
+            )
+        if decision:
+            return candidate['uuid'], [], score, 'Merge'
+    return None, [], 0.0, 'Separate'
+
+
+async def _new_hub(
+    record: dict,
+    synthesizer: Any,
+    gate: asyncio.Semaphore,
+    spec: GlobalPredicateHubSpec,
+) -> dict:
+    """Synthesize a new global hub for an unmatched source hub."""
+    surface_forms = list(
+        dict.fromkeys(
+            form
+            for form in [record['name'], *record.get('aliases', [])]
+            if form
+        )
+    )
+    descriptions = sorted(
+        {
+            member['description']
+            for member in [record]
+            if member.get('description')
+        }
+    )
+    async with gate:
+        canonical_name, description = await synthesizer.aforward(
+            surface_forms=surface_forms,
+            descriptions=descriptions,
+            scope=spec.synthesis_context,
+        )
+    definition = {
+        'canonical_name': canonical_name,
+        'description': description,
+    }
+    vector = await embeddings.embedder().embed(
+        [f'{canonical_name}: {description}']
+    )
+    return {
+        'uuid': spec.hub_id_factory([record], definition),
+        'source': spec.source_resolver([record]),
+        'canonical_name': canonical_name,
+        'aliases': sorted(
+            {
+                value
+                for value in [record.get('name'), *record.get('aliases', [])]
+                if value
+            }
+        ),
+        'description': description,
+        'embedding': vector[0],
+        'members': [record['uuid']],
+    }
+
+
+def _aliases(record: dict) -> set[str]:
+    name = record.get('name') or record.get('canonical_name')
+    return {value for value in [name, *record.get('aliases', [])] if value}
+
 
 async def _rebuild_global_names_callback(
     domain: str, *, language_model, session_factory, max_concurrency=None
@@ -66,6 +425,7 @@ async def _rebuild_triplets_callback(
         language_model=language_model,
         session_factory=session_factory,
     )
+
 
 def global_hub_id_factory(graph: Any) -> callable:
     """Creates a deterministic meta-hub id function for predicate hubs."""
@@ -163,7 +523,7 @@ async def align_global_hubs(
         rebuild_names=None,
         rebuild_triplets=_rebuild_triplets_callback,
         all_source_hubs=queries.all_predicate_source_hubs,
-        qualified_global_hub_uuids=queries.qualified_predicate_global_hub_uuids,
+        qualified_global_hub_uuids=queries.qualified_predicate_meta_hub_uuids,
         index_name='global_predicate_hub_embedding',
         attach_global_hubs=writer.attach_predicate_global_hubs,
         clear_invalid_global_hubs=writer.clear_invalid_predicate_global_hubs,
@@ -194,7 +554,7 @@ async def align_global_hubs(
             f'predicate hubs (meta): source hub(s) lack an embedding: {missing}'
         )
 
-    eligible_global_hubs = await queries.qualified_predicate_global_hub_uuids(
+    eligible_global_hubs = await queries.qualified_predicate_meta_hub_uuids(
         session_factory
     )
     top_k = config.get_settings().stages.search.top_k
@@ -251,7 +611,9 @@ async def align_global_hubs(
             )
         if global_hub in new_hubs:
             new_hubs[global_hub]['members'] = list(
-                dict.fromkeys(new_hubs[global_hub]['members'] + [record['uuid']])
+                dict.fromkeys(
+                    new_hubs[global_hub]['members'] + [record['uuid']]
+                )
             )
             new_hubs[global_hub]['aliases'] = sorted(
                 set(new_hubs[global_hub]['aliases']) | _aliases(record)
@@ -345,7 +707,7 @@ async def rebuild_global(
         rebuild_names=None,
         rebuild_triplets=_rebuild_triplets_callback,
         all_source_hubs=queries.all_predicate_source_hubs,
-        qualified_global_hub_uuids=queries.qualified_predicate_global_hub_uuids,
+        qualified_global_hub_uuids=queries.qualified_predicate_meta_hub_uuids,
         index_name='global_predicate_hub_embedding',
         attach_global_hubs=writer.attach_predicate_global_hubs,
         clear_invalid_global_hubs=writer.clear_invalid_predicate_global_hubs,
@@ -354,14 +716,13 @@ async def rebuild_global(
         ),
     )
     records = await queries.all_predicate_source_hubs(session_factory)
-    result = await build_hubs(
+    result = await _build_global_predicate_hubs(
         records,
         spec=spec,
         max_concurrency=max_concurrency,
         adjudicator=adjudicator,
         synthesizer=synthesizer,
     )
-    result = _qualify_global_result(result, records)
     await writer.clear_predicate_global_hubs(session_factory=session_factory)
     await writer.persist_predicate_hubs(
         result['hubs'],
@@ -380,5 +741,3 @@ async def rebuild_global(
         max_concurrency=max_concurrency,
     )
     return {'global_hubs': len(result['hubs']), 'local_hubs': result['records']}
-
-

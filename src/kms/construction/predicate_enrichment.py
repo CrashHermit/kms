@@ -1,5 +1,3 @@
-import logging
-
 import dspy
 from pydantic import BaseModel, Field
 
@@ -12,22 +10,11 @@ from kms.core import (
     state,
 )
 
-logger = logging.getLogger(__name__)
-
 
 class TermDescription(BaseModel):
     term: str = Field(description='The exact input predicate term.')
     description: str = Field(
         description='A concise local predicate description.'
-    )
-
-
-def _is_compact_description(description: str) -> bool:
-    """Checks the model-facing description size and source leakage."""
-    words = description.split()
-    return (
-        2 <= len(words) <= 12
-        and not any(mark in description for mark in ('$', '\\', '\n', ':', ';'))
     )
 
 
@@ -71,30 +58,18 @@ class PredicateEnricher(module.Module):
     signature = PredicateEnrichmentSignature
     record_name = 'predicate_enrichment'
 
-    def encode(
-        self, request: models.TermEnrichmentInput
-    ) -> dict[str, object]:
+    def encode(self, request: models.TermEnrichmentInput) -> dict[str, object]:
         """Passes the validated enrichment request to the signature."""
         return {'request': request}
 
     def decode(self, prediction, **inputs) -> list[TermDescription]:
-        """Returns one compact description for the singleton input term."""
-        description = module.require_text(
-            prediction.description, 'description'
-        )
+        """Returns one model-generated description for the singleton term."""
+        description = module.require_text(prediction.description, 'description')
         terms = inputs['request'].terms
         if len(terms) != 1:
             raise ValueError(
-                f'predicate enrichment expects one input term, '
-                f'got {len(terms)}'
+                f'predicate enrichment expects one input term, got {len(terms)}'
             )
-        if not _is_compact_description(description):
-            logger.warning(
-                'discarding verbose predicate description for %r: %s',
-                terms[0],
-                description,
-            )
-            description = terms[0]
         return [TermDescription(term=terms[0], description=description)]
 
 

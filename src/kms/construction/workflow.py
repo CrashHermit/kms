@@ -12,6 +12,7 @@ from kms import config
 from kms.construction import (
     block_corrector,
     entity_enrichment,
+    event_enrichment,
     formatter,
     governance_judge,
     governance_walker,
@@ -19,12 +20,12 @@ from kms.construction import (
     image_seam_merger,
     instruction_finder,
     local_entity_hubs,
+    local_event_hubs,
     local_predicate_hubs,
     local_procedure_hubs,
     local_statement_hubs,
     ocr,
     pedagogical_component_finder,
-    pedagogical_window_readiness,
     predicate_enrichment,
     procedure_enrichment,
     splitter,
@@ -41,31 +42,6 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from langgraph.graph.state import CompiledStateGraph
-
-
-class TripletHubNode:
-    def __init__(self, language_model) -> None:
-        self._language_model = language_model
-
-    async def run(self, current_state: state.State) -> dict:
-        bundle = state.to_construction_bundle(current_state)
-        source = bundle.source.key
-        if not source:
-            return {}
-        result = await triplet_hubs.build_source(
-            language_model=self._language_model,
-            source=source,
-            triplets=bundle.triplets,
-            entity_assignments=bundle.entity_hub_assignments,
-            predicate_assignments=bundle.predicate_hub_assignments,
-            entity_hubs=bundle.entity_hub_records,
-            predicate_hubs=bundle.predicate_hub_records,
-        )
-        bundle.triplet_hubs = result.get('hubs', [])
-        return {
-            'triplet_hubs': bundle.triplet_hubs,
-            'construction_bundle': bundle,
-        }
 
 
 def _build_modules(
@@ -109,14 +85,14 @@ def _build_modules(
             language_model=llm.module_lm('instruction_grower'),
             recorder=recorder,
         ),
-        'component_finder': (
-            pedagogical_component_finder.PedagogicalComponentFinder(
+        'pedagogical_start_router': (
+            pedagogical_component_finder.PedagogicalStartRouter(
                 language_model=llm.module_lm('pedagogical_component_finder'),
                 recorder=recorder,
             )
         ),
-        'pedagogical_window_readiness_router': (
-            pedagogical_window_readiness.PedagogicalWindowReadinessRouter(
+        'pedagogical_end_router': (
+            pedagogical_component_finder.PedagogicalEndRouter(
                 language_model=llm.module_lm('pedagogical_component_finder'),
                 recorder=recorder,
             )
@@ -152,6 +128,10 @@ def _build_modules(
             language_model=llm.module_lm('entity_enrichment'),
             recorder=recorder,
         ),
+        'event_enrichment': event_enrichment.EventEnricher(
+            language_model=llm.module_lm('event_enrichment'),
+            recorder=recorder,
+        ),
         'predicate_enrichment': predicate_enrichment.PredicateEnricher(
             language_model=llm.module_lm('predicate_enrichment'),
             recorder=recorder,
@@ -164,35 +144,25 @@ def _build_modules(
             language_model=llm.module_lm('procedure_enrichment'),
             recorder=recorder,
         ),
-        'statement_hub_builder': local_statement_hubs.LocalStatementHubSynthesizer(
+        'statement_hub_builder': local_statement_hubs.StatementHubSynthesizer(
             language_model=llm.module_lm('statement_hub_builder'),
             recorder=recorder,
         ),
-        'statement_hub_adjudicator': local_statement_hubs.LocalStatementHubAdjudicator(
-            language_model=llm.module_lm('statement_hub_builder'),
-            recorder=recorder,
-        ),
-        'procedure_hub_builder': local_procedure_hubs.LocalProcedureHubSynthesizer(
+        'procedure_hub_builder': local_procedure_hubs.ProcedureHubSynthesizer(
             language_model=llm.module_lm('procedure_hub_builder'),
-            recorder=recorder,
-        ),
-        'procedure_hub_adjudicator': local_procedure_hubs.LocalProcedureHubAdjudicator(
-            language_model=llm.module_lm('procedure_hub_builder'),
-            recorder=recorder,
-        ),
-        'entity_hub_adjudicator': local_entity_hubs.EntityHubAdjudicator(
-            language_model=llm.module_lm('entity_hub_builder'),
             recorder=recorder,
         ),
         'entity_hub_builder': local_entity_hubs.EntityHubSynthesizer(
             language_model=llm.module_lm('entity_hub_builder'),
             recorder=recorder,
         ),
-        'predicate_hub_adjudicator': local_predicate_hubs.PredicateHubAdjudicator(
-            language_model=llm.module_lm('predicate_hub_builder'),
+        'event_hub_builder': local_event_hubs.EventHubSynthesizer(
+            language_model=llm.module_lm('event_hub_builder'),
+            recorder=recorder,
         ),
         'predicate_hub_builder': local_predicate_hubs.PredicateHubSynthesizer(
             language_model=llm.module_lm('predicate_hub_builder'),
+            recorder=recorder,
         ),
         'triplet_hub_builder': llm.module_lm('triplet_hub_builder'),
     }
@@ -228,11 +198,19 @@ async def _timed_stage(
     duration_ms = round((time.perf_counter() - started) * 1000, 2)
     logger.info('pipeline stage completed: %s (%s ms)', name, duration_ms)
     if recorder is not None:
+        diagnostic_keys = {
+            'entity_hub_builder': 'entity_hub_diagnostics',
+            'statement_hub_builder': 'statement_hub_diagnostics',
+            'procedure_hub_builder': 'procedure_hub_diagnostics',
+        }
+        diagnostics_key = diagnostic_keys.get(name)
+        details = result[diagnostics_key] if diagnostics_key else None
         recorder.record_progress(
             name,
             status='completed',
             duration_ms=duration_ms,
             output_keys=list(result),
+            details=details,
         )
     return result
 
@@ -277,21 +255,21 @@ def build_workflow(
     exercise_strip_router_module = modules['exercise_strip_router']
     instruction_router_module = modules['instruction_router']
     instruction_grower_module = modules['instruction_grower']
-    component_finder_module = modules['component_finder']
-    readiness_module = modules['pedagogical_window_readiness_router']
+    start_router_module = modules['pedagogical_start_router']
+    end_router_module = modules['pedagogical_end_router']
     role_typer_module = modules['role_typer']
     statement_partitioner_module = modules['statement_partitioner']
     procedure_partitioner_module = modules['procedure_partitioner']
     fact_module = modules['fact_extractor']
     triplet_module = modules['triplet_extractor']
     entity_enrichment_module = modules['entity_enrichment']
+    event_enrichment_module = modules['event_enrichment']
     predicate_enrichment_module = modules['predicate_enrichment']
     statement_enrichment_module = modules['statement_enrichment']
     procedure_enrichment_module = modules['procedure_enrichment']
     statement_hub_module = modules['statement_hub_builder']
-    statement_hub_adjudicator = modules['statement_hub_adjudicator']
     procedure_hub_module = modules['procedure_hub_builder']
-    procedure_hub_adjudicator = modules['procedure_hub_adjudicator']
+    triplet_hub_config = config.get_settings().stages.triplet_hubs
 
     block_corrector_node = block_corrector.BlockCorrectorNode(
         corrector=block_corrector_module,
@@ -317,8 +295,8 @@ def build_workflow(
     )
     component_finder_node = (
         pedagogical_component_finder.PedagogicalComponentFinderNode(
-            module=component_finder_module,
-            readiness_module=readiness_module,
+            start_router=start_router_module,
+            end_router=end_router_module,
         )
     )
     governance_config = config.get_settings().stages.governance
@@ -341,6 +319,9 @@ def build_workflow(
     entity_enrichment_node = entity_enrichment.EntityEnrichmentNode(
         enricher=entity_enrichment_module
     )
+    event_enrichment_node = event_enrichment.EventEnrichmentNode(
+        enricher=event_enrichment_module
+    )
     predicate_enrichment_node = predicate_enrichment.PredicateEnrichmentNode(
         enricher=predicate_enrichment_module
     )
@@ -348,15 +329,20 @@ def build_workflow(
         session_factory=neo4j_session_factory,
         neo4j_configured=neo4j_configured,
     )
+    triplet_hub_node = triplet_hubs.TripletHubNode(
+        language_model=modules['triplet_hub_builder'],
+        session_factory=neo4j_session_factory,
+        neo4j_configured=neo4j_configured,
+        max_concurrency=triplet_hub_config.max_concurrent_calls,
+    )
     entity_hub_node = local_entity_hubs.EntityHubNode(
-        modules['entity_hub_adjudicator'],
         modules['entity_hub_builder'],
     )
+    event_hub_module = modules['event_hub_builder']
     predicate_hub_node = local_predicate_hubs.PredicateHubNode(
-        modules['predicate_hub_adjudicator'],
         modules['predicate_hub_builder'],
     )
-    triplet_hub_node = TripletHubNode(modules['triplet_hub_builder'])
+    event_hub_node = local_event_hubs.EventHubNode(event_hub_module)
     statement_enrichment_node = statement_enrichment.StatementEnrichmentNode(
         enricher=statement_enrichment_module,
     )
@@ -364,13 +350,11 @@ def build_workflow(
         enricher=procedure_enrichment_module,
     )
 
-    statement_hub_node = local_statement_hubs.LocalStatementHubNode(
-        adjudicator=statement_hub_adjudicator,
-        synthesizer=statement_hub_module,
+    statement_hub_node = local_statement_hubs.StatementHubNode(
+        statement_hub_module,
     )
-    procedure_hub_node = local_procedure_hubs.LocalProcedureHubNode(
-        adjudicator=procedure_hub_adjudicator,
-        synthesizer=procedure_hub_module,
+    procedure_hub_node = local_procedure_hubs.ProcedureHubNode(
+        procedure_hub_module,
     )
     graph = StateGraph(state.State)
     graph.add_node('ocr', _timed_node('ocr', ocr.OCRNode().run, recorder))
@@ -441,6 +425,10 @@ def build_workflow(
         _timed_node('entity_enrichment', entity_enrichment_node.run, recorder),
     )
     graph.add_node(
+        'event_enrichment',
+        _timed_node('event_enrichment', event_enrichment_node.run, recorder),
+    )
+    graph.add_node(
         'predicate_enrichment',
         _timed_node(
             'predicate_enrichment', predicate_enrichment_node.run, recorder
@@ -451,12 +439,12 @@ def build_workflow(
         _timed_node('entity_hub_builder', entity_hub_node.run, recorder),
     )
     graph.add_node(
-        'predicate_hub_builder',
-        _timed_node('predicate_hub_builder', predicate_hub_node.run, recorder),
+        'event_hub_builder',
+        _timed_node('event_hub_builder', event_hub_node.run, recorder),
     )
     graph.add_node(
-        'triplet_hub_builder',
-        _timed_node('triplet_hub_builder', triplet_hub_node.run, recorder),
+        'predicate_hub_builder',
+        _timed_node('predicate_hub_builder', predicate_hub_node.run, recorder),
     )
     graph.add_node(
         'statement_enrichment',
@@ -479,6 +467,10 @@ def build_workflow(
         _timed_node('procedure_hub_builder', procedure_hub_node.run, recorder),
     )
     graph.add_node(
+        'triplet_hub_builder',
+        _timed_node('triplet_hub_builder', triplet_hub_node.run, recorder),
+    )
+    graph.add_node(
         'final_projector',
         _timed_node('final_projector', final_projector_node.run, recorder),
     )
@@ -495,10 +487,11 @@ def build_workflow(
     statement_builder_entry = 'statement_procedure_builder'
     triplet_entry = 'triplet_extraction'
     entity_enrichment_entry = 'entity_enrichment'
+    event_enrichment_entry = 'event_enrichment'
     predicate_enrichment_entry = 'predicate_enrichment'
     entity_hub_entry = 'entity_hub_builder'
+    event_hub_entry = 'event_hub_builder'
     predicate_hub_entry = 'predicate_hub_builder'
-    triplet_hub_entry = 'triplet_hub_builder'
     statement_enrichment_entry = 'statement_enrichment'
     procedure_enrichment_entry = 'procedure_enrichment'
     statement_hub_entry = 'statement_hub_builder'
@@ -551,14 +544,16 @@ def build_workflow(
     graph.add_edge('statement_procedure_builder', 'governance_walker')
     graph.add_edge('governance_walker', triplet_entry)
     graph.add_edge('triplet_extraction', entity_enrichment_entry)
-    graph.add_edge('entity_enrichment', predicate_enrichment_entry)
+    graph.add_edge('entity_enrichment', event_enrichment_entry)
+    graph.add_edge('event_enrichment', predicate_enrichment_entry)
     graph.add_edge('predicate_enrichment', entity_hub_entry)
-    graph.add_edge('entity_hub_builder', predicate_hub_entry)
-    graph.add_edge('predicate_hub_builder', triplet_hub_entry)
-    graph.add_edge('triplet_hub_builder', statement_enrichment_entry)
-    graph.add_edge('statement_enrichment', procedure_enrichment_entry)
-    graph.add_edge('procedure_enrichment', statement_hub_entry)
-    graph.add_edge('statement_hub_builder', procedure_hub_entry)
+    graph.add_edge(entity_hub_entry, event_hub_entry)
+    graph.add_edge(event_hub_entry, predicate_hub_entry)
+    graph.add_edge(predicate_hub_entry, statement_enrichment_entry)
+    graph.add_edge(statement_enrichment_entry, procedure_enrichment_entry)
+    graph.add_edge(procedure_enrichment_entry, statement_hub_entry)
+    graph.add_edge(statement_hub_entry, procedure_hub_entry)
     graph.add_edge(procedure_hub_exit, 'final_projector')
-    graph.add_edge('final_projector', END)
+    graph.add_edge('final_projector', 'triplet_hub_builder')
+    graph.add_edge('triplet_hub_builder', END)
     return graph.compile()

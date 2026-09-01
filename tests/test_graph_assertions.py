@@ -120,11 +120,16 @@ def test_assertion_rows_builds_event_endpoints():
     rows = assertions.assertion_rows(
         [triplet],
         'hefferon.pdf',
-        {3: {'Alice': 'A person', 'an appointment': 'An event'}},
+        {3: {'Alice': 'entity person', 'an appointment': 'wrong entity text'}},
         {3: {'participates in': 'event participation'}},
+        entity_embeddings={3: {'Alice': [0.1], 'an appointment': [0.2]}},
+        event_descriptions={3: {'an appointment': 'event occurrence'}},
+        event_embeddings={3: {'an appointment': [0.9]}},
     )
     assert len(rows['entities']) == 1
     assert rows['events'][0]['name'] == 'an appointment'
+    assert rows['events'][0]['description'] == 'event occurrence'
+    assert rows['events'][0]['embedding'] == [0.9]
 
 
 def test_event_endpoint_uuid_is_disjoint_and_stable():

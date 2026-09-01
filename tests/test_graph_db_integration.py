@@ -37,7 +37,9 @@ def test_persist_nodes_upserts_labels_and_next_chain():
     source = 'integration-test-book'
     stream = [
         models.SourceNode(type='header', content='§1', id=0, document_index=0),
-        models.SourceNode(type='paragraph', content='a', id=1, document_index=0),
+        models.SourceNode(
+            type='paragraph', content='a', id=1, document_index=0
+        ),
         models.SourceNode(type='math', content='$x$', id=2, document_index=0),
     ]
 
@@ -160,8 +162,10 @@ def test_meta_rebuild_preserves_durable_components_and_source_hubs(monkeypatch):
             ],
         }
 
-    monkeypatch.setattr(local_entity_hubs, 'build_hubs', fake_build_hubs)
-    monkeypatch.setattr(local_predicate_hubs, 'build_hubs', fake_build_hubs_predicate)
+    monkeypatch.setattr(local_entity_hubs, 'build_entity_hubs', fake_build_hubs)
+    monkeypatch.setattr(
+        local_predicate_hubs, 'build_hubs', fake_build_hubs_predicate
+    )
     monkeypatch.setattr(
         name_hubs,
         'rebuild_global',
@@ -259,7 +263,6 @@ def test_meta_rebuild_preserves_durable_components_and_source_hubs(monkeypatch):
                     else local_predicate_hubs.rebuild_global
                 )(
                     language_model=object(),
-                    adjudicator=object(),
                     synthesizer=object(),
                     session_factory=_session_factory,
                 )

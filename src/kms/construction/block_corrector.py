@@ -19,11 +19,12 @@ class BlockReviewSignature(dspy.Signature):
     DEFAULT ANSWER: FALSE.
 
     Return TRUE only when the crop directly proves a specific mismatch between
-    the visible content and the transcription. You must be able to identify
-    the mismatched character, word, digit, punctuation mark, or mathematical
-    glyph. If the crop is small, blurry, clipped, compressed, ambiguous, or
-    merely suspicious, return FALSE. Never guess.
-
+    the visible content and the transcription and at least one supplied line
+    can be named as the mismatched line. If no supplied line can be identified
+    with confidence, return FALSE. You must be able to identify the mismatched
+    character, word, digit, punctuation mark, or mathematical glyph. If the
+    crop is small, blurry, clipped, compressed, ambiguous, or merely
+    suspicious, return FALSE. Never guess.
     Compare the crop and transcription character by character from left to
     right. Check words, digits, signs, relation symbols, quantifiers,
     exponents, subscripts, fraction parts, delimiters, parentheses, brackets,
@@ -251,6 +252,20 @@ class BlockCorrectionSignature(dspy.Signature):
     is a visual error even if all other symbols match. Correct the placement
     of parentheses when the crop shows a different grouping, such as
     `f(A) \cap B` versus `f(A \cap B)`.
+
+    Symbol-fidelity examples:
+    - If the crop visibly shows `P \Leftrightarrow Q` but the OCR line says
+      `P \Rightarrow Q`, replace only that source line with the
+      `\Leftrightarrow` form.
+    - If the crop visibly shows `(P \wedge Q)` but the OCR line says
+      `(P \vee Q)`, replace only that source line with the `\wedge` form.
+    - If the crop visibly shows `x \geq 0` but the OCR line says `x \ge 0`,
+      preserve the crop's exact `\geq` command; equivalent LaTeX is not a
+      valid reason to normalize the source.
+    - If the crop visibly shows `a \neq b` but the OCR line says `a = b`,
+      replace the relation symbol with `\neq`; do not infer other changes.
+    In every example, preserve all surrounding Markdown, LaTeX delimiters,
+    whitespace, and line structure exactly, and return no unchanged lines.
 
     Return only the replacement edit list.
     """

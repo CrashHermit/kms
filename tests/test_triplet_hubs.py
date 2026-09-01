@@ -1,7 +1,7 @@
 import asyncio
 
 from kms.construction import triplet_hubs
-from kms.core import identity, models
+from kms.core import models
 from kms.graph import hubs, queries, schema, writer
 
 
@@ -20,56 +20,6 @@ def test_triplet_hub_ids_are_tuple_stable_and_tier_scoped():
     )
 
 
-def test_triplet_memberships_use_predicate_occurrence_identity():
-    triplet = models.Triplet(
-        subject='graph', predicate='has', object='vertex', evidence_positions=[0]
-    )
-    identity.assign_triplet_ids([triplet], 'book.pdf')
-    subject_id = identity.entity_uuid('book.pdf', 0, triplet.subject)
-    object_id = identity.entity_uuid('book.pdf', 0, triplet.object)
-    predicate_id = identity.predicate_uuid(triplet.occurrence_uuids[0])
-
-    memberships = triplet_hubs.build_triplet_memberships(
-        [triplet],
-        source='book.pdf',
-        entity_assignments={
-            subject_id: ('entity-hub',),
-            object_id: ('object-hub',),
-        },
-        predicate_assignments={predicate_id: ('predicate-hub',)},
-    )
-
-    assert memberships[0].subject_hubs == ('entity-hub',)
-    assert memberships[0].predicate_hubs == ('predicate-hub',)
-    assert memberships[0].object_hubs == ('object-hub',)
-
-def test_triplet_memberships_support_event_endpoints():
-    triplet = models.Triplet(
-        subject='event-a',
-        predicate='precedes',
-        object='event-b',
-        subject_kind=models.NodeKind.EVENT,
-        object_kind=models.NodeKind.EVENT,
-        evidence_positions=[0],
-    )
-    identity.assign_triplet_ids([triplet], 'book.pdf')
-    subject_id = identity.event_uuid('book.pdf', 0, triplet.subject)
-    object_id = identity.event_uuid('book.pdf', 0, triplet.object)
-    predicate_id = identity.predicate_uuid(triplet.occurrence_uuids[0])
-    memberships = triplet_hubs.build_triplet_memberships(
-        [triplet],
-        source='book.pdf',
-        entity_assignments={},
-        event_assignments={
-            subject_id: ('event-hub-a',),
-            object_id: ('event-hub-b',),
-        },
-        predicate_assignments={predicate_id: ('predicate-hub',)},
-    )
-    assert memberships[0].subject_hubs == ('event-hub-a',)
-    assert memberships[0].object_hubs == ('event-hub-b',)
-
-
 def test_schema_contains_triplet_hub_constraints_and_indexes():
     combined = '\n'.join(schema.schema_statements())
 
@@ -85,7 +35,9 @@ def test_group_query_keeps_triplet_as_three_way_intersection_anchor():
     assert '(t)-[:HAS_SUBJECT]->(s)-[:CANONICAL]->(sh)' in cypher
     assert '(t)-[:HAS_PREDICATE]->(p:Predicate)-[:CANONICAL]->' in cypher
     assert '(t)-[:HAS_OBJECT]->(o)-[:CANONICAL]->(oh)' in cypher
-    assert 'collect(DISTINCT t.uuid)' in cypher
+    assert f'sh:{hubs.LOCAL_EVENT_HUB_LABEL}' in cypher
+    assert f'oh:{hubs.ENTITY_HUB_LABEL}' in cypher
+    assert f'oh:{hubs.LOCAL_EVENT_HUB_LABEL}' in cypher
 
 
 def test_meta_group_query_requires_two_sources():
@@ -243,3 +195,206 @@ async def _group_query_text(tier):
     rows = await queries.triplet_hub_groups(lambda: _Session(), tier)
     assert rows == []
     return captured[0]
+
+
+def test_source_role_query_accepts_entity_or_event_hubs():
+    cypher = queries.merge_triplet_hub_edges_query('source')
+
+    assert '(s {uuid: row.subject_hub})' in cypher
+    assert f's:{hubs.ENTITY_HUB_LABEL}' in cypher
+    assert f's:{hubs.LOCAL_EVENT_HUB_LABEL}' in cypher
+    assert f'o:{hubs.ENTITY_HUB_LABEL}' in cypher
+    assert f'o:{hubs.LOCAL_EVENT_HUB_LABEL}' in cypher
+    assert f'p:{hubs.PREDICATE_HUB_LABEL}' in cypher
+    assert 'HAS_SUBJECT_HUB' in cypher
+    assert 'HAS_PREDICATE_HUB' in cypher
+    assert 'HAS_OBJECT_HUB' in cypher
+
+
+def test_persist_source_triplet_hub_writes_roles_and_evidence():
+    captured = []
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc_info):
+            return False
+
+        async def run(self, cypher, **kwargs):
+            captured.append((cypher, kwargs))
+
+    asyncio.run(
+        writer.persist_triplet_hubs(
+            [
+                {
+                    'uuid': 'source-triplet',
+                    'source': 'book-a',
+                    'canonical_name': 'An event precedes an entity.',
+                    'description': 'An event precedes an entity.',
+                    'embedding': [0.1],
+                    'subject_hub': 'event-hub',
+                    'predicate_hub': 'predicate-hub',
+                    'object_hub': 'entity-hub',
+                    'triplets': ['triplet-a'],
+                }
+            ],
+            tier='source',
+            session_factory=lambda: _Session(),
+        )
+    )
+
+    assert len(captured) == 3
+    assert 'LocalEventHub' in captured[1][0]
+    assert captured[1][1]['rows'] == [
+        {
+            'hub': 'source-triplet',
+            'subject_hub': 'event-hub',
+            'predicate_hub': 'predicate-hub',
+            'object_hub': 'entity-hub',
+        }
+    ]
+    assert captured[2][1]['pairs'] == [
+        {'triplet': 'triplet-a', 'hub': 'source-triplet'}
+    ]
+    assert 'HAS_SUBJECT_HUB' in captured[1][0]
+    assert 'HAS_PREDICATE_HUB' in captured[1][0]
+    assert 'HAS_OBJECT_HUB' in captured[1][0]
+    assert 'CANONICAL' in captured[2][0]
+
+
+def test_rebuild_source_triplet_hubs_clears_before_persisting(monkeypatch):
+    calls = []
+    rows = [
+        {
+            'source': 'book-a',
+            'subject_hub': 'event-hub',
+            'predicate_hub': 'predicate-hub',
+            'object_hub': 'entity-hub',
+            'triplets': ['triplet-a'],
+        }
+    ]
+    groups = [
+        {
+            **rows[0],
+            'uuid': 'source-triplet',
+            'canonical_name': 'An event precedes an entity.',
+            'description': 'An event precedes an entity.',
+            'embedding': [0.1],
+        }
+    ]
+
+    async def read_groups(*args, **kwargs):
+        calls.append('read')
+        return rows
+
+    async def synthesize(groups_to_synthesize, **kwargs):
+        calls.append('synthesize')
+        assert groups_to_synthesize == triplet_hubs._prepare_groups(
+            rows, 'source'
+        )
+        return groups
+
+    async def clear(*args, **kwargs):
+        calls.append(('clear', kwargs['source']))
+
+    async def persist(groups_to_persist, **kwargs):
+        calls.append(('persist', groups_to_persist))
+
+    monkeypatch.setattr(triplet_hubs.queries, 'triplet_hub_groups', read_groups)
+    monkeypatch.setattr(triplet_hubs, '_synthesize_groups', synthesize)
+    monkeypatch.setattr(triplet_hubs.writer, 'clear_triplet_hubs', clear)
+    monkeypatch.setattr(triplet_hubs.writer, 'persist_triplet_hubs', persist)
+
+    result = asyncio.run(
+        triplet_hubs.rebuild(
+            language_model=object(),
+            session_factory=object(),
+            source='book-a',
+            max_concurrency=4,
+        )
+    )
+
+    assert calls[0:2] == ['read', 'synthesize']
+    assert calls[2][0] == 'clear'
+    assert calls[3][0] == 'persist'
+    assert calls[2][1] == 'book-a'
+    assert result == {'triplet_hubs': 1, 'triplets': 1}
+
+
+def test_rebuild_source_triplet_hubs_clears_when_no_groups(monkeypatch):
+    calls = []
+
+    async def read_groups(*args, **kwargs):
+        return []
+
+    async def clear(*args, **kwargs):
+        calls.append(('clear', kwargs['source']))
+
+    async def persist(groups, **kwargs):
+        calls.append(('persist', groups))
+
+    monkeypatch.setattr(triplet_hubs.queries, 'triplet_hub_groups', read_groups)
+    monkeypatch.setattr(triplet_hubs.writer, 'clear_triplet_hubs', clear)
+    monkeypatch.setattr(triplet_hubs.writer, 'persist_triplet_hubs', persist)
+
+    result = asyncio.run(
+        triplet_hubs.rebuild(
+            language_model=object(),
+            session_factory=object(),
+            source='book-a',
+        )
+    )
+
+    assert calls == [('clear', 'book-a'), ('persist', [])]
+    assert result == {'triplet_hubs': 0, 'triplets': 0}
+
+
+def test_triplet_hub_node_skips_without_graph(monkeypatch):
+    async def fail_rebuild(**kwargs):
+        raise AssertionError('rebuild must not run without graph persistence')
+
+    monkeypatch.setattr(triplet_hubs, 'rebuild', fail_rebuild)
+    node = triplet_hubs.TripletHubNode(
+        object(),
+        session_factory=None,
+        neo4j_configured=False,
+    )
+
+    result = asyncio.run(node.run({'source': models.Source(key='book-a')}))
+
+    assert result == {
+        'triplet_hubs_created': 0,
+        'triplets_clustered': 0,
+    }
+
+
+def test_triplet_hub_node_rebuilds_for_current_source(monkeypatch):
+    captured = {}
+
+    async def fake_rebuild(**kwargs):
+        captured.update(kwargs)
+        return {'triplet_hubs': 3, 'triplets': 7}
+
+    monkeypatch.setattr(triplet_hubs, 'rebuild', fake_rebuild)
+    language_model = object()
+    session_factory = object()
+    node = triplet_hubs.TripletHubNode(
+        language_model,
+        session_factory=session_factory,
+        neo4j_configured=True,
+        max_concurrency=4,
+    )
+
+    result = asyncio.run(node.run({'source': models.Source(key='book-a')}))
+
+    assert result == {
+        'triplet_hubs_created': 3,
+        'triplets_clustered': 7,
+    }
+    assert captured == {
+        'language_model': language_model,
+        'session_factory': session_factory,
+        'source': 'book-a',
+        'max_concurrency': 4,
+    }

@@ -4,27 +4,6 @@ from kms import config
 from kms.core import context_window, embeddings, llm, models
 
 
-def select_term_context(
-    nodes: list[models.SourceNode],
-    position: int,
-    before_budget: int,
-    after_budget: int,
-) -> tuple[
-    list[context_window.ContextNode],
-    context_window.ContextNode,
-    list[context_window.ContextNode],
-]:
-    """Selects directional context around one target node."""
-    before = context_window.project_nodes(
-        context_window.nodes_before(nodes, position, before_budget)
-    )
-    target = context_window.project_nodes([nodes[position]])[0]
-    after = context_window.project_nodes(
-        context_window.nodes_after(nodes, position, after_budget)
-    )
-    return before, target, after
-
-
 def embedding_text(term: str, description: str | None) -> str:
     return f'{term} : {description}' if description else term
 
@@ -44,7 +23,7 @@ async def describe_terms(
         if not terms:
             return
         ordered_terms = sorted(terms)
-        before, target, after = select_term_context(
+        before, target, after = context_window.select_target_context(
             nodes, position, before_budget, after_budget
         )
         request = models.TermEnrichmentInput(

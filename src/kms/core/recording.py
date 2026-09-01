@@ -98,8 +98,9 @@ class Recorder:
         status: str,
         duration_ms: float,
         output_keys: list[str] | None = None,
+        details: dict[str, object] | None = None,
     ) -> None:
-        """Records one workflow-stage timing event."""
+        """Records one workflow-stage timing event and optional details."""
         try:
             progress_path = self._output_dir / 'progress.jsonl'
             progress_path.parent.mkdir(parents=True, exist_ok=True)
@@ -111,6 +112,8 @@ class Recorder:
             }
             if output_keys is not None:
                 record['output_keys'] = sorted(output_keys)
+            if details is not None:
+                record['details'] = details
             with progress_path.open('a') as handle:
                 handle.write(json.dumps(record, ensure_ascii=False) + '\n')
         except (TypeError, ValueError, OSError):

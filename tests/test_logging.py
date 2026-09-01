@@ -6,7 +6,7 @@ from kms.construction import (
     statement_procedure_builder,
     text_seam_merger,
 )
-from kms.core import logs, models, walker
+from kms.core import logs, models
 
 
 def test_elide_collapses_whitespace_and_newlines():
@@ -43,30 +43,29 @@ def _nodes(*contents):
     ]
 
 
-class _ScriptedFinder:
+class _ScriptedRouter:
     def __init__(self, scripted):
         self._scripted = list(scripted)
 
-    async def aforward(self, current_nodes):
-        return self._scripted.pop(0) if self._scripted else []
+    async def aforward(self, **inputs):
+        return self._scripted.pop(0)
 
 
 def test_pedagogical_component_finder_logs_the_span_count(caplog):
-    module = _ScriptedFinder(
-        [
-            [
-                walker.Span(start=0, end=0),
-                walker.Span(start=1, end=1),
-            ],
-            [],
-        ]
-    )
+    start_router = _ScriptedRouter([True, True, False])
+    end_router = _ScriptedRouter([True, True])
     with caplog.at_level(
         logging.INFO, logger='kms.construction.pedagogical_component_finder'
     ):
         asyncio.run(
             pedagogical_component_finder.find_spans(
-                _nodes('Theorem 1', 'Proof.', 'tail'), module=module
+                _nodes('Theorem 1', 'Proof.', 'tail'),
+                start_router=start_router,
+                end_router=end_router,
+                start_before_budget=300,
+                start_after_budget=300,
+                end_before_budget=300,
+                end_after_budget=300,
             )
         )
     assert '3 nodes -> 2 span(s)' in caplog.text

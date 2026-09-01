@@ -16,7 +16,7 @@ class _RecordingEnricher:
         return self.results_by_term[kwargs['request'].terms[0]]
 
 
-def test_select_term_context_is_directional_and_text_only():
+def test_select_target_context_is_directional_and_text_only():
     nodes = [
         models.SourceNode(type='paragraph', content='before'),
         models.SourceNode(
@@ -27,7 +27,7 @@ def test_select_term_context_is_directional_and_text_only():
         models.SourceNode(type='paragraph', content='after'),
     ]
 
-    before, target, after = semantic.select_term_context(
+    before, target, after = context_window.select_target_context(
         nodes, position=1, before_budget=100, after_budget=100
     )
 
@@ -43,14 +43,14 @@ def test_select_term_context_is_directional_and_text_only():
     assert not hasattr(projected, 'assets')
 
 
-def test_select_term_context_preserves_empty_image_target():
+def test_select_target_context_preserves_empty_image_target():
     nodes = [
         models.SourceNode(type='paragraph', content='before'),
         models.SourceNode(type='image', content=None),
         models.SourceNode(type='paragraph', content='after'),
     ]
 
-    _, target, _ = semantic.select_term_context(
+    _, target, _ = context_window.select_target_context(
         nodes, position=1, before_budget=100, after_budget=100
     )
 
@@ -75,7 +75,10 @@ def test_describe_terms_requires_exact_ordered_one_to_one_results():
         )
     )
     assert result == {0: {'alpha': 'A', 'beta': 'B'}}
-    assert [call['request'].terms for call in enricher.calls] == [['alpha'], ['beta']]
+    assert [call['request'].terms for call in enricher.calls] == [
+        ['alpha'],
+        ['beta'],
+    ]
     assert list(enricher.calls[0]) == ['request']
 
     cases = [

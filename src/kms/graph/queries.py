@@ -56,6 +56,24 @@ def merge_nodes_query(label: str | None) -> str:
     return query
 
 
+MERGE_VISUAL_ASSETS = (
+    f'UNWIND $rows AS row '
+    f'MERGE (a:{nodes.VISUAL_ASSET_LABEL} {{uuid: row.uuid}}) '
+    f'ON CREATE SET a.created_at = $now '
+    f'SET a += row, a.modified_at = $now'
+)
+
+
+MERGE_NODE_ASSETS = (
+    f'UNWIND $pairs AS pair '
+    f'MATCH (n:{nodes.NODE_LABEL} {{uuid: pair.node}}), '
+    f'(a:{nodes.VISUAL_ASSET_LABEL} {{uuid: pair.asset}}) '
+    f'MERGE (n)-[r:HAS_ASSET]->(a) '
+    f'ON CREATE SET r.created_at = $now '
+    f'SET r.modified_at = $now'
+)
+
+
 MERGE_HEAD = (
     f'MATCH (s:{nodes.SOURCE_LABEL} {{uuid: $source}}), '
     f'(n:{nodes.NODE_LABEL} {{uuid: $head}}) '
@@ -166,6 +184,14 @@ MERGE_ENTITIES = (
     f'SET e += row, e.modified_at = $now'
 )
 
+MERGE_EVENTS = (
+    f'UNWIND $rows AS row '
+    f'MERGE (e:{events.EVENT_LABEL} {{uuid: row.uuid}}) '
+    f'ON CREATE SET e.created_at = $now '
+    f'SET e += row, e.modified_at = $now'
+)
+
+
 MERGE_PREDICATES = (
     f'UNWIND $rows AS row '
     f'MERGE (p:{predicates.PREDICATE_LABEL} {{uuid: row.uuid}}) '
@@ -180,6 +206,14 @@ MERGE_ENTITY_NAMES = (
     f'SET n += row, n.modified_at = $now'
 )
 
+MERGE_EVENT_NAMES = (
+    f'UNWIND $rows AS row '
+    f'MERGE (n:{names.EVENT_NAME_LABEL} {{uuid: row.uuid}}) '
+    f'ON CREATE SET n.created_at = $now '
+    f'SET n += row, n.modified_at = $now'
+)
+
+
 MERGE_PREDICATE_NAMES = (
     f'UNWIND $rows AS row '
     f'MERGE (n:{names.PREDICATE_NAME_LABEL} {{uuid: row.uuid}}) '
@@ -191,6 +225,13 @@ MERGE_HAS_ENTITY_NAME = (
     f'UNWIND $pairs AS pair '
     f'MATCH (c:{entities.ENTITY_LABEL} {{uuid: pair.component}}), '
     f'(n:{names.ENTITY_NAME_LABEL} {{uuid: pair.name}}) '
+    f'MERGE (c)-[:HAS_NAME]->(n)'
+)
+
+MERGE_HAS_EVENT_NAME = (
+    f'UNWIND $pairs AS pair '
+    f'MATCH (c:{events.EVENT_LABEL} {{uuid: pair.component}}), '
+    f'(n:{names.EVENT_NAME_LABEL} {{uuid: pair.name}}) '
     f'MERGE (c)-[:HAS_NAME]->(n)'
 )
 
@@ -437,9 +478,13 @@ def merge_triplet_hub_edges_query(tier: str) -> str:
         return (
             f'UNWIND $rows AS row '
             f'MATCH (h:{label} {{uuid: row.hub}}), '
-            f'(s:{hubs.ENTITY_HUB_LABEL} {{uuid: row.subject_hub}}), '
+            f'(s {{uuid: row.subject_hub}}), '
             f'(p:{hubs.PREDICATE_HUB_LABEL} {{uuid: row.predicate_hub}}), '
-            f'(o:{hubs.ENTITY_HUB_LABEL} {{uuid: row.object_hub}}) '
+            f'(o {{uuid: row.object_hub}}) '
+            f'WHERE (s:{hubs.ENTITY_HUB_LABEL} OR '
+            f's:{hubs.LOCAL_EVENT_HUB_LABEL}) AND '
+            f'(o:{hubs.ENTITY_HUB_LABEL} OR '
+            f'o:{hubs.LOCAL_EVENT_HUB_LABEL}) '
             f'MERGE (h)-[:HAS_SUBJECT_HUB]->(s) '
             f'MERGE (h)-[:HAS_PREDICATE_HUB]->(p) '
             f'MERGE (h)-[:HAS_OBJECT_HUB]->(o)'
@@ -628,7 +673,7 @@ async def _all_components(
         f'MATCH (src:{nodes.SOURCE_LABEL} {{uuid: c.source}})\n'
         f'WHERE src.key = $source\n'
         f'RETURN c.uuid AS uuid, c.{name_field} AS name, '
-        f'c.node_id AS node_id, c.description AS description, '
+        f'c.node_position AS node_position, c.description AS description, '
         f'c.embedding AS embedding, src.key AS source'
     )
     async with session_factory() as session:
@@ -637,7 +682,7 @@ async def _all_components(
             {
                 'uuid': record['uuid'],
                 'name': record['name'],
-                'node_id': record['node_id'],
+                'node_position': record['node_position'],
                 'description': record.get('description'),
                 'embedding': record.get('embedding'),
                 'source': record.get('source'),
@@ -651,6 +696,8 @@ async def all_components(
 ) -> list[dict]:
     if kind == 'entity':
         return await all_entity_components(session_factory, source)
+    if kind == 'event':
+        return await all_event_components(session_factory, source)
     if kind == 'predicate':
         return await all_predicate_components(session_factory, source)
     raise ValueError(f'unknown component kind: {kind}')
@@ -662,6 +709,17 @@ async def all_entity_components(
     return await _all_components(
         session_factory,
         label=entities.ENTITY_LABEL,
+        name_field='name',
+        source=source,
+    )
+
+
+async def all_event_components(
+    session_factory: Callable, source: str
+) -> list[dict]:
+    return await _all_components(
+        session_factory,
+        label=events.EVENT_LABEL,
         name_field='name',
         source=source,
     )
@@ -786,6 +844,10 @@ async def unassigned_components(
 ) -> list[dict]:
     if kind == 'entity':
         return await unassigned_entity_components(session_factory, source)
+    if kind == 'event':
+        raise ValueError(
+            'event components do not use canonicalized assignment queries'
+        )
     if kind == 'predicate':
         return await unassigned_predicate_components(session_factory, source)
     raise ValueError(f'unknown component kind: {kind}')
@@ -826,9 +888,10 @@ async def all_source_hubs(
         label=(
             entity_hubs.hub_label()
             if kind == 'entity'
+            else local_event_hubs.hub_label()
+            if kind == 'event'
             else predicate_hubs.hub_label()
         ),
-        source=source,
         hub_uuids=hub_uuids,
     )
 
@@ -888,6 +951,19 @@ async def all_entity_source_hubs(
     )
 
 
+async def all_event_source_hubs(
+    session_factory: Callable,
+    source: str | None = None,
+    hub_uuids: list[str] | None = None,
+) -> list[dict]:
+    return await _all_source_hubs(
+        session_factory,
+        label=local_event_hubs.hub_label(),
+        source=source,
+        hub_uuids=hub_uuids,
+    )
+
+
 async def all_predicate_source_hubs(
     session_factory: Callable,
     source: str | None = None,
@@ -921,6 +997,16 @@ async def qualified_predicate_meta_hub_uuids(
     )
 
 
+async def qualified_event_meta_hub_uuids(
+    session_factory: Callable,
+) -> set[str]:
+    return await _qualified_meta_hub_uuids(
+        session_factory,
+        source_hub_label=local_event_hubs.hub_label(),
+        meta_hub_label=local_event_hubs.hub_label('meta'),
+    )
+
+
 async def triplet_hub_groups(
     session_factory: Callable,
     tier: str,
@@ -939,11 +1025,13 @@ async def triplet_hub_groups(
         cypher = (
             f'MATCH (t:{triplets.TRIPLET_LABEL})\n'
             f'MATCH (t)-[:HAS_SUBJECT]->(s)-[:CANONICAL]->(sh)'
-            f' WHERE sh:{hubs.ENTITY_HUB_LABEL}\n'
+            f' WHERE sh:{hubs.ENTITY_HUB_LABEL} OR '
+            f'sh:{hubs.LOCAL_EVENT_HUB_LABEL}\n'
             f'MATCH (t)-[:HAS_PREDICATE]->(p:{predicates.PREDICATE_LABEL})-[:CANONICAL]->'
             f'(ph:{hubs.PREDICATE_HUB_LABEL})\n'
             f'MATCH (t)-[:HAS_OBJECT]->(o)-[:CANONICAL]->(oh)'
-            f' WHERE oh:{hubs.ENTITY_HUB_LABEL}\n'
+            f' WHERE oh:{hubs.ENTITY_HUB_LABEL} OR '
+            f'oh:{hubs.LOCAL_EVENT_HUB_LABEL}\n'
             f'MATCH (src:{nodes.SOURCE_LABEL} {{uuid: t.source}})\n'
             f'{source_filter}'
             f'WITH sh, ph, oh, src.key AS source, t, s, p, o\n'

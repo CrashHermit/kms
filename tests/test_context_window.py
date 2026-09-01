@@ -96,3 +96,24 @@ def test_nodes_before_and_after_retain_image_nodes(tmp_path):
 
     assert before == nodes[:2]
     assert after == nodes[3:]
+
+
+def test_select_target_context_keeps_target_and_bounds_each_direction():
+    nodes = [
+        models.SourceNode(content='a' * 7),
+        models.SourceNode(content='b' * 7),
+        models.SourceNode(type='image', content='target' * 20),
+        models.SourceNode(content='c' * 7),
+        models.SourceNode(content='d' * 7),
+    ]
+
+    before, target, after = context_window.select_target_context(
+        nodes, position=2, before_budget=2, after_budget=2
+    )
+
+    assert [node.content for node in before] == ['b' * 7]
+    assert target.content == 'target' * 20
+    assert target.position == 0
+    assert [node.content for node in after] == ['c' * 7]
+    assert [node.position for node in before] == [0]
+    assert [node.position for node in after] == [0]
