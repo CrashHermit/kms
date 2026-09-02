@@ -1,0 +1,44 @@
+[Wed Sep 02 09:43:51 2026]00000:Starting EverQuest (Built Sep  1 2026 07:04:28)
+[Wed Sep 02 09:43:51 2026]00001:EverQuest Configuration Type: RELEASE_NON_AVATAR
+[Wed Sep 02 09:43:51 2026]00002:Timezone: UTC-6h00m
+[Wed Sep 02 09:43:51 2026]00003:Loading graphics DLL.
+[Wed Sep 02 09:43:52 2026]00004:Graphics DLL Configuration Type: GraphicsDLL
+[Wed Sep 02 09:43:52 2026]00005:Graphics DLL Version 3.02.260506
+[Wed Sep 02 09:43:52 2026]00006:Initializing timers.
+[Wed Sep 02 09:43:53 2026]00007:Checking critical files.
+[Wed Sep 02 09:43:53 2026]00008:Initializing WinSock.
+[Wed Sep 02 09:43:53 2026]00009:Enumerating 3D devices.
+[Wed Sep 02 09:43:54 2026]00000:Found adapter #0 - NVIDIA GeForce RTX 3060 Ti (32.0.65535.65535)
+
+[Wed Sep 02 09:43:54 2026]00001:Adapter #0 - NVIDIA GeForce RTX 3060 Ti :
+
+[Wed Sep 02 09:43:54 2026]00002:32Bit = 1, D32 = 1, D24 = 1, D16 = 1 
+
+[Wed Sep 02 09:43:54 2026]00003:16Bit(565) = 1, D32 = 1, D24 = 1, D16 = 1 
+
+[Wed Sep 02 09:43:55 2026]00004:16Bit(1555) = 1, D32 = 1, D24 = 1, D16 = 1 
+
+[Wed Sep 02 09:43:55 2026]00010:Picking a default resolution, desktop is 1920 x 1080, 32 bits
+[Wed Sep 02 09:43:55 2026]00011:Resolution was capped at 1920 x 1080
+[Wed Sep 02 09:43:55 2026]00012:Resolution verified 1920 x 1080, 32 bits ... diff was 1000 from 0 modes
+[Wed Sep 02 09:43:55 2026]00013:Resolution selected 1920 x 1080, 32 bits
+[Wed Sep 02 09:43:55 2026]00014:Creating window.
+[Wed Sep 02 09:43:55 2026]00015:Checking display driver version.
+[Wed Sep 02 09:43:56 2026]00016:Activating window.
+[Wed Sep 02 09:43:57 2026]00017:Dump generation request succeeded: C:\Crash\1a9b23dc-7f74-4abf-8990-599509f9611e.dmp
+[Wed Sep 02 09:43:57 2026]00018:Fatal error occurred in mainthread! (Release Client #630)
+
+[Wed Sep 02 09:43:57 2026]00019:Client Version: Sep  1 2026 07:04:28
+[Wed Sep 02 09:43:57 2026]00020:Skin Directory: 
+
+[Wed Sep 02 09:43:57 2026]00021:Graphics DLL Loaded: Graphics DLL Version 3.02.260506
+[Wed Sep 02 09:43:57 2026]00022:Graphics Build Date: Sep  1 2026 07:07:29
+[Wed Sep 02 09:43:57 2026]00023:Video Card: NVIDIA GeForce RTX 3060 Ti, 32.0.65535.65535
+
+[Wed Sep 02 09:43:57 2026]00024:Processor: 24 of type 8664
+[Wed Sep 02 09:43:57 2026]00025:Memory: Load: 32, Total Phys: 31848, Avail Phys: 21426, Total Page: 40040, Avail Page: 24487, Total Virtual: 134217727, Avail Virtual: 134217535, FreeBlocks: 2048,1588,209,166,2,0,0,0,0,0
+[Wed Sep 02 09:43:57 2026]00026:CPU: 13th Gen Intel(R) Core(TM) i7-13700K 10000
+[Wed Sep 02 09:43:57 2026]00027:Pools: Temp: 0(0). Persistent: 0(0). OnDemand: 0(0). Zone: 0(0)
+[Wed Sep 02 09:43:57 2026]00028:MaxTextures: 0k, CurrentTextures: 0k, HighQualityTextures: 0k
+[Wed Sep 02 09:43:57 2026]00029:Memory Mode: Maximum
+
