@@ -1,6 +1,10 @@
 """DSPy module for visual source-content correction."""
 
 import dspy
+from langgraph.types import Send
+
+from kms2.core.model.source import OCRArtifact
+from kms2.langgraph.source.state import SourceState
 
 
 class ContentCorrectorSignature(dspy.Signature):
@@ -60,11 +64,16 @@ class ContentCorrectorModule(dspy.Module):
 
 
 class ContentCorrectorNode:
-    def dispatch(self, state: dict) -> dict:
-        pass
+    def dispatch(self, state: SourceState) -> dict:
+        ocr_artifacts: list[OCRArtifact] = state['ocr_artifacts']
+        sends: list[Send]
+        for ocr_artifact in ocr_artifacts:
+            send.append('content_corrector_worker', {'ocr_artifact': ocr_artifact})
+
+        return sends
 
     async def worker(self, state: dict) -> dict:
         pass
 
-    def collect(self, state: dict) -> dict:
+    def collect(self, state: SourceState) -> dict:
         pass
