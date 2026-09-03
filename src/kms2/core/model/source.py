@@ -30,7 +30,11 @@ class SourceContent(Vertex):
 
 
 class OCRImageArtifact(BaseModel):
-    """One materialized image produced by OCR."""
+    """One materialized OCR image and its source-page geometry.
+
+    ``bbox`` is an optional ``(left, top, right, bottom)`` fraction of the
+    source page. The file at ``path`` is written by the OCR provider adapter.
+    """
 
     model_config = ConfigDict(extra='forbid')
 
@@ -40,7 +44,12 @@ class OCRImageArtifact(BaseModel):
 
 
 class OCRArtifact(BaseModel):
-    """One OCR block and its visual correction artifacts."""
+    """One OCR block and its visual correction artifacts.
+
+    ``crop_bbox`` is an optional ``(left, top, right, bottom)`` box in pixels
+    of the rendered source page image. ``images`` contains provider images
+    whose page-space boxes overlap this block.
+    """
 
     model_config = ConfigDict(extra='forbid')
 
