@@ -24,8 +24,6 @@ class LineReplacement(BaseModel):
     )
 
 
-
-
 class LineEdit(BaseModel):
     """One deterministic operation anchored to an original numbered line.
 
@@ -81,7 +79,9 @@ def apply_line_replacements(
     return apply_line_edits(
         markdown,
         [
-            LineEdit(index=replacement.index, replacement=replacement.replacement)
+            LineEdit(
+                index=replacement.index, replacement=replacement.replacement
+            )
             for replacement in replacements
         ],
     )

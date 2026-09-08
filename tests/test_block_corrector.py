@@ -106,6 +106,8 @@ def test_editor_allows_empty_replacements_as_conservative_no_op():
         allowed_indexes=[1],
     )
     assert result == []
+
+
 def test_locator_accepts_structured_one_based_location():
     location = models.LineSelection(index=1)
     result = block_corrector.BlockCorrectionLocator.decode(
@@ -199,6 +201,7 @@ def test_staged_corrector_router_false_skips_downstream():
         'corrected_text': 'original',
         'edits': [],
     }
+
 
 def test_editor_rejects_duplicate_line_indices():
     replacements = [

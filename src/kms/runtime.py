@@ -28,7 +28,6 @@ class Runtime:
             return serve.retrieval_server_manager()
         return None
 
-
     @property
     def model_manager(self) -> serve.RouterManager | None:
         """Return the shared local model manager, if enabled."""
@@ -42,6 +41,7 @@ class Runtime:
     def session_factory(self) -> Callable | None:
         """Return the shared Neo4j session factory, if configured."""
         return db.session if self._neo4j_configured else None
+
     async def __aenter__(self) -> 'Runtime':
         """Start the runtime context."""
         return self
@@ -57,10 +57,10 @@ class Runtime:
         if self._model_manager:
             self._model_manager.shutdown()
         await db.close_driver()
+
     async def __aexit__(self, exception_type, exception, traceback) -> None:
         """Stop shared services after the process context exits."""
         await self.close()
-
 
     async def ingest(
         self,
@@ -85,6 +85,8 @@ class Runtime:
             ocr_response_path=ocr_response_path,
             author=author,
         )
+
+
 async def ingest(
     pdf_path: str | Path,
     output_dir: str | Path = 'output',

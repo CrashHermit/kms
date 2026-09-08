@@ -56,8 +56,7 @@ async def main():
 
     async with db.session() as session:
         hubs = await session.run(
-            'MATCH (h:EntityHub) '
-            'RETURN h.canonical_name AS name ORDER BY name'
+            'MATCH (h:EntityHub) RETURN h.canonical_name AS name ORDER BY name'
         )
         records = [record async for record in hubs]
         print(f'\nEntity hubs: {len(records)}')

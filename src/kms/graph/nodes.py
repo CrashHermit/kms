@@ -76,8 +76,6 @@ def node_properties(
     }
 
 
-
-
 def visual_asset_rows(
     nodes_stream: list[models.SourceNode],
     source: str,
@@ -118,6 +116,8 @@ def visual_asset_pairs(
                 }
             )
     return pairs
+
+
 def block_key(block: list[int]) -> str:
     """Serializes a member id block into a stable string key."""
     return '#'.join(str(node_id) for node_id in block)

@@ -27,7 +27,9 @@ def test_node_context_input_rejects_extra_fields() -> None:
     }
 
 
-def test_node_context_input_preserves_context_local_one_based_positions() -> None:
+def test_node_context_input_preserves_context_local_one_based_positions() -> (
+    None
+):
     context = models.NodeContextInput(
         context_before=[
             _node(1, 'header', 'First'),
@@ -152,10 +154,14 @@ def _complete_bundle() -> models.ConstructionBundle:
     return models.ConstructionBundle(
         source=source,
         nodes=nodes,
-        instructions=[models.Instruction(block=[0, 1], member_positions=[1, 0])],
+        instructions=[
+            models.Instruction(block=[0, 1], member_positions=[1, 0])
+        ],
         statements=[models.Statement(block=[0], member_positions=[0])],
         procedures=[models.Procedure(block=[1], member_positions=[1])],
-        triplets=[models.Triplet('first', 'is', 'second', evidence_positions=[1, 0])],
+        triplets=[
+            models.Triplet('first', 'is', 'second', evidence_positions=[1, 0])
+        ],
     )
 
 
@@ -181,12 +187,17 @@ def test_validate_bundle_rejects_missing_and_duplicate_node_ids() -> None:
     try:
         models.validate_bundle(bundle)
     except models.BundleValidationError as error:
-        assert any('nodes contain duplicate uuids' in message for message in error.errors)
+        assert any(
+            'nodes contain duplicate uuids' in message
+            for message in error.errors
+        )
     else:
         raise AssertionError('expected BundleValidationError')
 
 
-def test_validate_bundle_rejects_bad_ownership_membership_and_evidence() -> None:
+def test_validate_bundle_rejects_bad_ownership_membership_and_evidence() -> (
+    None
+):
     bundle = _complete_bundle()
     bundle.nodes[0].document_index = 99
     bundle.instructions[0].member_positions = [42, 42, 999]
@@ -199,7 +210,9 @@ def test_validate_bundle_rejects_bad_ownership_membership_and_evidence() -> None
             'references missing document 99' in message
             for message in error.errors
         )
-        assert 'instruction 0 member_positions contain duplicates' in error.errors
+        assert (
+            'instruction 0 member_positions contain duplicates' in error.errors
+        )
         assert 'instruction 0 references missing node 999' in error.errors
         assert 'triplet 0 evidence contains duplicates' in error.errors
         assert 'triplet 0 references missing node 999' in error.errors

@@ -32,6 +32,7 @@ class EventCardSuitability(module.Module):
         delimiters, commands, braces, superscripts, subscripts, fractions,
         alignment, and escaping. Never convert it to Unicode or plain text.
         """
+
         hub_context: str = dspy.InputField()
         event: str = dspy.InputField()
         eligible: bool = dspy.OutputField()
@@ -71,10 +72,10 @@ class EventCardGenerator(module.Module):
         subscripts, fractions, alignment, and escaping. Never convert
         mathematical LaTeX to Unicode or plain text.
         """
+
         hub_context: str = dspy.InputField()
         event: str = dspy.InputField()
         card: CardDraft = dspy.OutputField()
-
 
     def __init__(
         self, language_model: dspy.LM | None = None, recorder=None
@@ -110,6 +111,7 @@ class EventCardVerifier(module.Module):
         superscripts, subscripts, fractions, alignment, and escaping. Reject
         Unicode/plain-text conversion.
         """
+
         event: str = dspy.InputField()
         prompt: str = dspy.InputField()
         response: str = dspy.InputField()

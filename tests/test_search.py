@@ -84,16 +84,12 @@ def test_search_embeds_rendered_text_and_judges_text_records(monkeypatch):
 
         async def aforward(self, *, query, candidates):
             self.calls.append((query, candidates))
-            return [
-                search_module.SearchJudgeDecision(index=0, relevant=True)
-            ]
+            return [search_module.SearchJudgeDecision(index=0, relevant=True)]
 
     fake_embedder = FakeEmbedder()
     monkeypatch.setattr(embeddings, 'is_configured', lambda: True)
     monkeypatch.setattr(embeddings, 'embedder', lambda: fake_embedder)
-    monkeypatch.setattr(
-        search_module, 'DecomposeJudge', FakeDecomposeJudge
-    )
+    monkeypatch.setattr(search_module, 'DecomposeJudge', FakeDecomposeJudge)
     monkeypatch.setattr(search_module, 'SearchJudge', FakeSearchJudge)
     monkeypatch.setattr(search_module.reranker, 'is_configured', lambda: False)
 
@@ -123,6 +119,7 @@ def test_search_embeds_rendered_text_and_judges_text_records(monkeypatch):
     groups = asyncio.run(scenario())
     assert fake_embedder.queries == ['alpha beta']
     assert groups[0].results[0].image_paths == ['/missing/image.png']
+
 
 def test_local_reranker_orders_scores_and_ties(monkeypatch):
     def handler(request):

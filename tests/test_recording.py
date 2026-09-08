@@ -175,7 +175,9 @@ def test_same_source_gets_a_fresh_run_namespace(tmp_path):
     assert first._run_id != second._run_id
 
     _record(first, inputs={'text': 'one'}, prediction=dspy.Prediction(ok='yes'))
-    _record(second, inputs={'text': 'two'}, prediction=dspy.Prediction(ok='yes'))
+    _record(
+        second, inputs={'text': 'two'}, prediction=dspy.Prediction(ok='yes')
+    )
 
     runs = list((output_dir / 'corrector').iterdir())
     assert len(runs) == 2

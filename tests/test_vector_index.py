@@ -43,7 +43,9 @@ def test_ties_are_sorted_by_stable_key() -> None:
         ('negative_top_k', 'negative'),
     ],
 )
-def test_invalid_vector_inputs_are_rejected(operation: str, expected: str) -> None:
+def test_invalid_vector_inputs_are_rejected(
+    operation: str, expected: str
+) -> None:
     index = ExactCosineIndex(2)
     with pytest.raises(ValueError, match=expected):
         if operation == 'dimension':

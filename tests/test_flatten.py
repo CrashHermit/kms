@@ -10,8 +10,12 @@ def _documents():
             index=0,
             image_path='p0.png',
             nodes=[
-                models.SourceNode(type=models.NodeType.HEADER, content='# Ch 1'),
-                models.SourceNode(type=models.NodeType.PARAGRAPH, content='intro'),
+                models.SourceNode(
+                    type=models.NodeType.HEADER, content='# Ch 1'
+                ),
+                models.SourceNode(
+                    type=models.NodeType.PARAGRAPH, content='intro'
+                ),
             ],
         ),
         models.Document(
@@ -71,7 +75,10 @@ class _AllStatements:
 def test_overlay_leaves_each_block_in_the_stream_exactly_once():
     nodes = [
         models.SourceNode(
-            type='paragraph', content='Theorem 2.1.', uuid='node-0', document_index=0
+            type='paragraph',
+            content='Theorem 2.1.',
+            uuid='node-0',
+            document_index=0,
         ),
         models.SourceNode(
             type='paragraph',
@@ -85,7 +92,12 @@ def test_overlay_leaves_each_block_in_the_stream_exactly_once():
             uuid='node-2',
             document_index=0,
         ),
-        models.SourceNode(type='paragraph', content='1.23 Compute it.', uuid='node-3', document_index=0),
+        models.SourceNode(
+            type='paragraph',
+            content='1.23 Compute it.',
+            uuid='node-3',
+            document_index=0,
+        ),
     ]
     state = {
         'nodes': nodes,

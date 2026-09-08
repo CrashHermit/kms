@@ -27,6 +27,7 @@ def procedure_uuid(
         generation_slot=generation_slot,
     )
 
+
 def _procedure_id(source: str, procedure: models.Procedure) -> str:
     """Returns and verifies the persisted UUID for a procedure model."""
     expected = procedure_uuid(
@@ -72,6 +73,7 @@ def procedure_enrichment_properties(
         'procedure': procedure,
         'embedding': embedding,
     }
+
 
 def procedure_rows(
     procedures: list[models.Procedure], source: str

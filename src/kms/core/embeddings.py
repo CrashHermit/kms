@@ -38,8 +38,12 @@ class Embedder:
         self.dimension = dimension or settings.dimension
 
     @staticmethod
-    def _validate(vectors: list[list[float]], dimension: int) -> list[list[float]]:
-        invalid = [len(vector) for vector in vectors if len(vector) != dimension]
+    def _validate(
+        vectors: list[list[float]], dimension: int
+    ) -> list[list[float]]:
+        invalid = [
+            len(vector) for vector in vectors if len(vector) != dimension
+        ]
         if invalid:
             raise RuntimeError(
                 f'embedding dimension mismatch: configured {dimension}, '
@@ -88,7 +92,9 @@ class Embedder:
             raise TypeError('embed() accepts strings only')
         vectors: list[list[float]] = []
         for start in range(0, len(values), self.batch_size):
-            vectors.extend(await self._request(values[start : start + self.batch_size]))
+            vectors.extend(
+                await self._request(values[start : start + self.batch_size])
+            )
         return vectors
 
     async def embed_query(self, text: str) -> list[float]:
@@ -96,7 +102,9 @@ class Embedder:
             raise TypeError('embed_query() accepts a string only')
         vectors = await self._request([text])
         if len(vectors) != 1:
-            raise RuntimeError(f'query embedding returned {len(vectors)} vectors')
+            raise RuntimeError(
+                f'query embedding returned {len(vectors)} vectors'
+            )
         return vectors[0]
 
     async def aclose(self) -> None:
@@ -152,7 +160,9 @@ def top_k(
 ) -> list[tuple[object, float]]:
     if k is None:
         k = config.get_settings().stages.search.top_k
-    scored = [(key, cosine_similarity(query, vector)) for key, vector in candidates]
+    scored = [
+        (key, cosine_similarity(query, vector)) for key, vector in candidates
+    ]
     if threshold is not None:
         scored = [entry for entry in scored if entry[1] >= threshold]
     scored.sort(key=lambda entry: entry[1], reverse=True)

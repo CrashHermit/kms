@@ -21,6 +21,7 @@ def test_comparator_produces_exact_match_and_percentage_similarity():
 
     assert 0 < different.score < 100
 
+
 def test_metric_uses_only_character_difference_by_default():
     evaluator = training.Evaluator()
     example = dspy.Example(text='hello', answer='HELLO').with_inputs('text')
@@ -42,9 +43,7 @@ def test_optional_judge_can_be_enabled_explicitly():
         def judge(self, **kwargs):
             return training.JudgeResult(0.25, False, 'Needs work.')
 
-    evaluator = training.Evaluator(
-        judge=FakeJudge(), deterministic_weight=0.4
-    )
+    evaluator = training.Evaluator(judge=FakeJudge(), deterministic_weight=0.4)
     result = evaluator.metric(
         dspy.Example(text='input', answer='gold').with_inputs('text'),
         'gold',
@@ -70,11 +69,11 @@ def test_golden_data_remains_a_plain_dspy_dataset_artifact(tmp_path):
         '"facts":["Text."]}\n'
     )
     records = [
-        __import__('json').loads(line)
-        for line in path.read_text().splitlines()
+        __import__('json').loads(line) for line in path.read_text().splitlines()
     ]
     assert records[0]['source'] == 'book.pdf'
     assert records[0]['facts'] == ['Text.']
+
 
 def test_compile_uses_explicit_teacher_lm(monkeypatch):
     class Program(dspy.Module):

@@ -39,6 +39,8 @@ class _LexicalMembershipInput(BaseModel):
     left: str
     right: str
     kind: str
+
+
 class _LexicalDefinitionSignature(dspy.Signature):
     r"""
     Choose one preferred written form for a fixed lexical cluster.
@@ -53,8 +55,6 @@ class _LexicalDefinitionSignature(dspy.Signature):
 
     request: _LexicalDefinitionInput = dspy.InputField()
     result: _LexicalDefinition = dspy.OutputField()
-
-
 
 
 class _LexicalMembershipSignature(dspy.Signature):
@@ -165,6 +165,7 @@ async def _judged_groups(
             + context_window.estimate_text_tokens(kind)
             + 32
         )
+
     decisions: list[tuple[int, int] | None] = []
     wave_count = 0
     largest_wave_tokens = 0
@@ -178,7 +179,9 @@ async def _judged_groups(
             largest_wave_tokens,
             sum(token_cost(pair) for pair in wave),
         )
-        decisions.extend(await asyncio.gather(*(_judge_pair(pair) for pair in wave)))
+        decisions.extend(
+            await asyncio.gather(*(_judge_pair(pair) for pair in wave))
+        )
     logger = logging.getLogger(__name__)
     logger.info(
         '%s lexical hub comparisons: %d candidate pairs, %d waves, '

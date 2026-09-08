@@ -57,7 +57,9 @@ def test_triplet_uuid_changes_when_the_content_changes():
 
 
 def test_triplet_properties_are_a_pure_connector():
-    triplet = _triplet('$G_4$', 'is NOT a subgraph of', '$G_1$', evidence_positions=[3])
+    triplet = _triplet(
+        '$G_4$', 'is NOT a subgraph of', '$G_1$', evidence_positions=[3]
+    )
     props = triplet_properties(triplet, 'hefferon.pdf', 3)
     assert props['uuid'] == triplet_uuid(
         'hefferon.pdf', 3, '$G_4$', 'is NOT a subgraph of', '$G_1$'
@@ -71,7 +73,9 @@ def test_triplet_properties_are_a_pure_connector():
 
 def test_triplet_rows_write_each_node_occurrence_separately():
     triplets_list = [
-        _triplet('$G_4$', 'is NOT a subgraph of', '$G_1$', evidence_positions=[3, 9]),
+        _triplet(
+            '$G_4$', 'is NOT a subgraph of', '$G_1$', evidence_positions=[3, 9]
+        ),
     ]
     rows = triplet_rows(triplets_list, 'hefferon.pdf')
     assert len(rows) == 2
@@ -80,7 +84,9 @@ def test_triplet_rows_write_each_node_occurrence_separately():
 
 def test_evidence_pairs_one_pair_per_node_occurrence():
     triplets_list = [
-        _triplet('$G_4$', 'is NOT a subgraph of', '$G_1$', evidence_positions=[3, 9]),
+        _triplet(
+            '$G_4$', 'is NOT a subgraph of', '$G_1$', evidence_positions=[3, 9]
+        ),
     ]
     doc_nodes = [models.SourceNode(uuid=f'node-{i}') for i in range(10)]
     pairs = evidence_pairs(triplets_list, 'hefferon.pdf', doc_nodes)

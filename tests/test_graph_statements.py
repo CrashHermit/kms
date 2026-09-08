@@ -46,16 +46,27 @@ def test_statement_properties_carry_compiled_content_and_provenance():
 
 def test_statement_properties_preserve_assigned_uuid():
     assigned = identity.statement_uuid('book.pdf', [4, 5])
-    statement = models.Statement(block=[4, 5], member_positions=[4, 5], uuid=assigned)
-    assert statements.statement_properties(statement, 'book.pdf')['uuid'] == assigned
+    statement = models.Statement(
+        block=[4, 5], member_positions=[4, 5], uuid=assigned
+    )
+    assert (
+        statements.statement_properties(statement, 'book.pdf')['uuid']
+        == assigned
+    )
 
 
 def _stream():
     return [
         models.SourceNode(uuid='node-0', type='paragraph', content='prose'),
-        models.SourceNode(uuid='node-1', type='paragraph', content='Theorem 2.1.'),
-        models.SourceNode(uuid='node-2', type='paragraph', content='Proof. ...'),
-        models.SourceNode(uuid='node-3', type='paragraph', content='more prose'),
+        models.SourceNode(
+            uuid='node-1', type='paragraph', content='Theorem 2.1.'
+        ),
+        models.SourceNode(
+            uuid='node-2', type='paragraph', content='Proof. ...'
+        ),
+        models.SourceNode(
+            uuid='node-3', type='paragraph', content='more prose'
+        ),
     ]
 
 
@@ -109,7 +120,9 @@ def test_statement_member_pairs_link_every_member_node():
 
 def test_statement_member_pairs_preserve_assigned_uuid():
     assigned = identity.statement_uuid('book.pdf', [1, 2])
-    statement = models.Statement(block=[1, 2], member_positions=[1, 2], uuid=assigned)
+    statement = models.Statement(
+        block=[1, 2], member_positions=[1, 2], uuid=assigned
+    )
     node_stream = _member_nodes()
     pairs = statements.statement_member_pairs(
         [statement], node_stream, 'book.pdf'
@@ -162,7 +175,9 @@ def test_persist_chain_writes_head_and_next_over_pure_nodes():
 
 def test_has_procedure_pairs_use_assigned_statement_identity():
     assigned = identity.statement_uuid('book.pdf', [1, 2])
-    statement = models.Statement(block=[1, 2], member_positions=[1], uuid=assigned)
+    statement = models.Statement(
+        block=[1, 2], member_positions=[1], uuid=assigned
+    )
     procedure = models.Procedure(
         block=[1, 2],
         member_positions=[2],
@@ -171,9 +186,7 @@ def test_has_procedure_pairs_use_assigned_statement_identity():
         ),
         statement_uuid=assigned,
     )
-    pairs = statements.has_procedure_pairs(
-        [statement], [procedure], 'book.pdf'
-    )
+    pairs = statements.has_procedure_pairs([statement], [procedure], 'book.pdf')
     assert pairs == [
         {
             'statement': assigned,

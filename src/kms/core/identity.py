@@ -3,8 +3,6 @@
 Execution records use separate random identities; knowledge nodes do not.
 """
 
-
-
 from uuid import NAMESPACE_URL, uuid5
 
 from kms.core import models
@@ -45,9 +43,7 @@ def split_child_uuid(parent_uuid: str, child_index: int) -> str:
         raise ValueError('split child identity requires a parent uuid')
     if child_index < 0:
         raise ValueError('split child identity requires a non-negative index')
-    return uuid5(
-        NAMESPACE_URL, f'{parent_uuid}#split-child#{child_index}'
-    ).hex
+    return uuid5(NAMESPACE_URL, f'{parent_uuid}#split-child#{child_index}').hex
 
 
 def instruction_uuid(source: str, block: list[int]) -> str:
@@ -118,12 +114,13 @@ def entity_uuid(source: str, node_position: int, name: str) -> str:
     return uuid5(
         NAMESPACE_URL, f'{_source(source)}#entity#{node_position}#{name}'
     ).hex
+
+
 def event_uuid(source: str, node_position: int, name: str) -> str:
     """Return a deterministic node-local event identity."""
     return uuid5(
         NAMESPACE_URL, f'{_source(source)}#event#{node_position}#{name}'
     ).hex
-
 
 
 def predicate_uuid(triplet_occurrence_uuid: str) -> str:
@@ -208,8 +205,11 @@ def assign_triplet_ids(triplets: list[models.Triplet], source: str) -> None:
         triplet.predicate_uuids = {}
         for node_position in triplet.evidence_positions:
             occurrence_id = triplet_uuid(
-                source, node_position, triplet.subject,
-                triplet.predicate, triplet.object
+                source,
+                node_position,
+                triplet.subject,
+                triplet.predicate,
+                triplet.object,
             )
             triplet.occurrence_uuids[node_position] = occurrence_id
             for name, kind in (
@@ -233,7 +233,9 @@ def assign_triplet_ids(triplets: list[models.Triplet], source: str) -> None:
                     else triplet.event_uuids
                 )
                 endpoint_map[(node_position, name)] = endpoint_id
-            triplet.predicate_uuids[node_position] = predicate_uuid(occurrence_id)
+            triplet.predicate_uuids[node_position] = predicate_uuid(
+                occurrence_id
+            )
 
 
 def validate_assigned_ids(bundle: models.ConstructionBundle) -> None:

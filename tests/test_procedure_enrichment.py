@@ -9,9 +9,12 @@ from kms.postprocessing.learning import procedures as procedure_generation
 def test_statement_enricher_emits_the_canonical_statement_field():
     prediction = SimpleNamespace(statement='Complete statement.')
 
-    assert statement_enrichment.StatementEnricher.decode(
-        None, prediction, source_content=[], canonical_knowledge='knowledge'
-    ) == 'Complete statement.'
+    assert (
+        statement_enrichment.StatementEnricher.decode(
+            None, prediction, source_content=[], canonical_knowledge='knowledge'
+        )
+        == 'Complete statement.'
+    )
 
 
 def test_source_procedure_writer_encodes_source_text_nodes():
@@ -48,7 +51,9 @@ def test_source_procedure_enricher_skips_missing_source_procedure():
         statement_uuid='statement-1',
         statement=(
             models.TextNodeInput(
-                local_index=0, node_type='paragraph', node_text='Define a graph.'
+                local_index=0,
+                node_type='paragraph',
+                node_text='Define a graph.',
             ),
         ),
     )
@@ -73,7 +78,9 @@ def test_source_procedure_enricher_compiles_existing_source_procedure():
         procedure_uuid='procedure-1',
         statement=(
             models.TextNodeInput(
-                local_index=0, node_type='paragraph', node_text='Prove the claim.'
+                local_index=0,
+                node_type='paragraph',
+                node_text='Prove the claim.',
             ),
         ),
         procedure=(
@@ -97,12 +104,18 @@ def test_solution_router_decodes_a_boolean_gate():
         )
     ]
 
-    assert procedure_generation.ProcedureNeedRouter.decode(
-        None, SimpleNamespace(needs_procedure=True), statement=statement
-    ) is True
-    assert procedure_generation.ProcedureNeedRouter.decode(
-        None, SimpleNamespace(needs_procedure=False), statement=statement
-    ) is False
+    assert (
+        procedure_generation.ProcedureNeedRouter.decode(
+            None, SimpleNamespace(needs_procedure=True), statement=statement
+        )
+        is True
+    )
+    assert (
+        procedure_generation.ProcedureNeedRouter.decode(
+            None, SimpleNamespace(needs_procedure=False), statement=statement
+        )
+        is False
+    )
 
 
 def test_generated_solution_has_generated_kind():
@@ -123,7 +136,9 @@ def test_generated_solution_has_generated_kind():
         statement_uuid='statement-1',
         statement=(
             models.TextNodeInput(
-                local_index=0, node_type='paragraph', node_text='Prove the claim.'
+                local_index=0,
+                node_type='paragraph',
+                node_text='Prove the claim.',
             ),
         ),
         canonical_knowledge='definition',

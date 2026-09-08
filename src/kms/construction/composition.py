@@ -42,9 +42,7 @@ class ComposedContent:
                 'image_path': asset.path,
             }
             for index, (part, asset) in enumerate(
-                (part, asset)
-                for part in self.parts
-                for asset in part.assets
+                (part, asset) for part in self.parts for asset in part.assets
             )
         ]
 

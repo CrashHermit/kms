@@ -1,6 +1,5 @@
 """Compile canonical statement content for the graph."""
 
-
 import asyncio
 
 import dspy
@@ -21,6 +20,7 @@ def _text_nodes(
         )
         for index, part in enumerate(composed.parts)
     )
+
 
 def statement_enrichment_input(
     bundle: models.ConstructionBundle,
@@ -121,6 +121,7 @@ class StatementEnrichmentNode:
                     source_content=source_content,
                     canonical_knowledge=canonical_knowledge,
                 )
+
         compiled = await asyncio.gather(
             *(compile_one(stmt) for stmt in bundle.statements)
         )
@@ -132,9 +133,7 @@ class StatementEnrichmentNode:
         for stmt, text in zip(bundle.statements, compiled, strict=True):
             if stmt.uuid:
                 statements_by_uuid[stmt.uuid].statement = text.strip()
-        vectors = await embeddings.embedder().embed(
-            [text for text in compiled]
-        )
+        vectors = await embeddings.embedder().embed([text for text in compiled])
         source = bundle.source.key or ''
         enrichments = [
             {

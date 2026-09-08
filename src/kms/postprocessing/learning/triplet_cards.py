@@ -33,6 +33,7 @@ class TripletCardSuitability(module.Module):
         commands, braces, superscripts, subscripts, fractions, alignment, and
         escaping. Never convert it to Unicode or plain text.
         """
+
         hub_context: str = dspy.InputField()
         triplet: str = dspy.InputField()
         endpoints: str = dspy.InputField()
@@ -74,6 +75,7 @@ class TripletCardGenerator(module.Module):
         delimiters, commands, braces, superscripts, subscripts, fractions,
         alignment, and escaping. Never convert it to Unicode or plain text.
         """
+
         hub_context: str = dspy.InputField()
         triplet: str = dspy.InputField()
         endpoints: str = dspy.InputField()
@@ -114,6 +116,7 @@ class TripletCardVerifier(module.Module):
         subscripts, fractions, alignment, and escaping. Reject Unicode/plain-
         text conversion and malformed mathematical expressions.
         """
+
         triplet: str = dspy.InputField()
         endpoints: str = dspy.InputField()
         prompt: str = dspy.InputField()

@@ -143,7 +143,9 @@ def test_loads_structured_fact_context_inputs(tmp_path):
         {
             'request': models.FactExtractionInput(
                 context_before=[
-                    models.NodeInput(index=1, node_type='paragraph', text='Before')
+                    models.NodeInput(
+                        index=1, node_type='paragraph', text='Before'
+                    )
                 ],
                 target_node=models.NodeInput(
                     index=1, node_type='image', text='A diagram'
@@ -174,9 +176,7 @@ def test_loads_structured_fact_context_inputs(tmp_path):
         recorder=recorder,
     )
     module.router.predictor = _Fake(needs_correction=True)
-    module.locator.predictor = _Fake(
-        locations=[models.LineSelection(index=1)]
-    )
+    module.locator.predictor = _Fake(locations=[models.LineSelection(index=1)])
     module.editor.predictor = _Fake(edits=[])
     image_path = tmp_path / 'block.png'
     image_path.write_bytes(_png_bytes())

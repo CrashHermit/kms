@@ -62,9 +62,7 @@ class ImageSeamMerger(module.Module):
         if top_image is None:
             raise ValueError(f'image asset does not exist: {top_asset.path}')
         if bottom_image is None:
-            raise ValueError(
-                f'image asset does not exist: {bottom_asset.path}'
-            )
+            raise ValueError(f'image asset does not exist: {bottom_asset.path}')
         return {'top_image': top_image, 'bottom_image': bottom_image}
 
     def decode(self, prediction: Any, **inputs: Any) -> bool:

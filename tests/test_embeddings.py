@@ -31,20 +31,28 @@ def test_source_nodes_embed_descriptions_without_opening_assets(monkeypatch):
     ]
     vectors = asyncio.run(embeddings.embed_source_nodes(source_nodes))
     assert vectors == [[1.0], [2.0], [3.0], None]
-    assert fake.inputs == ['A theorem.', 'A diagram of the theorem.', 'The proof follows.']
+    assert fake.inputs == [
+        'A theorem.',
+        'A diagram of the theorem.',
+        'The proof follows.',
+    ]
 
 
 def test_empty_source_nodes_return_position_preserving_nones(monkeypatch):
     fake = _Embedder()
     monkeypatch.setattr(embeddings, 'embedder', lambda: fake)
     assert asyncio.run(
-        embeddings.embed_source_nodes([models.SourceNode(type='image', assets=[])])
+        embeddings.embed_source_nodes(
+            [models.SourceNode(type='image', assets=[])]
+        )
     ) == [None]
     assert fake.inputs == []
 
 
 def test_node_properties_use_source_node_embedding():
-    node = models.SourceNode(uuid='node-1', type='paragraph', content='text', embedding=[0.25, 0.75])
+    node = models.SourceNode(
+        uuid='node-1', type='paragraph', content='text', embedding=[0.25, 0.75]
+    )
     assert nodes.node_properties(node, 'book.pdf')['embedding'] == [0.25, 0.75]
 
 
@@ -63,11 +71,15 @@ def test_local_embedder_batches_and_preserves_response_order(monkeypatch):
             },
         )
 
-    monkeypatch.setattr(embeddings.serve, 'retrieval_server_manager', lambda: _NoopManager())
+    monkeypatch.setattr(
+        embeddings.serve, 'retrieval_server_manager', lambda: _NoopManager()
+    )
     monkeypatch.setattr(
         embeddings,
         '_http_client',
-        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url='http://local/v1'),
+        lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), base_url='http://local/v1'
+        ),
     )
     instance = embeddings.Embedder(model='fake', batch_size=2, dimension=2)
     assert asyncio.run(instance.embed(['a', 'b'])) == [[1.0, 2.0], [3.0, 4.0]]
@@ -76,13 +88,19 @@ def test_local_embedder_batches_and_preserves_response_order(monkeypatch):
 
 def test_local_embedder_rejects_dimension_mismatch(monkeypatch):
     def handler(request):
-        return httpx.Response(200, json={'data': [{'index': 0, 'embedding': [1.0]}]})
+        return httpx.Response(
+            200, json={'data': [{'index': 0, 'embedding': [1.0]}]}
+        )
 
-    monkeypatch.setattr(embeddings.serve, 'retrieval_server_manager', lambda: _NoopManager())
+    monkeypatch.setattr(
+        embeddings.serve, 'retrieval_server_manager', lambda: _NoopManager()
+    )
     monkeypatch.setattr(
         embeddings,
         '_http_client',
-        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url='http://local/v1'),
+        lambda: httpx.AsyncClient(
+            transport=httpx.MockTransport(handler), base_url='http://local/v1'
+        ),
     )
     with pytest.raises(RuntimeError, match='dimension mismatch'):
         asyncio.run(embeddings.Embedder(dimension=2).embed(['text']))

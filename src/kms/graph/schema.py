@@ -29,23 +29,18 @@ def schema_statements() -> list[str]:
     """
     dimension = config.get_settings().embeddings.dimension
     return [
-        'MATCH (h:StatementHub) REMOVE h:StatementHub '
-        'SET h:LocalStatementHub',
-        'MATCH (h:ProcedureHub) REMOVE h:ProcedureHub '
-        'SET h:LocalProcedureHub',
+        'MATCH (h:StatementHub) REMOVE h:StatementHub SET h:LocalStatementHub',
+        'MATCH (h:ProcedureHub) REMOVE h:ProcedureHub SET h:LocalProcedureHub',
         'MATCH (h:MetaStatementHub) REMOVE h:MetaStatementHub '
         'SET h:GlobalStatementHub',
         'MATCH (h:MetaProcedureHub) REMOVE h:MetaProcedureHub '
         'SET h:GlobalProcedureHub',
         'MATCH (h:EntityHub) REMOVE h:EntityHub SET h:LocalEntityHub',
-        'MATCH (h:PredicateHub) REMOVE h:PredicateHub '
-        'SET h:LocalPredicateHub',
-        'MATCH (h:MetaEntityHub) REMOVE h:MetaEntityHub '
-        'SET h:GlobalEntityHub',
+        'MATCH (h:PredicateHub) REMOVE h:PredicateHub SET h:LocalPredicateHub',
+        'MATCH (h:MetaEntityHub) REMOVE h:MetaEntityHub SET h:GlobalEntityHub',
         'MATCH (h:MetaPredicateHub) REMOVE h:MetaPredicateHub '
         'SET h:GlobalPredicateHub',
-        'MATCH (h:TripletHub) REMOVE h:TripletHub '
-        'SET h:LocalTripletHub',
+        'MATCH (h:TripletHub) REMOVE h:TripletHub SET h:LocalTripletHub',
         'MATCH (h:MetaTripletHub) REMOVE h:MetaTripletHub '
         'SET h:GlobalTripletHub',
         'MATCH (h:EntityNameHub) REMOVE h:EntityNameHub '
@@ -280,8 +275,7 @@ _VECTOR_INDEX_NAMES = {
 async def _drop_stale_vector_indexes(session) -> None:
     """Drop known vector indexes whose dimension no longer matches."""
     result = await session.run(
-        'SHOW VECTOR INDEXES YIELD name, options '
-        'RETURN name, options'
+        'SHOW VECTOR INDEXES YIELD name, options RETURN name, options'
     )
     for row in await result.data():
         name = row.get('name')
@@ -292,6 +286,7 @@ async def _drop_stale_vector_indexes(session) -> None:
         dimensions = index_config.get('vector.dimensions')
         if dimensions != config.get_settings().embeddings.dimension:
             await session.run(f'DROP INDEX `{name}` IF EXISTS')
+
 
 async def ensure_schema(session_factory: Callable) -> None:
     """Applies schema after removing stale known vector indexes."""

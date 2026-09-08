@@ -18,8 +18,6 @@ from kms.core import (
 logger = logging.getLogger(__name__)
 
 
-
-
 class Classify(dspy.Signature):
     r"""
     Judge two questions about a pedagogical block. Answer True or False
@@ -153,33 +151,37 @@ class StatementPartitioner(module.Module):
         super().__init__(language_model, recorder)
         self.predictor.demos = [
             dspy.Example(
-                current_nodes=_statement_procedure_inputs([
-                    context_window.ContextNode(
-                        position=0,
-                        type='paragraph',
-                        content="**Exercise 1.2.1:** Sketch the slope field for $y' = e^{x-y}$.",
-                    ),
-                    context_window.ContextNode(
-                        position=1,
-                        type='paragraph',
-                        content="**Exercise 1.2.2:** Sketch the slope field for $y' = x^2$.",
-                    ),
-                ]),
+                current_nodes=_statement_procedure_inputs(
+                    [
+                        context_window.ContextNode(
+                            position=0,
+                            type='paragraph',
+                            content="**Exercise 1.2.1:** Sketch the slope field for $y' = e^{x-y}$.",
+                        ),
+                        context_window.ContextNode(
+                            position=1,
+                            type='paragraph',
+                            content="**Exercise 1.2.2:** Sketch the slope field for $y' = x^2$.",
+                        ),
+                    ]
+                ),
                 statement_positions=[1, 2],
             ).with_inputs('current_nodes'),
             dspy.Example(
-                current_nodes=_statement_procedure_inputs([
-                    context_window.ContextNode(
-                        position=0,
-                        type='paragraph',
-                        content="**Example 1.2.1:** Attempt to solve: $y' = \\frac{1}{x}, y(0) = 0$.",
-                    ),
-                    context_window.ContextNode(
-                        position=1,
-                        type='paragraph',
-                        content='Integrate to find the general solution $y = \\ln |x| + C$.',
-                    ),
-                ]),
+                current_nodes=_statement_procedure_inputs(
+                    [
+                        context_window.ContextNode(
+                            position=0,
+                            type='paragraph',
+                            content="**Example 1.2.1:** Attempt to solve: $y' = \\frac{1}{x}, y(0) = 0$.",
+                        ),
+                        context_window.ContextNode(
+                            position=1,
+                            type='paragraph',
+                            content='Integrate to find the general solution $y = \\ln |x| + C$.',
+                        ),
+                    ]
+                ),
                 statement_positions=[1],
             ).with_inputs('current_nodes'),
         ]

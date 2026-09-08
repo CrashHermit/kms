@@ -6,7 +6,6 @@ from kms.graph import nodes
 STATEMENT_LABEL = 'Statement'
 
 
-
 def _statement_id(statement: models.Statement, source: str) -> str:
     """Returns and verifies the assigned model identity."""
     expected = identity.statement_uuid(source, statement.block)

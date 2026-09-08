@@ -4,9 +4,7 @@ import os
 os.environ['KMS_MODELS__MODULES__FORMATTER__BASE_URL'] = (
     'http://localhost:8080/v1'
 )
-os.environ['KMS_MODELS__MODULES__FORMATTER__MODEL'] = (
-    'openai/gemma-4-e4b-it'
-)
+os.environ['KMS_MODELS__MODULES__FORMATTER__MODEL'] = 'openai/gemma-4-e4b-it'
 os.environ['KMS_MODELS__MODULES__FORMATTER__API_KEY'] = 'not-needed'
 
 from tests.helpers import (

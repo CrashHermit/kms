@@ -10,20 +10,18 @@ from kms.core import context_window, models, state
 logger = logging.getLogger(__name__)
 
 
-
-
 def _member_nodes(
     member_positions: list[int], nodes: list[models.SourceNode]
 ) -> list[models.SourceNode]:
     """Returns existing member nodes in the unit's declared order."""
     return [nodes[position] for position in member_positions]
+
+
 def _member_window(
     member_positions: list[int], nodes: list[models.SourceNode]
 ) -> list[context_window.ContextNode]:
     """Projects ordered source members into a local node window."""
     return context_window.project_nodes(_member_nodes(member_positions, nodes))
-
-
 
 
 def _positions(
@@ -47,9 +45,7 @@ def _statement_context_parts(
     target_positions: list[int],
     backward_budget: int,
     forward_budget: int,
-) -> tuple[
-    list[context_window.ContextNode], list[context_window.ContextNode]
-]:
+) -> tuple[list[context_window.ContextNode], list[context_window.ContextNode]]:
     """Builds directional context around explicit statement members."""
     if not target_positions:
         return [], []

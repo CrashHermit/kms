@@ -35,6 +35,8 @@ def test_load_examples_preserves_typed_dspy_shape(tmp_path):
     assert examples[0].inputs().toDict()['request'] == (
         examples[0].request.model_dump()
     )
+
+
 def test_load_examples_rejects_missing_structured_fields(tmp_path):
     path = tmp_path / 'facts.jsonl'
     path.write_text('{"facts": []}\n')

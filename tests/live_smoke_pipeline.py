@@ -90,9 +90,15 @@ async def main():
     async with db.session() as session:
         result = await session.run('MATCH (n) DETACH DELETE n')
         await result.consume()
-    print(f'[{elapsed(start_total):.1f}s] DB cleared, ensuring schema...', flush=True)
+    print(
+        f'[{elapsed(start_total):.1f}s] DB cleared, ensuring schema...',
+        flush=True,
+    )
     await schema.ensure_schema(lambda: db.session())
-    print(f'[{elapsed(start_total):.1f}s] Schema ensured, starting ingestion...', flush=True)
+    print(
+        f'[{elapsed(start_total):.1f}s] Schema ensured, starting ingestion...',
+        flush=True,
+    )
 
     result = await runtime.ingest(
         PDF,
@@ -109,19 +115,27 @@ async def main():
     triplets = result.get('triplets') or []
     print(f'\n=== triplets: {len(triplets)} ===', flush=True)
     for triplet in triplets:
-        print(f'  {triplet.subject} | {triplet.predicate} | {triplet.object}', flush=True)
+        print(
+            f'  {triplet.subject} | {triplet.predicate} | {triplet.object}',
+            flush=True,
+        )
 
     print('\n=== hub building ===', flush=True)
     print(f'  entity assigned: {result.get("entity_assigned")}', flush=True)
-    print(f'  predicate assigned: {result.get("predicate_assigned")}', flush=True)
-    print(f'  procedures created: {result.get("procedures_created")}', flush=True)
+    print(
+        f'  predicate assigned: {result.get("predicate_assigned")}', flush=True
+    )
+    print(
+        f'  procedures created: {result.get("procedures_created")}', flush=True
+    )
 
     datasets = verify_recordings(f'{OUTPUT_DIR}/examples')
     print(f'\n=== recorded datasets: {len(datasets)} ===', flush=True)
     for dataset in datasets:
         print(
             f'  {dataset.stage}: {len(dataset.examples)} example(s), '
-            f'signature={dataset.signature.__name__}', flush=True
+            f'signature={dataset.signature.__name__}',
+            flush=True,
         )
 
     print('\nDone.', flush=True)

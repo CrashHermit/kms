@@ -67,7 +67,9 @@ def test_name_hub_ids_are_source_and_membership_stable():
     )
     assert names.global_name_hub_uuid(
         'entity', ['source-name-a', 'source-name-b']
-    ) == names.global_name_hub_uuid('entity', ['source-name-b', 'source-name-a'])
+    ) == names.global_name_hub_uuid(
+        'entity', ['source-name-b', 'source-name-a']
+    )
 
 
 def test_assertion_query_contains_lexical_occurrence_edges():
@@ -176,10 +178,13 @@ def test_meta_name_hubs_rebuild_from_qualified_source_hubs(monkeypatch):
         async def aforward(self, **kwargs):
             calls.append(('llm', kwargs['surface_forms']))
             return 0
+
     monkeypatch.setattr(
         global_name_hubs.queries, 'all_name_hubs', fake_all_name_hubs
     )
-    monkeypatch.setattr(global_name_hubs.writer, 'clear_global_name_hubs', fake_clear)
+    monkeypatch.setattr(
+        global_name_hubs.writer, 'clear_global_name_hubs', fake_clear
+    )
     monkeypatch.setattr(
         global_name_hubs.writer, 'persist_global_name_hubs', fake_persist
     )
@@ -187,13 +192,16 @@ def test_meta_name_hubs_rebuild_from_qualified_source_hubs(monkeypatch):
         global_name_hubs, '_LexicalDefinitionSynthesizer', lambda lm: _Synth()
     )
     monkeypatch.setattr(
-        global_name_hubs.llm, 'gate', lambda max_concurrency: asyncio.Semaphore(1)
+        global_name_hubs.llm,
+        'gate',
+        lambda max_concurrency: asyncio.Semaphore(1),
     )
 
     async def fake_judged_groups(rows, kind, **kwargs):
         return names.lexical_groups(
             rows, threshold=kwargs['similarity_threshold']
         )
+
     monkeypatch.setattr(global_name_hubs, '_judged_groups', fake_judged_groups)
     result = asyncio.run(
         global_name_hubs.rebuild_global(

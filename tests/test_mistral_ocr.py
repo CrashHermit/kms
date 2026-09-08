@@ -168,11 +168,21 @@ def test_build_source_materializes_blockless_page_images(tmp_path):
     document = source.documents[0]
     assert document.index == 0
     assert [node.type for node in document.nodes] == ['image', 'image']
-    assert [
-        asset.path for node in document.nodes for asset in node.assets
-    ] == [
-        str(tmp_path / 'Documents' / 'Document_0000' / 'Images' / 'Image_000.png'),
-        str(tmp_path / 'Documents' / 'Document_0000' / 'Images' / 'Image_001.png'),
+    assert [asset.path for node in document.nodes for asset in node.assets] == [
+        str(
+            tmp_path
+            / 'Documents'
+            / 'Document_0000'
+            / 'Images'
+            / 'Image_000.png'
+        ),
+        str(
+            tmp_path
+            / 'Documents'
+            / 'Document_0000'
+            / 'Images'
+            / 'Image_001.png'
+        ),
     ]
 
 
@@ -199,6 +209,7 @@ def test_image_block_discards_provider_placeholder_content(tmp_path):
     assert [asset.path for asset in node.assets] == [
         str(tmp_path / 'Image_000.png')
     ]
+
 
 def test_materialize_document_crops_blocks(tmp_path):
     resp = {

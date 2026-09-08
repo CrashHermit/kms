@@ -23,8 +23,8 @@ class SplitExercise(BaseModel):
 
     content: str = Field(
         description=(
-            "The complete exercise text, including its leading number, "
-            "copied verbatim."
+            'The complete exercise text, including its leading number, '
+            'copied verbatim.'
         )
     )
 
@@ -38,7 +38,6 @@ class NodeSplit(BaseModel):
     exercises: list[SplitExercise] = Field(
         description='The individual exercises it holds, in order (two or more).'
     )
-
 
 
 class ExerciseStripRouterSignature(dspy.Signature):
@@ -68,8 +67,6 @@ class ExerciseStripRouterSignature(dspy.Signature):
     contains_multiple_exercises: bool = dspy.OutputField(
         description='True only when target_node contains two or more distinct exercises.',
     )
-
-
 
 
 class ExerciseStripRouter(module.Module):
@@ -145,6 +142,7 @@ class Signature(dspy.Signature):
         )
     )
 
+
 class Splitter(module.Module):
     """Finds nodes packing multiple exercises and splits them."""
 
@@ -184,7 +182,9 @@ class Splitter(module.Module):
                         f'split at position {split.position} has empty '
                         f'exercise item {index}'
                     )
-            splits.append(split.model_copy(update={'position': split.position - 1}))
+            splits.append(
+                split.model_copy(update={'position': split.position - 1})
+            )
         module.require_positions(
             [split.position for split in splits],
             field_name='splits.position',
@@ -192,6 +192,7 @@ class Splitter(module.Module):
             ordered=True,
         )
         return splits
+
 
 def _splitter_inputs(
     nodes: list[context_window.ContextNode],
@@ -207,6 +208,7 @@ class Decision(BaseModel):
     """Accumulated per-node split decisions keyed by node position."""
 
     splits: dict[int, list[SplitExercise]] = {}
+
 
 def _rebuild(
     nodes: list[models.SourceNode], decision: Decision
@@ -236,6 +238,7 @@ def _rebuild(
             out.append(node)
     return out
 
+
 async def _select_candidates(
     nodes: list[models.SourceNode],
     router: ExerciseStripRouter,
@@ -254,7 +257,9 @@ async def _select_candidates(
             marker='exercise_target',
         )
         target_index = next(
-            index for index, node in enumerate(window) if node.marker is not None
+            index
+            for index, node in enumerate(window)
+            if node.marker is not None
         )
         before = [
             context_window.node_input(node, index)

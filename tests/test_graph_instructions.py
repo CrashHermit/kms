@@ -8,7 +8,9 @@ def _instruction(block=None, member_positions=None):
     block = block if block is not None else [0, 1]
     return models.Instruction(
         block=list(block),
-        member_positions=member_positions if member_positions is not None else list(block),
+        member_positions=member_positions
+        if member_positions is not None
+        else list(block),
         uuid=instructions.instruction_uuid('ea2e.pdf', list(block)),
     )
 
@@ -46,14 +48,17 @@ def test_properties_carry_only_identity():
 
 
 def test_instruction_member_pairs_one_per_member():
-    node_stream = [models.SourceNode(uuid=f'node-{index}') for index in range(4)]
+    node_stream = [
+        models.SourceNode(uuid=f'node-{index}') for index in range(4)
+    ]
     pairs = instructions.instruction_member_pairs(
-        [_instruction(block=[0], member_positions=[1, 2, 3])], node_stream, 'ea2e.pdf'
+        [_instruction(block=[0], member_positions=[1, 2, 3])],
+        node_stream,
+        'ea2e.pdf',
     )
     assert len(pairs) == 3
     assert {pair['node'] for pair in pairs} == {
-        nodes.node_uuid('ea2e.pdf', node_stream[index])
-        for index in [1, 2, 3]
+        nodes.node_uuid('ea2e.pdf', node_stream[index]) for index in [1, 2, 3]
     }
     assert {pair['instruction'] for pair in pairs} == {
         instructions.instruction_uuid('ea2e.pdf', [0])
@@ -91,9 +96,7 @@ def test_instruction_governance_pairs_reject_unknown_instruction():
         instruction_uuids=['missing'],
     )
     try:
-        instructions.instruction_governance_pairs(
-            [statement], [], 'ea2e.pdf'
-        )
+        instructions.instruction_governance_pairs([statement], [], 'ea2e.pdf')
     except ValueError as exc:
         assert 'unknown instruction' in str(exc)
     else:
@@ -147,6 +150,7 @@ def test_persist_instructions_writes_hubs_then_member_edges():
     edge_query, edge_params = fake.queries[1]
     assert 'MEMBER_OF]->(i)' in edge_query
     assert len(edge_params['pairs']) == 2
+
 
 def test_persist_instruction_governance_writes_governs_edges():
     fake = _FakeDriver()

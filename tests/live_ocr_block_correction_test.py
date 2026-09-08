@@ -52,7 +52,12 @@ async def run_case(name: str, pdf_name: str, pages: list[int]) -> None:
             region_obj = SimpleNamespace(
                 crop_path=region.provenance['crop_path'],
                 block=SimpleNamespace(
-                    type=region.provenance.get('provider_type', region.type.value if hasattr(region.type, 'value') else region.type),
+                    type=region.provenance.get(
+                        'provider_type',
+                        region.type.value
+                        if hasattr(region.type, 'value')
+                        else region.type,
+                    ),
                     content=region.content or '',
                 ),
             )
@@ -61,7 +66,9 @@ async def run_case(name: str, pdf_name: str, pages: list[int]) -> None:
                 {
                     'page_index': doc.index,
                     'block_index': region.index,
-                    'block_type': region.type.value if hasattr(region.type, 'value') else region.type,
+                    'block_type': region.type.value
+                    if hasattr(region.type, 'value')
+                    else region.type,
                     'crop_path': region.provenance['crop_path'],
                     'crop_bbox': region.provenance.get('crop_bbox'),
                     'original_text': region.content or '',

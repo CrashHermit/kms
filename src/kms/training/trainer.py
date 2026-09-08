@@ -114,7 +114,9 @@ class SimpleJudge(module.Module):
             'rubric': rubric,
         }
 
-    def decode(self, prediction: dspy.Prediction, **inputs: object) -> JudgeResult:
+    def decode(
+        self, prediction: dspy.Prediction, **inputs: object
+    ) -> JudgeResult:
         """Validate the judge's structured result."""
         return JudgeResult(
             score=module.require_number(
@@ -142,6 +144,7 @@ class Evaluator:
         self.judge = judge
         self.deterministic_weight = deterministic_weight
         self.rubric = rubric
+
     def metric(
         self,
         example: dspy.Example,
@@ -149,9 +152,7 @@ class Evaluator:
         trace: object | None = None,
     ) -> float:
         """Return a 0–100 percentage similarity for BootstrapFewShot."""
-        inputs = {
-            name: getattr(example, name) for name in example.inputs()
-        }
+        inputs = {name: getattr(example, name) for name in example.inputs()}
         output_fields = set(example.toDict()) - set(inputs)
         if len(output_fields) != 1:
             raise ValueError(
@@ -173,7 +174,6 @@ class Evaluator:
             self.deterministic_weight * comparison.score
             + (1 - self.deterministic_weight) * judgment.score
         )
-
 
     def compile(
         self,
@@ -222,6 +222,8 @@ def _prediction_value(prediction: object) -> object:
 def _canonical_text(value: object) -> str:
     """Return stable text for arbitrary output values."""
     try:
-        return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+        return json.dumps(
+            value, ensure_ascii=False, sort_keys=True, default=str
+        )
     except (TypeError, ValueError):
         return str(value)

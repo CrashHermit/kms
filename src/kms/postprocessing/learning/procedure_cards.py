@@ -30,6 +30,7 @@ class ProcedureCardSuitability(module.Module):
         delimiters, commands, braces, superscripts, subscripts, fractions,
         alignment, and escaping. Never convert it to Unicode or plain text.
         """
+
         hub_context: str = dspy.InputField()
         procedure: str = dspy.InputField()
         context: str = dspy.InputField()
@@ -72,6 +73,7 @@ class ProcedureCardGenerator(module.Module):
         mathematical LaTeX to Unicode or plain text; keep display math separate
         from prose.
         """
+
         procedure: str = dspy.InputField()
         context: str = dspy.InputField()
         cards: list[CardDraft] = dspy.OutputField()
@@ -113,6 +115,7 @@ class ProcedureCardVerifier(module.Module):
         subscripts, fractions, alignment, and escaping. Reject Unicode/plain-
         text conversions and malformed mathematical expressions.
         """
+
         procedure: str = dspy.InputField()
         content_key: str = dspy.InputField()
         prompt: str = dspy.InputField()

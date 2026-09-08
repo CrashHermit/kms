@@ -25,10 +25,17 @@ def _bundle() -> models.ConstructionBundle:
             models.SourceNode(uuid='node-1', content='statement'),
             models.SourceNode(uuid='node-2', content='procedure'),
         ],
-        statements=[models.Statement(block=[1], member_positions=[0], uuid='statement-1')],
+        statements=[
+            models.Statement(
+                block=[1], member_positions=[0], uuid='statement-1'
+            )
+        ],
         knowledge_index=models.KnowledgeIndex(
             source='book',
-            assertions=(_assertion('statement-fact', {0}), _assertion('procedure-fact', {1})),
+            assertions=(
+                _assertion('statement-fact', {0}),
+                _assertion('procedure-fact', {1}),
+            ),
         ),
     )
 
@@ -43,7 +50,9 @@ def test_statement_enrichment_input_is_pure_and_typed() -> None:
     assert 'statement-fact' in result.canonical_knowledge
 
 
-def test_procedure_enrichment_input_explicitly_unions_statement_and_procedure_knowledge() -> None:
+def test_procedure_enrichment_input_explicitly_unions_statement_and_procedure_knowledge() -> (
+    None
+):
     bundle = _bundle()
     procedure = models.Procedure(
         block=[1],

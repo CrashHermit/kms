@@ -1,79 +1,90 @@
-"""DSPy module for visual source-content correction."""
+"""LangGraph node for visual source-content correction."""
+
+from typing import Literal, TypedDict
 
 import dspy
 from langgraph.types import Send
 
-from kms2.core.model.source import OCRArtifact
+from kms2.core.model.content_correction import (
+    ContentCorrectionRequest,
+    ContentCorrectionResult,
+)
+from kms2.core.model.source import SourceBlock, SourcePage
 from kms2.langgraph.source.state import SourceState
+from kms2.module.source.content_correction import ContentCorrectorModule
 
 
-class ContentCorrectorSignature(dspy.Signature):
-    """Restore OCR content so it matches the supplied source image."""
+class ContentCorrectionWorkerState(TypedDict):
+    """State supplied to one dispatched correction worker."""
 
-    block_crop: dspy.Image = dspy.InputField(
-        description='The cropped source image for this content block.'
-    )
-    block_type: str = dspy.InputField(
-        description='The source block type, such as text or equation.'
-    )
-    content: str = dspy.InputField(
-        description='The complete OCR transcription of the block.'
-    )
-    corrected_content: str = dspy.OutputField(
-        description='The complete corrected block transcription.'
-    )
+    content_correction_request: ContentCorrectionRequest
 
 
-class ContentCorrectorModule(dspy.Module):
-    """Run one non-recording full-block content correction prediction."""
+class ContentCorrectionNode:
+    """Dispatch and collect visual source-content corrections."""
 
-    def __init__(self, language_model: dspy.LM) -> None:
-        super().__init__()
-        self.predictor = dspy.Predict(ContentCorrectorSignature)
-        self.predictor.set_lm(language_model)
+    def __init__(self, corrector: ContentCorrectorModule) -> None:
+        self._corrector = corrector
 
-    def forward(
+    def dispatch(
+        self, state: SourceState
+    ) -> list[Send] | Literal['content_correction_collect']:
+        """Dispatch one correction request per source block."""
+        sends: list[Send] = []
+        for page in state.ocr_pages:
+            for block_position, source_block in enumerate(page.blocks):
+                request = ContentCorrectionRequest(
+                    page_index=page.index,
+                    block_position=block_position,
+                    source_block=source_block,
+                )
+                sends.append(
+                    Send(
+                        'content_correction_worker',
+                        {'content_correction_request': request},
+                    )
+                )
+        return sends or 'content_correction_collect'
+
+    async def worker(
         self,
-        *,
-        block_crop: dspy.Image,
-        block_type: str,
-        content: str,
-    ) -> str:
-        """Correct one OCR block synchronously."""
-        prediction = self.predictor(
-            block_crop=block_crop,
-            block_type=block_type,
-            content=content,
-        )
-        return prediction.corrected_content
+        state: ContentCorrectionWorkerState,
+    ) -> dict[str, list[ContentCorrectionResult]]:
+        """Correct one dispatched source block."""
+        request = state['content_correction_request']
+        source_block = request.source_block
 
-    async def aforward(
+        block_crop: dspy.Image = dspy.Image(url=source_block.crop_path)
+        corrected_content = await self._corrector.acall(
+            block_crop=block_crop,
+            block_type=source_block.block_type,
+            content=source_block.content,
+        )
+        result = ContentCorrectionResult(
+            page_index=request.page_index,
+            block_position=request.block_position,
+            source_block=source_block.model_copy(
+                update={'content': corrected_content}
+            ),
+        )
+        return {'correction_results': [result]}
+
+    def collect(
         self,
-        *,
-        block_crop: dspy.Image,
-        block_type: str,
-        content: str,
-    ) -> str:
-        """Correct one OCR block asynchronously."""
-        prediction = await self.predictor.acall(
-            block_crop=block_crop,
-            block_type=block_type,
-            content=content,
-        )
-        return prediction.corrected_content
+        state: SourceState,
+    ) -> dict[str, list[SourcePage]]:
+        """Collect corrected source blocks into ordered source pages."""
+        blocks_by_page: dict[int, list[SourceBlock]] = {}
+        for result in sorted(
+            state.correction_results,
+            key=lambda item: (item.page_index, item.block_position),
+        ):
+            blocks_by_page.setdefault(result.page_index, []).append(
+                result.source_block
+            )
 
-
-class ContentCorrectorNode:
-    def dispatch(self, state: SourceState) -> dict:
-        ocr_artifacts: list[OCRArtifact] = state['ocr_artifacts']
-        sends: list[Send]
-        for ocr_artifact in ocr_artifacts:
-            send.append('content_corrector_worker', {'ocr_artifact': ocr_artifact})
-
-        return sends
-
-    async def worker(self, state: dict) -> dict:
-        pass
-
-    def collect(self, state: SourceState) -> dict:
-        pass
+        corrected_pages = [
+            SourcePage(index=page_index, blocks=blocks)
+            for page_index, blocks in sorted(blocks_by_page.items())
+        ]
+        return {'corrected_pages': corrected_pages}

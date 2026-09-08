@@ -25,7 +25,9 @@ def test_token_batches_emit_oversized_item() -> None:
     ('cost', 'budget'),
     [(0, 4096), (-1, 4096), (1, 0)],
 )
-def test_token_batches_reject_invalid_budget_or_cost(cost: int, budget: int) -> None:
+def test_token_batches_reject_invalid_budget_or_cost(
+    cost: int, budget: int
+) -> None:
     with pytest.raises(ValueError):
         token_batches(['item'], token_cost=lambda _: cost, token_budget=budget)
 

@@ -38,6 +38,8 @@ def test_procedure_uuid_covers_the_whole_block():
     assert procedures.procedure_uuid('book.pdf', [7], 0) != (
         procedures.procedure_uuid('book.pdf', [7, 8], 0)
     )
+
+
 def test_procedure_uuid_separates_source_and_generated_kinds():
     source_uuid = procedures.procedure_uuid(
         'book.pdf',
@@ -95,6 +97,7 @@ def test_procedure_properties_carry_content_provenance_and_kind():
     assert props['source'] == nodes.source_uuid('book.pdf')
     assert props['kind'] == 'source'
     assert props['procedure'] == 'Compiled procedure.'
+
 
 def test_procedure_member_pairs_link_every_member_node():
     doc_nodes = [

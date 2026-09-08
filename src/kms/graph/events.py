@@ -27,4 +27,6 @@ def event_properties(
         'description': description,
         'embedding': embedding,
     }
-    return {key: value for key, value in properties.items() if value is not None}
+    return {
+        key: value for key, value in properties.items() if value is not None
+    }

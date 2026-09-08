@@ -92,9 +92,7 @@ async def rebuild(
         synthesizer=synthesizer,
     )
     for hub in result['hubs']:
-        hub['uuid'] = local_procedure_hubs.global_hub_uuid(
-            hub['members']
-        )
+        hub['uuid'] = local_procedure_hubs.global_hub_uuid(hub['members'])
     await writer.clear_global_procedure_hubs(session_factory=session_factory)
     await writer.persist_global_procedure_hubs(
         result['hubs'], session_factory=session_factory

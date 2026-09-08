@@ -36,8 +36,6 @@ def global_hub_uuid(identity: str) -> str:
     return uuid5(NAMESPACE_URL, f'meta#predicate_hub#{identity}').hex
 
 
-
-
 def hub_properties(
     source: str | None,
     canonical_name: str,

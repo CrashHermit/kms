@@ -15,7 +15,9 @@ class _Judge:
 
 def test_governance_judges_complete_statement_with_static_context():
     nodes = [
-        models.SourceNode(uuid='node-0', type='paragraph', content='Instruction'),
+        models.SourceNode(
+            uuid='node-0', type='paragraph', content='Instruction'
+        ),
         models.SourceNode(uuid='node-1', type='paragraph', content='Before'),
         models.SourceNode(uuid='node-2', type='paragraph', content='Statement'),
         models.SourceNode(uuid='node-3', type='paragraph', content='After'),
@@ -23,7 +25,9 @@ def test_governance_judges_complete_statement_with_static_context():
     instruction = models.Instruction(
         block=[0], member_positions=[0], uuid='instruction-uuid'
     )
-    statement = models.Statement(block=[2], member_positions=[2], uuid='statement-uuid')
+    statement = models.Statement(
+        block=[2], member_positions=[2], uuid='statement-uuid'
+    )
     judge = _Judge()
     node = governance_walker.GovernanceStatementWalkerNode(
         judge=judge,

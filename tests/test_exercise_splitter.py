@@ -18,6 +18,8 @@ class _ScriptedRouter:
 
 def _router(decisions):
     return _ScriptedRouter(decisions)
+
+
 class _ScriptedSplitter:
     def __init__(self, scripted):
         self._scripted = list(scripted)
@@ -43,7 +45,10 @@ def _nodes():
             document_index=0,
         ),
         models.SourceNode(
-            type='paragraph', content='ordinary prose', uuid='node-2', document_index=0
+            type='paragraph',
+            content='ordinary prose',
+            uuid='node-2',
+            document_index=0,
         ),
     ]
 
@@ -52,7 +57,9 @@ def test_encode_returns_text_only_splitter_inputs():
     encoded = splitter.Splitter.encode(
         None,
         current_nodes=[
-            models.NodeInput(index=3, node_type='paragraph', text='candidate text')
+            models.NodeInput(
+                index=3, node_type='paragraph', text='candidate text'
+            )
         ],
         context_before=[
             models.NodeInput(index=2, node_type='image', text='A diagram.')
@@ -103,6 +110,7 @@ def test_splitter_projection_maps_image_description_without_assets(tmp_path):
         },
     ]
 
+
 def test_nodes_before_preserves_multimodal_nodes_and_order():
     nodes = [
         models.SourceNode(
@@ -129,12 +137,8 @@ def test_gather_decisions_uses_structured_text_only_inputs():
     )
 
     current_nodes, context_before = fake.calls[0]
-    assert all(
-        isinstance(node, models.NodeInput) for node in current_nodes
-    )
-    assert all(
-        isinstance(node, models.NodeInput) for node in context_before
-    )
+    assert all(isinstance(node, models.NodeInput) for node in current_nodes)
+    assert all(isinstance(node, models.NodeInput) for node in context_before)
     assert [node.index for node in current_nodes] == [1, 2, 3]
     assert current_nodes[1].text == '3 matrix A\n4 matrix B'
 
@@ -237,6 +241,7 @@ def test_duplicate_split_position_fails():
             )
         )
 
+
 def test_empty_split_item_fails():
     split = splitter.NodeSplit(
         position=0,
@@ -269,7 +274,6 @@ def test_single_exercise_is_invalid_split_output():
             )
         )
 
-
     node = models.SourceNode(
         type='image',
         assets=[models.VisualAsset(path='/tmp/figure.png')],
@@ -286,16 +290,21 @@ def test_single_exercise_is_invalid_split_output():
         ],
     )
 
-    rebuilt = splitter._rebuild([node], splitter.Decision(splits={0: split.exercises}))
+    rebuilt = splitter._rebuild(
+        [node], splitter.Decision(splits={0: split.exercises})
+    )
 
     assert [item.assets[0].path for item in rebuilt] == [
         '/tmp/figure.png',
         '/tmp/figure.png',
     ]
     assert all(
-        item.governing_instruction_uuids == ['instruction-1'] for item in rebuilt
+        item.governing_instruction_uuids == ['instruction-1']
+        for item in rebuilt
     )
     assert rebuilt[0].uuid == identity.split_child_uuid('node-1', 0)
+
+
 def test_no_verdict_passes_through():
     out = asyncio.run(
         splitter.split_exercises(
@@ -392,6 +401,7 @@ def test_splitter_leaves_already_separate_mistral_blocks_untouched():
         '2. Second exercise.',
     ]
     assert [node.provenance['provider_index'] for node in out] == [5, 6]
+
 
 def test_splitter_node_synchronizes_documents():
     split = splitter.NodeSplit(

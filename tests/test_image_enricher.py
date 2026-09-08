@@ -68,7 +68,9 @@ def test_context_text_omits_neighboring_image_bytes(tmp_path):
         )
     ]
 
-    assert image_enricher._context_text(context) == '[0] (image): [IMAGE_OMITTED]'
+    assert (
+        image_enricher._context_text(context) == '[0] (image): [IMAGE_OMITTED]'
+    )
 
 
 def test_image_enricher_encode_preserves_native_image_list():
@@ -123,7 +125,10 @@ def test_image_enricher_node_describes_each_post_seam_node(tmp_path):
     ]
     enricher = _FakeEnricher()
     stage = image_enricher.ImageEnrichmentNode(
-        enricher, backward_budget=100, forward_budget=100, max_concurrent_calls=2
+        enricher,
+        backward_budget=100,
+        forward_budget=100,
+        max_concurrent_calls=2,
     )
 
     result = asyncio.run(stage.run({'documents': [], 'nodes': nodes}))
@@ -146,7 +151,9 @@ def test_image_enricher_skips_non_images_and_assetless_images():
     enricher = _FakeEnricher()
     stage = image_enricher.ImageEnrichmentNode(enricher)
 
-    result = asyncio.run(stage.run({'documents': [], 'nodes': [text, assetless]}))
+    result = asyncio.run(
+        stage.run({'documents': [], 'nodes': [text, assetless]})
+    )
 
     assert result['nodes'] == [text, assetless]
     assert enricher.calls == []
@@ -166,5 +173,7 @@ def test_image_enricher_rejects_missing_asset_before_calls(tmp_path):
 def test_decode_rejects_empty_description():
     module = object.__new__(image_enricher.ImageEnricher)
 
-    with pytest.raises(ValueError, match='description must be a non-empty string'):
+    with pytest.raises(
+        ValueError, match='description must be a non-empty string'
+    ):
         module.decode(SimpleNamespace(description=''))

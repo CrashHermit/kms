@@ -31,6 +31,7 @@ class EntityCardSuitability(module.Module):
         delimiters, commands, braces, superscripts, subscripts, fractions,
         alignment, and escaping. Never convert it to Unicode or plain text.
         """
+
         hub_context: str = dspy.InputField()
         entity: str = dspy.InputField()
         eligible: bool = dspy.OutputField()
@@ -70,6 +71,7 @@ class EntityCardGenerator(module.Module):
         superscripts, subscripts, fractions, alignment, and escaping. Never
         convert mathematical LaTeX to Unicode or plain text.
         """
+
         hub_context: str = dspy.InputField()
         entity: str = dspy.InputField()
         card: CardDraft = dspy.OutputField()
@@ -108,6 +110,7 @@ class EntityCardVerifier(module.Module):
         braces, superscripts, subscripts, fractions, alignment, and escaping.
         Reject any conversion to Unicode or plain text.
         """
+
         entity: str = dspy.InputField()
         prompt: str = dspy.InputField()
         response: str = dspy.InputField()

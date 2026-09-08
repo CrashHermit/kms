@@ -44,9 +44,7 @@ async def rebuild_embeddings(
             )
             rows = await result.data()
             updates: list[dict] = []
-            non_empty = [
-                row for row in rows if (row.get('text') or '').strip()
-            ]
+            non_empty = [row for row in rows if (row.get('text') or '').strip()]
             vectors = await embeddings.embedder().embed(
                 [row['text'] for row in non_empty]
             )

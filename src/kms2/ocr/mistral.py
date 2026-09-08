@@ -1,7 +1,6 @@
 """Mistral OCR transport and KMS2 artifact materialization."""
 
 import base64
-import binascii
 from pathlib import Path
 from typing import Any, Literal
 
@@ -11,7 +10,8 @@ from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from kms2 import config
-from kms2.core.model import OCRArtifact, OCRImageArtifact
+from kms2.core.model.block_types import BlockType
+from kms2.core.model.ocr import OCRArtifact, OCRImageArtifact
 
 _TIMEOUT = httpx.Timeout(300.0, connect=30.0)
 
@@ -20,31 +20,49 @@ class MistralOCRError(RuntimeError):
     """Raised when the Mistral OCR API cannot be used or parsed."""
 
 
-class OCRBlock(BaseModel):
-    """One typed Mistral OCR block and its optional page coordinates."""
+class PageDimensions(BaseModel):
+    """Required source-page dimensions returned by Mistral."""
 
     model_config = ConfigDict(extra='allow')
 
+    width: float = Field(gt=0)
+    height: float = Field(gt=0)
+
+
+class OCRLocatedItem(BaseModel):
+    """Mistral response item with a complete page-space bounding box."""
+
+    model_config = ConfigDict(extra='allow')
+
+    top_left_x: float
+    top_left_y: float
+    bottom_right_x: float
+    bottom_right_y: float
+
+    @property
+    def bbox(self) -> tuple[float, float, float, float]:
+        """Return the item's page-space bounding box."""
+        return (
+            self.top_left_x,
+            self.top_left_y,
+            self.bottom_right_x,
+            self.bottom_right_y,
+        )
+
+
+class OCRBlock(OCRLocatedItem):
+    """One typed Mistral OCR block."""
+
     type: str
-    content: str | None = None
-    top_left_x: float | None = None
-    top_left_y: float | None = None
-    bottom_right_x: float | None = None
-    bottom_right_y: float | None = None
+    content: str
     confidence: float | None = None
 
 
-class OCRImage(BaseModel):
+class OCRImage(OCRLocatedItem):
     """One image returned by Mistral OCR."""
 
-    model_config = ConfigDict(extra='allow')
-
     id: str | None = None
-    image_base64: str | None = None
-    top_left_x: float | None = None
-    top_left_y: float | None = None
-    bottom_right_x: float | None = None
-    bottom_right_y: float | None = None
+    image_base64: str
 
 
 class OCRPage(BaseModel):
@@ -52,9 +70,9 @@ class OCRPage(BaseModel):
 
     model_config = ConfigDict(extra='allow')
 
-    index: int | None = None
+    index: int
     markdown: str = ''
-    dimensions: dict[str, Any] | None = None
+    dimensions: PageDimensions
     blocks: list[OCRBlock] = Field(default_factory=list)
     images: list[OCRImage] = Field(default_factory=list)
     footer: str | None = None
@@ -77,7 +95,7 @@ class OCRResponse(BaseModel):
 
     @property
     def raw_response(self) -> dict[str, Any]:
-        """Returns the original response body for replay and diagnostics."""
+        """Return the original unmodified provider response."""
         return self._raw_response or self.model_dump()
 
 
@@ -171,45 +189,13 @@ def ocr_pdf(
     return _request_ocr(request)
 
 
-def _coordinates(
-    value: OCRBlock | OCRImage,
-) -> tuple[float, float, float, float] | None:
-    """Return one complete Mistral page-space bounding box."""
-    values = (
-        value.top_left_x,
-        value.top_left_y,
-        value.bottom_right_x,
-        value.bottom_right_y,
-    )
-    if any(item is None for item in values):
-        return None
-    return values  # type: ignore[return-value]
-
-
-def _page_dimensions(page: OCRPage) -> tuple[float, float] | None:
-    """Return positive source-page dimensions when Mistral supplied them."""
-    dimensions = page.dimensions or {}
-    width = dimensions.get('width')
-    height = dimensions.get('height')
-    if not isinstance(width, (int, float)) or not isinstance(
-        height, (int, float)
-    ):
-        return None
-    if width <= 0 or height <= 0:
-        return None
-    return float(width), float(height)
-
-
 def _normalized_bbox(
     image: OCRImage, page: OCRPage
-) -> tuple[float, float, float, float] | None:
+) -> tuple[float, float, float, float]:
     """Normalize an image's page-space box to source-page fractions."""
-    bbox = _coordinates(image)
-    dimensions = _page_dimensions(page)
-    if bbox is None or dimensions is None:
-        return None
-    width, height = dimensions
-    left, top, right, bottom = bbox
+    left, top, right, bottom = image.bbox
+    width = page.dimensions.width
+    height = page.dimensions.height
     return left / width, top / height, right / width, bottom / height
 
 
@@ -225,49 +211,9 @@ def _overlaps(
     ) and max(first_top, second_top) < min(first_bottom, second_bottom)
 
 
-def _write_image(data: str, path: Path) -> bool:
-    """Decode one embedded OCR image, returning whether it was written."""
-    if not data:
-        return False
-    if data.startswith('data:'):
-        data = data.split(',', 1)[-1]
-    try:
-        decoded = base64.b64decode(data, validate=True)
-        path.write_bytes(decoded)
-    except (binascii.Error, ValueError, OSError):
-        return False
-    return True
-
-
-def _resolve_page_indices(
-    response: OCRResponse, pages: list[int] | None
-) -> list[int]:
-    """Resolve and validate source page identities before materialization."""
-    selected = set(pages or ())
-    resolved: list[int] = []
-    seen: set[int] = set()
-    for order, page in enumerate(response.pages):
-        page_index = page.index
-        if page_index is None:
-            if pages is not None:
-                if order >= len(pages):
-                    raise ValueError(
-                        'Mistral OCR returned more pages than the requested set'
-                    )
-                page_index = pages[order]
-            else:
-                page_index = order
-        if pages is not None and page_index not in selected:
-            raise ValueError(
-                f'Mistral OCR returned page {page_index} outside requested pages'
-            )
-        if page_index in seen:
-            raise ValueError(
-                f'Mistral OCR returned duplicate page {page_index}'
-            )
-        seen.add(page_index)
-        resolved.append(page_index)
-    return resolved
+def _write_image(data: str, path: Path) -> None:
+    """Decode one embedded OCR image and write it to ``path``."""
+    path.write_bytes(base64.b64decode(data, validate=True))
 
 
 def _render_page(
@@ -289,15 +235,12 @@ def _block_bbox(
     block: OCRBlock,
     page: OCRPage,
     image_size: tuple[int, int],
-) -> tuple[int, int, int, int] | None:
+) -> tuple[int, int, int, int]:
     """Return a clamped block crop box in rendered-image pixels."""
-    values = _coordinates(block)
-    if values is None:
-        return None
     width, height = image_size
-    dimensions = _page_dimensions(page)
-    source_width, source_height = dimensions or (width, height)
-    left, top, right, bottom = values
+    source_width = page.dimensions.width
+    source_height = page.dimensions.height
+    left, top, right, bottom = block.bbox
     scale_x = width / source_width
     scale_y = height / source_height
     margin = max(8, round(max(width, height) * 0.006))
@@ -314,7 +257,6 @@ def _block_bbox(
 
 def _materialize_page(
     page: OCRPage,
-    page_index: int,
     document_dir: Path,
     pdf: Any,
     render_scale: float,
@@ -324,22 +266,21 @@ def _materialize_page(
     """Render one page and build its ordered block artifacts."""
     page_path = document_dir / 'Document.png'
     image_size = _render_page(
-        pdf, page_index, page_path, render_scale, pdf_path
+        pdf, page.index, page_path, render_scale, pdf_path
     )
     materialized_images: list[tuple[OCRImage, Path]] = []
     images_dir = document_dir / 'Images'
     images_dir.mkdir(parents=True, exist_ok=True)
     for image_index, image in enumerate(page.images):
         image_path = images_dir / f'Image_{image_index:03d}.png'
-        if _write_image(image.image_base64 or '', image_path):
-            materialized_images.append((image, image_path))
+        _write_image(image.image_base64, image_path)
+        materialized_images.append((image, image_path))
 
     artifacts: list[OCRArtifact] = []
     with Image.open(page_path) as opened:
         page_image = opened.convert('RGB')
         for block_index, block in enumerate(page.blocks):
             block_bbox = _block_bbox(block, page, image_size)
-            block_coordinates = _coordinates(block)
             attached_images = [
                 OCRImageArtifact(
                     path=str(image_path),
@@ -347,33 +288,28 @@ def _materialize_page(
                     bbox=_normalized_bbox(image, page),
                 )
                 for image, image_path in materialized_images
-                if block_coordinates is not None
-                and _coordinates(image) is not None
-                and _overlaps(block_coordinates, _coordinates(image))
+                if _overlaps(block.bbox, image.bbox)
             ]
-            crop_path: str | None = None
-            if block_bbox is not None:
-                path = document_dir / 'Blocks' / f'Block_{block_index:04d}.png'
-                path.parent.mkdir(parents=True, exist_ok=True)
-                crop = page_image.crop(block_bbox)
-                if block_crop_scale != 1.0:
-                    crop = crop.resize(
-                        (
-                            max(1, round(crop.width * block_crop_scale)),
-                            max(1, round(crop.height * block_crop_scale)),
-                        ),
-                        Image.Resampling.LANCZOS,
-                    )
-                crop.save(path)
-                crop_path = str(path)
+            path = document_dir / 'Blocks' / f'Block_{block_index:04d}.png'
+            path.parent.mkdir(parents=True, exist_ok=True)
+            crop = page_image.crop(block_bbox)
+            if block_crop_scale != 1.0:
+                crop = crop.resize(
+                    (
+                        max(1, round(crop.width * block_crop_scale)),
+                        max(1, round(crop.height * block_crop_scale)),
+                    ),
+                    Image.Resampling.LANCZOS,
+                )
+            crop.save(path)
             artifacts.append(
                 OCRArtifact(
-                    page_index=page_index,
+                    page_index=page.index,
                     block_index=block_index,
-                    block_type=block.type,
+                    block_type=BlockType(block.type),
                     content=block.content,
                     images=attached_images,
-                    crop_path=crop_path,
+                    crop_path=str(path),
                     crop_bbox=block_bbox,
                 )
             )
@@ -384,25 +320,22 @@ def _materialize_page(
 def _materialize_artifacts(
     response: OCRResponse,
     pdf_path: Path,
-    pages: list[int] | None,
     output_dir: str | Path,
     render_scale: float,
     block_crop_scale: float,
 ) -> list[OCRArtifact]:
     """Materialize response images and crops as provider-neutral artifacts."""
-    page_indices = _resolve_page_indices(response, pages)
     output_root = Path(output_dir)
     pdf = pdfium.PdfDocument(str(pdf_path))
     try:
         artifacts: list[OCRArtifact] = []
-        for page, page_index in zip(response.pages, page_indices, strict=True):
+        for page in response.pages:
             document_dir = (
-                output_root / 'Documents' / f'Document_{page_index:04d}'
+                output_root / 'Documents' / f'Document_{page.index:04d}'
             )
             artifacts.extend(
                 _materialize_page(
                     page,
-                    page_index,
                     document_dir,
                     pdf,
                     render_scale,
@@ -431,7 +364,6 @@ class MistralOCRProvider:
         return _materialize_artifacts(
             response,
             source_path,
-            pages,
             settings.ocr.output_dir,
             settings.ocr.render_scale,
             settings.ocr.block_crop_scale,

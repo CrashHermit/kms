@@ -30,7 +30,10 @@ def _bundle() -> models.ConstructionBundle:
 def test_knowledge_selection_uses_members_not_blocks() -> None:
     index = models.KnowledgeIndex(
         source='book',
-        assertions=(_assertion('supported', {10}), _assertion('block-only', {99})),
+        assertions=(
+            _assertion('supported', {10}),
+            _assertion('block-only', {99}),
+        ),
     )
     statement = models.Statement(block=[99], member_positions=[10])
 
@@ -40,7 +43,9 @@ def test_knowledge_selection_uses_members_not_blocks() -> None:
 
 
 def test_procedure_selection_uses_procedure_members() -> None:
-    index = models.KnowledgeIndex(source='book', assertions=(_assertion('fact', {20}),))
+    index = models.KnowledgeIndex(
+        source='book', assertions=(_assertion('fact', {20}),)
+    )
     procedure = models.Procedure(block=[20], member_positions=[20])
 
     result = knowledge_for_procedure(_bundle(), procedure, index)
@@ -49,7 +54,9 @@ def test_procedure_selection_uses_procedure_members() -> None:
 
 
 def test_empty_members_return_empty_knowledge() -> None:
-    index = models.KnowledgeIndex(source='book', assertions=(_assertion('fact', {1}),))
+    index = models.KnowledgeIndex(
+        source='book', assertions=(_assertion('fact', {1}),)
+    )
 
     result = knowledge_for_statement(
         _bundle(), models.Statement(block=[1], member_positions=[]), index
@@ -69,10 +76,15 @@ def test_cross_source_selection_is_rejected() -> None:
 
 def test_knowledge_union_deduplicates_and_merges_evidence() -> None:
     left = models.Knowledge((_assertion('same', {1}),))
-    right = models.Knowledge((_assertion('same', {2}), _assertion('other', {3})))
+    right = models.Knowledge(
+        (_assertion('same', {2}), _assertion('other', {3}))
+    )
 
     result = left.union(right)
 
-    assert [assertion.uuid for assertion in result.assertions] == ['other', 'same']
+    assert [assertion.uuid for assertion in result.assertions] == [
+        'other',
+        'same',
+    ]
     assert result.assertions[1].evidence_node_ids == frozenset({1, 2})
     assert 'concept --relates--> concept: description same' in result.render()

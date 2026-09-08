@@ -208,9 +208,7 @@ class SearchJudge(module.Module):
             not isinstance(decision, SearchJudgeDecision)
             for decision in decisions
         ):
-            raise TypeError(
-                'decisions must contain SearchJudgeDecision values'
-            )
+            raise TypeError('decisions must contain SearchJudgeDecision values')
         candidate_count = len(inputs['candidates'])
         if len(decisions) != candidate_count:
             raise ValueError(
@@ -290,7 +288,9 @@ class QueryDecomposer(module.Module):
         previous_end = -1
         for plan_index, plan in enumerate(plans):
             if not plan.label.strip():
-                raise ValueError(f'sub_queries[{plan_index}] has an empty label')
+                raise ValueError(
+                    f'sub_queries[{plan_index}] has an empty label'
+                )
             indices = module.require_positions(
                 plan.part_indices,
                 field_name=f'sub_queries[{plan_index}].part_indices',

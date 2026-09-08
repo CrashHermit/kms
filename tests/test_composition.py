@@ -61,7 +61,12 @@ def test_compose_statement_preserves_interleaved_image_provenance() -> None:
 def test_compose_statement_supports_empty_and_image_only_statements() -> None:
     bundle = _bundle()
 
-    assert compose_statement(bundle, models.Statement(block=[0], member_positions=[])).text == ''
+    assert (
+        compose_statement(
+            bundle, models.Statement(block=[0], member_positions=[])
+        ).text
+        == ''
+    )
     image_only = compose_statement(
         bundle, models.Statement(block=[1], member_positions=[1])
     )

@@ -1,36 +1,50 @@
-from langgraph.graph.state import CompiledStateGraph
+"""Source-processing LangGraph assembly for KMS2."""
 
+from kms2.langgraph.source.content_correction import (
+    add_content_correction_phase,
+)
+from kms2.langgraph.source.formatting import add_formatter_phase
+from kms2.langgraph.source.image_seam import add_image_seam_phase
+from kms2.langgraph.source.ocr import add_ocr_phase
+from kms2.langgraph.source.splitter import add_splitter_phase
 from kms2.langgraph.source.state import SourceState
+from kms2.langgraph.source.text_seam import add_text_seam_phase
+from kms2.node.source.content_correction import ContentCorrectionNode
+from kms2.node.source.formatting import FormattingNode
+from kms2.node.source.image_seam import ImageSeamNode
 from kms2.node.source.ocr import OCRNode
-from kms2.node.source.content_correction import ContentCorrectorNode
-
-from langgraph.graph import END, START, StateGraph
+from kms2.node.source.splitter import SplitterNode
+from kms2.node.source.text_seam import TextSeamNode
+from langgraph.graph import StateGraph
+from langgraph.graph.state import CompiledStateGraph
 
 
 class SourceGraph:
-    def __init__(self) -> None:
+    """Compile the source-processing graph from injected node behaviors."""
+
+    def __init__(
+        self,
+        ocr: OCRNode,
+        content_correction: ContentCorrectionNode,
+        formatter: FormattingNode,
+        text_seam: TextSeamNode,
+        image_seam: ImageSeamNode,
+        splitter: SplitterNode,
+    ) -> None:
         self.graph = StateGraph(SourceState)
-
-    def _build_nodes(self):
-        self.graph.add_node('ocr', node=OCRNode)
-        self.graph.add_node('content_corrector', node=ContentCorrectorNode)
-
-    def _build_edges(self):
-        """Build and compile the ordered source-processing graph.
-        
-        The graph keeps provider-specific work inside the supplied nodes. Its
-        coordination boundary is provider-neutral: OCR produces artifacts
-        consumed by the content corrector, which produces the terminal state.
-        """
-        graph.add_edge(START, 'ocr')
-        graph.add_edge('ocr', 'content_corrector')
-        graph.add_edge('content_corrector', END)
-        return graph.compile()
+        self.ocr = ocr
+        self.content_correction = content_correction
+        self.formatter = formatter
+        self.text_seam = text_seam
+        self.image_seam = image_seam
+        self.splitter = splitter
 
     def build_graph(self) -> CompiledStateGraph:
-        self._build_nodes()
-        self._build_edges()
-
-        compiled_state_graph: CompiledStateGraph = self.graph.compile()
-
-        return compiled_state_graph
+        """Register source phases and compile the graph."""
+        add_ocr_phase(self.graph, self.ocr)
+        add_content_correction_phase(self.graph, self.content_correction)
+        add_formatter_phase(self.graph, self.formatter)
+        add_text_seam_phase(self.graph, self.text_seam)
+        add_image_seam_phase(self.graph, self.image_seam)
+        add_splitter_phase(self.graph, self.splitter)
+        return self.graph.compile()

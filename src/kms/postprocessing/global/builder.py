@@ -11,7 +11,9 @@ class HubAdjudicator(Protocol):
 
 
 class HubSynthesizer(Protocol):
-    def aforward(self, *, evidence: list[str]) -> Awaitable[tuple[str, str]]: ...
+    def aforward(
+        self, *, evidence: list[str]
+    ) -> Awaitable[tuple[str, str]]: ...
 
 
 async def build(
@@ -46,7 +48,9 @@ async def build(
         comparison_token_budget=stage.comparison_token_budget,
     )
     groups = [
-        group for group in groups if len({record.source for record in group}) >= 2
+        group
+        for group in groups
+        if len({record.source for record in group}) >= 2
     ]
     gate = asyncio.Semaphore(stage.max_concurrent_calls)
 

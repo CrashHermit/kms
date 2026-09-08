@@ -9,9 +9,17 @@ from kms.core import identity, models
 def _bundle() -> models.ConstructionBundle:
     source = models.Source(key='book')
     nodes = [
-        models.SourceNode(uuid='node-0', type=models.NodeType.PARAGRAPH, content='intro'),
-        models.SourceNode(uuid='node-1', type=models.NodeType.IMAGE, assets=[models.VisualAsset(path='figure.png')]),
-        models.SourceNode(uuid='node-2', type=models.NodeType.PARAGRAPH, content='finish'),
+        models.SourceNode(
+            uuid='node-0', type=models.NodeType.PARAGRAPH, content='intro'
+        ),
+        models.SourceNode(
+            uuid='node-1',
+            type=models.NodeType.IMAGE,
+            assets=[models.VisualAsset(path='figure.png')],
+        ),
+        models.SourceNode(
+            uuid='node-2', type=models.NodeType.PARAGRAPH, content='finish'
+        ),
     ]
     statement = models.Statement(block=[0, 1], member_positions=[0, 1])
     procedure = models.Procedure(block=[0, 1], member_positions=[0, 1])
@@ -38,7 +46,9 @@ def test_compose_procedure_preserves_ordered_content() -> None:
     assert composed.statement.text == 'intro'
 
 
-def test_compose_procedure_supports_empty_content_and_orphan_statement() -> None:
+def test_compose_procedure_supports_empty_content_and_orphan_statement() -> (
+    None
+):
     bundle = models.ConstructionBundle(source=models.Source(key='book'))
     procedure = models.Procedure(block=[9], member_positions=[])
 
@@ -64,7 +74,9 @@ def test_compose_procedure_rejects_bad_members() -> None:
 def test_compose_procedure_rejects_ambiguous_statement_linkage() -> None:
     bundle = _bundle()
     # Add a statement with the same block as the procedure to create ambiguity
-    bundle.statements.append(models.Statement(block=[0, 1], member_positions=[2]))
+    bundle.statements.append(
+        models.Statement(block=[0, 1], member_positions=[2])
+    )
     # Create a procedure without statement_uuid so it falls through to ambiguous check
     procedure = models.Procedure(block=[0, 1], member_positions=[0, 1])
 

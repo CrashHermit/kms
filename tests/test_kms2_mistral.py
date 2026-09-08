@@ -2,6 +2,7 @@ import base64
 
 import pytest
 from PIL import Image
+from pydantic import ValidationError
 
 from kms2 import config
 from kms2.ocr import mistral
@@ -41,6 +42,41 @@ class _PdfDocument:
         pass
 
 
+def _block_payload(content='text', **overrides):
+    block = {
+        'type': 'text',
+        'content': content,
+        'top_left_x': 10,
+        'top_left_y': 20,
+        'bottom_right_x': 50,
+        'bottom_right_y': 100,
+    }
+    block.update(overrides)
+    return block
+
+
+def _image_payload(image_base64, **overrides):
+    image = {
+        'id': 'image-1',
+        'image_base64': image_base64,
+        'top_left_x': 20,
+        'top_left_y': 30,
+        'bottom_right_x': 40,
+        'bottom_right_y': 60,
+    }
+    image.update(overrides)
+    return image
+
+
+def _page_payload(index=0, *, blocks=None, images=None):
+    return {
+        'index': index,
+        'dimensions': {'width': 100, 'height': 200},
+        'blocks': [_block_payload()] if blocks is None else blocks,
+        'images': [] if images is None else images,
+    }
+
+
 def _configure_materialization(monkeypatch, tmp_path):
     settings = config.Settings(
         ocr={'output_dir': str(tmp_path / 'output')},
@@ -77,9 +113,7 @@ def test_ocr_request_builds_document_payload():
 
 
 def test_ocr_response_retains_raw_response():
-    raw = {
-        'pages': [{'index': 0, 'blocks': [{'type': 'text', 'content': 'hi'}]}]
-    }
+    raw = {'pages': [_page_payload(blocks=[_block_payload('hi')])]}
 
     response = mistral.OCRResponse.from_raw(raw)
 
@@ -126,35 +160,42 @@ def test_mistral_provider_materializes_ordered_artifacts(monkeypatch, tmp_path):
     _configure_materialization(monkeypatch, tmp_path)
     pdf_path = tmp_path / 'book.pdf'
     pdf_path.write_bytes(b'%PDF')
-    embedded = base64.b64encode(b'embedded-image').decode('ascii')
+    first_embedded = base64.b64encode(b'first-image').decode('ascii')
+    second_embedded = base64.b64encode(b'second-image').decode('ascii')
     response = mistral.OCRResponse.from_raw(
         {
             'pages': [
-                {
-                    'index': 0,
-                    'dimensions': {'width': 100, 'height': 200},
-                    'images': [
-                        {
-                            'id': 'image-1',
-                            'image_base64': embedded,
-                            'top_left_x': 20,
-                            'top_left_y': 30,
-                            'bottom_right_x': 40,
-                            'bottom_right_y': 60,
-                        }
+                _page_payload(
+                    index=2,
+                    blocks=[
+                        _block_payload(
+                            'first',
+                            top_left_x=10,
+                            top_left_y=20,
+                            bottom_right_x=50,
+                            bottom_right_y=100,
+                        ),
+                        _block_payload(
+                            'second',
+                            top_left_x=60,
+                            top_left_y=120,
+                            bottom_right_x=90,
+                            bottom_right_y=180,
+                        ),
                     ],
-                    'blocks': [
-                        {
-                            'type': 'text',
-                            'content': 'first',
-                            'top_left_x': 10,
-                            'top_left_y': 20,
-                            'bottom_right_x': 50,
-                            'bottom_right_y': 100,
-                        },
-                        {'type': 'text', 'content': 'second'},
+                    images=[
+                        _image_payload(first_embedded),
+                        _image_payload(
+                            second_embedded,
+                            id='image-2',
+                            top_left_x=70,
+                            top_left_y=150,
+                            bottom_right_x=80,
+                            bottom_right_y=170,
+                        ),
                     ],
-                }
+                ),
+                _page_payload(index=0, blocks=[_block_payload('third')]),
             ]
         }
     )
@@ -162,115 +203,72 @@ def test_mistral_provider_materializes_ordered_artifacts(monkeypatch, tmp_path):
 
     artifacts = mistral.MistralOCRProvider().extract(pdf_path)
 
-    assert [artifact.content for artifact in artifacts] == ['first', 'second']
-    assert artifacts[0].block_type == 'text'
-    assert artifacts[0].page_index == 0
+    assert [artifact.content for artifact in artifacts] == [
+        'first',
+        'second',
+        'third',
+    ]
+    assert [artifact.page_index for artifact in artifacts] == [2, 2, 0]
     assert artifacts[0].crop_bbox == (2, 12, 58, 108)
-    assert artifacts[0].crop_path == str(
-        tmp_path / 'output/Documents/Document_0000/Blocks/Block_0000.png'
-    )
-    assert artifacts[0].images[0].image_id == 'image-1'
-    assert artifacts[0].images[0].bbox == (0.2, 0.15, 0.4, 0.3)
-    assert artifacts[1].crop_path is None
-    assert artifacts[1].crop_bbox is None
-    assert (
-        tmp_path / 'output/Documents/Document_0000/Images/Image_000.png'
-    ).read_bytes() == b'embedded-image'
-
-
-def test_mistral_provider_resolves_requested_page_without_index(
-    monkeypatch, tmp_path
-):
-    _configure_materialization(monkeypatch, tmp_path)
-    pdf_path = tmp_path / 'book.pdf'
-    pdf_path.write_bytes(b'%PDF')
-    response = mistral.OCRResponse.from_raw(
-        {
-            'pages': [
-                {
-                    'blocks': [
-                        {
-                            'type': 'text',
-                            'content': 'page',
-                            'top_left_x': 10,
-                            'top_left_y': 20,
-                            'bottom_right_x': 50,
-                            'bottom_right_y': 100,
-                        }
-                    ]
-                }
-            ]
-        }
-    )
-    monkeypatch.setattr(mistral, 'ocr_pdf', lambda data, pages=None: response)
-
-    artifacts = mistral.MistralOCRProvider().extract(pdf_path, pages=[2])
-
-    assert artifacts[0].page_index == 2
+    assert artifacts[1].crop_bbox == (52, 112, 98, 188)
+    assert artifacts[2].crop_bbox == (2, 12, 58, 108)
     assert artifacts[0].crop_path == str(
         tmp_path / 'output/Documents/Document_0002/Blocks/Block_0000.png'
     )
-
-
-def test_mistral_provider_rejects_invalid_page_identity_before_writing(
-    monkeypatch, tmp_path
-):
-    _configure_materialization(monkeypatch, tmp_path)
-    pdf_path = tmp_path / 'book.pdf'
-    pdf_path.write_bytes(b'%PDF')
-    response = mistral.OCRResponse.from_raw(
-        {'pages': [{'index': 1, 'blocks': [{'type': 'text'}]}]}
+    assert artifacts[1].crop_path == str(
+        tmp_path / 'output/Documents/Document_0002/Blocks/Block_0001.png'
     )
-    monkeypatch.setattr(mistral, 'ocr_pdf', lambda data, pages=None: response)
-
-    with pytest.raises(ValueError, match='outside requested pages'):
-        mistral.MistralOCRProvider().extract(pdf_path, pages=[2])
-
-    assert not (tmp_path / 'output').exists()
-
-
-def test_mistral_provider_rejects_duplicate_page_identity_before_writing(
-    monkeypatch, tmp_path
-):
-    _configure_materialization(monkeypatch, tmp_path)
-    pdf_path = tmp_path / 'book.pdf'
-    pdf_path.write_bytes(b'%PDF')
-    response = mistral.OCRResponse.from_raw(
-        {
-            'pages': [
-                {'index': 2, 'blocks': []},
-                {'index': 2, 'blocks': []},
-            ]
-        }
+    assert artifacts[2].crop_path == str(
+        tmp_path / 'output/Documents/Document_0000/Blocks/Block_0000.png'
     )
-    monkeypatch.setattr(mistral, 'ocr_pdf', lambda data, pages=None: response)
+    assert [image.image_id for image in artifacts[0].images] == ['image-1']
+    assert [image.image_id for image in artifacts[1].images] == ['image-2']
+    assert artifacts[2].images == []
+    assert artifacts[0].images[0].bbox == (0.2, 0.15, 0.4, 0.3)
+    assert (
+        tmp_path / 'output/Documents/Document_0002/Images/Image_000.png'
+    ).read_bytes() == b'first-image'
+    assert (
+        tmp_path / 'output/Documents/Document_0002/Images/Image_001.png'
+    ).read_bytes() == b'second-image'
 
-    with pytest.raises(ValueError, match='duplicate page'):
-        mistral.MistralOCRProvider().extract(pdf_path, pages=[2, 3])
 
-    assert not (tmp_path / 'output').exists()
+@pytest.mark.parametrize(
+    'missing_field',
+    [
+        'page_index',
+        'page_dimensions',
+        'block_coordinate',
+        'block_content',
+        'image_coordinate',
+        'image_base64',
+    ],
+)
+def test_mistral_response_requires_guaranteed_fields(missing_field):
+    raw = {
+        'pages': [
+            _page_payload(
+                blocks=[_block_payload()],
+                images=[_image_payload('aGVsbG8=')],
+            )
+        ]
+    }
+    page = raw['pages'][0]
+    block = page['blocks'][0]
+    image = page['images'][0]
 
+    if missing_field == 'page_index':
+        page.pop('index')
+    elif missing_field == 'page_dimensions':
+        page.pop('dimensions')
+    elif missing_field == 'block_coordinate':
+        block.pop('top_left_x')
+    elif missing_field == 'block_content':
+        block.pop('content')
+    elif missing_field == 'image_coordinate':
+        image.pop('top_left_x')
+    else:
+        image.pop('image_base64')
 
-def test_mistral_provider_omits_malformed_embedded_images(
-    monkeypatch, tmp_path
-):
-    _configure_materialization(monkeypatch, tmp_path)
-    pdf_path = tmp_path / 'book.pdf'
-    pdf_path.write_bytes(b'%PDF')
-    response = mistral.OCRResponse.from_raw(
-        {
-            'pages': [
-                {
-                    'images': [{'image_base64': 'not-valid-base64'}],
-                    'blocks': [{'type': 'image', 'content': 'diagram'}],
-                }
-            ]
-        }
-    )
-    monkeypatch.setattr(mistral, 'ocr_pdf', lambda data, pages=None: response)
-
-    artifacts = mistral.MistralOCRProvider().extract(pdf_path)
-
-    assert artifacts[0].images == []
-    assert artifacts[0].page_index == 0
-    assert not list((tmp_path / 'output').rglob('Image_*.png'))
+    with pytest.raises(ValidationError):
+        mistral.OCRResponse.from_raw(raw)

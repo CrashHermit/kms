@@ -52,8 +52,19 @@ def test_assess_runs_local_gate_only_after_global_true(monkeypatch):
         'entity_learning_candidates',
         lambda session_factory: _rows(rows),
     )
-    global_gate = FakeGate([[entity_learning.EntityLearningDecision(index=1, learnable=True), entity_learning.EntityLearningDecision(index=2, learnable=False)]])
-    local_gate = FakeGate([[entity_learning.EntityLearningDecision(index=1, learnable=True)]])
+    global_gate = FakeGate(
+        [
+            [
+                entity_learning.EntityLearningDecision(index=1, learnable=True),
+                entity_learning.EntityLearningDecision(
+                    index=2, learnable=False
+                ),
+            ]
+        ]
+    )
+    local_gate = FakeGate(
+        [[entity_learning.EntityLearningDecision(index=1, learnable=True)]]
+    )
 
     result = asyncio.run(
         entity_learning.assess(
@@ -71,6 +82,7 @@ def test_assess_runs_local_gate_only_after_global_true(monkeypatch):
         entity_learning.EntityLearningLocalBatchInput,
     )
 
+
 def test_local_stage_preserves_sparse_global_indexes(monkeypatch):
     rows = [_row('local-1'), _row('local-2')]
     monkeypatch.setattr(
@@ -79,10 +91,14 @@ def test_local_stage_preserves_sparse_global_indexes(monkeypatch):
         lambda session_factory: _rows(rows),
     )
     global_gate = FakeGate(
-        [[
-            entity_learning.EntityLearningDecision(index=1, learnable=False),
-            entity_learning.EntityLearningDecision(index=2, learnable=True),
-        ]]
+        [
+            [
+                entity_learning.EntityLearningDecision(
+                    index=1, learnable=False
+                ),
+                entity_learning.EntityLearningDecision(index=2, learnable=True),
+            ]
+        ]
     )
     local_gate = FakeGate(
         [[entity_learning.EntityLearningDecision(index=2, learnable=True)]]

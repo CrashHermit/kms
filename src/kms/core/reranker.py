@@ -30,7 +30,9 @@ def _http_client() -> httpx.AsyncClient:
 class Reranker:
     """Lazily-loaded local HTTP reranking client."""
 
-    def __init__(self, model: str | None = None, *, batch_size: int | None = None) -> None:
+    def __init__(
+        self, model: str | None = None, *, batch_size: int | None = None
+    ) -> None:
         settings = config.get_settings().reranker
         self.model = model or settings.model
         self.batch_size = batch_size or settings.batch_size
@@ -81,7 +83,9 @@ class Reranker:
                 ):
                     raise ValueError('invalid or duplicated reranker result')
                 seen.add(index)
-                validated.append({'index': index, 'relevance_score': float(score)})
+                validated.append(
+                    {'index': index, 'relevance_score': float(score)}
+                )
             validated.sort(
                 key=lambda result: (-result['relevance_score'], result['index'])
             )
@@ -89,7 +93,9 @@ class Reranker:
         except RuntimeError:
             raise
         except Exception as exc:
-            raise RuntimeError(f'local reranker endpoint {endpoint} failed: {exc}') from exc
+            raise RuntimeError(
+                f'local reranker endpoint {endpoint} failed: {exc}'
+            ) from exc
         elapsed_ms = round((time.perf_counter() - started) * 1000, 2)
         logger.info(
             'reranker: %d candidates -> %d selected; query=%s; '

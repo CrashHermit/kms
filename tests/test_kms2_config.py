@@ -1,4 +1,20 @@
 from kms2 import config
+from kms2.setting.model.language.base import LanguageModelBase
+
+
+def test_language_model_provider_options_are_optional_and_preserved():
+    language_model = LanguageModelBase(
+        model='openai/qwen3.5-9b-text',
+        provider_options={
+            'timeout': 30,
+            'response_format': {'type': 'json_object'},
+        },
+    )
+
+    assert language_model.provider_options == {
+        'timeout': 30,
+        'response_format': {'type': 'json_object'},
+    }
 
 
 def test_kms2_ocr_and_mistral_defaults_are_separate():

@@ -92,5 +92,3 @@ def instruction_governance_pairs(
                 }
             )
     return pairs
-
-

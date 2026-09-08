@@ -1,6 +1,8 @@
 """Minimal graph record models for KMS2."""
 
-from pydantic import BaseModel, ConfigDict
+import uuid
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class Vertex(BaseModel):
@@ -8,7 +10,7 @@ class Vertex(BaseModel):
 
     model_config = ConfigDict(extra='forbid')
 
-    uuid: str
+    uuid: str = Field(default_factory=lambda: str(uuid.uuid4()))
 
 
 class Edge(BaseModel):
