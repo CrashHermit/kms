@@ -1,11 +1,17 @@
 """LangGraph node for routed source-block splitting."""
 
-from kms2.core.context_window import select_cursor_window
+from typing import Literal, TypedDict
+
+from langgraph.types import Send
+
+from kms2.config import ContextWindowSettings
+from kms2.core.context_window import select_window
 from kms2.core.model import (
     SourceBlock,
     SourcePage,
     SplitCandidate,
-    SplitPiece,
+    SplitRequest,
+    SplitResult,
 )
 from kms2.langgraph.source.state import SourceState
 from kms2.module.source.splitter import (
@@ -14,76 +20,117 @@ from kms2.module.source.splitter import (
 )
 
 
+class SplitterWorkerState(TypedDict):
+    """State supplied to one dispatched splitter worker."""
+
+    split_request: SplitRequest
+
+
 class SplitterNode:
-    """Route packed source blocks and restore split output to source pages."""
+    """Dispatch, route, split, and collect source blocks."""
 
     def __init__(
         self,
         router: ExerciseStripRouterModule,
         splitter: ExerciseSplitterModule,
-        *,
-        backward_budget: int,
-        target_budget: int,
-        forward_budget: int,
+        context_window: ContextWindowSettings,
     ) -> None:
         self._router = router
         self._splitter = splitter
-        self._backward_budget = backward_budget
-        self._target_budget = target_budget
-        self._forward_budget = forward_budget
+        self._context_window = context_window
 
-    async def run(self, state: SourceState) -> dict[str, list[SourcePage]]:
-        """Split routed blocks in a flat stream and restore page wrappers."""
+    def dispatch(
+        self, state: SourceState
+    ) -> list[Send] | Literal['splitter_collect']:
+        """Dispatch one context-window request per source block."""
         flat_blocks = [
             source_block
-            for page in state.image_seam_pages
+            for page in state.image_enriched_pages
             for source_block in page.blocks
         ]
-        replacements: dict[int, list[SplitPiece]] = {}
-        cursor = 0
-        while cursor < len(flat_blocks):
-            cursor_at_window_start = cursor
-            next_cursor, window = select_cursor_window(
+        sends: list[Send] = []
+        flat_position = 0
+        while flat_position < len(flat_blocks):
+            window = select_window(
                 flat_blocks,
-                cursor,
-                backward_budget=self._backward_budget,
-                target_budget=self._target_budget,
-                forward_budget=self._forward_budget,
+                [flat_position],
+                backward_budget=self._context_window.backward_budget,
+                forward_budget=self._context_window.forward_budget,
+                target_budget=self._context_window.target_budget,
             )
-            candidates: list[SplitCandidate] = []
-            for target_position, target_block in enumerate(window.target):
-                contains_multiple = await self._router.aforward(
-                    context_before=(
-                        window.context_before + window.target[:target_position]
-                    ),
-                    target_block=target_block,
-                    context_after=(
-                        window.target[target_position + 1 :]
-                        + window.context_after
-                    ),
-                )
-                if contains_multiple:
-                    candidates.append(
-                        SplitCandidate(
-                            position=target_position,
-                            source_block=target_block,
+            if not window.target:
+                raise RuntimeError('splitter selected an empty target window')
+            sends.append(
+                Send(
+                    'splitter_worker',
+                    {
+                        'split_request': SplitRequest(
+                            flat_position=flat_position,
+                            window=window,
                         )
-                    )
-
-            if candidates:
-                decisions = await self._splitter.aforward(
-                    context_before=window.context_before,
-                    candidates=candidates,
-                    context_after=window.context_after,
+                    },
                 )
-                for decision in decisions:
-                    flat_position = cursor_at_window_start + decision.position
-                    replacements[flat_position] = decision.pieces
-            cursor = next_cursor
+            )
+            flat_position += len(window.target)
+        return sends or 'splitter_collect'
 
+    async def worker(
+        self,
+        state: SplitterWorkerState,
+    ) -> dict[str, list[SplitResult]]:
+        """Route and split one dispatched source-block window."""
+        request = state['split_request']
+        window = request.window
+        candidates: list[SplitCandidate] = []
+        for target_position, target_block in enumerate(window.target):
+            contains_multiple = await self._router.aforward(
+                context_before=(
+                    window.context_before + window.target[:target_position]
+                ),
+                target_block=target_block,
+                context_after=(
+                    window.target[target_position + 1 :] + window.context_after
+                ),
+            )
+            if contains_multiple:
+                candidates.append(
+                    SplitCandidate(
+                        position=target_position,
+                        source_block=target_block,
+                    )
+                )
+        if not candidates:
+            return {
+                'split_results': [
+                    SplitResult(flat_position=request.flat_position)
+                ]
+            }
+
+        decisions = await self._splitter.aforward(
+            context_before=window.context_before,
+            candidates=candidates,
+            context_after=window.context_after,
+        )
+        return {
+            'split_results': [
+                SplitResult(
+                    flat_position=request.flat_position + decision.position,
+                    pieces=decision.pieces,
+                )
+                for decision in decisions
+            ]
+        }
+
+    def collect(self, state: SourceState) -> dict[str, list[SourcePage]]:
+        """Collect split results while preserving page and block order."""
+        replacements = {
+            result.flat_position: result.pieces
+            for result in state.split_results
+            if result.pieces is not None
+        }
         split_pages: list[SourcePage] = []
         flat_position = 0
-        for page in state.image_seam_pages:
+        for page in state.image_enriched_pages:
             split_blocks: list[SourceBlock] = []
             for source_block in page.blocks:
                 pieces = replacements.get(flat_position)

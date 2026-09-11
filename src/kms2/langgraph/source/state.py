@@ -7,8 +7,10 @@ from pydantic import BaseModel, Field
 
 from kms2.core.model.content_correction import ContentCorrectionResult
 from kms2.core.model.formatting import FormattingResult
+from kms2.core.model.image_enrichment import ImageEnrichmentResult
 from kms2.core.model.image_seam import ImageSeamResult
 from kms2.core.model.source import Source, SourcePage
+from kms2.core.model.splitter import SplitResult
 from kms2.core.model.text_seam import TextSeamResult
 
 
@@ -47,4 +49,13 @@ class SourceState(BaseModel):
         Field(default_factory=list)
     )
     image_seam_pages: list[SourcePage] = Field(default_factory=list)
+
+    image_enrichment_results: Annotated[
+        list[ImageEnrichmentResult], operator.add
+    ] = Field(default_factory=list)
+    image_enriched_pages: list[SourcePage] = Field(default_factory=list)
     split_pages: list[SourcePage] = Field(default_factory=list)
+
+    split_results: Annotated[list[SplitResult], operator.add] = Field(
+        default_factory=list
+    )

@@ -35,10 +35,9 @@ class ExerciseStripRouterSignature(dspy.Signature):
 class ExerciseStripRouterModule(dspy.Module):
     """Route only source blocks that visibly contain multiple exercises."""
 
-    def __init__(self, language_model: dspy.LM) -> None:
+    def __init__(self, predictor: dspy.Module) -> None:
         super().__init__()
-        self.predictor = dspy.Predict(ExerciseStripRouterSignature)
-        self.predictor.set_lm(language_model)
+        self.predictor = predictor
 
     def forward(
         self,
@@ -96,10 +95,9 @@ class ExerciseSplitterSignature(dspy.Signature):
 class ExerciseSplitterModule(dspy.Module):
     """Split routed packed-exercise blocks into independent pieces."""
 
-    def __init__(self, language_model: dspy.LM) -> None:
+    def __init__(self, predictor: dspy.Module) -> None:
         super().__init__()
-        self.predictor = dspy.Predict(ExerciseSplitterSignature)
-        self.predictor.set_lm(language_model)
+        self.predictor = predictor
 
     def forward(
         self,

@@ -1,5 +1,6 @@
 import asyncio
 
+from kms2.config import ContextWindowSettings
 from kms2.core.model import Source, SourceBlock, SourcePage
 from kms2.core.model.content_correction import ContentCorrectionResult
 from kms2.core.model.ocr import OCRArtifact, OCRImageArtifact
@@ -7,6 +8,7 @@ from kms2.langgraph.source import OCRNode, SourceState
 from kms2.langgraph.source.graph import SourceGraph
 from kms2.node.source.content_correction import ContentCorrectionNode
 from kms2.node.source.formatting import FormattingNode
+from kms2.node.source.image_enrichment import ImageEnrichmentNode
 from kms2.node.source.image_seam import ImageSeamNode
 from kms2.node.source.splitter import SplitterNode
 from kms2.node.source.text_seam import TextSeamNode
@@ -23,13 +25,35 @@ class _UnexpectedSplitter:
         raise AssertionError('splitter must not run without routed candidates')
 
 
+class _UnexpectedEnricher:
+    async def aforward(self, **kwargs: object) -> str:
+        raise AssertionError('enricher must not run without image blocks')
+
+
+class _RecordingPersistence:
+    def __init__(self) -> None:
+        self.pages: list[SourcePage] | None = None
+
+    async def run(self, state: SourceState) -> dict[str, object]:
+        self.pages = state.split_pages
+        return {}
+
+
 def _no_splitter() -> SplitterNode:
     return SplitterNode(
         _FalseRouter(),
         _UnexpectedSplitter(),
-        backward_budget=100,
-        target_budget=100,
-        forward_budget=100,
+        ContextWindowSettings(
+            backward_budget=100,
+            forward_budget=100,
+        ),
+    )
+
+
+def _no_enricher() -> ImageEnrichmentNode:
+    return ImageEnrichmentNode(
+        _UnexpectedEnricher(),
+        ContextWindowSettings(backward_budget=100, forward_budget=100),
     )
 
 
@@ -71,7 +95,10 @@ def test_source_state_carries_source_pipeline_data():
     assert state.image_seam_even_pages == []
     assert state.image_seam_odd_results == []
     assert state.image_seam_pages == []
+    assert state.image_enrichment_results == []
+    assert state.image_enriched_pages == []
     assert state.split_pages == []
+    assert state.split_results == []
 
 
 def test_source_state_defaults_optional_pipeline_fields():
@@ -93,7 +120,10 @@ def test_source_state_defaults_optional_pipeline_fields():
     assert state.image_seam_even_pages == []
     assert state.image_seam_odd_results == []
     assert state.image_seam_pages == []
+    assert state.image_enrichment_results == []
+    assert state.image_enriched_pages == []
     assert state.split_pages == []
+    assert state.split_results == []
 
 
 def test_ocr_node_delegates_once_to_injected_provider():
@@ -233,13 +263,16 @@ def test_source_graph_runs_correction_formatting_and_text_seams():
         async def aforward(self, **kwargs: object) -> bool:
             raise AssertionError('image judge must not run for text-only pages')
 
+    persistence = _RecordingPersistence()
     source_graph = SourceGraph(
         OCRNode(FakeProvider()),
         ContentCorrectionNode(FakeCorrector()),
         FormattingNode(FakeFormatter()),
         TextSeamNode(FakeJudge(), FakeRewriter()),
         ImageSeamNode(FakeImageJudge()),
+        _no_enricher(),
         _no_splitter(),
+        persistence,
     ).build_graph()
 
     result = asyncio.run(
@@ -267,7 +300,8 @@ def test_source_graph_runs_correction_formatting_and_text_seams():
         for content in page.blocks
     ] == ['merged tail and head']
     assert [page.index for page in result['text_seam_pages']] == [0, 1]
-    assert result['split_pages'] == result['image_seam_pages']
+    assert result['split_pages'] == result['image_enriched_pages']
+    assert persistence.pages == result['split_pages']
 
 
 def test_source_graph_merges_adjacent_image_artifacts_after_text_seams():
@@ -322,13 +356,33 @@ def test_source_graph_merges_adjacent_image_artifacts_after_text_seams():
         async def aforward(self, **kwargs: object) -> bool:
             return True
 
+    class FakeEnricher:
+        async def aforward(
+            self,
+            *,
+            source_block: SourceBlock,
+            context_before: object,
+            context_after: object,
+        ) -> str:
+            assert [asset.path for asset in source_block.assets] == [
+                'top.png',
+                'bottom.png',
+            ]
+            return 'one merged visual description'
+
+    persistence = _RecordingPersistence()
     source_graph = SourceGraph(
         OCRNode(FakeProvider()),
         ContentCorrectionNode(FakeCorrector()),
         FormattingNode(FakeFormatter()),
         TextSeamNode(FakeTextJudge(), FakeTextRewriter()),
         ImageSeamNode(FakeImageJudge()),
+        ImageEnrichmentNode(
+            FakeEnricher(),
+            ContextWindowSettings(backward_budget=100, forward_budget=100),
+        ),
         _no_splitter(),
+        persistence,
     ).build_graph()
 
     result = asyncio.run(
@@ -348,5 +402,9 @@ def test_source_graph_merges_adjacent_image_artifacts_after_text_seams():
         [asset.path for asset in page.blocks[0].assets] if page.blocks else []
         for page in result['image_seam_pages']
     ] == [['top.png', 'bottom.png'], []]
-    assert [page.index for page in result['image_seam_pages']] == [0, 1]
-    assert result['split_pages'] == result['image_seam_pages']
+    assert [
+        page.blocks[0].content if page.blocks else None
+        for page in result['image_enriched_pages']
+    ] == ['one merged visual description', None]
+    assert result['split_pages'] == result['image_enriched_pages']
+    assert persistence.pages == result['split_pages']

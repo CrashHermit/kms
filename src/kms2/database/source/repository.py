@@ -1,5 +1,6 @@
 """Persistence repository for the final KMS2 source structure."""
 
+import json
 from collections.abc import Callable
 
 from kms2.core.model import Source, SourceBlock, SourcePage
@@ -69,7 +70,7 @@ class SourceRepository:
             'source': {
                 'uuid': source.uuid,
                 'key': source.key,
-                'metadata': source.metadata,
+                'metadata': json.dumps(source.metadata, sort_keys=True),
             },
             'pages': [{'index': page.index} for page in pages],
             'blocks': block_rows,
@@ -104,6 +105,6 @@ class SourceRepository:
             'first_block_uuid': blocks[0].uuid if blocks else None,
             'last_block_uuid': blocks[-1].uuid if blocks else None,
         }
-
         async with self._session_factory() as session:
-            await session.run(REPLACE_SOURCE, **parameters)
+            result = await session.run(REPLACE_SOURCE, **parameters)
+            await result.consume()

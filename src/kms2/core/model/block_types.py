@@ -19,5 +19,6 @@ class BlockType(StrEnum):
     BIBLIOGRAPHIC = 'bibliographic'
     NOTE = 'note'
     FOOTER = 'footer'
+    ASIDE_TEXT = 'aside_text'
     MARKDOWN = 'markdown'
     INSTRUCTION = 'instruction'

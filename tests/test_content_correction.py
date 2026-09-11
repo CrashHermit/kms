@@ -19,11 +19,8 @@ class _Predictor:
 
 
 def _module() -> tuple[content_correction.ContentCorrectorModule, _Predictor]:
-    module = content_correction.ContentCorrectorModule(
-        dspy.LM('openai/dummy', api_key='test')
-    )
     predictor = _Predictor()
-    module.predictor = predictor
+    module = content_correction.ContentCorrectorModule(predictor)
     return module, predictor
 
 

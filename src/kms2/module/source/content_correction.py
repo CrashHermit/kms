@@ -23,10 +23,9 @@ class ContentCorrectorSignature(dspy.Signature):
 class ContentCorrectorModule(dspy.Module):
     """Run one non-recording full-block content correction prediction."""
 
-    def __init__(self, language_model: dspy.LM) -> None:
+    def __init__(self, predictor: dspy.Module) -> None:
         super().__init__()
-        self.predictor = dspy.Predict(ContentCorrectorSignature)
-        self.predictor.set_lm(language_model)
+        self.predictor = predictor
 
     def forward(
         self,

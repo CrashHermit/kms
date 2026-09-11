@@ -2,7 +2,6 @@ from kms2.core.context_window import (
     estimate_text_tokens,
     estimate_tokens,
     project_block,
-    select_cursor_window,
     select_window,
 )
 from kms2.core.model import (
@@ -70,13 +69,38 @@ def test_select_window_returns_ordered_target_and_independent_context_sides():
         blocks,
         [2, 3, 4],
         backward_budget=2,
-        target_budget=6,
         forward_budget=2,
     )
 
     assert [item.content for item in window.context_before] == ['abc', 'abc']
     assert [item.content for item in window.target] == ['abc', 'abc', 'abc']
     assert [item.content for item in window.context_after] == ['abc', 'abc']
+
+
+def test_select_window_expands_targets_with_optional_target_budget():
+    blocks = [_block(index, 'abc') for index in range(8)]
+
+    window = select_window(
+        blocks,
+        [2],
+        backward_budget=2,
+        target_budget=3,
+        forward_budget=2,
+    )
+
+    assert [item.content for item in window.target] == ['abc', 'abc', 'abc']
+    assert [item.content for item in window.context_before] == ['abc', 'abc']
+    assert [item.content for item in window.context_after] == ['abc', 'abc']
+
+
+def test_select_window_disables_optional_context_sides():
+    blocks = [_block(index, 'abc') for index in range(3)]
+
+    window = select_window(blocks, [1])
+
+    assert window.context_before == []
+    assert [item.content for item in window.target] == ['abc']
+    assert window.context_after == []
 
 
 def test_select_window_includes_exact_budget_boundaries_and_stops_on_oversized_nearby_block():
@@ -86,7 +110,6 @@ def test_select_window_includes_exact_budget_boundaries_and_stops_on_oversized_n
         blocks,
         [3],
         backward_budget=2,
-        target_budget=1,
         forward_budget=2,
     )
     assert len(exact.context_before) == 2
@@ -96,7 +119,6 @@ def test_select_window_includes_exact_budget_boundaries_and_stops_on_oversized_n
         blocks,
         [3],
         backward_budget=0,
-        target_budget=1,
         forward_budget=0,
     )
     assert zero.context_before == []
@@ -106,61 +128,9 @@ def test_select_window_includes_exact_budget_boundaries_and_stops_on_oversized_n
         [_block(0), _block(1, 'aaaaaaaa'), _block(2, 'target')],
         [2],
         backward_budget=2,
-        target_budget=2,
         forward_budget=0,
     )
     assert oversized.context_before == []
-
-
-def test_select_cursor_window_expands_target_from_cursor():
-    blocks = [_block(index, 'abc') for index in range(8)]
-
-    next_cursor, window = select_cursor_window(
-        blocks,
-        2,
-        backward_budget=2,
-        target_budget=3,
-        forward_budget=2,
-    )
-
-    assert next_cursor == 5
-    assert [item.content for item in window.context_before] == ['abc', 'abc']
-    assert [item.content for item in window.target] == ['abc', 'abc', 'abc']
-    assert [item.content for item in window.context_after] == ['abc', 'abc']
-
-
-def test_select_cursor_window_advances_through_contiguous_targets():
-    blocks = [_block(index, str(index)) for index in range(5)]
-    cursor = 0
-    target_contents = []
-
-    while cursor < len(blocks):
-        cursor, window = select_cursor_window(
-            blocks,
-            cursor,
-            backward_budget=0,
-            target_budget=2,
-            forward_budget=0,
-        )
-        target_contents.append([item.content for item in window.target])
-
-    assert target_contents == [['0', '1'], ['2', '3'], ['4']]
-    assert cursor == len(blocks)
-
-
-def test_select_cursor_window_advances_oversized_first_target():
-    blocks = [_block(0, 'aaaaaaaa'), _block(1, 'abc')]
-
-    next_cursor, window = select_cursor_window(
-        blocks,
-        0,
-        backward_budget=0,
-        target_budget=1,
-        forward_budget=0,
-    )
-
-    assert next_cursor == 1
-    assert [item.content for item in window.target] == ['aaaaaaaa']
 
 
 def test_token_estimates_ignore_asset_paths():

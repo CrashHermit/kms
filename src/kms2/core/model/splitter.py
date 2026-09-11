@@ -2,7 +2,14 @@
 
 from pydantic import BaseModel
 
-from kms2.core.model.context import SourceBlockContext
+from kms2.core.model.context import SourceBlockContext, SourceContextWindow
+
+
+class SplitRequest(BaseModel):
+    """One source-block split request with its surrounding context."""
+
+    flat_position: int
+    window: SourceContextWindow
 
 
 class SplitCandidate(BaseModel):
@@ -16,6 +23,13 @@ class SplitPiece(BaseModel):
     """One verbatim replacement fragment of a source block."""
 
     content: str
+
+
+class SplitResult(BaseModel):
+    """One dispatched source-block split result."""
+
+    flat_position: int
+    pieces: list[SplitPiece] | None = None
 
 
 class SplitDecision(BaseModel):

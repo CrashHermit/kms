@@ -4,7 +4,7 @@ import pytest
 from PIL import Image
 from pydantic import ValidationError
 
-from kms2 import config
+from kms2.config import OCRSettings
 from kms2.ocr import mistral
 
 
@@ -77,17 +77,21 @@ def _page_payload(index=0, *, blocks=None, images=None):
     }
 
 
+def _ocr_settings(**values) -> OCRSettings:
+    return OCRSettings(**values)
+
+
 def _configure_materialization(monkeypatch, tmp_path):
-    settings = config.Settings(
-        ocr={'output_dir': str(tmp_path / 'output')},
-        mistral_ocr={'api_key': 'test-key'},
+    ocr_settings = _ocr_settings(
+        api_key='test-key',
+        output_dir=str(tmp_path / 'output'),
     )
-    monkeypatch.setattr(config, 'get_settings', lambda: settings)
     monkeypatch.setattr(
         mistral.pdfium,
         'PdfDocument',
         lambda path: _PdfDocument(),
     )
+    return ocr_settings
 
 
 def test_ocr_request_builds_document_payload():
@@ -123,15 +127,15 @@ def test_ocr_response_retains_raw_response():
 
 def test_ocr_pdf_sends_pdf_bytes_and_applies_pages(monkeypatch):
     calls = []
+    ocr_settings = _ocr_settings(api_key='test-key')
 
     def fake_post(url, json, headers, timeout):
         calls.append((url, json, headers, timeout))
         return _Response({'pages': []})
 
-    monkeypatch.setattr(mistral, '_require_key', lambda: 'test-key')
     monkeypatch.setattr(mistral.httpx, 'post', fake_post)
 
-    response = mistral.ocr_pdf(b'%PDF', pages=[2])
+    response = mistral.ocr_pdf(b'%PDF', ocr_settings, pages=[2])
 
     assert response.pages == []
     assert calls[0][1]['document']['document_url'] == (
@@ -144,8 +148,8 @@ def test_ocr_pdf_sends_pdf_bytes_and_applies_pages(monkeypatch):
 def test_ocr_pdf_translates_http_failures(monkeypatch):
     request = mistral.OCRRequest(model='model', document_url='url')
     error = mistral.httpx.HTTPError('offline')
+    ocr_settings = _ocr_settings(api_key='test-key')
 
-    monkeypatch.setattr(mistral, '_require_key', lambda: 'test-key')
     monkeypatch.setattr(
         mistral.httpx,
         'post',
@@ -153,15 +157,22 @@ def test_ocr_pdf_translates_http_failures(monkeypatch):
     )
 
     with pytest.raises(mistral.MistralOCRError, match='request failed'):
-        mistral._request_ocr(request)
+        mistral._request_ocr(request, ocr_settings)
+
+
+def test_mistral_structural_labels_map_to_canonical_block_types():
+    assert mistral._block_type('title') is mistral.BlockType.HEADER
+    assert mistral._block_type('references') is mistral.BlockType.BIBLIOGRAPHIC
 
 
 def test_mistral_provider_materializes_ordered_artifacts(monkeypatch, tmp_path):
-    _configure_materialization(monkeypatch, tmp_path)
+    ocr_settings = _configure_materialization(monkeypatch, tmp_path)
     pdf_path = tmp_path / 'book.pdf'
     pdf_path.write_bytes(b'%PDF')
     first_embedded = base64.b64encode(b'first-image').decode('ascii')
-    second_embedded = base64.b64encode(b'second-image').decode('ascii')
+    second_embedded = 'data:image/png;base64,' + base64.b64encode(
+        b'second-image'
+    ).decode('ascii')
     response = mistral.OCRResponse.from_raw(
         {
             'pages': [
@@ -170,6 +181,7 @@ def test_mistral_provider_materializes_ordered_artifacts(monkeypatch, tmp_path):
                     blocks=[
                         _block_payload(
                             'first',
+                            type='aside_text',
                             top_left_x=10,
                             top_left_y=20,
                             bottom_right_x=50,
@@ -199,15 +211,20 @@ def test_mistral_provider_materializes_ordered_artifacts(monkeypatch, tmp_path):
             ]
         }
     )
-    monkeypatch.setattr(mistral, 'ocr_pdf', lambda data, pages=None: response)
+    monkeypatch.setattr(
+        mistral,
+        'ocr_pdf',
+        lambda data, settings, pages=None: response,
+    )
 
-    artifacts = mistral.MistralOCRProvider().extract(pdf_path)
+    artifacts = mistral.MistralOCRProvider(ocr_settings).extract(pdf_path)
 
     assert [artifact.content for artifact in artifacts] == [
         'first',
         'second',
         'third',
     ]
+    assert artifacts[0].block_type.value == 'aside_text'
     assert [artifact.page_index for artifact in artifacts] == [2, 2, 0]
     assert artifacts[0].crop_bbox == (2, 12, 58, 108)
     assert artifacts[1].crop_bbox == (52, 112, 98, 188)

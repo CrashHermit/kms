@@ -23,9 +23,8 @@ class _Predictor:
 
 
 def _module() -> tuple[formatting.FormatterModule, _Predictor]:
-    module = formatting.FormatterModule(dspy.LM('openai/dummy', api_key='test'))
     predictor = _Predictor()
-    module.predictor = predictor
+    module = formatting.FormatterModule(predictor)
     return module, predictor
 
 

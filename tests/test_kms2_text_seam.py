@@ -51,9 +51,7 @@ def _module(
     | type[text_seam.TextSeamRewriterModule],
     predictor: _Predictor,
 ):
-    module = module_type(dspy.LM('openai/dummy', api_key='test'))
-    module.predictor = predictor
-    return module
+    return module_type(predictor)
 
 
 def _state(pages: list[SourcePage]) -> SourceState:

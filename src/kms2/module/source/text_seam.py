@@ -139,10 +139,9 @@ def _text(source_block: SourceBlock | None) -> str:
 class TextSeamJudgeModule(dspy.Module):
     """Make one boolean judgment about whether a page seam splits text."""
 
-    def __init__(self, language_model: dspy.LM) -> None:
+    def __init__(self, predictor: dspy.Module) -> None:
         super().__init__()
-        self.predictor = dspy.Predict(TextSeamSignature)
-        self.predictor.set_lm(language_model)
+        self.predictor = predictor
 
     def _inputs(
         self,
@@ -201,10 +200,9 @@ class TextSeamJudgeModule(dspy.Module):
 class TextSeamRewriterModule(dspy.Module):
     """Rejoin two text blocks after a positive seam judgment."""
 
-    def __init__(self, language_model: dspy.LM) -> None:
+    def __init__(self, predictor: dspy.Module) -> None:
         super().__init__()
-        self.predictor = dspy.Predict(TextSeamRewriteSignature)
-        self.predictor.set_lm(language_model)
+        self.predictor = predictor
 
     def _inputs(
         self,

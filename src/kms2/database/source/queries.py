@@ -16,16 +16,14 @@ FOREACH (page IN old_pages | DETACH DELETE page)
 FOREACH (block IN old_blocks | DETACH DELETE block)
 FOREACH (asset IN old_assets | DETACH DELETE asset)
 WITH source
-CALL {
-    WITH source
+CALL (source) {
     UNWIND $pages AS row
     CREATE (page:SourcePage {index: row.index})
     CREATE (source)-[:HAS_PAGE]->(page)
     RETURN count(*) AS _
 }
 WITH source
-CALL {
-    WITH source
+CALL (source) {
     UNWIND $blocks AS row
     CREATE (block:SourceBlock {
         uuid: row.uuid,
@@ -48,19 +46,18 @@ CALL {
     FOREACH (_ IN CASE WHEN row.block_type = 'note' THEN [1] ELSE [] END | SET block:Note)
     FOREACH (_ IN CASE WHEN row.block_type = 'footer' THEN [1] ELSE [] END | SET block:Footer)
     FOREACH (_ IN CASE WHEN row.block_type = 'markdown' THEN [1] ELSE [] END | SET block:Markdown)
+    FOREACH (_ IN CASE WHEN row.block_type = 'aside_text' THEN [1] ELSE [] END | SET block:AsideText)
     FOREACH (_ IN CASE WHEN row.block_type = 'instruction' THEN [1] ELSE [] END | SET block:Instruction)
     RETURN count(*) AS _
 }
 WITH source
-CALL {
-    WITH source
+CALL (source) {
     UNWIND $assets AS row
     CREATE (asset:VisualAsset {uuid: row.uuid, path: row.path})
     RETURN count(*) AS _
 }
 WITH source
-CALL {
-    WITH source
+CALL (source) {
     UNWIND $block_asset_pairs AS row
     MATCH (block:SourceBlock {uuid: row.block_uuid})
     MATCH (asset:VisualAsset {uuid: row.asset_uuid})
@@ -68,8 +65,7 @@ CALL {
     RETURN count(*) AS _
 }
 WITH source
-CALL {
-    WITH source
+CALL (source) {
     UNWIND $asset_pairs AS row
     MATCH (from_asset:VisualAsset {uuid: row.from_uuid})
     MATCH (to_asset:VisualAsset {uuid: row.to_uuid})
@@ -77,8 +73,7 @@ CALL {
     RETURN count(*) AS _
 }
 WITH source
-CALL {
-    WITH source
+CALL (source) {
     UNWIND $asset_bounds AS row
     MATCH (block:SourceBlock {uuid: row.block_uuid})
     MATCH (first_asset:VisualAsset {uuid: row.first_asset_uuid})
@@ -88,8 +83,7 @@ CALL {
     RETURN count(*) AS _
 }
 WITH source
-CALL {
-    WITH source
+CALL (source) {
     UNWIND $page_block_pairs AS row
     MATCH (source)-[:HAS_PAGE]->(page:SourcePage {index: row.page_index})
     MATCH (block:SourceBlock {uuid: row.block_uuid})
@@ -97,17 +91,15 @@ CALL {
     RETURN count(*) AS _
 }
 WITH source
-CALL {
-    WITH source
+CALL (source) {
     UNWIND $page_pairs AS row
-    MATCH (from_page:SourcePage {index: row.from_index})
-    MATCH (to_page:SourcePage {index: row.to_index})
+    MATCH (source)-[:HAS_PAGE]->(from_page:SourcePage {index: row.from_index})
+    MATCH (source)-[:HAS_PAGE]->(to_page:SourcePage {index: row.to_index})
     CREATE (from_page)-[:NEXT_PAGE]->(to_page)
     RETURN count(*) AS _
 }
 WITH source
-CALL {
-    WITH source
+CALL (source) {
     UNWIND $block_pairs AS row
     MATCH (from_block:SourceBlock {uuid: row.from_uuid})
     MATCH (to_block:SourceBlock {uuid: row.to_uuid})
@@ -115,8 +107,7 @@ CALL {
     RETURN count(*) AS _
 }
 WITH source
-CALL {
-    WITH source
+CALL (source) {
     UNWIND $page_bounds AS row
     MATCH (source)-[:HAS_PAGE]->(page:SourcePage {index: row.page_index})
     MATCH (first_block:SourceBlock {uuid: row.first_block_uuid})
@@ -126,24 +117,21 @@ CALL {
     RETURN count(*) AS _
 }
 WITH source
-CALL {
-    WITH source
+CALL (source) {
     WITH source WHERE $first_page_index IS NOT NULL
     MATCH (source)-[:HAS_PAGE]->(page:SourcePage {index: $first_page_index})
     CREATE (source)-[:FIRST_PAGE]->(page)
     RETURN count(*) AS _
 }
 WITH source
-CALL {
-    WITH source
+CALL (source) {
     WITH source WHERE $first_block_uuid IS NOT NULL
     MATCH (first_block:SourceBlock {uuid: $first_block_uuid})
     CREATE (source)-[:FIRST_BLOCK]->(first_block)
     RETURN count(*) AS _
 }
 WITH source
-CALL {
-    WITH source
+CALL (source) {
     WITH source WHERE $last_block_uuid IS NOT NULL
     MATCH (last_block:SourceBlock {uuid: $last_block_uuid})
     CREATE (source)-[:LAST_BLOCK]->(last_block)

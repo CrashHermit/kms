@@ -102,10 +102,9 @@ class FormatterSignature(dspy.Signature):
 class FormatterModule(dspy.Module):
     """Run one non-recording full-block formatting prediction."""
 
-    def __init__(self, language_model: dspy.LM) -> None:
+    def __init__(self, predictor: dspy.Module) -> None:
         super().__init__()
-        self.predictor = dspy.Predict(FormatterSignature)
-        self.predictor.set_lm(language_model)
+        self.predictor = predictor
 
     def forward(self, *, content: str) -> str:
         """Format one source-content block synchronously."""

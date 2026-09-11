@@ -20,12 +20,10 @@ class TextSeamWorkerState(TypedDict):
     text_seam_request: TextSeamRequest
 
 
-_APPARATUS = {BlockType.BIBLIOGRAPHIC, BlockType.NOTE}
-
-
 def _skip_for_text(source_block: SourceBlock) -> bool:
     return bool(
-        source_block.block_type in _APPARATUS
+        source_block.block_type is BlockType.BIBLIOGRAPHIC
+        or source_block.block_type is BlockType.NOTE
         or source_block.block_type is BlockType.IMAGE
         or source_block.assets
     )

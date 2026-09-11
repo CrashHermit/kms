@@ -9,7 +9,7 @@ import pypdfium2 as pdfium
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from kms2 import config
+from kms2.config import OCRSettings
 from kms2.core.model.block_types import BlockType
 from kms2.core.model.ocr import OCRArtifact, OCRImageArtifact
 
@@ -129,25 +129,25 @@ class OCRRequest(BaseModel):
         }
 
 
-def _require_key() -> str:
+def _require_key(settings: OCRSettings) -> str:
     """Return the configured Mistral API key or raise."""
-    key = config.get_settings().mistral_ocr.api_key
+    key = settings.api_key
     if not key:
         raise MistralOCRError(
-            'KMS2_MISTRAL_OCR__API_KEY is not set. Export your Mistral API key '
+            'KMS2_OCR__API_KEY is not set. Export your Mistral API key '
             'before running the Mistral OCR client.'
         )
     return key
 
 
-def _request_ocr(request: OCRRequest) -> OCRResponse:
+def _request_ocr(request: OCRRequest, settings: OCRSettings) -> OCRResponse:
     """Send one validated request to the Mistral OCR endpoint."""
     try:
         response = httpx.post(
-            config.get_settings().mistral_ocr.url,
+            settings.url,
             json=request.payload(),
             headers={
-                'Authorization': f'Bearer {_require_key()}',
+                'Authorization': f'Bearer {_require_key(settings)}',
                 'Content-Type': 'application/json',
             },
             timeout=_TIMEOUT,
@@ -171,6 +171,7 @@ def _request_ocr(request: OCRRequest) -> OCRResponse:
 
 def ocr_pdf(
     pdf_bytes: bytes,
+    settings: OCRSettings,
     pages: list[int] | None = None,
     options: OCRRequestOptions | None = None,
 ) -> OCRResponse:
@@ -179,14 +180,14 @@ def ocr_pdf(
     if pages is not None:
         request_options = request_options.model_copy(update={'pages': pages})
     request = OCRRequest(
-        model=config.get_settings().mistral_ocr.model,
+        model=settings.model,
         document_url=(
             'data:application/pdf;base64,'
             + base64.b64encode(pdf_bytes).decode('ascii')
         ),
         options=request_options,
     )
-    return _request_ocr(request)
+    return _request_ocr(request, settings)
 
 
 def _normalized_bbox(
@@ -213,6 +214,8 @@ def _overlaps(
 
 def _write_image(data: str, path: Path) -> None:
     """Decode one embedded OCR image and write it to ``path``."""
+    if data.startswith('data:'):
+        data = data.split(',', 1)[1]
     path.write_bytes(base64.b64decode(data, validate=True))
 
 
@@ -253,6 +256,15 @@ def _block_bbox(
     right = max(left + 1, min(right, width))
     bottom = max(top + 1, min(bottom, height))
     return left, top, right, bottom
+
+
+def _block_type(value: str) -> BlockType:
+    """Map Mistral structural labels to canonical block types."""
+    if value == 'title':
+        return BlockType.HEADER
+    if value == 'references':
+        return BlockType.BIBLIOGRAPHIC
+    return BlockType(value)
 
 
 def _materialize_page(
@@ -306,7 +318,7 @@ def _materialize_page(
                 OCRArtifact(
                     page_index=page.index,
                     block_index=block_index,
-                    block_type=BlockType(block.type),
+                    block_type=_block_type(block.type),
                     content=block.content,
                     images=attached_images,
                     crop_path=str(path),
@@ -351,6 +363,9 @@ def _materialize_artifacts(
 class MistralOCRProvider:
     """Adapt Mistral OCR responses to KMS2 correction artifacts."""
 
+    def __init__(self, settings: OCRSettings) -> None:
+        self._settings = settings
+
     def extract(
         self,
         pdf_path: str | Path,
@@ -359,12 +374,15 @@ class MistralOCRProvider:
     ) -> list[OCRArtifact]:
         """OCR a PDF and materialize its ordered KMS2 artifacts."""
         source_path = Path(pdf_path)
-        response = ocr_pdf(source_path.read_bytes(), pages=pages)
-        settings = config.get_settings()
+        response = ocr_pdf(
+            source_path.read_bytes(),
+            self._settings,
+            pages=pages,
+        )
         return _materialize_artifacts(
             response,
             source_path,
-            settings.ocr.output_dir,
-            settings.ocr.render_scale,
-            settings.ocr.block_crop_scale,
+            self._settings.output_dir,
+            self._settings.render_scale,
+            self._settings.block_crop_scale,
         )

@@ -3,6 +3,7 @@ import uuid
 
 import dspy
 
+from kms2.config import ContextWindowSettings
 from kms2.core.model import (
     BlockType,
     Source,
@@ -12,6 +13,7 @@ from kms2.core.model import (
     SplitCandidate,
     SplitDecision,
     SplitPiece,
+    SplitResult,
     VisualAsset,
 )
 from kms2.langgraph.source.state import SourceState
@@ -64,11 +66,8 @@ def test_signatures_expose_routed_split_contracts():
 
 
 def test_router_forwards_context_and_returns_model_boolean():
-    router = splitter_module.ExerciseStripRouterModule(
-        dspy.LM('openai/dummy', api_key='test')
-    )
     predictor = _Predictor(contains_multiple_exercises=True)
-    router.predictor = predictor
+    router = splitter_module.ExerciseStripRouterModule(predictor)
     before = [_context('before')]
     target = _context('1. first 2. second')
     after = [_context('after')]
@@ -106,15 +105,12 @@ def test_router_forwards_context_and_returns_model_boolean():
 
 
 def test_splitter_forwards_candidates_and_returns_model_decisions():
-    splitter = splitter_module.ExerciseSplitterModule(
-        dspy.LM('openai/dummy', api_key='test')
-    )
     decision = SplitDecision(
         position=1,
         pieces=[SplitPiece(content='one'), SplitPiece(content='two')],
     )
     predictor = _Predictor(splits=[decision])
-    splitter.predictor = predictor
+    splitter = splitter_module.ExerciseSplitterModule(predictor)
     before = [_context('before')]
     candidates = [
         SplitCandidate(position=1, source_block=_context('packed')),
@@ -172,20 +168,220 @@ def _state(pages: list[SourcePage]) -> SourceState:
     return SourceState(
         pdf_path='document.pdf',
         source=Source(uuid='source-1', key='document.pdf'),
-        image_seam_pages=pages,
+        image_enriched_pages=pages,
     )
 
 
-def test_node_routes_flat_context_and_restores_independent_page_blocks():
+def _node(
+    router: _Router,
+    splitter: _Splitter,
+    *,
+    target_budget: int = 0,
+) -> SplitterNode:
+    return SplitterNode(
+        router,
+        splitter,
+        ContextWindowSettings(
+            backward_budget=2,
+            forward_budget=2,
+            target_budget=target_budget,
+        ),
+    )
+
+
+def test_node_dispatches_one_context_window_per_flat_block():
+    pages = [
+        SourcePage(
+            index=0,
+            blocks=[
+                SourceBlock(block_type=BlockType.TEXT, content='first'),
+                SourceBlock(block_type=BlockType.TEXT, content='second'),
+            ],
+        ),
+        SourcePage(
+            index=1,
+            blocks=[
+                SourceBlock(
+                    block_type=BlockType.IMAGE, content='enriched image'
+                ),
+            ],
+        ),
+    ]
+    node = _node(_Router(set()), _Splitter([]))
+
+    sends = node.dispatch(_state(pages))
+
+    assert isinstance(sends, list)
+    assert [send.node for send in sends] == [
+        'splitter_worker',
+        'splitter_worker',
+        'splitter_worker',
+    ]
+    requests = [send.arg['split_request'] for send in sends]
+    assert [request.flat_position for request in requests] == [0, 1, 2]
+    assert [request.window.target[0].content for request in requests] == [
+        'first',
+        'second',
+        'enriched image',
+    ]
+    assert [request.window.context_before for request in requests] == [
+        [],
+        [_context('first')],
+        [_context('second')],
+    ]
+    assert [request.window.context_after for request in requests] == [
+        [_context('second')],
+        [],
+        [],
+    ]
+
+
+def test_node_dispatches_multiple_targets_when_target_budget_is_increased():
+    pages = [
+        SourcePage(
+            index=0,
+            blocks=[
+                SourceBlock(block_type=BlockType.TEXT, content='one'),
+                SourceBlock(block_type=BlockType.TEXT, content='two'),
+                SourceBlock(block_type=BlockType.TEXT, content='three'),
+            ],
+        )
+    ]
+    node = _node(_Router(set()), _Splitter([]), target_budget=3)
+
+    sends = node.dispatch(_state(pages))
+    requests = [send.arg['split_request'] for send in sends]
+
+    assert [request.flat_position for request in requests] == [0, 2]
+    assert [request.window.target for request in requests] == [
+        [_context('one'), _context('two')],
+        [_context('three')],
+    ]
+    assert [
+        block.content for request in requests for block in request.window.target
+    ] == ['one', 'two', 'three']
+
+
+def test_worker_returns_results_for_multiple_routed_targets():
+    first = SourceBlock(block_type=BlockType.LIST, content='one')
+    second = SourceBlock(block_type=BlockType.LIST, content='two')
+    router = _Router({'one', 'two'})
+    splitter = _Splitter(
+        [
+            SplitDecision(position=0, pieces=[SplitPiece(content='first')]),
+            SplitDecision(position=1, pieces=[SplitPiece(content='second')]),
+        ]
+    )
+    node = _node(router, splitter, target_budget=2)
+    sends = node.dispatch(_state([SourcePage(index=0, blocks=[first, second])]))
+
+    result = asyncio.run(node.worker(sends[0].arg))
+
+    assert [item.flat_position for item in result['split_results']] == [0, 1]
+    assert [
+        candidate.position for candidate in splitter.calls[0]['candidates']
+    ] == [
+        0,
+        1,
+    ]
+
+
+def test_worker_returns_unsplit_result_without_calling_splitter():
+    parent = SourceBlock(
+        block_type=BlockType.LIST,
+        content='ordinary',
+    )
+    node = _node(_Router(set()), _Splitter([]))
+    sends = node.dispatch(_state([SourcePage(index=0, blocks=[parent])]))
+
+    result = asyncio.run(node.worker(sends[0].arg))
+
+    assert result == {
+        'split_results': [SplitResult(flat_position=0, pieces=None)]
+    }
+    assert node._splitter.calls == []
+
+
+def test_worker_splits_one_routed_candidate_at_local_position_zero():
+    parent = SourceBlock(
+        uuid='packed',
+        block_type=BlockType.LIST,
+        content='1. first exercise 2. second exercise',
+        crop_path='packed.png',
+        crop_bbox=(1, 2, 3, 4),
+        assets=[VisualAsset(path='packed-figure.png')],
+    )
+    router = _Router({parent.content})
+    splitter = _Splitter(
+        [
+            SplitDecision(
+                position=0,
+                pieces=[
+                    SplitPiece(content='1. first exercise'),
+                    SplitPiece(content='2. second exercise'),
+                ],
+            )
+        ]
+    )
+    node = _node(router, splitter)
+    sends = node.dispatch(
+        _state(
+            [
+                SourcePage(
+                    index=0,
+                    blocks=[
+                        SourceBlock(
+                            block_type=BlockType.TEXT, content='before'
+                        ),
+                        parent,
+                    ],
+                )
+            ]
+        )
+    )
+
+    result = asyncio.run(node.worker(sends[1].arg))
+
+    assert result['split_results'] == [
+        SplitResult(
+            flat_position=1,
+            pieces=[
+                SplitPiece(content='1. first exercise'),
+                SplitPiece(content='2. second exercise'),
+            ],
+        )
+    ]
+    assert router.calls == [
+        {
+            'context_before': [_context('before')],
+            'target_block': _projected_parent(parent.content),
+            'context_after': [],
+        }
+    ]
+    assert splitter.calls == [
+        {
+            'context_before': [_context('before')],
+            'candidates': [
+                SplitCandidate(
+                    position=0,
+                    source_block=_projected_parent(parent.content),
+                )
+            ],
+            'context_after': [],
+        }
+    ]
+
+
+def test_collect_restores_order_and_preserves_unsplit_blocks():
     before = SourceBlock(
         uuid='before',
         block_type=BlockType.TEXT,
         content='before',
     )
     parent = SourceBlock(
-        uuid='packed',
+        uuid='parent',
         block_type=BlockType.LIST,
-        content='1. first exercise 2. second exercise',
+        content='packed',
         crop_path='packed.png',
         crop_bbox=(1, 2, 3, 4),
         assets=[VisualAsset(path='packed-figure.png')],
@@ -199,49 +395,33 @@ def test_node_routes_flat_context_and_restores_independent_page_blocks():
         SourcePage(index=0, blocks=[before, parent]),
         SourcePage(index=1, blocks=[after]),
     ]
-    router = _Router({parent.content})
-    splitter = _Splitter(
-        [
-            SplitDecision(
-                position=0,
-                pieces=[
-                    SplitPiece(content='1. first exercise'),
-                    SplitPiece(content='2. second exercise'),
-                ],
-            )
-        ]
+    state = _state(pages).model_copy(
+        update={
+            'split_results': [
+                SplitResult(
+                    flat_position=2,
+                    pieces=[
+                        SplitPiece(content='after one'),
+                        SplitPiece(content='after two'),
+                    ],
+                ),
+                SplitResult(
+                    flat_position=1,
+                    pieces=[
+                        SplitPiece(content='first'),
+                        SplitPiece(content='second'),
+                    ],
+                ),
+            ]
+        }
     )
-    node = SplitterNode(
-        router,
-        splitter,
-        backward_budget=10,
-        target_budget=1,
-        forward_budget=10,
-    )
-    result = asyncio.run(node.run(_state(pages)))
+
+    result = _node(_Router(set()), _Splitter([])).collect(state)
     split_pages = result['split_pages']
     child_blocks = split_pages[0].blocks[1:]
 
-    assert router.calls[1] == {
-        'context_before': [_context('before')],
-        'target_block': _projected_parent(parent.content),
-        'context_after': [_context('after')],
-    }
-    assert len(splitter.calls) == 1
-    assert splitter.calls[0] == {
-        'context_before': [_context('before')],
-        'candidates': [
-            SplitCandidate(
-                position=0,
-                source_block=_projected_parent(parent.content),
-            )
-        ],
-        'context_after': [_context('after')],
-    }
-    assert [block.content for block in child_blocks] == [
-        '1. first exercise',
-        '2. second exercise',
-    ]
+    assert split_pages[0].blocks[0] is before
+    assert [block.content for block in child_blocks] == ['first', 'second']
     assert all(block.block_type is BlockType.LIST for block in child_blocks)
     assert all(block.uuid != parent.uuid for block in child_blocks)
     assert len({block.uuid for block in child_blocks}) == 2
@@ -252,29 +432,7 @@ def test_node_routes_flat_context_and_restores_independent_page_blocks():
         and block.assets == []
         for block in child_blocks
     )
-    assert split_pages[1] == pages[1]
-    assert split_pages[1].blocks[0] is after
-
-
-def test_node_preserves_pages_and_skips_splitter_without_candidates():
-    pages = [
-        SourcePage(
-            index=0,
-            blocks=[SourceBlock(block_type=BlockType.TEXT, content='ordinary')],
-        )
+    assert [block.content for block in split_pages[1].blocks] == [
+        'after one',
+        'after two',
     ]
-    router = _Router(set())
-    splitter = _Splitter([])
-    node = SplitterNode(
-        router,
-        splitter,
-        backward_budget=10,
-        target_budget=1,
-        forward_budget=10,
-    )
-
-    result = asyncio.run(node.run(_state(pages)))
-
-    assert result['split_pages'] == pages
-    assert result['split_pages'][0].blocks[0] is pages[0].blocks[0]
-    assert splitter.calls == []

@@ -28,10 +28,9 @@ class ImageSeamSignature(dspy.Signature):
 class ImageSeamJudgeModule(dspy.Module):
     """Make one boolean judgment about whether two images form one visual."""
 
-    def __init__(self, language_model: dspy.LM) -> None:
+    def __init__(self, predictor: dspy.Module) -> None:
         super().__init__()
-        self.predictor = dspy.Predict(ImageSeamSignature)
-        self.predictor.set_lm(language_model)
+        self.predictor = predictor
 
     @staticmethod
     def _inputs(

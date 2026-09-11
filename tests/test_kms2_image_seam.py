@@ -80,10 +80,7 @@ def test_signature_and_module_preserve_image_boundary(monkeypatch):
 
     monkeypatch.setattr(image_seam.dspy, 'Image', FakeImage)
     predictor = _Predictor(is_continuation=True)
-    judge = image_seam.ImageSeamJudgeModule(
-        dspy.LM('openai/dummy', api_key='test')
-    )
-    judge.predictor = predictor
+    judge = image_seam.ImageSeamJudgeModule(predictor)
     top = _block(0, assets=[VisualAsset(path='top.png')])
     bottom = _block(1, assets=[VisualAsset(path='bottom.png')])
 
