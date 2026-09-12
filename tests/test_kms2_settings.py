@@ -175,3 +175,67 @@ def test_kms2_settings_do_not_read_shared_kms_environment(monkeypatch):
     assert runtime_settings.database.username == ''
     assert runtime_settings.database.password == ''
     assert runtime_settings.database.database == 'neo4j'
+
+
+def test_kms2_semantic_settings_default_and_nested_environment(monkeypatch):
+    monkeypatch.delenv(
+        'KMS2_SEMANTIC__FACT_EXTRACTION__MODEL_SERVER_PROFILE', raising=False
+    )
+    monkeypatch.delenv(
+        'KMS2_SEMANTIC__TRIPLET_DECOMPOSITION__MODEL_SERVER_PROFILE',
+        raising=False,
+    )
+    settings = config.Settings()
+    assert settings.semantic.fact_extraction.model_server_profile == (
+        'gemma-text-32k'
+    )
+    assert settings.semantic.fact_extraction.num_retries == 0
+    assert settings.semantic.context_window.backward_budget == 400
+    assert settings.semantic.context_window.forward_budget == 400
+
+    monkeypatch.setenv(
+        'KMS2_SEMANTIC__FACT_EXTRACTION__MODEL_SERVER_PROFILE',
+        'custom-fact-profile',
+    )
+    monkeypatch.setenv(
+        'KMS2_SEMANTIC__TRIPLET_DECOMPOSITION__MODEL_SERVER_PROFILE',
+        'custom-triplet-profile',
+    )
+    settings = config.Settings()
+    assert settings.semantic.fact_extraction.model_server_profile == (
+        'custom-fact-profile'
+    )
+    assert settings.semantic.triplet_decomposition.model_server_profile == (
+        'custom-triplet-profile'
+    )
+
+    assert (
+        settings.semantic.entity_enrichment.inference.model_server_profile
+        == ('gemma-text-32k')
+    )
+    assert settings.semantic.event_enrichment.inference.num_retries == 0
+    assert (
+        settings.semantic.predicate_enrichment.context_window.forward_budget
+        == 400
+    )
+    monkeypatch.setenv(
+        'KMS2_SEMANTIC__ENTITY_ENRICHMENT__INFERENCE__MODEL_SERVER_PROFILE',
+        'custom-entity-profile',
+    )
+    monkeypatch.setenv(
+        'KMS2_SEMANTIC__EVENT_ENRICHMENT__CONTEXT_WINDOW__BACKWARD_BUDGET',
+        '17',
+    )
+    monkeypatch.setenv(
+        'KMS2_SEMANTIC__PREDICATE_ENRICHMENT__INFERENCE__MAX_TOKENS',
+        '1234',
+    )
+    settings = config.Settings()
+    assert (
+        settings.semantic.entity_enrichment.inference.model_server_profile
+        == 'custom-entity-profile'
+    )
+    assert (
+        settings.semantic.event_enrichment.context_window.backward_budget == 17
+    )
+    assert settings.semantic.predicate_enrichment.inference.max_tokens == 1234

@@ -1,18 +1,31 @@
-"""Persistence repository for the final KMS2 source structure."""
+"""Persistence access for source graphs and ordered source content."""
 
 import json
 from collections.abc import Callable
 
 from kms2.core.model import Source, SourceBlock, SourcePage
 
-from .queries import REPLACE_SOURCE
+from .queries import READ_SOURCE_BLOCKS, READ_SOURCES, REPLACE_SOURCE
 
 
 class SourceRepository:
-    """Persists a source and its ordered page, block, and asset structure."""
+    """Access persisted sources and their ordered page, block, and asset data."""
 
     def __init__(self, session_factory: Callable) -> None:
         self._session_factory = session_factory
+
+    async def list_sources(self) -> list[Source]:
+        """Load persisted sources in stable display order."""
+        async with self._session_factory() as session:
+            result = await session.run(READ_SOURCES)
+            rows = await result.data()
+        return [
+            Source(
+                uuid=row['uuid'],
+                key=row['key'],
+            )
+            for row in rows
+        ]
 
     async def replace_source(
         self,
@@ -28,6 +41,7 @@ class SourceRepository:
                 'uuid': block.uuid,
                 'block_type': block.block_type.value,
                 'content': block.content,
+                'embedding': block.embedding,
                 'crop_path': block.crop_path,
                 'crop_bbox': (
                     list(block.crop_bbox)
@@ -72,7 +86,10 @@ class SourceRepository:
                 'key': source.key,
                 'metadata': json.dumps(source.metadata, sort_keys=True),
             },
-            'pages': [{'index': page.index} for page in pages],
+            'pages': [
+                {'index': page.index, 'markdown': page.markdown}
+                for page in pages
+            ],
             'blocks': block_rows,
             'assets': [
                 {'uuid': asset.uuid, 'path': asset.path} for asset in assets
@@ -108,3 +125,20 @@ class SourceRepository:
         async with self._session_factory() as session:
             result = await session.run(REPLACE_SOURCE, **parameters)
             await result.consume()
+
+    async def load_blocks(self, source_uuid: str) -> list[SourceBlock]:
+        """Load canonical source blocks in persisted stream order."""
+        async with self._session_factory() as session:
+            result = await session.run(
+                READ_SOURCE_BLOCKS,
+                source_uuid=source_uuid,
+            )
+            rows = await result.data()
+        return [
+            SourceBlock(
+                uuid=row['uuid'],
+                block_type=row['block_type'],
+                content=row['content'],
+            )
+            for row in rows
+        ]

@@ -68,9 +68,10 @@ def _image_payload(image_base64, **overrides):
     return image
 
 
-def _page_payload(index=0, *, blocks=None, images=None):
+def _page_payload(index=0, *, blocks=None, images=None, markdown=''):
     return {
         'index': index,
+        'markdown': markdown,
         'dimensions': {'width': 100, 'height': 200},
         'blocks': [_block_payload()] if blocks is None else blocks,
         'images': [] if images is None else images,
@@ -178,6 +179,7 @@ def test_mistral_provider_materializes_ordered_artifacts(monkeypatch, tmp_path):
             'pages': [
                 _page_payload(
                     index=2,
+                    markdown='## Second',
                     blocks=[
                         _block_payload(
                             'first',
@@ -207,7 +209,11 @@ def test_mistral_provider_materializes_ordered_artifacts(monkeypatch, tmp_path):
                         ),
                     ],
                 ),
-                _page_payload(index=0, blocks=[_block_payload('third')]),
+                _page_payload(
+                    index=0,
+                    markdown='## First',
+                    blocks=[_block_payload('third')],
+                ),
             ]
         }
     )
@@ -219,29 +225,41 @@ def test_mistral_provider_materializes_ordered_artifacts(monkeypatch, tmp_path):
 
     artifacts = mistral.MistralOCRProvider(ocr_settings).extract(pdf_path)
 
-    assert [artifact.content for artifact in artifacts] == [
+    assert [page.page_index for page in artifacts] == [2, 0]
+    assert [page.markdown for page in artifacts] == ['## Second', '## First']
+    assert [block.content for page in artifacts for block in page.blocks] == [
         'first',
         'second',
         'third',
     ]
-    assert artifacts[0].block_type.value == 'aside_text'
-    assert [artifact.page_index for artifact in artifacts] == [2, 2, 0]
-    assert artifacts[0].crop_bbox == (2, 12, 58, 108)
-    assert artifacts[1].crop_bbox == (52, 112, 98, 188)
-    assert artifacts[2].crop_bbox == (2, 12, 58, 108)
-    assert artifacts[0].crop_path == str(
+    assert artifacts[0].blocks[0].block_type.value == 'aside_text'
+    assert [
+        block.page_index for page in artifacts for block in page.blocks
+    ] == [
+        2,
+        2,
+        0,
+    ]
+    assert artifacts[0].blocks[0].crop_bbox == (2, 12, 58, 108)
+    assert artifacts[0].blocks[1].crop_bbox == (52, 112, 98, 188)
+    assert artifacts[1].blocks[0].crop_bbox == (2, 12, 58, 108)
+    assert artifacts[0].blocks[0].crop_path == str(
         tmp_path / 'output/Documents/Document_0002/Blocks/Block_0000.png'
     )
-    assert artifacts[1].crop_path == str(
+    assert artifacts[0].blocks[1].crop_path == str(
         tmp_path / 'output/Documents/Document_0002/Blocks/Block_0001.png'
     )
-    assert artifacts[2].crop_path == str(
+    assert artifacts[1].blocks[0].crop_path == str(
         tmp_path / 'output/Documents/Document_0000/Blocks/Block_0000.png'
     )
-    assert [image.image_id for image in artifacts[0].images] == ['image-1']
-    assert [image.image_id for image in artifacts[1].images] == ['image-2']
-    assert artifacts[2].images == []
-    assert artifacts[0].images[0].bbox == (0.2, 0.15, 0.4, 0.3)
+    assert [image.image_id for image in artifacts[0].blocks[0].images] == [
+        'image-1'
+    ]
+    assert [image.image_id for image in artifacts[0].blocks[1].images] == [
+        'image-2'
+    ]
+    assert artifacts[1].blocks[0].images == []
+    assert artifacts[0].blocks[0].images[0].bbox == (0.2, 0.15, 0.4, 0.3)
     assert (
         tmp_path / 'output/Documents/Document_0002/Images/Image_000.png'
     ).read_bytes() == b'first-image'

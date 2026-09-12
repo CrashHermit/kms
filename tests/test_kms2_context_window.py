@@ -16,7 +16,7 @@ from kms2.core.model import (
 def _block(
     index: int,
     content: str | None = None,
-    block_type: BlockType = BlockType.TEXT,
+    block_type: BlockType = BlockType.PARAGRAPH,
     *,
     assets: list[VisualAsset] | None = None,
 ) -> SourceBlock:
@@ -34,7 +34,9 @@ def test_source_context_window_defaults_are_independent():
     first = SourceContextWindow()
     second = SourceContextWindow()
 
-    first.context_before.append(SourceBlockContext(block_type=BlockType.TEXT))
+    first.context_before.append(
+        SourceBlockContext(block_type=BlockType.PARAGRAPH)
+    )
 
     assert first.context_before
     assert second.context_before == []

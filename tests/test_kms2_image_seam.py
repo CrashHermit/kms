@@ -136,7 +136,7 @@ def test_edge_selection_skips_only_apparatus_and_rejects_invalid_images():
         (
             SourcePage(
                 index=0,
-                blocks=[eligible_top, _block(4, 'text', BlockType.TEXT)],
+                blocks=[eligible_top, _block(4, 'text', BlockType.PARAGRAPH)],
             ),
             bottom,
         ),
@@ -144,7 +144,10 @@ def test_edge_selection_skips_only_apparatus_and_rejects_invalid_images():
             top,
             SourcePage(
                 index=1,
-                blocks=[_block(5, 'text', BlockType.TEXT), eligible_bottom],
+                blocks=[
+                    _block(5, 'text', BlockType.PARAGRAPH),
+                    eligible_bottom,
+                ],
             ),
         ),
         (
@@ -186,10 +189,10 @@ def test_edge_selection_skips_only_apparatus_and_rejects_invalid_images():
 
 
 def test_true_merge_preserves_metadata_order_and_source_pages():
-    top_context = _block(0, 'context', BlockType.TEXT)
+    top_context = _block(0, 'context', BlockType.PARAGRAPH)
     top_image = _block(1, assets=[VisualAsset(path='top.png')])
     bottom_image = _block(2, assets=[VisualAsset(path='bottom.png')])
-    bottom_tail = _block(3, 'tail', BlockType.TEXT)
+    bottom_tail = _block(3, 'tail', BlockType.PARAGRAPH)
     top = SourcePage(index=0, blocks=[top_context, top_image])
     bottom = SourcePage(index=1, blocks=[bottom_image, bottom_tail])
 

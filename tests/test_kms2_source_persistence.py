@@ -23,7 +23,13 @@ def test_persistence_initializes_schema_before_replacing_source():
     pages = [
         SourcePage(
             index=0,
-            blocks=[SourceBlock(uuid='block-1', block_type='text')],
+            blocks=[
+                SourceBlock(
+                    uuid='block-1',
+                    block_type='paragraph',
+                    embedding=[0.1, 0.2],
+                )
+            ],
         )
     ]
 
@@ -38,7 +44,7 @@ def test_persistence_initializes_schema_before_replacing_source():
             SourceState(
                 pdf_path='book.pdf',
                 source=source,
-                split_pages=pages,
+                embedded_pages=pages,
             )
         )
     )

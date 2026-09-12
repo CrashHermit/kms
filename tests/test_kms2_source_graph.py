@@ -3,10 +3,11 @@ import asyncio
 from kms2.config import ContextWindowSettings
 from kms2.core.model import Source, SourceBlock, SourcePage
 from kms2.core.model.content_correction import ContentCorrectionResult
-from kms2.core.model.ocr import OCRArtifact, OCRImageArtifact
+from kms2.core.model.ocr import OCRArtifact, OCRImageArtifact, OCRPageArtifact
 from kms2.langgraph.source import OCRNode, SourceState
 from kms2.langgraph.source.graph import SourceGraph
 from kms2.node.source.content_correction import ContentCorrectionNode
+from kms2.node.source.embedding import EmbeddingNode
 from kms2.node.source.formatting import FormattingNode
 from kms2.node.source.image_enrichment import ImageEnrichmentNode
 from kms2.node.source.image_seam import ImageSeamNode
@@ -30,13 +31,26 @@ class _UnexpectedEnricher:
         raise AssertionError('enricher must not run without image blocks')
 
 
+class _RecordingEmbeddingClient:
+    def __init__(self) -> None:
+        self.texts: list[str] | None = None
+
+    async def embed(self, texts: list[str]) -> list[list[float]]:
+        self.texts = texts
+        return [[float(index)] for index in range(len(texts))]
+
+
 class _RecordingPersistence:
     def __init__(self) -> None:
         self.pages: list[SourcePage] | None = None
 
     async def run(self, state: SourceState) -> dict[str, object]:
-        self.pages = state.split_pages
+        self.pages = state.embedded_pages
         return {}
+
+
+def _embedding_node() -> EmbeddingNode:
+    return EmbeddingNode(_RecordingEmbeddingClient())
 
 
 def _no_splitter() -> SplitterNode:
@@ -61,14 +75,14 @@ def test_source_state_carries_source_pipeline_data():
     source = Source(uuid='source-1', key='document.pdf')
     artifact = SourceBlock(
         uuid='content-1',
-        block_type='text',
+        block_type='paragraph',
         content='original',
         crop_path='output/blocks/block-0.png',
     )
     ocr_page = SourcePage(index=0, blocks=[artifact])
     corrected_content = SourceBlock(
         uuid='content-1',
-        block_type='text',
+        block_type='paragraph',
         content='corrected source content',
     )
     corrected_page = SourcePage(index=0, blocks=[corrected_content])
@@ -98,6 +112,8 @@ def test_source_state_carries_source_pipeline_data():
     assert state.image_enrichment_results == []
     assert state.image_enriched_pages == []
     assert state.split_pages == []
+    assert state.embedded_pages == []
+    assert state.embedding_results == []
     assert state.split_results == []
 
 
@@ -123,30 +139,38 @@ def test_source_state_defaults_optional_pipeline_fields():
     assert state.image_enrichment_results == []
     assert state.image_enriched_pages == []
     assert state.split_pages == []
+    assert state.embedded_pages == []
     assert state.split_results == []
+    assert state.embedding_results == []
 
 
 def test_ocr_node_delegates_once_to_injected_provider():
     calls = []
     artifacts = [
-        OCRArtifact(
+        OCRPageArtifact(
             page_index=2,
-            block_index=1,
-            block_type='text',
-            content='second',
-        ),
-        OCRArtifact(
-            page_index=2,
-            block_index=0,
-            block_type='text',
-            content='first',
-        ),
+            markdown='# Page 2',
+            blocks=[
+                OCRArtifact(
+                    page_index=2,
+                    block_index=1,
+                    block_type='paragraph',
+                    content='second',
+                ),
+                OCRArtifact(
+                    page_index=2,
+                    block_index=0,
+                    block_type='paragraph',
+                    content='first',
+                ),
+            ],
+        )
     ]
 
     class FakeProvider:
         def extract(
             self, pdf_path: str, *, pages: list[int] | None = None
-        ) -> list[OCRArtifact]:
+        ) -> list[OCRPageArtifact]:
             calls.append((pdf_path, pages))
             return artifacts
 
@@ -179,8 +203,10 @@ def test_content_correction_dispatch_routes_empty_ocr_to_collect():
 
 
 def test_content_correction_collects_results_by_page_and_block_position():
-    first = SourceBlock(uuid='first', block_type='text', content='first')
-    second = SourceBlock(uuid='second', block_type='text', content='second')
+    first = SourceBlock(uuid='first', block_type='paragraph', content='first')
+    second = SourceBlock(
+        uuid='second', block_type='paragraph', content='second'
+    )
     state = SourceState(
         pdf_path='book.pdf',
         ocr_pages=[SourcePage(index=4, blocks=[first, second])],
@@ -213,12 +239,18 @@ def test_content_correction_collects_results_by_page_and_block_position():
 
 def test_source_graph_runs_correction_formatting_and_text_seams():
     artifacts = [
-        OCRArtifact(
+        OCRPageArtifact(
             page_index=page_index,
-            block_index=0,
-            block_type='text',
-            content=content,
-            crop_path='data:image/png;base64,AA==',
+            markdown=f'# Page {page_index}',
+            blocks=[
+                OCRArtifact(
+                    page_index=page_index,
+                    block_index=0,
+                    block_type='paragraph',
+                    content=content,
+                    crop_path='data:image/png;base64,AA==',
+                )
+            ],
         )
         for page_index, content in enumerate(['first', 'second'])
     ]
@@ -226,7 +258,7 @@ def test_source_graph_runs_correction_formatting_and_text_seams():
     class FakeProvider:
         def extract(
             self, pdf_path: str, *, pages: list[int] | None = None
-        ) -> list[OCRArtifact]:
+        ) -> list[OCRPageArtifact]:
             return artifacts
 
     events: list[str] = []
@@ -272,6 +304,7 @@ def test_source_graph_runs_correction_formatting_and_text_seams():
         ImageSeamNode(FakeImageJudge()),
         _no_enricher(),
         _no_splitter(),
+        _embedding_node(),
         persistence,
     ).build_graph()
 
@@ -300,32 +333,47 @@ def test_source_graph_runs_correction_formatting_and_text_seams():
         for content in page.blocks
     ] == ['merged tail and head']
     assert [page.index for page in result['text_seam_pages']] == [0, 1]
-    assert result['split_pages'] == result['image_enriched_pages']
-    assert persistence.pages == result['split_pages']
+    assert [page.markdown for page in result['split_pages']] == [
+        '# Page 0',
+        '# Page 1',
+    ]
+    assert persistence.pages == result['embedded_pages']
 
 
 def test_source_graph_merges_adjacent_image_artifacts_after_text_seams():
     artifacts = [
-        OCRArtifact(
+        OCRPageArtifact(
             page_index=0,
-            block_index=0,
-            block_type='image',
-            images=[OCRImageArtifact(path='top.png')],
-            crop_path='data:image/png;base64,AA==',
+            markdown='',
+            blocks=[
+                OCRArtifact(
+                    page_index=0,
+                    block_index=0,
+                    block_type='image',
+                    images=[OCRImageArtifact(path='top.png')],
+                    crop_path='data:image/png;base64,AA==',
+                )
+            ],
         ),
-        OCRArtifact(
+        OCRPageArtifact(
             page_index=1,
-            block_index=0,
-            block_type='image',
-            images=[OCRImageArtifact(path='bottom.png')],
-            crop_path='data:image/png;base64,AA==',
+            markdown='',
+            blocks=[
+                OCRArtifact(
+                    page_index=1,
+                    block_index=0,
+                    block_type='image',
+                    images=[OCRImageArtifact(path='bottom.png')],
+                    crop_path='data:image/png;base64,AA==',
+                )
+            ],
         ),
     ]
 
     class FakeProvider:
         def extract(
             self, pdf_path: str, *, pages: list[int] | None = None
-        ) -> list[OCRArtifact]:
+        ) -> list[OCRPageArtifact]:
             return artifacts
 
     class FakeCorrector:
@@ -382,6 +430,7 @@ def test_source_graph_merges_adjacent_image_artifacts_after_text_seams():
             ContextWindowSettings(backward_budget=100, forward_budget=100),
         ),
         _no_splitter(),
+        _embedding_node(),
         persistence,
     ).build_graph()
 
@@ -407,4 +456,4 @@ def test_source_graph_merges_adjacent_image_artifacts_after_text_seams():
         for page in result['image_enriched_pages']
     ] == ['one merged visual description', None]
     assert result['split_pages'] == result['image_enriched_pages']
-    assert persistence.pages == result['split_pages']
+    assert persistence.pages == result['embedded_pages']

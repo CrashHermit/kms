@@ -32,7 +32,7 @@ class _Predictor:
 def _block(
     index: int,
     content: str,
-    block_type: BlockType = BlockType.TEXT,
+    block_type: BlockType = BlockType.PARAGRAPH,
     *,
     assets: list[VisualAsset] | None = None,
 ) -> SourceBlock:
@@ -125,7 +125,7 @@ def test_signatures_and_module_calls_preserve_exact_text_boundary():
         {
             'tail': 'tail',
             'head': 'head',
-            'tail_kind': 'text',
+            'tail_kind': 'paragraph',
             'head_kind': 'paragraph',
             'before_tail': '',
             'after_head': '',

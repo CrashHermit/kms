@@ -11,7 +11,11 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from kms2.config import OCRSettings
 from kms2.core.model.block_types import BlockType
-from kms2.core.model.ocr import OCRArtifact, OCRImageArtifact
+from kms2.core.model.ocr import (
+    OCRArtifact,
+    OCRImageArtifact,
+    OCRPageArtifact,
+)
 
 _TIMEOUT = httpx.Timeout(300.0, connect=30.0)
 
@@ -55,7 +59,9 @@ class OCRBlock(OCRLocatedItem):
 
     type: str
     content: str
-    confidence: float | None = None
+    table_id: str | None = None
+    image_id: str | None = None
+    confidence_scores: dict[str, object] | None = None
 
 
 class OCRImage(OCRLocatedItem):
@@ -71,11 +77,15 @@ class OCRPage(BaseModel):
     model_config = ConfigDict(extra='allow')
 
     index: int
-    markdown: str = ''
-    dimensions: PageDimensions
-    blocks: list[OCRBlock] = Field(default_factory=list)
+    markdown: str
     images: list[OCRImage] = Field(default_factory=list)
+    tables: list[dict[str, object]] = Field(default_factory=list)
+    hyperlinks: list[dict[str, object]] = Field(default_factory=list)
+    header: str | None = None
     footer: str | None = None
+    dimensions: PageDimensions
+    confidence_scores: dict[str, object] | None = None
+    blocks: list[OCRBlock] = Field(default_factory=list)
 
 
 class OCRResponse(BaseModel):
@@ -84,6 +94,9 @@ class OCRResponse(BaseModel):
     model_config = ConfigDict(extra='allow')
 
     pages: list[OCRPage] = Field(default_factory=list)
+    model: str | None = None
+    document_annotation: dict[str, object] | None = None
+    usage_info: dict[str, object] = Field(default_factory=dict)
     _raw_response: dict[str, Any] = PrivateAttr(default_factory=dict)
 
     @classmethod
@@ -106,6 +119,9 @@ class OCRRequestOptions(BaseModel):
     include_blocks: bool = True
     extract_header: bool = True
     extract_footer: bool = True
+    confidence_scores_granularity: Literal['page', 'block', 'word'] | None = (
+        None
+    )
     pages: list[int] | None = None
     table_format: Literal['markdown', 'html'] | None = None
 
@@ -260,6 +276,8 @@ def _block_bbox(
 
 def _block_type(value: str) -> BlockType:
     """Map Mistral structural labels to canonical block types."""
+    if value in {'text', 'paragraph'}:
+        return BlockType.PARAGRAPH
     if value == 'title':
         return BlockType.HEADER
     if value == 'references':
@@ -274,7 +292,7 @@ def _materialize_page(
     render_scale: float,
     block_crop_scale: float,
     pdf_path: Path,
-) -> list[OCRArtifact]:
+) -> OCRPageArtifact:
     """Render one page and build its ordered block artifacts."""
     page_path = document_dir / 'Document.png'
     image_size = _render_page(
@@ -326,7 +344,11 @@ def _materialize_page(
                 )
             )
     page_image.close()
-    return artifacts
+    return OCRPageArtifact(
+        page_index=page.index,
+        markdown=page.markdown,
+        blocks=artifacts,
+    )
 
 
 def _materialize_artifacts(
@@ -335,17 +357,17 @@ def _materialize_artifacts(
     output_dir: str | Path,
     render_scale: float,
     block_crop_scale: float,
-) -> list[OCRArtifact]:
-    """Materialize response images and crops as provider-neutral artifacts."""
+) -> list[OCRPageArtifact]:
+    """Materialize response pages as provider-neutral OCR artifacts."""
     output_root = Path(output_dir)
     pdf = pdfium.PdfDocument(str(pdf_path))
     try:
-        artifacts: list[OCRArtifact] = []
+        pages: list[OCRPageArtifact] = []
         for page in response.pages:
             document_dir = (
                 output_root / 'Documents' / f'Document_{page.index:04d}'
             )
-            artifacts.extend(
+            pages.append(
                 _materialize_page(
                     page,
                     document_dir,
@@ -355,7 +377,7 @@ def _materialize_artifacts(
                     pdf_path,
                 )
             )
-        return artifacts
+        return pages
     finally:
         pdf.close()
 
@@ -371,8 +393,8 @@ class MistralOCRProvider:
         pdf_path: str | Path,
         *,
         pages: list[int] | None = None,
-    ) -> list[OCRArtifact]:
-        """OCR a PDF and materialize its ordered KMS2 artifacts."""
+    ) -> list[OCRPageArtifact]:
+        """OCR a PDF and materialize its ordered page artifacts."""
         source_path = Path(pdf_path)
         response = ocr_pdf(
             source_path.read_bytes(),

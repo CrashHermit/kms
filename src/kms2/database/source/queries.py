@@ -1,4 +1,10 @@
-"""Cypher statements for replacing a source's structural graph."""
+"""Cypher statements for loading and replacing source graphs."""
+
+READ_SOURCES = """
+MATCH (source:Source)
+RETURN source.uuid AS uuid, source.key AS key
+ORDER BY source.key, source.uuid
+"""
 
 REPLACE_SOURCE = """
 MERGE (source:Source {uuid: $source.uuid})
@@ -18,7 +24,7 @@ FOREACH (asset IN old_assets | DETACH DELETE asset)
 WITH source
 CALL (source) {
     UNWIND $pages AS row
-    CREATE (page:SourcePage {index: row.index})
+    CREATE (page:SourcePage {index: row.index, markdown: row.markdown})
     CREATE (source)-[:HAS_PAGE]->(page)
     RETURN count(*) AS _
 }
@@ -29,10 +35,10 @@ CALL (source) {
         uuid: row.uuid,
         block_type: row.block_type,
         content: row.content,
+        embedding: row.embedding,
         crop_path: row.crop_path,
         crop_bbox: row.crop_bbox
     })
-    FOREACH (_ IN CASE WHEN row.block_type = 'text' THEN [1] ELSE [] END | SET block:Text)
     FOREACH (_ IN CASE WHEN row.block_type = 'equation' THEN [1] ELSE [] END | SET block:Equation)
     FOREACH (_ IN CASE WHEN row.block_type = 'paragraph' THEN [1] ELSE [] END | SET block:Paragraph)
     FOREACH (_ IN CASE WHEN row.block_type = 'math' THEN [1] ELSE [] END | SET block:Math)
@@ -138,4 +144,11 @@ CALL (source) {
     RETURN count(*) AS _
 }
 RETURN source.uuid AS uuid
+"""
+
+READ_SOURCE_BLOCKS = """
+MATCH (source:Source {uuid: $source_uuid})-[:FIRST_BLOCK]->(first:SourceBlock)
+MATCH path = (first)-[:NEXT_BLOCK*0..]->(block:SourceBlock)
+RETURN block.uuid AS uuid, block.block_type AS block_type, block.content AS content
+ORDER BY length(path)
 """

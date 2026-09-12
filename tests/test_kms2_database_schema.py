@@ -28,10 +28,13 @@ def test_ensure_schema_runs_only_kms2_uuid_constraints():
     asyncio.run(ensure_schema(lambda: _SessionContext(session)))
 
     assert session.statements == list(SCHEMA_STATEMENTS)
-    assert len(session.statements) == 3
     schema = '\n'.join(session.statements)
     assert 'SourcePage' not in schema
     assert 'SourceBlock' in schema
     assert 'VisualAsset' in schema
+    assert 'Triplet' in schema
+    assert 'Entity' in schema
+    assert 'Event' in schema
+    assert 'Predicate' in schema
     assert 'HAS_PAGE' not in schema
     assert 'CONTAINS_BLOCK' not in schema

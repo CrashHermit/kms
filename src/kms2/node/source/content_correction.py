@@ -82,9 +82,15 @@ class ContentCorrectionNode:
             blocks_by_page.setdefault(result.page_index, []).append(
                 result.source_block
             )
-
+        markdown_by_page = {
+            page.index: page.markdown for page in state.ocr_pages
+        }
         corrected_pages = [
-            SourcePage(index=page_index, blocks=blocks)
+            SourcePage(
+                index=page_index,
+                markdown=markdown_by_page.get(page_index, ''),
+                blocks=blocks,
+            )
             for page_index, blocks in sorted(blocks_by_page.items())
         ]
         return {'corrected_pages': corrected_pages}

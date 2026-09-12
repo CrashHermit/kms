@@ -6,6 +6,7 @@ from typing import Annotated
 from pydantic import BaseModel, Field
 
 from kms2.core.model.content_correction import ContentCorrectionResult
+from kms2.core.model.embedding import EmbeddingResult
 from kms2.core.model.formatting import FormattingResult
 from kms2.core.model.image_enrichment import ImageEnrichmentResult
 from kms2.core.model.image_seam import ImageSeamResult
@@ -55,6 +56,11 @@ class SourceState(BaseModel):
     ] = Field(default_factory=list)
     image_enriched_pages: list[SourcePage] = Field(default_factory=list)
     split_pages: list[SourcePage] = Field(default_factory=list)
+    embedded_pages: list[SourcePage] = Field(default_factory=list)
+
+    embedding_results: Annotated[list[EmbeddingResult], operator.add] = Field(
+        default_factory=list
+    )
 
     split_results: Annotated[list[SplitResult], operator.add] = Field(
         default_factory=list

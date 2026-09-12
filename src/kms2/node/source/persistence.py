@@ -18,7 +18,9 @@ class SourcePersistenceNode:
         self._schema_initializer = schema_initializer
 
     async def run(self, state: SourceState) -> dict[str, object]:
-        """Initialize the schema and replace the final split source graph."""
+        """Initialize the schema and replace the final embedded source graph."""
         await self._schema_initializer()
-        await self._repository.replace_source(state.source, state.split_pages)
+        await self._repository.replace_source(
+            state.source, state.embedded_pages
+        )
         return {}

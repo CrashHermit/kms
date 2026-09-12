@@ -16,6 +16,26 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     CREATE CONSTRAINT visual_asset_uuid IF NOT EXISTS
     FOR (asset:VisualAsset) REQUIRE asset.uuid IS UNIQUE
     """,
+    """
+    CREATE CONSTRAINT triplet_uuid IF NOT EXISTS
+    FOR (triplet:Triplet) REQUIRE triplet.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT entity_uuid IF NOT EXISTS
+    FOR (entity:Entity) REQUIRE entity.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT event_uuid IF NOT EXISTS
+    FOR (event:Event) REQUIRE event.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT predicate_uuid IF NOT EXISTS
+    FOR (predicate:Predicate) REQUIRE predicate.uuid IS UNIQUE
+    """,
+    """
+    CREATE INDEX triplet_source_uuid IF NOT EXISTS
+    FOR (triplet:Triplet) ON (triplet.source_uuid)
+    """,
 )
 
 

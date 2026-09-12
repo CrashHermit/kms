@@ -3,17 +3,17 @@
 from pathlib import Path
 from typing import Protocol
 
-from kms2.core.model.ocr import OCRArtifact
+from kms2.core.model.ocr import OCRPageArtifact
 
 
 class OCRProvider(Protocol):
-    """Extracts provider-neutral OCR artifacts from a source PDF."""
+    """Extracts provider-neutral OCR pages from a source PDF."""
 
     def extract(
         self,
         pdf_path: str | Path,
         *,
         pages: list[int] | None = None,
-    ) -> list[OCRArtifact]:
-        """Extract ordered OCR artifacts for a PDF and optional page subset."""
+    ) -> list[OCRPageArtifact]:
+        """Extract ordered OCR pages for a PDF and optional page subset."""
         ...

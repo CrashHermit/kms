@@ -42,33 +42,36 @@ def test_edge_contains_directed_vertex_references():
 def test_source_content_is_a_vertex_with_default_assets():
     content = SourceBlock(
         uuid='source-1',
-        block_type='text',
+        block_type='paragraph',
     )
 
     assert isinstance(content, Vertex)
     assert content.content is None
+    assert content.embedding is None
     assert content.assets == []
 
 
-def test_source_content_accepts_text_and_visual_assets():
+def test_source_content_accepts_text_embedding_and_visual_assets():
     asset = VisualAsset(path='images/block.png')
     content = SourceBlock(
         uuid='source-1',
-        block_type='text',
+        block_type='paragraph',
         content='canonical source text',
+        embedding=[0.25, -0.5],
         assets=[asset],
     )
 
     assert isinstance(asset, Vertex)
     assert uuid.UUID(asset.uuid).version == 4
     assert content.content == 'canonical source text'
+    assert content.embedding == [0.25, -0.5]
     assert content.assets == [asset]
 
 
 def test_source_page_contains_ordered_source_blocks():
     block = SourceBlock(
         uuid='block-1',
-        block_type='text',
+        block_type='paragraph',
         content='page text',
     )
 
@@ -97,7 +100,7 @@ def test_ocr_artifact_contains_content_and_visual_artifacts():
     artifact = OCRArtifact(
         page_index=2,
         block_index=4,
-        block_type='text',
+        block_type='paragraph',
         content='The value is x².',
         images=[
             OCRImageArtifact(
@@ -113,7 +116,7 @@ def test_ocr_artifact_contains_content_and_visual_artifacts():
     assert artifact.model_dump() == {
         'page_index': 2,
         'block_index': 4,
-        'block_type': 'text',
+        'block_type': 'paragraph',
         'content': 'The value is x².',
         'images': [
             {

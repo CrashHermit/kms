@@ -26,13 +26,15 @@ class SourceBlock(Vertex):
 
     block_type: BlockType
     content: str | None = None
+    embedding: list[float] | None = None
     crop_path: str | None = None
     crop_bbox: tuple[int, int, int, int] | None = None
     assets: list[VisualAsset] = Field(default_factory=list)
 
 
 class SourcePage(BaseModel):
-    """An ordered source page containing canonical source blocks."""
+    """An ordered source page containing markdown and canonical blocks."""
 
     index: int
+    markdown: str = ''
     blocks: list[SourceBlock] = Field(default_factory=list)

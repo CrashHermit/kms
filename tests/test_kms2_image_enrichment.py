@@ -78,8 +78,12 @@ def test_module_preserves_ordered_target_images_sync_and_async():
             'data:image/png;base64,BBBB',
         ],
     )
-    before = [SourceBlockContext(block_type=BlockType.TEXT, content='before')]
-    after = [SourceBlockContext(block_type=BlockType.TEXT, content='after')]
+    before = [
+        SourceBlockContext(block_type=BlockType.PARAGRAPH, content='before')
+    ]
+    after = [
+        SourceBlockContext(block_type=BlockType.PARAGRAPH, content='after')
+    ]
 
     assert (
         module(
@@ -120,10 +124,14 @@ def test_dspy_formats_ordered_image_list_as_native_image_blocks():
                 dspy.Image(url='data:image/png;base64,BBBB'),
             ],
             'context_before': [
-                SourceBlockContext(block_type=BlockType.TEXT, content='before')
+                SourceBlockContext(
+                    block_type=BlockType.PARAGRAPH, content='before'
+                )
             ],
             'context_after': [
-                SourceBlockContext(block_type=BlockType.TEXT, content='after')
+                SourceBlockContext(
+                    block_type=BlockType.PARAGRAPH, content='after'
+                )
             ],
         },
     )
@@ -136,10 +144,10 @@ def test_dispatch_targets_only_images_but_keeps_generic_neighbor_context():
         SourcePage(
             index=0,
             blocks=[
-                _block(block_type=BlockType.TEXT, content='before'),
+                _block(block_type=BlockType.PARAGRAPH, content='before'),
                 _block(block_type=BlockType.IMAGE, assets=['target.png']),
                 _block(block_type=BlockType.IMAGE, content='nearby image'),
-                _block(block_type=BlockType.TEXT, content='after'),
+                _block(block_type=BlockType.PARAGRAPH, content='after'),
             ],
         )
     ]
@@ -203,7 +211,8 @@ def test_no_images_route_directly_to_collect():
     state = _state(
         [
             SourcePage(
-                index=0, blocks=[_block(block_type=BlockType.TEXT, content='x')]
+                index=0,
+                blocks=[_block(block_type=BlockType.PARAGRAPH, content='x')],
             )
         ]
     )
@@ -212,12 +221,12 @@ def test_no_images_route_directly_to_collect():
 
 
 def test_collect_applies_out_of_order_results_without_losing_metadata():
-    first = _block(block_type=BlockType.TEXT, content='first')
+    first = _block(block_type=BlockType.PARAGRAPH, content='first')
     image = _block(
         block_type=BlockType.IMAGE,
         assets=['target.png'],
     )
-    second = _block(block_type=BlockType.TEXT, content='second')
+    second = _block(block_type=BlockType.PARAGRAPH, content='second')
     pages = [
         SourcePage(index=0, blocks=[first, image]),
         SourcePage(index=1, blocks=[second]),

@@ -4,9 +4,20 @@ import os
 import pytest
 
 from kms2.config import Settings
-from kms2.core.model import Source, SourceBlock, SourcePage, VisualAsset
+from kms2.core.model import (
+    Entity,
+    Event,
+    Predicate,
+    RawAssertion,
+    RawTriplet,
+    Source,
+    SourceBlock,
+    SourcePage,
+    VisualAsset,
+)
 from kms2.database import schema
 from kms2.database.client import DatabaseClient
+from kms2.database.semantic.repository import SemanticRepository
 from kms2.database.source.repository import SourceRepository
 
 _REQUIRED_ENVIRONMENT = (
@@ -41,7 +52,7 @@ def test_kms2_neo4j_materializes_and_replaces_source():
         )
         first_block = SourceBlock(
             uuid=old_block_uuids[0],
-            block_type='text',
+            block_type='paragraph',
             content='first block',
             assets=[
                 VisualAsset(uuid=old_asset_uuids[0], path='first.png'),
@@ -54,6 +65,7 @@ def test_kms2_neo4j_materializes_and_replaces_source():
             content='aside block',
         )
         repository = SourceRepository(database.session)
+        semantic_repository = SemanticRepository(database.session)
         initial_pages = [
             SourcePage(index=0),
             SourcePage(index=1, blocks=[first_block, second_block]),
@@ -184,6 +196,72 @@ def test_kms2_neo4j_materializes_and_replaces_source():
                     'key': 'integration.pdf',
                     'metadata': '{"suite": "kms2"}',
                 }
+            assertion = RawAssertion(
+                triplet=RawTriplet(
+                    uuid='kms2-integration-triplet',
+                    source_uuid=source_uuid,
+                    source_block_uuid=old_block_uuids[0],
+                    subject_uuid='kms2-integration-event',
+                    object_uuid='kms2-integration-entity',
+                    predicate_uuid='kms2-integration-predicate',
+                ),
+                subject=Event(
+                    uuid='kms2-integration-event',
+                    source_uuid=source_uuid,
+                    source_block_uuid=old_block_uuids[0],
+                    name='integration event',
+                ),
+                object=Entity(
+                    uuid='kms2-integration-entity',
+                    source_uuid=source_uuid,
+                    source_block_uuid=old_block_uuids[0],
+                    name='integration entity',
+                ),
+                predicate=Predicate(
+                    uuid='kms2-integration-predicate',
+                    source_uuid=source_uuid,
+                    source_block_uuid=old_block_uuids[0],
+                    predicate='relates to',
+                ),
+            )
+            await semantic_repository.replace_source_assertions(
+                source_uuid,
+                [assertion],
+            )
+
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (block:SourceBlock {uuid: $block_uuid})
+                          -[:HAS_TRIPLET]->
+                          (triplet:Triplet {uuid: $triplet_uuid})
+                    MATCH (triplet)-[:HAS_SUBJECT]->(subject:Event)
+                    MATCH (triplet)-[:HAS_OBJECT]->(object:Entity)
+                    MATCH (triplet)-[:HAS_PREDICATE]->(predicate:Predicate)
+                    RETURN count(*) AS relationships
+                    """,
+                    block_uuid=old_block_uuids[0],
+                    triplet_uuid='kms2-integration-triplet',
+                )
+                semantic_relationships = await result.single()
+                assert semantic_relationships['relationships'] == 1
+
+                result = await session.run(
+                    """
+                    MATCH (source:Source {uuid: $source_uuid})
+                          -[:HAS_TRIPLET]->
+                          (triplet:Triplet)
+                    RETURN count(triplet) AS direct_source_triplets
+                    """,
+                    source_uuid=source_uuid,
+                )
+                direct_source_triplets = await result.single()
+                assert direct_source_triplets['direct_source_triplets'] == 0
+
+            await semantic_repository.replace_source_assertions(
+                source_uuid,
+                [],
+            )
 
             replacement_block = SourceBlock(
                 uuid='kms2-integration-block-3',

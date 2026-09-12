@@ -35,7 +35,7 @@ class _Predictor:
         return dspy.Prediction(**self.values)
 
 
-def _context(content: str, block_type: BlockType = BlockType.TEXT):
+def _context(content: str, block_type: BlockType = BlockType.PARAGRAPH):
     return SourceBlockContext(block_type=block_type, content=content)
 
 
@@ -194,8 +194,8 @@ def test_node_dispatches_one_context_window_per_flat_block():
         SourcePage(
             index=0,
             blocks=[
-                SourceBlock(block_type=BlockType.TEXT, content='first'),
-                SourceBlock(block_type=BlockType.TEXT, content='second'),
+                SourceBlock(block_type=BlockType.PARAGRAPH, content='first'),
+                SourceBlock(block_type=BlockType.PARAGRAPH, content='second'),
             ],
         ),
         SourcePage(
@@ -241,9 +241,9 @@ def test_node_dispatches_multiple_targets_when_target_budget_is_increased():
         SourcePage(
             index=0,
             blocks=[
-                SourceBlock(block_type=BlockType.TEXT, content='one'),
-                SourceBlock(block_type=BlockType.TEXT, content='two'),
-                SourceBlock(block_type=BlockType.TEXT, content='three'),
+                SourceBlock(block_type=BlockType.PARAGRAPH, content='one'),
+                SourceBlock(block_type=BlockType.PARAGRAPH, content='two'),
+                SourceBlock(block_type=BlockType.PARAGRAPH, content='three'),
             ],
         )
     ]
@@ -331,7 +331,7 @@ def test_worker_splits_one_routed_candidate_at_local_position_zero():
                     index=0,
                     blocks=[
                         SourceBlock(
-                            block_type=BlockType.TEXT, content='before'
+                            block_type=BlockType.PARAGRAPH, content='before'
                         ),
                         parent,
                     ],
@@ -375,7 +375,7 @@ def test_worker_splits_one_routed_candidate_at_local_position_zero():
 def test_collect_restores_order_and_preserves_unsplit_blocks():
     before = SourceBlock(
         uuid='before',
-        block_type=BlockType.TEXT,
+        block_type=BlockType.PARAGRAPH,
         content='before',
     )
     parent = SourceBlock(
@@ -388,7 +388,7 @@ def test_collect_restores_order_and_preserves_unsplit_blocks():
     )
     after = SourceBlock(
         uuid='after',
-        block_type=BlockType.TEXT,
+        block_type=BlockType.PARAGRAPH,
         content='after',
     )
     pages = [

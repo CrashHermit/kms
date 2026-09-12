@@ -1,8 +1,9 @@
 """Typed runtime configuration for KMS2."""
 
 from enum import StrEnum
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -68,6 +69,41 @@ class ImageEnrichmentSettings(BaseModel):
     )
 
 
+class TermEnrichmentSettings(BaseModel):
+    """Language model and context-window settings for typed enrichment."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    inference: StageInferenceSettings = Field(
+        default_factory=lambda: StageInferenceSettings(
+            model_server_profile='gemma-text-32k',
+            num_retries=0,
+        )
+    )
+    context_window: ContextWindowSettings = Field(
+        default_factory=lambda: ContextWindowSettings(
+            backward_budget=400,
+            forward_budget=400,
+        )
+    )
+
+    @model_validator(mode='before')
+    @classmethod
+    def merge_inference_defaults(cls, value: Any) -> Any:
+        """Preserve typed defaults when one nested inference field is overridden."""
+        if not isinstance(value, dict) or 'inference' not in value:
+            return value
+        inference = value['inference']
+        if not isinstance(inference, dict):
+            return value
+        defaults = StageInferenceSettings(
+            model_server_profile='gemma-text-32k',
+            num_retries=0,
+        ).model_dump()
+        defaults.update(inference)
+        return {**value, 'inference': defaults}
+
+
 class SplitterSettings(BaseModel):
     """Language model and context-window settings for source splitting."""
 
@@ -87,6 +123,55 @@ class TextSeamSettings(BaseModel):
 
     judge: StageInferenceSettings
     rewriter: StageInferenceSettings
+
+
+class SemanticSettings(BaseModel):
+    """Language model and context-window settings for semantic extraction."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    fact_extraction: StageInferenceSettings = Field(
+        default_factory=lambda: StageInferenceSettings(
+            model_server_profile='gemma-text-32k',
+            num_retries=0,
+        )
+    )
+    triplet_decomposition: StageInferenceSettings = Field(
+        default_factory=lambda: StageInferenceSettings(
+            model_server_profile='gemma-text-32k',
+            num_retries=0,
+        )
+    )
+    context_window: ContextWindowSettings = Field(
+        default_factory=lambda: ContextWindowSettings(
+            backward_budget=400,
+            forward_budget=400,
+        )
+    )
+    entity_enrichment: TermEnrichmentSettings = Field(
+        default_factory=lambda: TermEnrichmentSettings(
+            inference=StageInferenceSettings(
+                model_server_profile='gemma-text-32k',
+                num_retries=0,
+            )
+        )
+    )
+    event_enrichment: TermEnrichmentSettings = Field(
+        default_factory=lambda: TermEnrichmentSettings(
+            inference=StageInferenceSettings(
+                model_server_profile='gemma-text-32k',
+                num_retries=0,
+            )
+        )
+    )
+    predicate_enrichment: TermEnrichmentSettings = Field(
+        default_factory=lambda: TermEnrichmentSettings(
+            inference=StageInferenceSettings(
+                model_server_profile='gemma-text-32k',
+                num_retries=0,
+            )
+        )
+    )
 
 
 class SourceSettings(BaseModel):
@@ -128,7 +213,7 @@ class OCRSettings(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
     api_key: str = ''
-    model: str = 'mistral-ocr-latest'
+    model: str = 'mistral-ocr-4-1'
     url: str = 'https://api.mistral.ai/v1/ocr'
     output_dir: str = 'output'
     render_scale: float = Field(default=1.0, gt=0.0)
@@ -274,10 +359,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix='KMS2_',
         env_nested_delimiter='__',
-        extra='forbid',
     )
 
     source: SourceSettings = Field(default_factory=SourceSettings)
+    semantic: SemanticSettings = Field(default_factory=SemanticSettings)
     local_models: LocalModelRuntimeSettings = Field(
         default_factory=LocalModelRuntimeSettings
     )
@@ -297,17 +382,17 @@ __all__ = [
     'EmbeddingModelSettings',
     'EmbeddingSettings',
     'ImageEnrichmentSettings',
-    'ModelServerProfileSettings',
-    'RouterServerSettings',
-    'StageInferenceSettings',
     'LocalModelRuntimeSettings',
     'LlamaServerSettings',
+    'ModelServerProfileSettings',
     'OCRSettings',
     'PredictorStrategy',
     'RerankerModelSettings',
     'RerankerSettings',
+    'RouterServerSettings',
+    'SemanticSettings',
     'Settings',
     'SourceSettings',
-    'SplitterSettings',
-    'TextSeamSettings',
+    'StageInferenceSettings',
+    'TermEnrichmentSettings',
 ]

@@ -68,21 +68,21 @@ def test_dispatch_indexes_non_empty_content_and_skips_empty_content():
             [
                 SourceBlock(
                     uuid='content-0',
-                    block_type='text',
+                    block_type='paragraph',
                 ),
                 SourceBlock(
                     uuid='content-1',
-                    block_type='text',
+                    block_type='paragraph',
                     content='',
                 ),
                 SourceBlock(
                     uuid='content-2',
-                    block_type='text',
+                    block_type='paragraph',
                     content='first',
                 ),
                 SourceBlock(
                     uuid='content-3',
-                    block_type='text',
+                    block_type='paragraph',
                     content='second',
                 ),
             ]
@@ -130,11 +130,11 @@ def test_dispatch_routes_directly_to_collect_without_eligible_content():
                 [
                     SourceBlock(
                         uuid='content-0',
-                        block_type='text',
+                        block_type='paragraph',
                     ),
                     SourceBlock(
                         uuid='content-1',
-                        block_type='text',
+                        block_type='paragraph',
                         content='',
                     ),
                 ]
@@ -175,18 +175,18 @@ def test_worker_returns_one_positioned_formatting_result():
 def test_collect_orders_results_and_preserves_source_content_identity_data():
     first = SourceBlock(
         uuid='content-1',
-        block_type='text',
+        block_type='paragraph',
         content='first',
         assets=[{'path': 'images/first.png'}],
     )
     skipped = SourceBlock(
         uuid='content-2',
-        block_type='text',
+        block_type='paragraph',
         content='',
     )
     third = SourceBlock(
         uuid='content-3',
-        block_type='text',
+        block_type='paragraph',
         content='third',
         assets=[{'path': 'images/third.png'}],
     )

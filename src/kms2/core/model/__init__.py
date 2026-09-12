@@ -7,13 +7,40 @@ from kms2.core.model.content_correction import (
     ContentCorrectionResult,
 )
 from kms2.core.model.context import SourceBlockContext, SourceContextWindow
+from kms2.core.model.embedding import EmbeddingRequest, EmbeddingResult
 from kms2.core.model.formatting import FormattingRequest, FormattingResult
 from kms2.core.model.image_enrichment import (
     ImageEnrichmentRequest,
     ImageEnrichmentResult,
 )
 from kms2.core.model.image_seam import ImageSeamRequest, ImageSeamResult
-from kms2.core.model.ocr import OCRArtifact, OCRImageArtifact
+from kms2.core.model.ocr import OCRArtifact, OCRImageArtifact, OCRPageArtifact
+from kms2.core.model.semantic import (
+    AtomicFact,
+    Entity,
+    EntityEnrichmentRequest,
+    EntityEnrichmentResult,
+    EntityEnrichmentTarget,
+    Event,
+    EventEnrichmentRequest,
+    EventEnrichmentResult,
+    EventEnrichmentTarget,
+    ExtractedFact,
+    FactExtractionInput,
+    FactExtractionRequest,
+    FactExtractionResult,
+    Predicate,
+    PredicateEnrichmentRequest,
+    PredicateEnrichmentResult,
+    PredicateEnrichmentTarget,
+    RawAssertion,
+    RawTriplet,
+    SemanticNodeKind,
+    TermEnrichmentInput,
+    TripletCandidate,
+    TripletDecompositionRequest,
+    TripletDecompositionResult,
+)
 from kms2.core.model.source import Source, SourceBlock, SourcePage, VisualAsset
 from kms2.core.model.splitter import (
     SplitCandidate,
@@ -25,6 +52,8 @@ from kms2.core.model.splitter import (
 from kms2.core.model.text_seam import TextSeamRequest, TextSeamResult
 
 __all__ = [
+    'EmbeddingRequest',
+    'EmbeddingResult',
     'BlockType',
     'ContentCorrectionRequest',
     'ContentCorrectionResult',
@@ -37,6 +66,7 @@ __all__ = [
     'ImageSeamResult',
     'OCRArtifact',
     'OCRImageArtifact',
+    'OCRPageArtifact',
     'Source',
     'SourceBlock',
     'SourceBlockContext',
@@ -51,4 +81,28 @@ __all__ = [
     'TextSeamResult',
     'Vertex',
     'VisualAsset',
+    'AtomicFact',
+    'Entity',
+    'EntityEnrichmentRequest',
+    'EntityEnrichmentResult',
+    'EntityEnrichmentTarget',
+    'Event',
+    'EventEnrichmentRequest',
+    'EventEnrichmentResult',
+    'EventEnrichmentTarget',
+    'ExtractedFact',
+    'FactExtractionInput',
+    'FactExtractionRequest',
+    'FactExtractionResult',
+    'Predicate',
+    'PredicateEnrichmentRequest',
+    'PredicateEnrichmentResult',
+    'PredicateEnrichmentTarget',
+    'RawAssertion',
+    'RawTriplet',
+    'SemanticNodeKind',
+    'TermEnrichmentInput',
+    'TripletCandidate',
+    'TripletDecompositionRequest',
+    'TripletDecompositionResult',
 ]

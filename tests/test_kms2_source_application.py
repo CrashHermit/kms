@@ -15,6 +15,7 @@ from kms2.config import (
 from kms2.database.client import DatabaseClient
 from kms2.langgraph.source.graph import SourceGraph
 from kms2.node.source.content_correction import ContentCorrectionNode
+from kms2.node.source.embedding import EmbeddingNode
 from kms2.node.source.formatting import FormattingNode
 from kms2.node.source.image_enrichment import ImageEnrichmentNode
 from kms2.node.source.image_seam import ImageSeamNode
@@ -26,6 +27,7 @@ from kms2.ocr.mistral import MistralOCRProvider
 
 
 class _RecordingRuntime:
+    embedding = object()
     calls: list[tuple[str, PredictorStrategy, type[dspy.Signature]]]
 
     def predictor(
@@ -115,6 +117,7 @@ def test_build_source_graph_composes_all_source_dependencies():
     assert graph.ocr.provider._settings is settings.ocr
     assert isinstance(graph.text_seam, TextSeamNode)
     assert isinstance(graph.image_seam, ImageSeamNode)
+    assert isinstance(graph.embedding, EmbeddingNode)
     assert isinstance(graph.image_enrichment, ImageEnrichmentNode)
     assert isinstance(graph.splitter, SplitterNode)
     assert isinstance(graph.persistence, SourcePersistenceNode)
