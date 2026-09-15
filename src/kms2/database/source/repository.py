@@ -3,9 +3,22 @@
 import json
 from collections.abc import Callable
 
-from kms2.core.model import Source, SourceBlock, SourcePage
+from kms2.core.model import (
+    Instruction,
+    Procedure,
+    Source,
+    SourceBlock,
+    SourceBlockSimilarityMatch,
+    SourcePage,
+    Statement,
+)
 
-from .queries import READ_SOURCE_BLOCKS, READ_SOURCES, REPLACE_SOURCE
+from .queries import (
+    FIND_SIMILAR_SOURCE_BLOCKS,
+    READ_SOURCE_BLOCKS,
+    READ_SOURCES,
+    REPLACE_SOURCE,
+)
 
 
 class SourceRepository:
@@ -31,6 +44,9 @@ class SourceRepository:
         self,
         source: Source,
         pages: list[SourcePage],
+        instructions: list[Instruction],
+        statements: list[Statement],
+        procedures: list[Procedure],
     ) -> None:
         """Replace the persisted structural graph for one source."""
         blocks: list[SourceBlock] = [
@@ -120,6 +136,48 @@ class SourceRepository:
             'page_bounds': page_bounds,
             'first_page_index': pages[0].index if pages else None,
             'first_block_uuid': blocks[0].uuid if blocks else None,
+            'instructions': [
+                {'uuid': instruction.uuid} for instruction in instructions
+            ],
+            'instruction_member_pairs': [
+                {
+                    'block_uuid': block_uuid,
+                    'instruction_uuid': instruction.uuid,
+                }
+                for instruction in instructions
+                for block_uuid in instruction.member_block_uuids
+            ],
+            'statements': [
+                {'uuid': statement.uuid, 'is_exercise': statement.is_exercise}
+                for statement in statements
+            ],
+            'procedures': [
+                {'uuid': procedure.uuid} for procedure in procedures
+            ],
+            'statement_member_pairs': [
+                {
+                    'block_uuid': block_uuid,
+                    'statement_uuid': statement.uuid,
+                }
+                for statement in statements
+                for block_uuid in statement.member_block_uuids
+            ],
+            'procedure_member_pairs': [
+                {
+                    'block_uuid': block_uuid,
+                    'procedure_uuid': procedure.uuid,
+                }
+                for procedure in procedures
+                for block_uuid in procedure.member_block_uuids
+            ],
+            'instruction_governance_pairs': [
+                {
+                    'instruction_uuid': instruction.uuid,
+                    'statement_uuid': statement_uuid,
+                }
+                for instruction in instructions
+                for statement_uuid in instruction.governed_statement_uuids
+            ],
             'last_block_uuid': blocks[-1].uuid if blocks else None,
         }
         async with self._session_factory() as session:
@@ -139,6 +197,31 @@ class SourceRepository:
                 uuid=row['uuid'],
                 block_type=row['block_type'],
                 content=row['content'],
+            )
+            for row in rows
+        ]
+
+    async def find_similar_blocks(
+        self,
+        block_uuid: str,
+        *,
+        top_k: int,
+    ) -> list[SourceBlockSimilarityMatch]:
+        """Find nearest source blocks using Neo4j's source-block index."""
+        async with self._session_factory() as session:
+            result = await session.run(
+                FIND_SIMILAR_SOURCE_BLOCKS,
+                query_uuid=block_uuid,
+                top_k=top_k,
+                candidate_limit=top_k + 1,
+            )
+            rows = await result.data()
+        return [
+            SourceBlockSimilarityMatch(
+                uuid=row['uuid'],
+                block_type=row['block_type'],
+                content=row['content'],
+                score=row['score'],
             )
             for row in rows
         ]

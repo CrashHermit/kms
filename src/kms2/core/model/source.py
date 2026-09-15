@@ -1,17 +1,10 @@
-"""Source vertex models for KMS2."""
+"""Root source vertex model."""
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import Field
 
 from kms2.core.model.base import Vertex
-from kms2.core.model.block_types import BlockType
-
-
-class VisualAsset(Vertex):
-    """One visual asset attached to source content."""
-
-    path: str
 
 
 class Source(Vertex):
@@ -21,20 +14,4 @@ class Source(Vertex):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class SourceBlock(Vertex):
-    """A canonical source block with content and visual assets."""
-
-    block_type: BlockType
-    content: str | None = None
-    embedding: list[float] | None = None
-    crop_path: str | None = None
-    crop_bbox: tuple[int, int, int, int] | None = None
-    assets: list[VisualAsset] = Field(default_factory=list)
-
-
-class SourcePage(BaseModel):
-    """An ordered source page containing markdown and canonical blocks."""
-
-    index: int
-    markdown: str = ''
-    blocks: list[SourceBlock] = Field(default_factory=list)
+__all__ = ['Source']

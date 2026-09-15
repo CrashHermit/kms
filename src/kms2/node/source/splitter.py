@@ -5,7 +5,6 @@ from typing import Literal, TypedDict
 from langgraph.types import Send
 
 from kms2.config import ContextWindowSettings
-from kms2.core.context_window import select_window
 from kms2.core.model import (
     SourceBlock,
     SourcePage,
@@ -13,6 +12,7 @@ from kms2.core.model import (
     SplitRequest,
     SplitResult,
 )
+from kms2.core.windowing import select_window
 from kms2.langgraph.source.state import SourceState
 from kms2.module.source.splitter import (
     ExerciseSplitterModule,
@@ -45,7 +45,7 @@ class SplitterNode:
         """Dispatch one context-window request per source block."""
         flat_blocks = [
             source_block
-            for page in state.image_enriched_pages
+            for page in state.image_described_pages
             for source_block in page.blocks
         ]
         sends: list[Send] = []
@@ -130,7 +130,7 @@ class SplitterNode:
         }
         split_pages: list[SourcePage] = []
         flat_position = 0
-        for page in state.image_enriched_pages:
+        for page in state.image_described_pages:
             split_blocks: list[SourceBlock] = []
             for source_block in page.blocks:
                 pieces = replacements.get(flat_position)

@@ -14,7 +14,7 @@ from kms2.application import (
     run_semantic_stage,
 )
 from kms2.config import Settings
-from kms2.core.model.source import Source
+from kms2.core.model import Source
 
 PDF_DIRECTORY = Path('pdfs')
 NEW_SOURCE_OPTION = 'Ingest a new PDF'
@@ -64,14 +64,14 @@ def _log_semantic_completion(source: Source, semantic) -> None:
     """Log all counts persisted by one complete semantic stage."""
     logger.info(
         'Done: source %s (%s), semantic stage persisted %d assertion(s), '
-        '%d entity enrichment(s), %d event enrichment(s), and '
-        '%d predicate enrichment(s).',
+        '%d source entity description(s), %d source event description(s), and '
+        '%d source predicate description(s).',
         source.uuid,
         source.key,
         semantic.raw_assertion_count,
-        semantic.entity_enrichment_count,
-        semantic.event_enrichment_count,
-        semantic.predicate_enrichment_count,
+        semantic.source_entity_description_count,
+        semantic.source_event_description_count,
+        semantic.source_predicate_description_count,
     )
 
 

@@ -9,7 +9,7 @@ def add_embedding_phase(graph: StateGraph, node: EmbeddingNode) -> None:
     graph.add_node('embedding_worker', node.worker)
     graph.add_node('embedding_collect', node.collect)
     graph.add_conditional_edges(
-        'splitter_collect',
+        'instruction_governance',
         node.dispatch,
         ['embedding_worker', 'embedding_collect'],
     )

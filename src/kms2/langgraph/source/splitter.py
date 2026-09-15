@@ -9,7 +9,7 @@ def add_splitter_phase(graph: StateGraph, node: SplitterNode) -> None:
     graph.add_node('splitter_worker', node.worker)
     graph.add_node('splitter_collect', node.collect)
     graph.add_conditional_edges(
-        'image_enrichment_collect',
+        'image_description_collect',
         node.dispatch,
         ['splitter_worker', 'splitter_collect'],
     )

@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model.source import SourceBlock
+from kms2.core.model import SourceBlock
 
 
 class ImageSeamSignature(dspy.Signature):

@@ -10,7 +10,6 @@ class SourceBlockContext(BaseModel):
 
     block_type: BlockType
     content: str | None = None
-    asset_paths: list[str] = Field(default_factory=list)
 
 
 class SourceContextWindow(BaseModel):

@@ -21,6 +21,10 @@ class SourcePersistenceNode:
         """Initialize the schema and replace the final embedded source graph."""
         await self._schema_initializer()
         await self._repository.replace_source(
-            state.source, state.embedded_pages
+            state.source,
+            state.embedded_pages,
+            state.instructions,
+            state.statements,
+            state.procedures,
         )
         return {}

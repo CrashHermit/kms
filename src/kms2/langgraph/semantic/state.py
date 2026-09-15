@@ -6,16 +6,16 @@ from typing import Annotated
 from pydantic import BaseModel, Field
 
 from kms2.core.model import (
-    EntityEnrichmentRequest,
-    EntityEnrichmentResult,
-    EventEnrichmentRequest,
-    EventEnrichmentResult,
     ExtractedFact,
     FactExtractionResult,
-    PredicateEnrichmentRequest,
-    PredicateEnrichmentResult,
     RawAssertion,
     SourceBlock,
+    SourceEntityDescriptionRequest,
+    SourceEntityDescriptionResult,
+    SourceEventDescriptionRequest,
+    SourceEventDescriptionResult,
+    SourcePredicateDescriptionRequest,
+    SourcePredicateDescriptionResult,
     TripletDecompositionResult,
 )
 
@@ -33,30 +33,34 @@ class SemanticState(BaseModel):
         list[TripletDecompositionResult], operator.add
     ] = Field(default_factory=list)
 
-    entity_requests: list[EntityEnrichmentRequest] = Field(default_factory=list)
-    entity_description_results: Annotated[
-        list[EntityEnrichmentResult], operator.add
-    ] = Field(default_factory=list)
-    entity_embedding_results: Annotated[
-        list[EntityEnrichmentResult], operator.add
-    ] = Field(default_factory=list)
-    entity_persisted_count: int = 0
-    event_requests: list[EventEnrichmentRequest] = Field(default_factory=list)
-    event_description_results: Annotated[
-        list[EventEnrichmentResult], operator.add
-    ] = Field(default_factory=list)
-    event_embedding_results: Annotated[
-        list[EventEnrichmentResult], operator.add
-    ] = Field(default_factory=list)
-    event_persisted_count: int = 0
-    predicate_requests: list[PredicateEnrichmentRequest] = Field(
-        default_factory=list
+    source_entity_description_requests: list[SourceEntityDescriptionRequest] = (
+        Field(default_factory=list)
     )
-    predicate_description_results: Annotated[
-        list[PredicateEnrichmentResult], operator.add
+    source_entity_description_results: Annotated[
+        list[SourceEntityDescriptionResult], operator.add
     ] = Field(default_factory=list)
-    predicate_embedding_results: Annotated[
-        list[PredicateEnrichmentResult], operator.add
+    source_entity_embedding_results: Annotated[
+        list[SourceEntityDescriptionResult], operator.add
     ] = Field(default_factory=list)
-    predicate_persisted_count: int = 0
+    source_entity_description_persisted_count: int = 0
+    source_event_description_requests: list[SourceEventDescriptionRequest] = (
+        Field(default_factory=list)
+    )
+    source_event_description_results: Annotated[
+        list[SourceEventDescriptionResult], operator.add
+    ] = Field(default_factory=list)
+    source_event_embedding_results: Annotated[
+        list[SourceEventDescriptionResult], operator.add
+    ] = Field(default_factory=list)
+    source_event_description_persisted_count: int = 0
+    source_predicate_description_requests: list[
+        SourcePredicateDescriptionRequest
+    ] = Field(default_factory=list)
+    source_predicate_description_results: Annotated[
+        list[SourcePredicateDescriptionResult], operator.add
+    ] = Field(default_factory=list)
+    source_predicate_embedding_results: Annotated[
+        list[SourcePredicateDescriptionResult], operator.add
+    ] = Field(default_factory=list)
+    source_predicate_description_persisted_count: int = 0
     raw_assertions: list[RawAssertion] = Field(default_factory=list)

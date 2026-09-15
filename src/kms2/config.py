@@ -42,7 +42,6 @@ class StageInferenceSettings(BaseModel):
     temperature: float = 0.0
     max_tokens: int = Field(default=8192, gt=0)
     num_retries: int = Field(default=3, ge=0)
-    cache: bool = True
 
 
 class ContextWindowSettings(BaseModel):
@@ -55,8 +54,8 @@ class ContextWindowSettings(BaseModel):
     target_budget: int = 0
 
 
-class ImageEnrichmentSettings(BaseModel):
-    """Language model and context-window settings for image enrichment."""
+class ImageDescriptionSettings(BaseModel):
+    """Language model and context-window settings for image descriptions."""
 
     model_config = ConfigDict(extra='forbid')
 
@@ -69,8 +68,8 @@ class ImageEnrichmentSettings(BaseModel):
     )
 
 
-class TermEnrichmentSettings(BaseModel):
-    """Language model and context-window settings for typed enrichment."""
+class TermDescriptionSettings(BaseModel):
+    """Language model and context-window settings for typed descriptions."""
 
     model_config = ConfigDict(extra='forbid')
 
@@ -116,6 +115,113 @@ class SplitterSettings(BaseModel):
     )
 
 
+class InstructionFinderSettings(BaseModel):
+    """Language model and context-window settings for instruction discovery."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    start_router: StageInferenceSettings = Field(
+        default_factory=lambda: _stage_inference('gemma-text-32k')
+    )
+    boundary_router: StageInferenceSettings = Field(
+        default_factory=lambda: _stage_inference('gemma-text-32k')
+    )
+    start_context_window: ContextWindowSettings = Field(
+        default_factory=lambda: ContextWindowSettings(
+            backward_budget=0,
+            forward_budget=0,
+        )
+    )
+    boundary_context_window: ContextWindowSettings = Field(
+        default_factory=lambda: ContextWindowSettings(
+            backward_budget=300,
+            forward_budget=0,
+        )
+    )
+
+
+class PedagogicalFinderSettings(BaseModel):
+    """Language model and context-window settings for pedagogical discovery."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    start_router: StageInferenceSettings = Field(
+        default_factory=lambda: _stage_inference('gemma-text-32k')
+    )
+    boundary_router: StageInferenceSettings = Field(
+        default_factory=lambda: _stage_inference('gemma-text-32k')
+    )
+    start_context_window: ContextWindowSettings = Field(
+        default_factory=lambda: ContextWindowSettings(
+            backward_budget=300,
+            forward_budget=300,
+        )
+    )
+    boundary_context_window: ContextWindowSettings = Field(
+        default_factory=lambda: ContextWindowSettings(
+            backward_budget=300,
+            forward_budget=300,
+        )
+    )
+
+
+class StatementProcedureSettings(BaseModel):
+    """Language model settings for statement and procedure construction."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    role_typer: StageInferenceSettings = Field(
+        default_factory=lambda: _stage_inference('gemma-text-32k')
+    )
+    statement_partitioner: StageInferenceSettings = Field(
+        default_factory=lambda: _stage_inference('gemma-text-32k')
+    )
+    procedure_partitioner: StageInferenceSettings = Field(
+        default_factory=lambda: _stage_inference('gemma-text-32k')
+    )
+
+
+class ExerciseFinderSettings(BaseModel):
+    """Language model and context-window settings for exercise discovery."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    start_router: StageInferenceSettings = Field(
+        default_factory=lambda: _stage_inference('gemma-text-32k')
+    )
+    boundary_router: StageInferenceSettings = Field(
+        default_factory=lambda: _stage_inference('gemma-text-32k')
+    )
+    start_context_window: ContextWindowSettings = Field(
+        default_factory=lambda: ContextWindowSettings(
+            backward_budget=0,
+            forward_budget=0,
+        )
+    )
+    boundary_context_window: ContextWindowSettings = Field(
+        default_factory=lambda: ContextWindowSettings(
+            backward_budget=0,
+            forward_budget=0,
+        )
+    )
+
+
+class InstructionGovernanceSettings(BaseModel):
+    """Language model and context-window settings for instruction governance."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    inference: StageInferenceSettings = Field(
+        default_factory=lambda: _stage_inference('gemma-text-32k')
+    )
+    context_window: ContextWindowSettings = Field(
+        default_factory=lambda: ContextWindowSettings(
+            backward_budget=200,
+            forward_budget=500,
+        )
+    )
+
+
 class TextSeamSettings(BaseModel):
     """Language model settings for text seam judging and rewriting."""
 
@@ -148,24 +254,24 @@ class SemanticSettings(BaseModel):
             forward_budget=400,
         )
     )
-    entity_enrichment: TermEnrichmentSettings = Field(
-        default_factory=lambda: TermEnrichmentSettings(
+    source_entity_description: TermDescriptionSettings = Field(
+        default_factory=lambda: TermDescriptionSettings(
             inference=StageInferenceSettings(
                 model_server_profile='gemma-text-32k',
                 num_retries=0,
             )
         )
     )
-    event_enrichment: TermEnrichmentSettings = Field(
-        default_factory=lambda: TermEnrichmentSettings(
+    source_event_description: TermDescriptionSettings = Field(
+        default_factory=lambda: TermDescriptionSettings(
             inference=StageInferenceSettings(
                 model_server_profile='gemma-text-32k',
                 num_retries=0,
             )
         )
     )
-    predicate_enrichment: TermEnrichmentSettings = Field(
-        default_factory=lambda: TermEnrichmentSettings(
+    source_predicate_description: TermDescriptionSettings = Field(
+        default_factory=lambda: TermDescriptionSettings(
             inference=StageInferenceSettings(
                 model_server_profile='gemma-text-32k',
                 num_retries=0,
@@ -194,8 +300,8 @@ class SourceSettings(BaseModel):
     image_seam: StageInferenceSettings = Field(
         default_factory=lambda: _stage_inference('gemma-vision-8k')
     )
-    image_enrichment: ImageEnrichmentSettings = Field(
-        default_factory=lambda: ImageEnrichmentSettings(
+    image_description: ImageDescriptionSettings = Field(
+        default_factory=lambda: ImageDescriptionSettings(
             inference=_stage_inference('gemma-vision-8k')
         )
     )
@@ -204,6 +310,21 @@ class SourceSettings(BaseModel):
             router=_stage_inference('gemma-text-32k'),
             splitter=_stage_inference('gemma-text-32k'),
         )
+    )
+    instruction_finder: InstructionFinderSettings = Field(
+        default_factory=InstructionFinderSettings
+    )
+    pedagogical_finder: PedagogicalFinderSettings = Field(
+        default_factory=PedagogicalFinderSettings
+    )
+    statement_procedure: StatementProcedureSettings = Field(
+        default_factory=StatementProcedureSettings
+    )
+    exercise_finder: ExerciseFinderSettings = Field(
+        default_factory=ExerciseFinderSettings
+    )
+    instruction_governance: InstructionGovernanceSettings = Field(
+        default_factory=InstructionGovernanceSettings
     )
 
 
@@ -381,11 +502,15 @@ __all__ = [
     'DedicatedLlamaServerSettings',
     'EmbeddingModelSettings',
     'EmbeddingSettings',
-    'ImageEnrichmentSettings',
+    'ExerciseFinderSettings',
+    'ImageDescriptionSettings',
+    'InstructionFinderSettings',
+    'InstructionGovernanceSettings',
     'LocalModelRuntimeSettings',
     'LlamaServerSettings',
     'ModelServerProfileSettings',
     'OCRSettings',
+    'PedagogicalFinderSettings',
     'PredictorStrategy',
     'RerankerModelSettings',
     'RerankerSettings',
@@ -394,5 +519,6 @@ __all__ = [
     'Settings',
     'SourceSettings',
     'StageInferenceSettings',
-    'TermEnrichmentSettings',
+    'StatementProcedureSettings',
+    'TermDescriptionSettings',
 ]

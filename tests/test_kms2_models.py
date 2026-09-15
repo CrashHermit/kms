@@ -5,11 +5,14 @@ from pydantic import ValidationError
 
 from kms2.core.model import (
     Edge,
+    Instruction,
     OCRArtifact,
     OCRImageArtifact,
+    Procedure,
     Source,
     SourceBlock,
     SourcePage,
+    Statement,
     Vertex,
     VisualAsset,
 )
@@ -140,3 +143,19 @@ def test_ocr_artifact_supports_image_only_blocks():
 
     assert artifact.content is None
     assert artifact.images[0].path == 'Images/Image_000.png'
+
+
+def test_pointer_models_preserve_ordered_uuid_lists_and_defaults():
+    instruction = Instruction(
+        uuid='instruction-1',
+        member_block_uuids=['block-1', 'block-2'],
+        governed_statement_uuids=['statement-1'],
+    )
+    statement = Statement(member_block_uuids=['block-3', 'block-4'])
+    procedure = Procedure(member_block_uuids=['block-5', 'block-6'])
+
+    assert instruction.member_block_uuids == ['block-1', 'block-2']
+    assert instruction.governed_statement_uuids == ['statement-1']
+    assert statement.is_exercise is False
+    assert statement.member_block_uuids == ['block-3', 'block-4']
+    assert procedure.member_block_uuids == ['block-5', 'block-6']

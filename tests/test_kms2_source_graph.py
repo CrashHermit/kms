@@ -2,14 +2,20 @@ import asyncio
 
 from kms2.config import ContextWindowSettings
 from kms2.core.model import Source, SourceBlock, SourcePage
-from kms2.core.model.content_correction import ContentCorrectionResult
-from kms2.core.model.ocr import OCRArtifact, OCRImageArtifact, OCRPageArtifact
+from kms2.core.model.source_stage.content_correction import (
+    ContentCorrectionResult,
+)
+from kms2.core.model.source_stage.ocr import (
+    OCRArtifact,
+    OCRImageArtifact,
+    OCRPageArtifact,
+)
 from kms2.langgraph.source import OCRNode, SourceState
 from kms2.langgraph.source.graph import SourceGraph
 from kms2.node.source.content_correction import ContentCorrectionNode
 from kms2.node.source.embedding import EmbeddingNode
 from kms2.node.source.formatting import FormattingNode
-from kms2.node.source.image_enrichment import ImageEnrichmentNode
+from kms2.node.source.image_description import ImageDescriptionNode
 from kms2.node.source.image_seam import ImageSeamNode
 from kms2.node.source.splitter import SplitterNode
 from kms2.node.source.text_seam import TextSeamNode
@@ -26,9 +32,9 @@ class _UnexpectedSplitter:
         raise AssertionError('splitter must not run without routed candidates')
 
 
-class _UnexpectedEnricher:
+class _UnexpectedDescriber:
     async def aforward(self, **kwargs: object) -> str:
-        raise AssertionError('enricher must not run without image blocks')
+        raise AssertionError('describer must not run without image blocks')
 
 
 class _RecordingEmbeddingClient:
@@ -64,11 +70,36 @@ def _no_splitter() -> SplitterNode:
     )
 
 
-def _no_enricher() -> ImageEnrichmentNode:
-    return ImageEnrichmentNode(
-        _UnexpectedEnricher(),
+def _no_describer() -> ImageDescriptionNode:
+    return ImageDescriptionNode(
+        _UnexpectedDescriber(),
         ContextWindowSettings(backward_budget=100, forward_budget=100),
     )
+
+
+class _NoInstructionFinder:
+    def run(self, state: SourceState) -> dict[str, object]:
+        return {'instructions': []}
+
+
+class _NoPedagogicalFinder:
+    async def run(self, state: SourceState) -> dict[str, object]:
+        return {'pedagogical_components': []}
+
+
+class _NoStatementProcedure:
+    async def run(self, state: SourceState) -> dict[str, object]:
+        return {'statements': [], 'procedures': []}
+
+
+class _NoExerciseFinder:
+    async def run(self, state: SourceState) -> dict[str, object]:
+        return {'exercise_components': []}
+
+
+class _NoInstructionGovernance:
+    def run(self, state: SourceState) -> dict[str, object]:
+        return {'instructions': state.instructions}
 
 
 def test_source_state_carries_source_pipeline_data():
@@ -109,8 +140,8 @@ def test_source_state_carries_source_pipeline_data():
     assert state.image_seam_even_pages == []
     assert state.image_seam_odd_results == []
     assert state.image_seam_pages == []
-    assert state.image_enrichment_results == []
-    assert state.image_enriched_pages == []
+    assert state.image_description_results == []
+    assert state.image_described_pages == []
     assert state.split_pages == []
     assert state.embedded_pages == []
     assert state.embedding_results == []
@@ -136,8 +167,8 @@ def test_source_state_defaults_optional_pipeline_fields():
     assert state.image_seam_even_pages == []
     assert state.image_seam_odd_results == []
     assert state.image_seam_pages == []
-    assert state.image_enrichment_results == []
-    assert state.image_enriched_pages == []
+    assert state.image_description_results == []
+    assert state.image_described_pages == []
     assert state.split_pages == []
     assert state.embedded_pages == []
     assert state.split_results == []
@@ -302,8 +333,13 @@ def test_source_graph_runs_correction_formatting_and_text_seams():
         FormattingNode(FakeFormatter()),
         TextSeamNode(FakeJudge(), FakeRewriter()),
         ImageSeamNode(FakeImageJudge()),
-        _no_enricher(),
+        _no_describer(),
         _no_splitter(),
+        _NoInstructionFinder(),
+        _NoExerciseFinder(),
+        _NoPedagogicalFinder(),
+        _NoStatementProcedure(),
+        _NoInstructionGovernance(),
         _embedding_node(),
         persistence,
     ).build_graph()
@@ -404,7 +440,7 @@ def test_source_graph_merges_adjacent_image_artifacts_after_text_seams():
         async def aforward(self, **kwargs: object) -> bool:
             return True
 
-    class FakeEnricher:
+    class FakeDescriber:
         async def aforward(
             self,
             *,
@@ -425,11 +461,16 @@ def test_source_graph_merges_adjacent_image_artifacts_after_text_seams():
         FormattingNode(FakeFormatter()),
         TextSeamNode(FakeTextJudge(), FakeTextRewriter()),
         ImageSeamNode(FakeImageJudge()),
-        ImageEnrichmentNode(
-            FakeEnricher(),
+        ImageDescriptionNode(
+            FakeDescriber(),
             ContextWindowSettings(backward_budget=100, forward_budget=100),
         ),
         _no_splitter(),
+        _NoInstructionFinder(),
+        _NoExerciseFinder(),
+        _NoPedagogicalFinder(),
+        _NoStatementProcedure(),
+        _NoInstructionGovernance(),
         _embedding_node(),
         persistence,
     ).build_graph()
@@ -453,7 +494,7 @@ def test_source_graph_merges_adjacent_image_artifacts_after_text_seams():
     ] == [['top.png', 'bottom.png'], []]
     assert [
         page.blocks[0].content if page.blocks else None
-        for page in result['image_enriched_pages']
+        for page in result['image_described_pages']
     ] == ['one merged visual description', None]
-    assert result['split_pages'] == result['image_enriched_pages']
+    assert result['split_pages'] == result['image_described_pages']
     assert persistence.pages == result['embedded_pages']

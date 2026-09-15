@@ -2,7 +2,7 @@ import asyncio
 
 from kms2 import application
 from kms2.config import Settings
-from kms2.core.model.source import Source
+from kms2.core.model import Source
 
 
 class _Runtime:
@@ -289,9 +289,9 @@ class _CompleteSemanticGraph:
         assert initial_state == {'source_uuid': 'source-1'}
         return {
             'raw_assertions': [1, 2],
-            'entity_persisted_count': 3,
-            'event_persisted_count': 4,
-            'predicate_persisted_count': 5,
+            'source_entity_description_persisted_count': 3,
+            'source_event_description_persisted_count': 4,
+            'source_predicate_description_persisted_count': 5,
         }
 
 
@@ -313,8 +313,8 @@ def test_run_semantic_stage_uses_one_complete_semantic_graph(monkeypatch):
     result = asyncio.run(application.run_semantic_stage(settings, 'source-1'))
 
     assert result.raw_assertion_count == 2
-    assert result.entity_enrichment_count == 3
-    assert result.event_enrichment_count == 4
-    assert result.predicate_enrichment_count == 5
+    assert result.source_entity_description_count == 3
+    assert result.source_event_description_count == 4
+    assert result.source_predicate_description_count == 5
     assert events == ['semantic-compose', 'semantic-invoke']
     assert database.closed is True

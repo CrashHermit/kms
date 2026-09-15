@@ -40,10 +40,7 @@ def _context(content: str, block_type: BlockType = BlockType.PARAGRAPH):
 
 
 def _projected_parent(content: str) -> SourceBlockContext:
-    return _context(
-        content,
-        BlockType.LIST,
-    ).model_copy(update={'asset_paths': ['packed-figure.png']})
+    return _context(content, BlockType.LIST)
 
 
 def test_signatures_expose_routed_split_contracts():
@@ -168,7 +165,7 @@ def _state(pages: list[SourcePage]) -> SourceState:
     return SourceState(
         pdf_path='document.pdf',
         source=Source(uuid='source-1', key='document.pdf'),
-        image_enriched_pages=pages,
+        image_described_pages=pages,
     )
 
 
@@ -202,7 +199,7 @@ def test_node_dispatches_one_context_window_per_flat_block():
             index=1,
             blocks=[
                 SourceBlock(
-                    block_type=BlockType.IMAGE, content='enriched image'
+                    block_type=BlockType.IMAGE, content='described image'
                 ),
             ],
         ),
@@ -222,7 +219,7 @@ def test_node_dispatches_one_context_window_per_flat_block():
     assert [request.window.target[0].content for request in requests] == [
         'first',
         'second',
-        'enriched image',
+        'described image',
     ]
     assert [request.window.context_before for request in requests] == [
         [],

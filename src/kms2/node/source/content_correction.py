@@ -5,11 +5,11 @@ from typing import Literal, TypedDict
 import dspy
 from langgraph.types import Send
 
-from kms2.core.model.content_correction import (
+from kms2.core.model import SourceBlock, SourcePage
+from kms2.core.model.source_stage.content_correction import (
     ContentCorrectionRequest,
     ContentCorrectionResult,
 )
-from kms2.core.model.source import SourceBlock, SourcePage
 from kms2.langgraph.source.state import SourceState
 from kms2.module.source.content_correction import ContentCorrectorModule
 

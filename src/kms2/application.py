@@ -5,7 +5,7 @@ from pathlib import Path
 
 from kms2.composition import build_semantic_graph, build_source_graph
 from kms2.config import Settings
-from kms2.core.model.source import Source
+from kms2.core.model import Source
 from kms2.database.client import DatabaseClient
 from kms2.database.source.repository import SourceRepository
 from kms2.local_models import LocalModelRuntime
@@ -33,9 +33,9 @@ class SemanticStageResult:
     """Counts persisted by one complete semantic stage."""
 
     raw_assertion_count: int
-    entity_enrichment_count: int
-    event_enrichment_count: int
-    predicate_enrichment_count: int
+    source_entity_description_count: int
+    source_event_description_count: int
+    source_predicate_description_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,9 +101,15 @@ async def _run_semantic_stage_with_resources(
     final_state = await graph.ainvoke({'source_uuid': source_uuid})
     return SemanticStageResult(
         raw_assertion_count=len(final_state['raw_assertions']),
-        entity_enrichment_count=final_state['entity_persisted_count'],
-        event_enrichment_count=final_state['event_persisted_count'],
-        predicate_enrichment_count=final_state['predicate_persisted_count'],
+        source_entity_description_count=final_state[
+            'source_entity_description_persisted_count'
+        ],
+        source_event_description_count=final_state[
+            'source_event_description_persisted_count'
+        ],
+        source_predicate_description_count=final_state[
+            'source_predicate_description_persisted_count'
+        ],
     )
 
 

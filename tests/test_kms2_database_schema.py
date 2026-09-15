@@ -1,14 +1,20 @@
 import asyncio
 
-from kms2.database.schema import SCHEMA_STATEMENTS, ensure_schema
+from kms2.database.schema import (
+    SCHEMA_MIGRATION_STATEMENTS,
+    SCHEMA_STATEMENTS,
+    VECTOR_INDEX_NAMES,
+    ensure_schema,
+    vector_index_statements,
+)
 
 
 class _RecordingSession:
     def __init__(self) -> None:
-        self.statements: list[str] = []
+        self.calls: list[tuple[str, dict[str, object]]] = []
 
-    async def run(self, statement: str) -> None:
-        self.statements.append(statement)
+    async def run(self, statement: str, **parameters: object) -> None:
+        self.calls.append((statement, parameters))
 
 
 class _SessionContext:
@@ -22,19 +28,44 @@ class _SessionContext:
         return None
 
 
-def test_ensure_schema_runs_only_kms2_uuid_constraints():
+def test_ensure_schema_runs_migration_structural_vector_and_wait_ddl():
     session = _RecordingSession()
 
-    asyncio.run(ensure_schema(lambda: _SessionContext(session)))
+    asyncio.run(
+        ensure_schema(
+            lambda: _SessionContext(session),
+            embedding_dimension=4096,
+        )
+    )
 
-    assert session.statements == list(SCHEMA_STATEMENTS)
-    schema = '\n'.join(session.statements)
+    statements = [statement for statement, _ in session.calls]
+    expected_prefix = (
+        *SCHEMA_MIGRATION_STATEMENTS,
+        *SCHEMA_STATEMENTS,
+        *vector_index_statements(4096),
+    )
+    assert statements[: len(expected_prefix)] == list(expected_prefix)
+    assert statements[len(expected_prefix) :] == [
+        'CALL db.awaitIndex($index_name, $timeout_seconds)'
+    ] * len(VECTOR_INDEX_NAMES)
+    assert all(
+        parameters == {}
+        for _, parameters in session.calls[: len(expected_prefix)]
+    )
+    assert [
+        parameters for _, parameters in session.calls[len(expected_prefix) :]
+    ] == [
+        {'index_name': index_name, 'timeout_seconds': 300}
+        for index_name in VECTOR_INDEX_NAMES
+    ]
+
+    schema = '\n'.join(statements)
     assert 'SourcePage' not in schema
     assert 'SourceBlock' in schema
     assert 'VisualAsset' in schema
     assert 'Triplet' in schema
-    assert 'Entity' in schema
-    assert 'Event' in schema
-    assert 'Predicate' in schema
+    assert 'SourceEntity' in schema
+    assert 'SourceEvent' in schema
+    assert 'SourcePredicate' in schema
     assert 'HAS_PAGE' not in schema
     assert 'CONTAINS_BLOCK' not in schema

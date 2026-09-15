@@ -2,8 +2,11 @@ import asyncio
 
 import dspy
 
-from kms2.core.model.formatting import FormattingRequest, FormattingResult
-from kms2.core.model.source import Source, SourceBlock, SourcePage
+from kms2.core.model import Source, SourceBlock, SourcePage
+from kms2.core.model.source_stage.formatting import (
+    FormattingRequest,
+    FormattingResult,
+)
 from kms2.langgraph.source.state import SourceState
 from kms2.module.source import formatting
 from kms2.node.source.formatting import FormattingNode

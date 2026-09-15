@@ -1,7 +1,19 @@
 import asyncio
 
-from kms2.core.model import Source, SourceBlock, SourcePage, VisualAsset
-from kms2.database.source.queries import READ_SOURCES, REPLACE_SOURCE
+from kms2.core.model import (
+    Instruction,
+    Procedure,
+    Source,
+    SourceBlock,
+    SourcePage,
+    Statement,
+    VisualAsset,
+)
+from kms2.database.source.queries import (
+    FIND_SIMILAR_SOURCE_BLOCKS,
+    READ_SOURCES,
+    REPLACE_SOURCE,
+)
 from kms2.database.source.repository import SourceRepository
 
 
@@ -37,121 +49,68 @@ class _SessionContext:
         return None
 
 
-def test_replace_source_projects_ordered_structure_once():
+def test_replace_source_projects_pointer_rows_and_governance_once():
     first_asset = VisualAsset(uuid='asset-1', path='first.png')
-    second_asset = VisualAsset(uuid='asset-2', path='second.png')
     first_block = SourceBlock(
         uuid='block-1',
         block_type='paragraph',
         content='first block',
-        embedding=[0.1, 0.2],
-        crop_path='first-crop.png',
-        crop_bbox=(1, 2, 3, 4),
-        assets=[first_asset, second_asset],
+        assets=[first_asset],
     )
     second_block = SourceBlock(
         uuid='block-2',
         block_type='image',
         content=None,
-        embedding=[0.3, 0.4],
     )
-    pages = [
-        SourcePage(index=0),
-        SourcePage(index=1, blocks=[first_block, second_block]),
+    pages = [SourcePage(index=1, blocks=[first_block, second_block])]
+    instructions = [
+        Instruction(
+            uuid='instruction-1',
+            member_block_uuids=['block-1'],
+            governed_statement_uuids=['statement-1'],
+        )
     ]
+    statements = [
+        Statement(
+            uuid='statement-1',
+            member_block_uuids=['block-2'],
+            is_exercise=True,
+        )
+    ]
+    procedures = [Procedure(uuid='procedure-1', member_block_uuids=['block-1'])]
     session = _RecordingSession()
 
     asyncio.run(
         SourceRepository(lambda: _SessionContext(session)).replace_source(
             Source(uuid='source-1', key='book.pdf', metadata={'kind': 'book'}),
             pages,
+            instructions,
+            statements,
+            procedures,
         )
     )
 
     assert len(session.calls) == 1
     query, parameters = session.calls[0]
     assert query is REPLACE_SOURCE
-    assert parameters == {
-        'source': {
-            'uuid': 'source-1',
-            'key': 'book.pdf',
-            'metadata': '{"kind": "book"}',
-        },
-        'pages': [
-            {'index': 0, 'markdown': ''},
-            {'index': 1, 'markdown': ''},
-        ],
-        'blocks': [
-            {
-                'uuid': 'block-1',
-                'block_type': 'paragraph',
-                'content': 'first block',
-                'embedding': [0.1, 0.2],
-                'crop_path': 'first-crop.png',
-                'crop_bbox': [1, 2, 3, 4],
-            },
-            {
-                'uuid': 'block-2',
-                'block_type': 'image',
-                'content': None,
-                'embedding': [0.3, 0.4],
-                'crop_path': None,
-                'crop_bbox': None,
-            },
-        ],
-        'assets': [
-            {'uuid': 'asset-1', 'path': 'first.png'},
-            {'uuid': 'asset-2', 'path': 'second.png'},
-        ],
-        'block_asset_pairs': [
-            {'block_uuid': 'block-1', 'asset_uuid': 'asset-1'},
-            {'block_uuid': 'block-1', 'asset_uuid': 'asset-2'},
-        ],
-        'asset_pairs': [{'from_uuid': 'asset-1', 'to_uuid': 'asset-2'}],
-        'asset_bounds': [
-            {
-                'block_uuid': 'block-1',
-                'first_asset_uuid': 'asset-1',
-                'last_asset_uuid': 'asset-2',
-            }
-        ],
-        'page_block_pairs': [
-            {'page_index': 1, 'block_uuid': 'block-1'},
-            {'page_index': 1, 'block_uuid': 'block-2'},
-        ],
-        'page_pairs': [{'from_index': 0, 'to_index': 1}],
-        'block_pairs': [{'from_uuid': 'block-1', 'to_uuid': 'block-2'}],
-        'page_bounds': [
-            {
-                'page_index': 1,
-                'first_block_uuid': 'block-1',
-                'last_block_uuid': 'block-2',
-            }
-        ],
-        'first_page_index': 0,
-        'first_block_uuid': 'block-1',
-        'last_block_uuid': 'block-2',
-    }
-    assert 'MATCH (source)-[:HAS_PAGE]->(from_page:SourcePage' in query
-    assert 'MATCH (source)-[:HAS_PAGE]->(to_page:SourcePage' in query
-    for block_type in (
-        'equation',
-        'paragraph',
-        'math',
-        'code',
-        'list',
-        'table',
-        'image',
-        'caption',
-        'header',
-        'bibliographic',
-        'note',
-        'footer',
-        'aside_text',
-        'markdown',
-        'instruction',
-    ):
-        assert f"row.block_type = '{block_type}'" in query
+    assert parameters['statements'] == [
+        {'uuid': 'statement-1', 'is_exercise': True}
+    ]
+    assert parameters['procedures'] == [{'uuid': 'procedure-1'}]
+    assert parameters['statement_member_pairs'] == [
+        {'block_uuid': 'block-2', 'statement_uuid': 'statement-1'}
+    ]
+    assert parameters['procedure_member_pairs'] == [
+        {'block_uuid': 'block-1', 'procedure_uuid': 'procedure-1'}
+    ]
+    assert parameters['instruction_governance_pairs'] == [
+        {'instruction_uuid': 'instruction-1', 'statement_uuid': 'statement-1'}
+    ]
+    assert 'HAS_STATEMENT' not in query
+    assert 'HAS_PROCEDURE' not in query
+    assert 'GOVERNS]->(block' not in query
+    assert 'MEMBER_OF]->(statement' in query
+    assert 'MEMBER_OF]->(procedure' in query
 
 
 def test_list_sources_returns_stable_source_summaries():
@@ -173,3 +132,49 @@ def test_list_sources_returns_stable_source_summaries():
         Source(uuid='source-1', key='first.pdf'),
     ]
     assert session.calls == [(READ_SOURCES, {})]
+
+
+def test_find_similar_blocks_uses_neo4j_vector_index_and_omits_embedding():
+    session = _RecordingSession(
+        _RecordingResult(
+            [
+                {
+                    'uuid': 'nearest-block',
+                    'block_type': 'paragraph',
+                    'content': 'nearest',
+                    'score': 0.99,
+                },
+                {
+                    'uuid': 'next-block',
+                    'block_type': 'equation',
+                    'content': None,
+                    'score': 0.81,
+                },
+            ]
+        )
+    )
+    repository = SourceRepository(lambda: _SessionContext(session))
+
+    results = asyncio.run(
+        repository.find_similar_blocks('query-block', top_k=2)
+    )
+
+    assert [result.uuid for result in results] == [
+        'nearest-block',
+        'next-block',
+    ]
+    assert results[0].score == 0.99
+    assert 'embedding' not in results[0].model_dump()
+    assert session.calls == [
+        (
+            FIND_SIMILAR_SOURCE_BLOCKS,
+            {
+                'query_uuid': 'query-block',
+                'top_k': 2,
+                'candidate_limit': 3,
+            },
+        )
+    ]
+    assert 'source_block_embedding' in FIND_SIMILAR_SOURCE_BLOCKS
+    assert 'node.uuid <> query.uuid' in FIND_SIMILAR_SOURCE_BLOCKS
+    assert 'ORDER BY score DESC, uuid ASC' in FIND_SIMILAR_SOURCE_BLOCKS

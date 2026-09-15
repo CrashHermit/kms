@@ -1,17 +1,17 @@
-"""Cypher statements for replacing raw semantic assertions."""
+"""Cypher statements for replacing raw semantic assertions and searching vertices."""
 
 REPLACE_SOURCE_ASSERTIONS = """
 MATCH (source:Source {uuid: $source_uuid})
 OPTIONAL MATCH (old_triplet:Triplet {source_uuid: $source_uuid})
 OPTIONAL MATCH (old_triplet)-[:HAS_SUBJECT|HAS_OBJECT]->(old_endpoint)
-OPTIONAL MATCH (old_triplet)-[:HAS_PREDICATE]->(old_predicate:Predicate)
+OPTIONAL MATCH (old_triplet)-[:HAS_PREDICATE]->(old_source_predicate:SourcePredicate)
 WITH source,
      collect(DISTINCT old_triplet) AS old_triplets,
      collect(DISTINCT old_endpoint) AS old_endpoints,
-     collect(DISTINCT old_predicate) AS old_predicates
+     collect(DISTINCT old_source_predicate) AS old_source_predicates
 FOREACH (node IN old_triplets | DETACH DELETE node)
 FOREACH (node IN old_endpoints | DETACH DELETE node)
-FOREACH (node IN old_predicates | DETACH DELETE node)
+FOREACH (node IN old_source_predicates | DETACH DELETE node)
 WITH source
 CALL (source) {
     UNWIND $triplets AS row
@@ -27,8 +27,8 @@ CALL (source) {
 }
 WITH source
 CALL (source) {
-    UNWIND $entities AS row
-    CREATE (entity:Entity {
+    UNWIND $source_entities AS row
+    CREATE (source_entity:SourceEntity {
         uuid: row.uuid,
         source_uuid: row.source_uuid,
         source_block_uuid: row.source_block_uuid,
@@ -38,8 +38,8 @@ CALL (source) {
 }
 WITH source
 CALL (source) {
-    UNWIND $events AS row
-    CREATE (event:Event {
+    UNWIND $source_events AS row
+    CREATE (source_event:SourceEvent {
         uuid: row.uuid,
         source_uuid: row.source_uuid,
         source_block_uuid: row.source_block_uuid,
@@ -49,8 +49,8 @@ CALL (source) {
 }
 WITH source
 CALL (source) {
-    UNWIND $predicates AS row
-    CREATE (predicate:Predicate {
+    UNWIND $source_predicates AS row
+    CREATE (source_predicate:SourcePredicate {
         uuid: row.uuid,
         source_uuid: row.source_uuid,
         source_block_uuid: row.source_block_uuid,
@@ -72,10 +72,10 @@ CALL (source) {
     MATCH (triplet:Triplet {uuid: row.uuid})
     MATCH (subject {uuid: row.subject_uuid})
     MATCH (object {uuid: row.object_uuid})
-    MATCH (predicate:Predicate {uuid: row.predicate_uuid})
+    MATCH (source_predicate:SourcePredicate {uuid: row.predicate_uuid})
     CREATE (triplet)-[:HAS_SUBJECT]->(subject)
     CREATE (triplet)-[:HAS_OBJECT]->(object)
-    CREATE (triplet)-[:HAS_PREDICATE]->(predicate)
+    CREATE (triplet)-[:HAS_PREDICATE]->(source_predicate)
     RETURN count(*) AS _
 }
 RETURN source.uuid AS uuid
@@ -85,64 +85,129 @@ CLEAR_SOURCE_ASSERTIONS = """
 MATCH (source:Source {uuid: $source_uuid})
 OPTIONAL MATCH (old_triplet:Triplet {source_uuid: $source_uuid})
 OPTIONAL MATCH (old_triplet)-[:HAS_SUBJECT|HAS_OBJECT]->(old_endpoint)
-OPTIONAL MATCH (old_triplet)-[:HAS_PREDICATE]->(old_predicate:Predicate)
+OPTIONAL MATCH (old_triplet)-[:HAS_PREDICATE]->(old_source_predicate:SourcePredicate)
 WITH collect(DISTINCT old_triplet) AS old_triplets,
      collect(DISTINCT old_endpoint) AS old_endpoints,
-     collect(DISTINCT old_predicate) AS old_predicates
+     collect(DISTINCT old_source_predicate) AS old_source_predicates
 FOREACH (node IN old_triplets | DETACH DELETE node)
 FOREACH (node IN old_endpoints | DETACH DELETE node)
-FOREACH (node IN old_predicates | DETACH DELETE node)
+FOREACH (node IN old_source_predicates | DETACH DELETE node)
 RETURN count(*) AS cleared
 """
 
-
 READ_SOURCE_ENTITIES = """
-MATCH (entity:Entity {source_uuid: $source_uuid})
-RETURN entity.uuid AS uuid,
-       entity.source_uuid AS source_uuid,
-       entity.source_block_uuid AS source_block_uuid,
-       entity.name AS name
-ORDER BY entity.source_block_uuid, entity.uuid
+MATCH (source_entity:SourceEntity {source_uuid: $source_uuid})
+RETURN source_entity.uuid AS uuid,
+       source_entity.source_uuid AS source_uuid,
+       source_entity.source_block_uuid AS source_block_uuid,
+       source_entity.name AS name
+ORDER BY source_entity.source_block_uuid, source_entity.uuid
 """
 
 READ_SOURCE_EVENTS = """
-MATCH (event:Event {source_uuid: $source_uuid})
-RETURN event.uuid AS uuid,
-       event.source_uuid AS source_uuid,
-       event.source_block_uuid AS source_block_uuid,
-       event.name AS name
-ORDER BY event.source_block_uuid, event.uuid
+MATCH (source_event:SourceEvent {source_uuid: $source_uuid})
+RETURN source_event.uuid AS uuid,
+       source_event.source_uuid AS source_uuid,
+       source_event.source_block_uuid AS source_block_uuid,
+       source_event.name AS name
+ORDER BY source_event.source_block_uuid, source_event.uuid
 """
 
 READ_SOURCE_PREDICATES = """
-MATCH (predicate:Predicate {source_uuid: $source_uuid})
-RETURN predicate.uuid AS uuid,
-       predicate.source_uuid AS source_uuid,
-       predicate.source_block_uuid AS source_block_uuid,
-       predicate.predicate AS predicate
-ORDER BY predicate.source_block_uuid, predicate.uuid
+MATCH (source_predicate:SourcePredicate {source_uuid: $source_uuid})
+RETURN source_predicate.uuid AS uuid,
+       source_predicate.source_uuid AS source_uuid,
+       source_predicate.source_block_uuid AS source_block_uuid,
+       source_predicate.predicate AS predicate
+ORDER BY source_predicate.source_block_uuid, source_predicate.uuid
 """
 
-UPDATE_ENTITY_ENRICHMENT = """
+UPDATE_SOURCE_ENTITY_DESCRIPTION = """
 UNWIND $rows AS row
-MATCH (entity:Entity {uuid: row.uuid, source_uuid: $source_uuid})
-SET entity.description = row.description,
-    entity.embedding = row.embedding
-RETURN count(entity) AS updated
+MATCH (source_entity:SourceEntity {
+    uuid: row.uuid,
+    source_uuid: $source_uuid
+})
+SET source_entity.description = row.description,
+    source_entity.embedding = row.embedding
+RETURN count(source_entity) AS updated
 """
 
-UPDATE_EVENT_ENRICHMENT = """
+UPDATE_SOURCE_EVENT_DESCRIPTION = """
 UNWIND $rows AS row
-MATCH (event:Event {uuid: row.uuid, source_uuid: $source_uuid})
-SET event.description = row.description,
-    event.embedding = row.embedding
-RETURN count(event) AS updated
+MATCH (source_event:SourceEvent {
+    uuid: row.uuid,
+    source_uuid: $source_uuid
+})
+SET source_event.description = row.description,
+    source_event.embedding = row.embedding
+RETURN count(source_event) AS updated
 """
 
-UPDATE_PREDICATE_ENRICHMENT = """
+UPDATE_SOURCE_PREDICATE_DESCRIPTION = """
 UNWIND $rows AS row
-MATCH (predicate:Predicate {uuid: row.uuid, source_uuid: $source_uuid})
-SET predicate.description = row.description,
-    predicate.embedding = row.embedding
-RETURN count(predicate) AS updated
+MATCH (source_predicate:SourcePredicate {
+    uuid: row.uuid,
+    source_uuid: $source_uuid
+})
+SET source_predicate.description = row.description,
+    source_predicate.embedding = row.embedding
+RETURN count(source_predicate) AS updated
+"""
+
+FIND_SIMILAR_SOURCE_ENTITIES = """
+MATCH (query:SourceEntity {uuid: $query_uuid})
+CALL db.index.vector.queryNodes(
+    'source_entity_embedding',
+    $candidate_limit,
+    query.embedding
+)
+YIELD node, score
+WHERE node.uuid <> query.uuid
+RETURN node.uuid AS uuid,
+       node.source_uuid AS source_uuid,
+       node.source_block_uuid AS source_block_uuid,
+       node.name AS name,
+       node.description AS description,
+       score
+ORDER BY score DESC, uuid ASC
+LIMIT $top_k
+"""
+
+FIND_SIMILAR_SOURCE_EVENTS = """
+MATCH (query:SourceEvent {uuid: $query_uuid})
+CALL db.index.vector.queryNodes(
+    'source_event_embedding',
+    $candidate_limit,
+    query.embedding
+)
+YIELD node, score
+WHERE node.uuid <> query.uuid
+RETURN node.uuid AS uuid,
+       node.source_uuid AS source_uuid,
+       node.source_block_uuid AS source_block_uuid,
+       node.name AS name,
+       node.description AS description,
+       score
+ORDER BY score DESC, uuid ASC
+LIMIT $top_k
+"""
+
+FIND_SIMILAR_SOURCE_PREDICATES = """
+MATCH (query:SourcePredicate {uuid: $query_uuid})
+CALL db.index.vector.queryNodes(
+    'source_predicate_embedding',
+    $candidate_limit,
+    query.embedding
+)
+YIELD node, score
+WHERE node.uuid <> query.uuid
+RETURN node.uuid AS uuid,
+       node.source_uuid AS source_uuid,
+       node.source_block_uuid AS source_block_uuid,
+       node.predicate AS predicate,
+       node.description AS description,
+       score
+ORDER BY score DESC, uuid ASC
+LIMIT $top_k
 """

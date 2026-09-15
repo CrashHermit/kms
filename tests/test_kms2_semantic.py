@@ -1,55 +1,70 @@
 import asyncio
 
 from kms2.config import ContextWindowSettings
-from kms2.core.context_window import select_window
 from kms2.core.model import (
     AtomicFact,
-    Entity,
-    EntityEnrichmentRequest,
-    EntityEnrichmentResult,
-    EntityEnrichmentTarget,
-    Event,
     ExtractedFact,
     FactExtractionRequest,
-    Predicate,
     RawAssertion,
     RawTriplet,
     SemanticNodeKind,
     SourceBlock,
-    TermEnrichmentInput,
+    SourceEntity,
+    SourceEntityDescriptionRequest,
+    SourceEntityDescriptionResult,
+    SourceEntityDescriptionTarget,
+    SourceEvent,
+    SourcePredicate,
+    TermDescriptionInput,
     TripletCandidate,
     TripletDecompositionResult,
 )
+from kms2.core.windowing import select_window
 from kms2.database.semantic.queries import (
     CLEAR_SOURCE_ASSERTIONS,
+    FIND_SIMILAR_SOURCE_ENTITIES,
+    FIND_SIMILAR_SOURCE_EVENTS,
+    FIND_SIMILAR_SOURCE_PREDICATES,
     READ_SOURCE_ENTITIES,
     REPLACE_SOURCE_ASSERTIONS,
-    UPDATE_ENTITY_ENRICHMENT,
+    UPDATE_SOURCE_ENTITY_DESCRIPTION,
 )
 from kms2.database.semantic.repository import SemanticRepository
 from kms2.database.source.queries import READ_SOURCE_BLOCKS
 from kms2.database.source.repository import SourceRepository
 from kms2.langgraph.semantic.graph import SemanticGraph
 from kms2.langgraph.semantic.state import SemanticState
-from kms2.node.semantic.entity_embedding import EntityEmbeddingNode
-from kms2.node.semantic.entity_enrichment import EntityEnrichmentNode
-from kms2.node.semantic.entity_enrichment_load import EntityEnrichmentLoadNode
-from kms2.node.semantic.entity_enrichment_persistence import (
-    EntityEnrichmentPersistenceNode,
+from kms2.node.semantic.source_entity_description import (
+    SourceEntityDescriptionNode,
 )
-from kms2.node.semantic.event_embedding import EventEmbeddingNode
-from kms2.node.semantic.event_enrichment import EventEnrichmentNode
-from kms2.node.semantic.event_enrichment_load import EventEnrichmentLoadNode
-from kms2.node.semantic.event_enrichment_persistence import (
-    EventEnrichmentPersistenceNode,
+from kms2.node.semantic.source_entity_description_load import (
+    SourceEntityDescriptionLoadNode,
 )
-from kms2.node.semantic.predicate_embedding import PredicateEmbeddingNode
-from kms2.node.semantic.predicate_enrichment import PredicateEnrichmentNode
-from kms2.node.semantic.predicate_enrichment_load import (
-    PredicateEnrichmentLoadNode,
+from kms2.node.semantic.source_entity_embedding import SourceEntityEmbeddingNode
+from kms2.node.semantic.source_entity_persistence import (
+    SourceEntityPersistenceNode,
 )
-from kms2.node.semantic.predicate_enrichment_persistence import (
-    PredicateEnrichmentPersistenceNode,
+from kms2.node.semantic.source_event_description import (
+    SourceEventDescriptionNode,
+)
+from kms2.node.semantic.source_event_description_load import (
+    SourceEventDescriptionLoadNode,
+)
+from kms2.node.semantic.source_event_embedding import SourceEventEmbeddingNode
+from kms2.node.semantic.source_event_persistence import (
+    SourceEventPersistenceNode,
+)
+from kms2.node.semantic.source_predicate_description import (
+    SourcePredicateDescriptionNode,
+)
+from kms2.node.semantic.source_predicate_description_load import (
+    SourcePredicateDescriptionLoadNode,
+)
+from kms2.node.semantic.source_predicate_embedding import (
+    SourcePredicateEmbeddingNode,
+)
+from kms2.node.semantic.source_predicate_persistence import (
+    SourcePredicatePersistenceNode,
 )
 from kms2.node.semantic.triplet import (
     FactExtractionNode,
@@ -91,19 +106,16 @@ def test_fact_request_projects_uuid_free_context_window():
             {
                 'block_type': 'paragraph',
                 'content': 'before text',
-                'asset_paths': [],
             }
         ],
         'target_block': {
             'block_type': 'paragraph',
             'content': 'target text',
-            'asset_paths': [],
         },
         'context_after': [
             {
                 'block_type': 'paragraph',
                 'content': 'after text',
-                'asset_paths': [],
             }
         ],
     }
@@ -215,7 +227,7 @@ def test_triplet_collection_creates_fresh_vertex_ids_and_preserves_provenance():
         for assertion in assertions
     )
     assert all(
-        isinstance(assertion.subject, Entity) for assertion in assertions
+        isinstance(assertion.subject, SourceEntity) for assertion in assertions
     )
 
 
@@ -271,19 +283,19 @@ def test_semantic_repository_replace_uses_exact_query_parameters():
             object_uuid='object-1',
             predicate_uuid='predicate-1',
         ),
-        subject=Entity(
+        subject=SourceEntity(
             uuid='subject-1',
             source_uuid='source-1',
             source_block_uuid='block-1',
             name='Alice',
         ),
-        object=Entity(
+        object=SourceEntity(
             uuid='object-1',
             source_uuid='source-1',
             source_block_uuid='block-1',
             name='Acme',
         ),
-        predicate=Predicate(
+        predicate=SourcePredicate(
             uuid='predicate-1',
             source_uuid='source-1',
             source_block_uuid='block-1',
@@ -300,7 +312,7 @@ def test_semantic_repository_replace_uses_exact_query_parameters():
     assert 'CREATE (source)-[:HAS_TRIPLET]->(triplet)' not in query
     assert 'CREATE (triplet)-[:HAS_SUBJECT]->(subject)' in query
     assert 'CREATE (triplet)-[:HAS_OBJECT]->(object)' in query
-    assert 'CREATE (triplet)-[:HAS_PREDICATE]->(predicate)' in query
+    assert 'CREATE (triplet)-[:HAS_PREDICATE]->(source_predicate)' in query
 
     asyncio.run(repository.replace_source_assertions('source-1', []))
     assert session.calls[-1][0] is CLEAR_SOURCE_ASSERTIONS
@@ -382,34 +394,40 @@ def test_semantic_graph_raw_only_mode_cleans_semantic_layer():
         fact_extraction=FactExtractionNode(_FactExtractor(), context_window),
         triplet_decomposition=TripletDecompositionNode(_TripletDecomposer()),
         triplet_persistence=TripletPersistenceNode(repository, _noop_schema),
-        entity_enrichment_load=EntityEnrichmentLoadNode(
+        source_entity_description_load=SourceEntityDescriptionLoadNode(
             source_repository, semantic_repository, context_window
         ),
-        entity_enrichment=EntityEnrichmentNode(_EntityEnricher()),
-        entity_embedding=EntityEmbeddingNode(_EmbeddingClient()),
-        entity_enrichment_persistence=EntityEnrichmentPersistenceNode(
+        source_entity_description=SourceEntityDescriptionNode(
+            _EntityDescriber()
+        ),
+        source_entity_embedding=SourceEntityEmbeddingNode(_EmbeddingClient()),
+        source_entity_persistence=SourceEntityPersistenceNode(
             semantic_repository, _noop_schema
         ),
-        event_enrichment_load=EventEnrichmentLoadNode(
+        source_event_description_load=SourceEventDescriptionLoadNode(
             source_repository, semantic_repository, context_window
         ),
-        event_enrichment=EventEnrichmentNode(_EntityEnricher()),
-        event_embedding=EventEmbeddingNode(_EmbeddingClient()),
-        event_enrichment_persistence=EventEnrichmentPersistenceNode(
+        source_event_description=SourceEventDescriptionNode(_EntityDescriber()),
+        source_event_embedding=SourceEventEmbeddingNode(_EmbeddingClient()),
+        source_event_persistence=SourceEventPersistenceNode(
             semantic_repository, _noop_schema
         ),
-        predicate_enrichment_load=PredicateEnrichmentLoadNode(
+        source_predicate_description_load=SourcePredicateDescriptionLoadNode(
             source_repository, semantic_repository, context_window
         ),
-        predicate_enrichment=PredicateEnrichmentNode(_EntityEnricher()),
-        predicate_embedding=PredicateEmbeddingNode(_EmbeddingClient()),
-        predicate_enrichment_persistence=PredicateEnrichmentPersistenceNode(
+        source_predicate_description=SourcePredicateDescriptionNode(
+            _EntityDescriber()
+        ),
+        source_predicate_embedding=SourcePredicateEmbeddingNode(
+            _EmbeddingClient()
+        ),
+        source_predicate_persistence=SourcePredicatePersistenceNode(
             semantic_repository, _noop_schema
         ),
     ).build_graph(raw_only=True)
 
     assert {'triplet_source_load', 'triplet_persistence'} <= set(graph.nodes)
-    assert 'entity_enrichment_load' not in graph.nodes
+    assert 'source_entity_description_load' not in graph.nodes
     final_state = asyncio.run(graph.ainvoke({'source_uuid': 'source-1'}))
 
     assert final_state['raw_assertions'] == []
@@ -431,29 +449,29 @@ class _TypedSemanticRepository:
         self.predicates = predicates or []
         self.updated = {}
 
-    async def load_entities(self, source_uuid):
+    async def load_source_entities(self, source_uuid):
         return self.entities
 
-    async def load_events(self, source_uuid):
+    async def load_source_events(self, source_uuid):
         return self.events
 
-    async def load_predicates(self, source_uuid):
+    async def load_source_predicates(self, source_uuid):
         return self.predicates
 
-    async def update_entity_enrichment(self, source_uuid, results):
+    async def update_source_entity_description(self, source_uuid, results):
         self.updated['entity'] = (source_uuid, results)
 
-    async def update_event_enrichment(self, source_uuid, results):
+    async def update_source_event_description(self, source_uuid, results):
         self.updated['event'] = (source_uuid, results)
 
-    async def update_predicate_enrichment(self, source_uuid, results):
+    async def update_source_predicate_description(self, source_uuid, results):
         self.updated['predicate'] = (source_uuid, results)
 
     async def replace_source_assertions(self, source_uuid, assertions):
         self.assertions = (source_uuid, assertions)
 
 
-class _EntityEnricher:
+class _EntityDescriber:
     async def aforward(self, *, request):
         return f'description of {request.term}'
 
@@ -473,20 +491,20 @@ def test_entity_load_orders_occurrences_and_projects_authoritative_context():
         _block('block-2', 'second'),
     ]
     occurrences = [
-        Entity(
+        SourceEntity(
             uuid='entity-b',
             source_uuid='source-1',
             source_block_uuid='block-1',
             name='Beta',
         ),
-        Entity(
+        SourceEntity(
             uuid='entity-a',
             source_uuid='source-1',
             source_block_uuid='block-1',
             name='Alpha',
         ),
     ]
-    node = EntityEnrichmentLoadNode(
+    node = SourceEntityDescriptionLoadNode(
         _TypedSourceRepository(blocks),
         _TypedSemanticRepository(occurrences),
         ContextWindowSettings(backward_budget=400, forward_budget=400),
@@ -494,7 +512,7 @@ def test_entity_load_orders_occurrences_and_projects_authoritative_context():
 
     state = asyncio.run(node.run(SemanticState(source_uuid='source-1')))
 
-    requests = state['entity_requests']
+    requests = state['source_entity_description_requests']
     assert [request.target.uuid for request in requests] == [
         'entity-a',
         'entity-b',
@@ -506,15 +524,15 @@ def test_entity_load_orders_occurrences_and_projects_authoritative_context():
     assert requests[0].model_input.context_after[0].content == 'second'
 
 
-def test_entity_enrichment_embedding_preserves_occurrence_identity():
-    request = EntityEnrichmentRequest(
-        target=EntityEnrichmentTarget(
+def test_entity_description_embedding_preserves_occurrence_identity():
+    request = SourceEntityDescriptionRequest(
+        target=SourceEntityDescriptionTarget(
             uuid='entity-1',
             source_uuid='source-1',
             source_block_uuid='block-1',
             name='Alpha',
         ),
-        model_input=TermEnrichmentInput(
+        model_input=TermDescriptionInput(
             term='Alpha',
             target_block={
                 'block_type': 'paragraph',
@@ -522,20 +540,24 @@ def test_entity_enrichment_embedding_preserves_occurrence_identity():
             },
         ),
     )
-    enrichment = EntityEnrichmentNode(_EntityEnricher())
+    describer = SourceEntityDescriptionNode(_EntityDescriber())
     description_state = asyncio.run(
-        enrichment.worker({'entity_enrichment_request': request})
+        describer.worker({'source_entity_description_request': request})
     )
-    description_result = description_state['entity_description_results'][0]
+    description_result = description_state['source_entity_description_results'][
+        0
+    ]
     client = _EmbeddingClient()
-    embedding = EntityEmbeddingNode(client)
+    embedding = SourceEntityEmbeddingNode(client)
 
     embedded_state = asyncio.run(
-        embedding.worker({'entity_description_results': [description_result]})
+        embedding.worker(
+            {'source_entity_description_results': [description_result]}
+        )
     )
 
     assert client.texts == ['Alpha : description of Alpha']
-    result = embedded_state['entity_embedding_results'][0]
+    result = embedded_state['source_entity_embedding_results'][0]
     assert result.uuid == 'entity-1'
     assert result.embedding == [0.0]
 
@@ -548,7 +570,19 @@ class _RowsResult:
                 'source_uuid': 'source-1',
                 'source_block_uuid': 'block-1',
                 'name': 'Alpha',
-            }
+                'predicate': 'supports',
+                'description': 'supports locally',
+                'score': 0.99,
+            },
+            {
+                'uuid': 'entity-2',
+                'source_uuid': 'source-1',
+                'source_block_uuid': 'block-2',
+                'name': 'Beta',
+                'predicate': 'contains',
+                'description': 'contains locally',
+                'score': 0.81,
+            },
         ]
 
     async def consume(self):
@@ -568,19 +602,21 @@ def test_semantic_repository_typed_reads_and_updates_are_source_scoped():
     session = _RowsSession()
     repository = SemanticRepository(lambda: _SessionContext(session))
 
-    entities = asyncio.run(repository.load_entities('source-1'))
-    result = EntityEnrichmentResult(
+    entities = asyncio.run(repository.load_source_entities('source-1'))
+    result = SourceEntityDescriptionResult(
         **entities[0].model_dump(),
         description='a local description',
         embedding=[0.1, 0.2],
     )
-    asyncio.run(repository.update_entity_enrichment('source-1', [result]))
+    asyncio.run(
+        repository.update_source_entity_description('source-1', [result])
+    )
 
     assert session.calls[0] == (
         READ_SOURCE_ENTITIES,
         {'source_uuid': 'source-1'},
     )
-    assert session.calls[1][0] is UPDATE_ENTITY_ENRICHMENT
+    assert session.calls[1][0] is UPDATE_SOURCE_ENTITY_DESCRIPTION
     assert session.calls[1][1] == {
         'source_uuid': 'source-1',
         'rows': [
@@ -591,9 +627,65 @@ def test_semantic_repository_typed_reads_and_updates_are_source_scoped():
             }
         ],
     }
-    assert 'MATCH (entity:Entity' in UPDATE_ENTITY_ENRICHMENT
-    assert 'source_uuid: $source_uuid' in UPDATE_ENTITY_ENRICHMENT
-    assert 'HAS_TRIPLET' not in UPDATE_ENTITY_ENRICHMENT
+    entity_matches = asyncio.run(
+        repository.find_similar_source_entities('entity-1', top_k=2)
+    )
+    event_matches = asyncio.run(
+        repository.find_similar_source_events('event-1', top_k=2)
+    )
+    predicate_matches = asyncio.run(
+        repository.find_similar_source_predicates('predicate-1', top_k=2)
+    )
+
+    assert [match.uuid for match in entity_matches] == ['entity-1', 'entity-2']
+    assert [match.uuid for match in event_matches] == ['entity-1', 'entity-2']
+    assert [match.uuid for match in predicate_matches] == [
+        'entity-1',
+        'entity-2',
+    ]
+    assert entity_matches[0].score == 0.99
+    assert entity_matches[0].model_dump().keys() == {
+        'uuid',
+        'source_uuid',
+        'source_block_uuid',
+        'name',
+        'description',
+        'score',
+    }
+    assert predicate_matches[0].predicate == 'supports'
+
+    assert session.calls[2] == (
+        FIND_SIMILAR_SOURCE_ENTITIES,
+        {
+            'query_uuid': 'entity-1',
+            'top_k': 2,
+            'candidate_limit': 3,
+        },
+    )
+    assert session.calls[3] == (
+        FIND_SIMILAR_SOURCE_EVENTS,
+        {
+            'query_uuid': 'event-1',
+            'top_k': 2,
+            'candidate_limit': 3,
+        },
+    )
+    assert session.calls[4] == (
+        FIND_SIMILAR_SOURCE_PREDICATES,
+        {
+            'query_uuid': 'predicate-1',
+            'top_k': 2,
+            'candidate_limit': 3,
+        },
+    )
+    assert 'SourceEntity' in FIND_SIMILAR_SOURCE_ENTITIES
+    assert 'source_entity_embedding' in FIND_SIMILAR_SOURCE_ENTITIES
+    assert 'SourceEvent' in FIND_SIMILAR_SOURCE_EVENTS
+    assert 'source_event_embedding' in FIND_SIMILAR_SOURCE_EVENTS
+    assert 'SourcePredicate' in FIND_SIMILAR_SOURCE_PREDICATES
+    assert 'source_predicate_embedding' in FIND_SIMILAR_SOURCE_PREDICATES
+    assert 'node.uuid <> query.uuid' in FIND_SIMILAR_SOURCE_PREDICATES
+    assert 'ORDER BY score DESC, uuid ASC' in FIND_SIMILAR_SOURCE_PREDICATES
 
 
 def test_semantic_graph_runs_all_typed_phases_in_one_graph():
@@ -602,7 +694,7 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
     )
     semantic_repository = _TypedSemanticRepository(
         [
-            Entity(
+            SourceEntity(
                 uuid='entity-1',
                 source_uuid='source-1',
                 source_block_uuid='block-1',
@@ -610,7 +702,7 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
             )
         ],
         [
-            Event(
+            SourceEvent(
                 uuid='event-1',
                 source_uuid='source-1',
                 source_block_uuid='block-1',
@@ -618,7 +710,7 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
             )
         ],
         [
-            Predicate(
+            SourcePredicate(
                 uuid='predicate-1',
                 source_uuid='source-1',
                 source_block_uuid='block-1',
@@ -639,36 +731,42 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
             semantic_repository,
             _noop_schema,
         ),
-        entity_enrichment_load=EntityEnrichmentLoadNode(
+        source_entity_description_load=SourceEntityDescriptionLoadNode(
             source_repository,
             semantic_repository,
             context_window,
         ),
-        entity_enrichment=EntityEnrichmentNode(_EntityEnricher()),
-        entity_embedding=EntityEmbeddingNode(_EmbeddingClient()),
-        entity_enrichment_persistence=EntityEnrichmentPersistenceNode(
+        source_entity_description=SourceEntityDescriptionNode(
+            _EntityDescriber()
+        ),
+        source_entity_embedding=SourceEntityEmbeddingNode(_EmbeddingClient()),
+        source_entity_persistence=SourceEntityPersistenceNode(
             semantic_repository,
             _noop_schema,
         ),
-        event_enrichment_load=EventEnrichmentLoadNode(
+        source_event_description_load=SourceEventDescriptionLoadNode(
             source_repository,
             semantic_repository,
             context_window,
         ),
-        event_enrichment=EventEnrichmentNode(_EntityEnricher()),
-        event_embedding=EventEmbeddingNode(_EmbeddingClient()),
-        event_enrichment_persistence=EventEnrichmentPersistenceNode(
+        source_event_description=SourceEventDescriptionNode(_EntityDescriber()),
+        source_event_embedding=SourceEventEmbeddingNode(_EmbeddingClient()),
+        source_event_persistence=SourceEventPersistenceNode(
             semantic_repository,
             _noop_schema,
         ),
-        predicate_enrichment_load=PredicateEnrichmentLoadNode(
+        source_predicate_description_load=SourcePredicateDescriptionLoadNode(
             source_repository,
             semantic_repository,
             context_window,
         ),
-        predicate_enrichment=PredicateEnrichmentNode(_EntityEnricher()),
-        predicate_embedding=PredicateEmbeddingNode(_EmbeddingClient()),
-        predicate_enrichment_persistence=PredicateEnrichmentPersistenceNode(
+        source_predicate_description=SourcePredicateDescriptionNode(
+            _EntityDescriber()
+        ),
+        source_predicate_embedding=SourcePredicateEmbeddingNode(
+            _EmbeddingClient()
+        ),
+        source_predicate_persistence=SourcePredicatePersistenceNode(
             semantic_repository,
             _noop_schema,
         ),
@@ -676,14 +774,14 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
 
     assert {
         'triplet_persistence',
-        'entity_enrichment_load',
-        'event_enrichment_load',
-        'predicate_enrichment_load',
+        'source_entity_description_load',
+        'source_event_description_load',
+        'source_predicate_description_load',
     } <= set(graph.nodes)
     final_state = asyncio.run(graph.ainvoke({'source_uuid': 'source-1'}))
 
     assert len(final_state['raw_assertions']) == 1
-    assert final_state['entity_persisted_count'] == 1
-    assert final_state['event_persisted_count'] == 1
-    assert final_state['predicate_persisted_count'] == 1
+    assert final_state['source_entity_description_persisted_count'] == 1
+    assert final_state['source_event_description_persisted_count'] == 1
+    assert final_state['source_predicate_description_persisted_count'] == 1
     assert set(semantic_repository.updated) == {'entity', 'event', 'predicate'}

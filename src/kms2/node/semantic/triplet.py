@@ -5,20 +5,20 @@ from typing import Literal, TypedDict
 from langgraph.types import Send
 
 from kms2.config import ContextWindowSettings
-from kms2.core.context_window import select_window
 from kms2.core.model import (
-    Entity,
-    Event,
     ExtractedFact,
     FactExtractionRequest,
     FactExtractionResult,
-    Predicate,
     RawAssertion,
     RawTriplet,
     SemanticNodeKind,
+    SourceEntity,
+    SourceEvent,
+    SourcePredicate,
     TripletDecompositionRequest,
     TripletDecompositionResult,
 )
+from kms2.core.windowing import select_window
 from kms2.langgraph.semantic.state import SemanticState
 from kms2.module.semantic.triplet import (
     FactExtractorModule,
@@ -166,32 +166,32 @@ class TripletDecompositionNode:
             fact = result.fact
             for candidate in result.triplets:
                 subject = (
-                    Entity(
+                    SourceEntity(
                         source_uuid=fact.source_uuid,
                         source_block_uuid=fact.source_block_uuid,
                         name=candidate.subject,
                     )
                     if candidate.subject_kind is SemanticNodeKind.ENTITY
-                    else Event(
+                    else SourceEvent(
                         source_uuid=fact.source_uuid,
                         source_block_uuid=fact.source_block_uuid,
                         name=candidate.subject,
                     )
                 )
                 object_ = (
-                    Entity(
+                    SourceEntity(
                         source_uuid=fact.source_uuid,
                         source_block_uuid=fact.source_block_uuid,
                         name=candidate.object,
                     )
                     if candidate.object_kind is SemanticNodeKind.ENTITY
-                    else Event(
+                    else SourceEvent(
                         source_uuid=fact.source_uuid,
                         source_block_uuid=fact.source_block_uuid,
                         name=candidate.object,
                     )
                 )
-                predicate = Predicate(
+                predicate = SourcePredicate(
                     source_uuid=fact.source_uuid,
                     source_block_uuid=fact.source_block_uuid,
                     predicate=candidate.predicate,

@@ -1,15 +1,15 @@
-from kms2.core.context_window import (
-    estimate_text_tokens,
-    estimate_tokens,
-    project_block,
-    select_window,
-)
 from kms2.core.model import (
     BlockType,
     SourceBlock,
     SourceBlockContext,
     SourceContextWindow,
     VisualAsset,
+)
+from kms2.core.windowing import (
+    estimate_text_tokens,
+    estimate_tokens,
+    project_block,
+    select_window,
 )
 
 
@@ -56,12 +56,7 @@ def test_project_block_preserves_model_facing_fields_only():
 
     assert projected.block_type is BlockType.IMAGE
     assert projected.content == 'source text'
-    assert projected.asset_paths == ['first.png', 'second.png']
-    assert set(projected.model_dump()) == {
-        'block_type',
-        'content',
-        'asset_paths',
-    }
+    assert set(projected.model_dump()) == {'block_type', 'content'}
 
 
 def test_select_window_returns_ordered_target_and_independent_context_sides():
@@ -135,11 +130,8 @@ def test_select_window_includes_exact_budget_boundaries_and_stops_on_oversized_n
     assert oversized.context_before == []
 
 
-def test_token_estimates_ignore_asset_paths():
-    visual_context = SourceBlockContext(
-        block_type=BlockType.IMAGE,
-        asset_paths=['a-very-long-image-path-that-is-not-tokenized.png'],
-    )
+def test_token_estimates_use_content_only():
+    visual_context = SourceBlockContext(block_type=BlockType.IMAGE)
 
     assert estimate_text_tokens(None) == 1
     assert estimate_text_tokens('abcd') == 2

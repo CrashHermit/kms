@@ -4,9 +4,11 @@ from typing import Literal, TypedDict
 
 from langgraph.types import Send
 
-from kms2.core.model import BlockType
-from kms2.core.model.formatting import FormattingRequest, FormattingResult
-from kms2.core.model.source import SourceBlock, SourcePage
+from kms2.core.model import BlockType, SourceBlock, SourcePage
+from kms2.core.model.source_stage.formatting import (
+    FormattingRequest,
+    FormattingResult,
+)
 from kms2.langgraph.source.state import SourceState
 from kms2.module.source.formatting import FormatterModule
 

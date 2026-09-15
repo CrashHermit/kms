@@ -184,8 +184,8 @@ async def _test_retrieval_clients_preserve_server_payload_order():
                 200,
                 json={
                     'data': [
-                        {'index': 1, 'embedding': [1.0]},
-                        {'index': 0, 'embedding': [0.0]},
+                        {'index': 1, 'embedding': [0.0, 4.0]},
+                        {'index': 0, 'embedding': [3.0, 4.0]},
                     ]
                 },
             )
@@ -216,7 +216,9 @@ async def _test_retrieval_clients_preserve_server_payload_order():
         settings.reranker, reranker_http, coordinator, role
     )
 
-    assert await embedding.embed(['a', 'b']) == [[1.0], [0.0]]
+    embedded = await embedding.embed(['a', 'b'])
+    assert embedded[0] == [0.0, 4.0]
+    assert embedded[1] == [3.0, 4.0]
     assert await reranker.rerank('query', ['a', 'b'], top_n=1) == [{'index': 1}]
 
     await coordinator.close()

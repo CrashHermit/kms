@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from kms2 import tui
 from kms2.application import SemanticStageResult
 from kms2.config import Settings
-from kms2.core.model.source import Source
+from kms2.core.model import Source
 
 
 class _Prompt:
@@ -18,9 +18,9 @@ class _Prompt:
 def _semantic_result() -> SemanticStageResult:
     return SemanticStageResult(
         raw_assertion_count=4,
-        entity_enrichment_count=3,
-        event_enrichment_count=2,
-        predicate_enrichment_count=1,
+        source_entity_description_count=3,
+        source_event_description_count=2,
+        source_predicate_description_count=1,
     )
 
 
@@ -140,8 +140,8 @@ def test_tui_runs_complete_stage_from_existing_source(monkeypatch, caplog):
     assert source_uuid == 'source-1'
     assert (
         'Done: source source-1 (book.pdf), semantic stage persisted 4 assertion(s), '
-        '3 entity enrichment(s), 2 event enrichment(s), and 1 predicate enrichment(s).'
-        in caplog.messages
+        '3 source entity description(s), 2 source event description(s), and '
+        '1 source predicate description(s).' in caplog.messages
     )
 
 

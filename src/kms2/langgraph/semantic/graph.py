@@ -3,25 +3,37 @@
 from kms2.langgraph.semantic.facts import add_fact_phase
 from kms2.langgraph.semantic.state import SemanticState
 from kms2.langgraph.semantic.triplets import add_triplet_phase
-from kms2.node.semantic.entity_embedding import EntityEmbeddingNode
-from kms2.node.semantic.entity_enrichment import EntityEnrichmentNode
-from kms2.node.semantic.entity_enrichment_load import EntityEnrichmentLoadNode
-from kms2.node.semantic.entity_enrichment_persistence import (
-    EntityEnrichmentPersistenceNode,
+from kms2.node.semantic.source_entity_description import (
+    SourceEntityDescriptionNode,
 )
-from kms2.node.semantic.event_embedding import EventEmbeddingNode
-from kms2.node.semantic.event_enrichment import EventEnrichmentNode
-from kms2.node.semantic.event_enrichment_load import EventEnrichmentLoadNode
-from kms2.node.semantic.event_enrichment_persistence import (
-    EventEnrichmentPersistenceNode,
+from kms2.node.semantic.source_entity_description_load import (
+    SourceEntityDescriptionLoadNode,
 )
-from kms2.node.semantic.predicate_embedding import PredicateEmbeddingNode
-from kms2.node.semantic.predicate_enrichment import PredicateEnrichmentNode
-from kms2.node.semantic.predicate_enrichment_load import (
-    PredicateEnrichmentLoadNode,
+from kms2.node.semantic.source_entity_embedding import SourceEntityEmbeddingNode
+from kms2.node.semantic.source_entity_persistence import (
+    SourceEntityPersistenceNode,
 )
-from kms2.node.semantic.predicate_enrichment_persistence import (
-    PredicateEnrichmentPersistenceNode,
+from kms2.node.semantic.source_event_description import (
+    SourceEventDescriptionNode,
+)
+from kms2.node.semantic.source_event_description_load import (
+    SourceEventDescriptionLoadNode,
+)
+from kms2.node.semantic.source_event_embedding import SourceEventEmbeddingNode
+from kms2.node.semantic.source_event_persistence import (
+    SourceEventPersistenceNode,
+)
+from kms2.node.semantic.source_predicate_description import (
+    SourcePredicateDescriptionNode,
+)
+from kms2.node.semantic.source_predicate_description_load import (
+    SourcePredicateDescriptionLoadNode,
+)
+from kms2.node.semantic.source_predicate_embedding import (
+    SourcePredicateEmbeddingNode,
+)
+from kms2.node.semantic.source_predicate_persistence import (
+    SourcePredicatePersistenceNode,
 )
 from kms2.node.semantic.triplet import (
     FactExtractionNode,
@@ -34,7 +46,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 
 class SemanticGraph:
-    """Compile raw extraction and typed enrichment as one semantic graph."""
+    """Compile raw extraction and typed descriptions as one semantic graph."""
 
     def __init__(
         self,
@@ -42,36 +54,38 @@ class SemanticGraph:
         fact_extraction: FactExtractionNode,
         triplet_decomposition: TripletDecompositionNode,
         triplet_persistence: TripletPersistenceNode,
-        entity_enrichment_load: EntityEnrichmentLoadNode,
-        entity_enrichment: EntityEnrichmentNode,
-        entity_embedding: EntityEmbeddingNode,
-        entity_enrichment_persistence: EntityEnrichmentPersistenceNode,
-        event_enrichment_load: EventEnrichmentLoadNode,
-        event_enrichment: EventEnrichmentNode,
-        event_embedding: EventEmbeddingNode,
-        event_enrichment_persistence: EventEnrichmentPersistenceNode,
-        predicate_enrichment_load: PredicateEnrichmentLoadNode,
-        predicate_enrichment: PredicateEnrichmentNode,
-        predicate_embedding: PredicateEmbeddingNode,
-        predicate_enrichment_persistence: PredicateEnrichmentPersistenceNode,
+        source_entity_description_load: SourceEntityDescriptionLoadNode,
+        source_entity_description: SourceEntityDescriptionNode,
+        source_entity_embedding: SourceEntityEmbeddingNode,
+        source_entity_persistence: SourceEntityPersistenceNode,
+        source_event_description_load: SourceEventDescriptionLoadNode,
+        source_event_description: SourceEventDescriptionNode,
+        source_event_embedding: SourceEventEmbeddingNode,
+        source_event_persistence: SourceEventPersistenceNode,
+        source_predicate_description_load: SourcePredicateDescriptionLoadNode,
+        source_predicate_description: SourcePredicateDescriptionNode,
+        source_predicate_embedding: SourcePredicateEmbeddingNode,
+        source_predicate_persistence: SourcePredicatePersistenceNode,
     ) -> None:
         self.graph = StateGraph(SemanticState)
         self.triplet_source_load = triplet_source_load
         self.fact_extraction = fact_extraction
         self.triplet_decomposition = triplet_decomposition
         self.triplet_persistence = triplet_persistence
-        self.entity_enrichment_load = entity_enrichment_load
-        self.entity_enrichment = entity_enrichment
-        self.entity_embedding = entity_embedding
-        self.entity_enrichment_persistence = entity_enrichment_persistence
-        self.event_enrichment_load = event_enrichment_load
-        self.event_enrichment = event_enrichment
-        self.event_embedding = event_embedding
-        self.event_enrichment_persistence = event_enrichment_persistence
-        self.predicate_enrichment_load = predicate_enrichment_load
-        self.predicate_enrichment = predicate_enrichment
-        self.predicate_embedding = predicate_embedding
-        self.predicate_enrichment_persistence = predicate_enrichment_persistence
+        self.source_entity_description_load = source_entity_description_load
+        self.source_entity_description = source_entity_description
+        self.source_entity_embedding = source_entity_embedding
+        self.source_entity_persistence = source_entity_persistence
+        self.source_event_description_load = source_event_description_load
+        self.source_event_description = source_event_description
+        self.source_event_embedding = source_event_embedding
+        self.source_event_persistence = source_event_persistence
+        self.source_predicate_description_load = (
+            source_predicate_description_load
+        )
+        self.source_predicate_description = source_predicate_description
+        self.source_predicate_embedding = source_predicate_embedding
+        self.source_predicate_persistence = source_predicate_persistence
 
     def build_graph(self, *, raw_only: bool = False) -> CompiledStateGraph:
         """Compile the complete graph or its explicit raw-only prefix."""
@@ -87,124 +101,166 @@ class SemanticGraph:
             return self.graph.compile()
 
         self.graph.add_node(
-            'entity_enrichment_load', self.entity_enrichment_load.run
+            'source_entity_description_load',
+            self.source_entity_description_load.run,
         )
         self.graph.add_node(
-            'entity_enrichment_worker', self.entity_enrichment.worker
+            'source_entity_description_worker',
+            self.source_entity_description.worker,
         )
         self.graph.add_node(
-            'entity_enrichment_collect', self.entity_enrichment.collect
+            'source_entity_description_collect',
+            self.source_entity_description.collect,
         )
         self.graph.add_node(
-            'entity_embedding_worker', self.entity_embedding.worker
+            'source_entity_embedding_worker',
+            self.source_entity_embedding.worker,
         )
         self.graph.add_node(
-            'entity_embedding_collect', self.entity_embedding.collect
+            'source_entity_embedding_collect',
+            self.source_entity_embedding.collect,
         )
         self.graph.add_node(
-            'entity_enrichment_persistence',
-            self.entity_enrichment_persistence.run,
+            'source_entity_persistence',
+            self.source_entity_persistence.run,
         )
         self.graph.add_node(
-            'event_enrichment_load', self.event_enrichment_load.run
+            'source_event_description_load',
+            self.source_event_description_load.run,
         )
         self.graph.add_node(
-            'event_enrichment_worker', self.event_enrichment.worker
+            'source_event_description_worker',
+            self.source_event_description.worker,
         )
         self.graph.add_node(
-            'event_enrichment_collect', self.event_enrichment.collect
+            'source_event_description_collect',
+            self.source_event_description.collect,
         )
         self.graph.add_node(
-            'event_embedding_worker', self.event_embedding.worker
+            'source_event_embedding_worker', self.source_event_embedding.worker
         )
         self.graph.add_node(
-            'event_embedding_collect', self.event_embedding.collect
+            'source_event_embedding_collect',
+            self.source_event_embedding.collect,
         )
         self.graph.add_node(
-            'event_enrichment_persistence',
-            self.event_enrichment_persistence.run,
+            'source_event_persistence',
+            self.source_event_persistence.run,
         )
         self.graph.add_node(
-            'predicate_enrichment_load', self.predicate_enrichment_load.run
+            'source_predicate_description_load',
+            self.source_predicate_description_load.run,
         )
         self.graph.add_node(
-            'predicate_enrichment_worker', self.predicate_enrichment.worker
+            'source_predicate_description_worker',
+            self.source_predicate_description.worker,
         )
         self.graph.add_node(
-            'predicate_enrichment_collect', self.predicate_enrichment.collect
+            'source_predicate_description_collect',
+            self.source_predicate_description.collect,
         )
         self.graph.add_node(
-            'predicate_embedding_worker', self.predicate_embedding.worker
+            'source_predicate_embedding_worker',
+            self.source_predicate_embedding.worker,
         )
         self.graph.add_node(
-            'predicate_embedding_collect', self.predicate_embedding.collect
+            'source_predicate_embedding_collect',
+            self.source_predicate_embedding.collect,
         )
         self.graph.add_node(
-            'predicate_enrichment_persistence',
-            self.predicate_enrichment_persistence.run,
+            'source_predicate_persistence',
+            self.source_predicate_persistence.run,
         )
 
-        self.graph.add_edge('triplet_persistence', 'entity_enrichment_load')
-        self.graph.add_conditional_edges(
-            'entity_enrichment_load',
-            self.entity_enrichment.dispatch,
-            ['entity_enrichment_worker', 'entity_enrichment_collect'],
-        )
         self.graph.add_edge(
-            'entity_enrichment_worker', 'entity_enrichment_collect'
+            'triplet_persistence', 'source_entity_description_load'
         )
         self.graph.add_conditional_edges(
-            'entity_enrichment_collect',
-            self.entity_embedding.dispatch,
-            ['entity_embedding_worker', 'entity_embedding_collect'],
+            'source_entity_description_load',
+            self.source_entity_description.dispatch,
+            [
+                'source_entity_description_worker',
+                'source_entity_description_collect',
+            ],
         )
         self.graph.add_edge(
-            'entity_embedding_worker', 'entity_embedding_collect'
-        )
-        self.graph.add_edge(
-            'entity_embedding_collect', 'entity_enrichment_persistence'
-        )
-        self.graph.add_edge(
-            'entity_enrichment_persistence', 'event_enrichment_load'
+            'source_entity_description_worker',
+            'source_entity_description_collect',
         )
         self.graph.add_conditional_edges(
-            'event_enrichment_load',
-            self.event_enrichment.dispatch,
-            ['event_enrichment_worker', 'event_enrichment_collect'],
+            'source_entity_description_collect',
+            self.source_entity_embedding.dispatch,
+            [
+                'source_entity_embedding_worker',
+                'source_entity_embedding_collect',
+            ],
         )
         self.graph.add_edge(
-            'event_enrichment_worker', 'event_enrichment_collect'
+            'source_entity_embedding_worker', 'source_entity_embedding_collect'
+        )
+        self.graph.add_edge(
+            'source_entity_embedding_collect',
+            'source_entity_persistence',
+        )
+        self.graph.add_edge(
+            'source_entity_persistence',
+            'source_event_description_load',
         )
         self.graph.add_conditional_edges(
-            'event_enrichment_collect',
-            self.event_embedding.dispatch,
-            ['event_embedding_worker', 'event_embedding_collect'],
+            'source_event_description_load',
+            self.source_event_description.dispatch,
+            [
+                'source_event_description_worker',
+                'source_event_description_collect',
+            ],
         )
-        self.graph.add_edge('event_embedding_worker', 'event_embedding_collect')
         self.graph.add_edge(
-            'event_embedding_collect', 'event_enrichment_persistence'
-        )
-        self.graph.add_edge(
-            'event_enrichment_persistence', 'predicate_enrichment_load'
+            'source_event_description_worker',
+            'source_event_description_collect',
         )
         self.graph.add_conditional_edges(
-            'predicate_enrichment_load',
-            self.predicate_enrichment.dispatch,
-            ['predicate_enrichment_worker', 'predicate_enrichment_collect'],
+            'source_event_description_collect',
+            self.source_event_embedding.dispatch,
+            ['source_event_embedding_worker', 'source_event_embedding_collect'],
         )
         self.graph.add_edge(
-            'predicate_enrichment_worker', 'predicate_enrichment_collect'
+            'source_event_embedding_worker', 'source_event_embedding_collect'
+        )
+        self.graph.add_edge(
+            'source_event_embedding_collect',
+            'source_event_persistence',
+        )
+        self.graph.add_edge(
+            'source_event_persistence',
+            'source_predicate_description_load',
         )
         self.graph.add_conditional_edges(
-            'predicate_enrichment_collect',
-            self.predicate_embedding.dispatch,
-            ['predicate_embedding_worker', 'predicate_embedding_collect'],
+            'source_predicate_description_load',
+            self.source_predicate_description.dispatch,
+            [
+                'source_predicate_description_worker',
+                'source_predicate_description_collect',
+            ],
         )
         self.graph.add_edge(
-            'predicate_embedding_worker', 'predicate_embedding_collect'
+            'source_predicate_description_worker',
+            'source_predicate_description_collect',
+        )
+        self.graph.add_conditional_edges(
+            'source_predicate_description_collect',
+            self.source_predicate_embedding.dispatch,
+            [
+                'source_predicate_embedding_worker',
+                'source_predicate_embedding_collect',
+            ],
         )
         self.graph.add_edge(
-            'predicate_embedding_collect', 'predicate_enrichment_persistence'
+            'source_predicate_embedding_worker',
+            'source_predicate_embedding_collect',
         )
-        self.graph.add_edge('predicate_enrichment_persistence', END)
+        self.graph.add_edge(
+            'source_predicate_embedding_collect',
+            'source_predicate_persistence',
+        )
+        self.graph.add_edge('source_predicate_persistence', END)
         return self.graph.compile()

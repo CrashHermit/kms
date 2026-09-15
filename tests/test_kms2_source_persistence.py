@@ -1,6 +1,13 @@
 import asyncio
 
-from kms2.core.model import Source, SourceBlock, SourcePage
+from kms2.core.model import (
+    Instruction,
+    Procedure,
+    Source,
+    SourceBlock,
+    SourcePage,
+    Statement,
+)
 from kms2.langgraph.source.state import SourceState
 from kms2.node.source.persistence import SourcePersistenceNode
 
@@ -13,8 +20,13 @@ class _RecordingRepository:
         self,
         source: Source,
         pages: list[SourcePage],
+        instructions: list[Instruction],
+        statements: list[Statement],
+        procedures: list[Procedure],
     ) -> None:
-        self._events.append(('repository', source, pages))
+        self._events.append(
+            ('repository', source, pages, instructions, statements, procedures)
+        )
 
 
 def test_persistence_initializes_schema_before_replacing_source():
@@ -32,6 +44,8 @@ def test_persistence_initializes_schema_before_replacing_source():
             ],
         )
     ]
+    statements = [Statement(uuid='statement-1', is_exercise=True)]
+    procedures = [Procedure(uuid='procedure-1')]
 
     async def initialize_schema() -> None:
         events.append('schema')
@@ -45,9 +59,22 @@ def test_persistence_initializes_schema_before_replacing_source():
                 pdf_path='book.pdf',
                 source=source,
                 embedded_pages=pages,
+                instructions=[Instruction(uuid='instruction-1')],
+                statements=statements,
+                procedures=procedures,
             )
         )
     )
 
-    assert events == ['schema', ('repository', source, pages)]
+    assert events == [
+        'schema',
+        (
+            'repository',
+            source,
+            pages,
+            [Instruction(uuid='instruction-1')],
+            statements,
+            procedures,
+        ),
+    ]
     assert result == {}

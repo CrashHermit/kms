@@ -1,6 +1,7 @@
 import asyncio
 
 import dspy
+import pytest
 
 from kms2.config import PredictorStrategy, StageInferenceSettings
 from kms2.local_models.coordinator import _GpuCoordinator
@@ -68,7 +69,6 @@ def _stage_inference(
         temperature=0.2,
         max_tokens=123,
         num_retries=4,
-        cache=False,
     )
 
 
@@ -122,6 +122,11 @@ def test_local_model_predictor_supports_configured_strategies(monkeypatch):
     )
 
     assert isinstance(predictor.predictor, _RecordingChainOfThought)
+
+
+def test_stage_inference_rejects_cache_override():
+    with pytest.raises(ValueError):
+        StageInferenceSettings(model_server_profile='text', cache=True)
 
 
 def test_router_profile_predictor_switches_model_server_profiles():

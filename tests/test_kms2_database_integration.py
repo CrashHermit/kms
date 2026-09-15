@@ -5,14 +5,20 @@ import pytest
 
 from kms2.config import Settings
 from kms2.core.model import (
-    Entity,
-    Event,
-    Predicate,
+    Instruction,
+    Procedure,
     RawAssertion,
     RawTriplet,
     Source,
     SourceBlock,
+    SourceEntity,
+    SourceEntityDescriptionResult,
+    SourceEvent,
+    SourceEventDescriptionResult,
     SourcePage,
+    SourcePredicate,
+    SourcePredicateDescriptionResult,
+    Statement,
     VisualAsset,
 )
 from kms2.database import schema
@@ -70,10 +76,39 @@ def test_kms2_neo4j_materializes_and_replaces_source():
             SourcePage(index=0),
             SourcePage(index=1, blocks=[first_block, second_block]),
         ]
+        initial_instructions = [
+            Instruction(
+                uuid='kms2-integration-instruction-1',
+                member_block_uuids=[old_block_uuids[0]],
+                governed_statement_uuids=['kms2-integration-statement-1'],
+            )
+        ]
+        initial_statements = [
+            Statement(
+                uuid='kms2-integration-statement-1',
+                member_block_uuids=[old_block_uuids[1]],
+                is_exercise=True,
+            )
+        ]
+        initial_procedures = [
+            Procedure(
+                uuid='kms2-integration-procedure-1',
+                member_block_uuids=[old_block_uuids[0]],
+            )
+        ]
 
         try:
-            await schema.ensure_schema(database.session)
-            await repository.replace_source(source, initial_pages)
+            await schema.ensure_schema(
+                database.session,
+                embedding_dimension=Settings().local_models.embedding.model.dimension,
+            )
+            await repository.replace_source(
+                source,
+                initial_pages,
+                initial_instructions,
+                initial_statements,
+                initial_procedures,
+            )
 
             async with database.session() as session:
                 result = await session.run(
@@ -205,19 +240,19 @@ def test_kms2_neo4j_materializes_and_replaces_source():
                     object_uuid='kms2-integration-entity',
                     predicate_uuid='kms2-integration-predicate',
                 ),
-                subject=Event(
+                subject=SourceEvent(
                     uuid='kms2-integration-event',
                     source_uuid=source_uuid,
                     source_block_uuid=old_block_uuids[0],
                     name='integration event',
                 ),
-                object=Entity(
+                object=SourceEntity(
                     uuid='kms2-integration-entity',
                     source_uuid=source_uuid,
                     source_block_uuid=old_block_uuids[0],
                     name='integration entity',
                 ),
-                predicate=Predicate(
+                predicate=SourcePredicate(
                     uuid='kms2-integration-predicate',
                     source_uuid=source_uuid,
                     source_block_uuid=old_block_uuids[0],
@@ -235,9 +270,9 @@ def test_kms2_neo4j_materializes_and_replaces_source():
                     MATCH (block:SourceBlock {uuid: $block_uuid})
                           -[:HAS_TRIPLET]->
                           (triplet:Triplet {uuid: $triplet_uuid})
-                    MATCH (triplet)-[:HAS_SUBJECT]->(subject:Event)
-                    MATCH (triplet)-[:HAS_OBJECT]->(object:Entity)
-                    MATCH (triplet)-[:HAS_PREDICATE]->(predicate:Predicate)
+                    MATCH (triplet)-[:HAS_SUBJECT]->(subject:SourceEvent)
+                    MATCH (triplet)-[:HAS_OBJECT]->(object:SourceEntity)
+                    MATCH (triplet)-[:HAS_PREDICATE]->(predicate:SourcePredicate)
                     RETURN count(*) AS relationships
                     """,
                     block_uuid=old_block_uuids[0],
@@ -274,9 +309,32 @@ def test_kms2_neo4j_materializes_and_replaces_source():
                     )
                 ],
             )
+            replacement_instructions = [
+                Instruction(
+                    uuid='kms2-integration-instruction-2',
+                    member_block_uuids=[replacement_block.uuid],
+                    governed_statement_uuids=['kms2-integration-statement-2'],
+                )
+            ]
+            replacement_statements = [
+                Statement(
+                    uuid='kms2-integration-statement-2',
+                    member_block_uuids=[replacement_block.uuid],
+                    is_exercise=False,
+                )
+            ]
+            replacement_procedures = [
+                Procedure(
+                    uuid='kms2-integration-procedure-2',
+                    member_block_uuids=[replacement_block.uuid],
+                )
+            ]
             await repository.replace_source(
                 source,
                 [SourcePage(index=7, blocks=[replacement_block])],
+                replacement_instructions,
+                replacement_statements,
+                replacement_procedures,
             )
 
             async with database.session() as session:
@@ -307,9 +365,38 @@ def test_kms2_neo4j_materializes_and_replaces_source():
                     WHERE node.uuid IN $stale_uuids
                     RETURN count(node) AS stale_nodes
                     """,
-                    stale_uuids=old_block_uuids + old_asset_uuids,
+                    stale_uuids=old_block_uuids
+                    + old_asset_uuids
+                    + [
+                        'kms2-integration-instruction-1',
+                        'kms2-integration-statement-1',
+                        'kms2-integration-procedure-1',
+                    ],
                 )
                 stale = await result.single()
+                result = await session.run(
+                    """
+                    MATCH (source:Source {uuid: $source_uuid})
+                          -[:HAS_INSTRUCTION]->
+                          (instruction:Instruction)
+                    OPTIONAL MATCH (member:SourceBlock)-[:MEMBER_OF]->(instruction)
+                    OPTIONAL MATCH (instruction)-[:GOVERNS]->(statement:Statement)
+                    RETURN instruction.uuid AS instruction_uuid,
+                           collect(DISTINCT member.uuid) AS member_uuids,
+                           collect(DISTINCT statement.uuid) AS statement_uuids
+                    """,
+                    source_uuid=source_uuid,
+                )
+                replacement_instruction = await result.single()
+                assert replacement_instruction['instruction_uuid'] == (
+                    'kms2-integration-instruction-2'
+                )
+                assert replacement_instruction['member_uuids'] == [
+                    'kms2-integration-block-3'
+                ]
+                assert replacement_instruction['statement_uuids'] == [
+                    'kms2-integration-statement-2'
+                ]
                 assert stale['stale_nodes'] == 0
 
                 result = await session.run(
@@ -325,6 +412,278 @@ def test_kms2_neo4j_materializes_and_replaces_source():
                     'Paragraph',
                 }
                 assert replacement['content'] == 'replacement block'
+        finally:
+            await database.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.skipif(
+    os.getenv('KMS2_NEO4J_IT') != '1'
+    or not all(os.getenv(name) for name in _REQUIRED_ENVIRONMENT),
+    reason='KMS2 Neo4j integration environment is not enabled',
+)
+def test_kms2_neo4j_migrates_labels_and_queries_vectors():
+    async def exercise() -> None:
+        settings = Settings()
+        database = DatabaseClient(settings.database)
+        source_repository = SourceRepository(database.session)
+        semantic_repository = SemanticRepository(database.session)
+        source_uuid = 'kms2-vector-source'
+        block_uuids = ['kms2-vector-block-1', 'kms2-vector-block-2']
+
+        try:
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    CREATE (:Entity {
+                        uuid: 'kms2-vector-legacy-entity',
+                        source_uuid: $source_uuid,
+                        source_block_uuid: $block_uuid,
+                        name: 'legacy entity'
+                    })
+                    CREATE (:Event {
+                        uuid: 'kms2-vector-legacy-event',
+                        source_uuid: $source_uuid,
+                        source_block_uuid: $block_uuid,
+                        name: 'legacy event'
+                    })
+                    CREATE (:Predicate {
+                        uuid: 'kms2-vector-legacy-predicate',
+                        source_uuid: $source_uuid,
+                        source_block_uuid: $block_uuid,
+                        predicate: 'legacy predicate'
+                    })
+                    """,
+                    source_uuid=source_uuid,
+                    block_uuid=block_uuids[0],
+                )
+                await result.consume()
+
+            await schema.ensure_schema(
+                database.session,
+                embedding_dimension=settings.local_models.embedding.model.dimension,
+            )
+
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (node {uuid: $uuid})
+                    RETURN labels(node) AS labels
+                    """,
+                    uuid='kms2-vector-legacy-entity',
+                )
+                assert set((await result.single())['labels']) == {
+                    'SourceEntity'
+                }
+                result = await session.run(
+                    """
+                    MATCH (node {uuid: $uuid})
+                    RETURN labels(node) AS labels
+                    """,
+                    uuid='kms2-vector-legacy-event',
+                )
+                assert set((await result.single())['labels']) == {'SourceEvent'}
+                result = await session.run(
+                    """
+                    MATCH (node {uuid: $uuid})
+                    RETURN labels(node) AS labels
+                    """,
+                    uuid='kms2-vector-legacy-predicate',
+                )
+                assert set((await result.single())['labels']) == {
+                    'SourcePredicate'
+                }
+
+            await source_repository.replace_source(
+                Source(uuid=source_uuid, key='vector-search.pdf'),
+                [
+                    SourcePage(
+                        index=0,
+                        blocks=[
+                            SourceBlock(
+                                uuid=block_uuids[0],
+                                block_type='paragraph',
+                                content='query block',
+                                embedding=[1.0, 0.0],
+                            ),
+                            SourceBlock(
+                                uuid=block_uuids[1],
+                                block_type='paragraph',
+                                content='nearest block',
+                                embedding=[0.9, 0.1],
+                            ),
+                        ],
+                    )
+                ],
+                [],
+                [],
+                [],
+            )
+
+            assertions = [
+                RawAssertion(
+                    triplet=RawTriplet(
+                        uuid='kms2-vector-triplet-1',
+                        source_uuid=source_uuid,
+                        source_block_uuid=block_uuids[0],
+                        subject_uuid='kms2-vector-entity-1',
+                        object_uuid='kms2-vector-event-1',
+                        predicate_uuid='kms2-vector-predicate-1',
+                    ),
+                    subject=SourceEntity(
+                        uuid='kms2-vector-entity-1',
+                        source_uuid=source_uuid,
+                        source_block_uuid=block_uuids[0],
+                        name='Alpha',
+                    ),
+                    object=SourceEvent(
+                        uuid='kms2-vector-event-1',
+                        source_uuid=source_uuid,
+                        source_block_uuid=block_uuids[0],
+                        name='Appears',
+                    ),
+                    predicate=SourcePredicate(
+                        uuid='kms2-vector-predicate-1',
+                        source_uuid=source_uuid,
+                        source_block_uuid=block_uuids[0],
+                        predicate='supports',
+                    ),
+                ),
+                RawAssertion(
+                    triplet=RawTriplet(
+                        uuid='kms2-vector-triplet-2',
+                        source_uuid=source_uuid,
+                        source_block_uuid=block_uuids[1],
+                        subject_uuid='kms2-vector-entity-2',
+                        object_uuid='kms2-vector-event-2',
+                        predicate_uuid='kms2-vector-predicate-2',
+                    ),
+                    subject=SourceEntity(
+                        uuid='kms2-vector-entity-2',
+                        source_uuid=source_uuid,
+                        source_block_uuid=block_uuids[1],
+                        name='Beta',
+                    ),
+                    object=SourceEvent(
+                        uuid='kms2-vector-event-2',
+                        source_uuid=source_uuid,
+                        source_block_uuid=block_uuids[1],
+                        name='Changes',
+                    ),
+                    predicate=SourcePredicate(
+                        uuid='kms2-vector-predicate-2',
+                        source_uuid=source_uuid,
+                        source_block_uuid=block_uuids[1],
+                        predicate='causes',
+                    ),
+                ),
+            ]
+            await semantic_repository.replace_source_assertions(
+                source_uuid,
+                assertions,
+            )
+            await semantic_repository.update_source_entity_description(
+                source_uuid,
+                [
+                    SourceEntityDescriptionResult(
+                        uuid='kms2-vector-entity-1',
+                        source_uuid=source_uuid,
+                        source_block_uuid=block_uuids[0],
+                        name='Alpha',
+                        description='first entity',
+                        embedding=[1.0, 0.0],
+                    ),
+                    SourceEntityDescriptionResult(
+                        uuid='kms2-vector-entity-2',
+                        source_uuid=source_uuid,
+                        source_block_uuid=block_uuids[1],
+                        name='Beta',
+                        description='second entity',
+                        embedding=[0.9, 0.1],
+                    ),
+                ],
+            )
+            await semantic_repository.update_source_event_description(
+                source_uuid,
+                [
+                    SourceEventDescriptionResult(
+                        uuid='kms2-vector-event-1',
+                        source_uuid=source_uuid,
+                        source_block_uuid=block_uuids[0],
+                        name='Appears',
+                        description='first event',
+                        embedding=[1.0, 0.0],
+                    ),
+                    SourceEventDescriptionResult(
+                        uuid='kms2-vector-event-2',
+                        source_uuid=source_uuid,
+                        source_block_uuid=block_uuids[1],
+                        name='Changes',
+                        description='second event',
+                        embedding=[0.9, 0.1],
+                    ),
+                ],
+            )
+            await semantic_repository.update_source_predicate_description(
+                source_uuid,
+                [
+                    SourcePredicateDescriptionResult(
+                        uuid='kms2-vector-predicate-1',
+                        source_uuid=source_uuid,
+                        source_block_uuid=block_uuids[0],
+                        predicate='supports',
+                        description='first predicate',
+                        embedding=[1.0, 0.0],
+                    ),
+                    SourcePredicateDescriptionResult(
+                        uuid='kms2-vector-predicate-2',
+                        source_uuid=source_uuid,
+                        source_block_uuid=block_uuids[1],
+                        predicate='causes',
+                        description='second predicate',
+                        embedding=[0.9, 0.1],
+                    ),
+                ],
+            )
+
+            block_matches = await source_repository.find_similar_blocks(
+                block_uuids[0],
+                top_k=1,
+            )
+            entity_matches = (
+                await semantic_repository.find_similar_source_entities(
+                    'kms2-vector-entity-1',
+                    top_k=1,
+                )
+            )
+            event_matches = (
+                await semantic_repository.find_similar_source_events(
+                    'kms2-vector-event-1',
+                    top_k=1,
+                )
+            )
+            predicate_matches = (
+                await semantic_repository.find_similar_source_predicates(
+                    'kms2-vector-predicate-1',
+                    top_k=1,
+                )
+            )
+
+            assert block_matches[0].uuid == block_uuids[1]
+            assert entity_matches[0].uuid == 'kms2-vector-entity-2'
+            assert event_matches[0].uuid == 'kms2-vector-event-2'
+            assert predicate_matches[0].uuid == 'kms2-vector-predicate-2'
+            assert all(
+                'embedding' not in match.model_dump()
+                for matches in (
+                    block_matches,
+                    entity_matches,
+                    event_matches,
+                    predicate_matches,
+                )
+                for match in matches
+            )
         finally:
             await database.close()
 

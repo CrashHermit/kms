@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Protocol
 
-from kms2.core.model.ocr import OCRPageArtifact
+from kms2.core.model.source_stage.ocr import OCRPageArtifact
 
 
 class OCRProvider(Protocol):

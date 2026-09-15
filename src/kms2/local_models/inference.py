@@ -161,7 +161,7 @@ def _predictor(
         temperature=inference.temperature,
         max_tokens=inference.max_tokens,
         num_retries=inference.num_retries,
-        cache=inference.cache,
+        cache=False,
     )
     predictor: dspy.Module
     if inference.strategy is PredictorStrategy.PREDICT:

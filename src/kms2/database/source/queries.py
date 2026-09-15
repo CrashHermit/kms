@@ -13,14 +13,23 @@ SET source.key = $source.key,
 WITH source
 OPTIONAL MATCH (source)-[:HAS_PAGE]->(old_page:SourcePage)
 OPTIONAL MATCH (old_page)-[:CONTAINS_BLOCK]->(old_block:SourceBlock)
+OPTIONAL MATCH (old_block)-[:MEMBER_OF]->(old_statement:Statement)
+OPTIONAL MATCH (old_block)-[:MEMBER_OF]->(old_procedure:Procedure)
 OPTIONAL MATCH (old_block)-[:CONTAINS_VISUAL_ASSET]->(old_asset:VisualAsset)
+OPTIONAL MATCH (source)-[:HAS_INSTRUCTION]->(old_instruction:Instruction)
 WITH source,
      collect(DISTINCT old_page) AS old_pages,
      collect(DISTINCT old_block) AS old_blocks,
-     collect(DISTINCT old_asset) AS old_assets
+     collect(DISTINCT old_statement) AS old_statements,
+     collect(DISTINCT old_procedure) AS old_procedures,
+     collect(DISTINCT old_asset) AS old_assets,
+     collect(DISTINCT old_instruction) AS old_instructions
 FOREACH (page IN old_pages | DETACH DELETE page)
 FOREACH (block IN old_blocks | DETACH DELETE block)
+FOREACH (statement IN old_statements | DETACH DELETE statement)
+FOREACH (procedure IN old_procedures | DETACH DELETE procedure)
 FOREACH (asset IN old_assets | DETACH DELETE asset)
+FOREACH (instruction IN old_instructions | DETACH DELETE instruction)
 WITH source
 CALL (source) {
     UNWIND $pages AS row
@@ -114,6 +123,60 @@ CALL (source) {
 }
 WITH source
 CALL (source) {
+    UNWIND $instructions AS row
+    CREATE (instruction:Instruction {uuid: row.uuid})
+    CREATE (source)-[:HAS_INSTRUCTION]->(instruction)
+    RETURN count(*) AS _
+}
+WITH source
+CALL (source) {
+    UNWIND $instruction_member_pairs AS row
+    MATCH (block:SourceBlock {uuid: row.block_uuid})
+    MATCH (instruction:Instruction {uuid: row.instruction_uuid})
+    CREATE (block)-[:MEMBER_OF]->(instruction)
+    RETURN count(*) AS _
+}
+WITH source
+CALL (source) {
+    UNWIND $statements AS row
+    CREATE (statement:Statement {
+        uuid: row.uuid,
+        is_exercise: row.is_exercise
+    })
+    RETURN count(*) AS _
+}
+WITH source
+CALL (source) {
+    UNWIND $procedures AS row
+    CREATE (procedure:Procedure {uuid: row.uuid})
+    RETURN count(*) AS _
+}
+WITH source
+CALL (source) {
+    UNWIND $statement_member_pairs AS row
+    MATCH (block:SourceBlock {uuid: row.block_uuid})
+    MATCH (statement:Statement {uuid: row.statement_uuid})
+    CREATE (block)-[:MEMBER_OF]->(statement)
+    RETURN count(*) AS _
+}
+WITH source
+CALL (source) {
+    UNWIND $procedure_member_pairs AS row
+    MATCH (block:SourceBlock {uuid: row.block_uuid})
+    MATCH (procedure:Procedure {uuid: row.procedure_uuid})
+    CREATE (block)-[:MEMBER_OF]->(procedure)
+    RETURN count(*) AS _
+}
+WITH source
+CALL (source) {
+    UNWIND $instruction_governance_pairs AS row
+    MATCH (instruction:Instruction {uuid: row.instruction_uuid})
+    MATCH (statement:Statement {uuid: row.statement_uuid})
+    CREATE (instruction)-[:GOVERNS]->(statement)
+    RETURN count(*) AS _
+}
+WITH source
+CALL (source) {
     UNWIND $page_bounds AS row
     MATCH (source)-[:HAS_PAGE]->(page:SourcePage {index: row.page_index})
     MATCH (first_block:SourceBlock {uuid: row.first_block_uuid})
@@ -151,4 +214,21 @@ MATCH (source:Source {uuid: $source_uuid})-[:FIRST_BLOCK]->(first:SourceBlock)
 MATCH path = (first)-[:NEXT_BLOCK*0..]->(block:SourceBlock)
 RETURN block.uuid AS uuid, block.block_type AS block_type, block.content AS content
 ORDER BY length(path)
+"""
+
+FIND_SIMILAR_SOURCE_BLOCKS = """
+MATCH (query:SourceBlock {uuid: $query_uuid})
+CALL db.index.vector.queryNodes(
+    'source_block_embedding',
+    $candidate_limit,
+    query.embedding
+)
+YIELD node, score
+WHERE node.uuid <> query.uuid
+RETURN node.uuid AS uuid,
+       node.block_type AS block_type,
+       node.content AS content,
+       score
+ORDER BY score DESC, uuid ASC
+LIMIT $top_k
 """
