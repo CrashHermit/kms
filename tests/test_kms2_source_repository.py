@@ -94,9 +94,15 @@ def test_replace_source_projects_pointer_rows_and_governance_once():
     query, parameters = session.calls[0]
     assert query is REPLACE_SOURCE
     assert parameters['statements'] == [
-        {'uuid': 'statement-1', 'is_exercise': True}
+        {
+            'uuid': 'statement-1',
+            'source_uuid': 'source-1',
+            'is_exercise': True,
+        }
     ]
-    assert parameters['procedures'] == [{'uuid': 'procedure-1'}]
+    assert parameters['procedures'] == [
+        {'uuid': 'procedure-1', 'source_uuid': 'source-1'}
+    ]
     assert parameters['statement_member_pairs'] == [
         {'block_uuid': 'block-2', 'statement_uuid': 'statement-1'}
     ]

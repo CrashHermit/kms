@@ -97,7 +97,7 @@ def test_local_model_predictor_forwards_inference_options(monkeypatch):
                 'temperature': 0.2,
                 'max_tokens': 123,
                 'num_retries': 4,
-                'cache': False,
+                'cache': True,
             },
         )
     ]

@@ -2,9 +2,9 @@
 
 from kms2.config import ContextWindowSettings
 from kms2.core.model import (
+    SourcePredicateDescriptionInput,
     SourcePredicateDescriptionRequest,
     SourcePredicateDescriptionTarget,
-    TermDescriptionInput,
 )
 from kms2.core.windowing import select_window
 from kms2.database.semantic.repository import SemanticRepository
@@ -56,7 +56,7 @@ class SourcePredicateDescriptionLoadNode:
             requests.append(
                 SourcePredicateDescriptionRequest(
                     target=target,
-                    model_input=TermDescriptionInput(
+                    model_input=SourcePredicateDescriptionInput(
                         term=target.predicate,
                         context_before=window.context_before,
                         target_block=window.target[0],

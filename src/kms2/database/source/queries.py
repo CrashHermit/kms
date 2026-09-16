@@ -141,6 +141,7 @@ CALL (source) {
     UNWIND $statements AS row
     CREATE (statement:Statement {
         uuid: row.uuid,
+        source_uuid: row.source_uuid,
         is_exercise: row.is_exercise
     })
     RETURN count(*) AS _
@@ -148,7 +149,10 @@ CALL (source) {
 WITH source
 CALL (source) {
     UNWIND $procedures AS row
-    CREATE (procedure:Procedure {uuid: row.uuid})
+    CREATE (procedure:Procedure {
+        uuid: row.uuid,
+        source_uuid: row.source_uuid
+    })
     RETURN count(*) AS _
 }
 WITH source

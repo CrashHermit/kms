@@ -33,6 +33,10 @@ def test_kms2_defaults_include_pointer_source_stages(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
     settings = config.Settings()
+    assert settings.local_models.reranker.model.model_id == 'Qwen3-Reranker-8B'
+    assert settings.local_models.reranker.model.model_path == (
+        '~/models/qwen3-reranker-8b-verified/Qwen3-Reranker-8B-Q4_K_M.gguf'
+    )
 
     zero_context_windows = [
         settings.source.instruction_finder.start_context_window,
@@ -107,4 +111,64 @@ def test_kms2_source_uses_nested_environment(monkeypatch):
     assert (
         settings.source.exercise_finder.boundary_router.model_server_profile
         == 'custom-exercise-boundary-profile'
+    )
+
+
+def test_kms2_source_hub_settings_are_independent(monkeypatch):
+    names = (
+        'KMS2_SEMANTIC__SOURCE_ENTITY_HUBS__INFERENCE__MODEL_SERVER_PROFILE',
+        'KMS2_SEMANTIC__SOURCE_EVENT_HUBS__CANDIDATE_LIMIT',
+        'KMS2_SEMANTIC__SOURCE_PREDICATE_HUBS__MINIMUM_SIMILARITY',
+    )
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+
+    settings = config.Settings()
+
+    assert (
+        settings.semantic.source_entity_hubs.inference.model_server_profile
+        == ('gemma-text-32k')
+    )
+    assert settings.semantic.source_event_hubs.candidate_limit == 50
+    assert settings.semantic.source_predicate_hubs.minimum_similarity == 0.82
+
+    monkeypatch.setenv(names[0], 'entity-hub-profile')
+    monkeypatch.setenv(names[1], '17')
+    monkeypatch.setenv(names[2], '0.91')
+    settings = config.Settings()
+
+    assert (
+        settings.semantic.source_entity_hubs.inference.model_server_profile
+        == 'entity-hub-profile'
+    )
+    assert settings.semantic.source_event_hubs.candidate_limit == 17
+    assert settings.semantic.source_predicate_hubs.minimum_similarity == 0.91
+
+
+def test_kms2_hub_filtering_settings_are_independent(monkeypatch):
+    monkeypatch.setenv(
+        'KMS2_SEMANTIC__SOURCE_ENTITY_HUBS__JUDGE__MODEL_SERVER_PROFILE',
+        'entity-judge',
+    )
+    monkeypatch.setenv(
+        'KMS2_SEMANTIC__SOURCE_EVENT_HUBS__RERANKER_TOKEN_BUDGET',
+        '2048',
+    )
+    monkeypatch.setenv(
+        'KMS2_SEMANTIC__SOURCE_PREDICATE_HUBS__JUDGE_TOKEN_BUDGET',
+        '16384',
+    )
+
+    settings = config.Settings()
+
+    assert settings.semantic.source_entity_hubs.judge.model_server_profile == (
+        'entity-judge'
+    )
+    assert settings.semantic.source_entity_hubs.judge.num_retries == 0
+    assert settings.semantic.source_event_hubs.reranker_token_budget == 2048
+    assert settings.semantic.source_predicate_hubs.judge_token_budget == 16384
+    assert settings.semantic.source_entity_hubs.reranker_token_budget == 4096
+    assert settings.semantic.source_entity_hubs.judge_batch_size == 16
+    assert settings.semantic.source_event_hubs.judge.model_server_profile == (
+        'gemma-text-32k'
     )

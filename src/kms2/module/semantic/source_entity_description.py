@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model import TermDescriptionInput
+from kms2.core.model import SourceEntityDescriptionInput
 
 
 class SourceEntityDescriptionSignature(dspy.Signature):
@@ -14,7 +14,7 @@ class SourceEntityDescriptionSignature(dspy.Signature):
     Describe only target_block; neighboring blocks are reference context.
     """
 
-    request: TermDescriptionInput = dspy.InputField(
+    request: SourceEntityDescriptionInput = dspy.InputField(
         description=(
             'Describe only target_block. context_before and context_after are '
             'reference context, not independent evidence.'
@@ -32,11 +32,11 @@ class SourceEntityDescriptionModule(dspy.Module):
         super().__init__()
         self.predictor = predictor
 
-    def forward(self, *, request: TermDescriptionInput) -> str:
+    def forward(self, *, request: SourceEntityDescriptionInput) -> str:
         """Describe one entity occurrence synchronously."""
         return self.predictor(request=request).description
 
-    async def aforward(self, *, request: TermDescriptionInput) -> str:
+    async def aforward(self, *, request: SourceEntityDescriptionInput) -> str:
         """Describe one entity occurrence asynchronously."""
         return (await self.predictor.acall(request=request)).description
 

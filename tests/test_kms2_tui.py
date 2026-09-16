@@ -21,6 +21,13 @@ def _semantic_result() -> SemanticStageResult:
         source_entity_description_count=3,
         source_event_description_count=2,
         source_predicate_description_count=1,
+        source_statement_description_count=0,
+        source_procedure_description_count=0,
+        source_entity_hub_count=6,
+        source_event_hub_count=7,
+        source_predicate_hub_count=8,
+        source_statement_hub_count=0,
+        source_procedure_hub_count=0,
     )
 
 
@@ -135,13 +142,11 @@ def test_tui_runs_complete_stage_from_existing_source(monkeypatch, caplog):
         }
     ]
     assert len(calls) == 1
-    settings, source_uuid = calls[0]
-    assert isinstance(settings, Settings)
-    assert source_uuid == 'source-1'
     assert (
-        'Done: source source-1 (book.pdf), semantic stage persisted 4 assertion(s), '
-        '3 source entity description(s), 2 source event description(s), and '
-        '1 source predicate description(s).' in caplog.messages
+        'Done: source source-1 (book.pdf), semantic stage persisted 4 assertion(s); '
+        'descriptions: 3 entity, 2 event, 1 predicate, 0 statement, 0 procedure; '
+        'hubs: 6 entity, 7 event, 8 predicate, 0 statement, 0 procedure.'
+        in caplog.messages
     )
 
 

@@ -103,6 +103,134 @@ class TermDescriptionSettings(BaseModel):
         return {**value, 'inference': defaults}
 
 
+class SourceEntityHubSettings(BaseModel):
+    """Similarity, filtering, community, and synthesis settings for entities."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    inference: StageInferenceSettings = Field(
+        default_factory=lambda: _stage_inference('gemma-text-32k')
+    )
+    judge: StageInferenceSettings = Field(
+        default_factory=lambda: StageInferenceSettings(
+            model_server_profile='gemma-text-32k',
+            num_retries=0,
+        )
+    )
+    candidate_limit: int = Field(default=50, ge=1)
+    minimum_similarity: float = Field(default=0.82, ge=-1.0, le=1.0)
+    reranker_token_budget: int = Field(default=4096, gt=0)
+    judge_token_budget: int = Field(default=8192, gt=0)
+    judge_batch_size: int = Field(default=16, ge=1)
+    reranker_acceptance_threshold: float = Field(default=0.90, ge=-1.0, le=1.0)
+    reranker_rejection_threshold: float = Field(default=0.20, ge=-1.0, le=1.0)
+    max_iterations: int = Field(default=100, gt=0)
+    min_association_strength: float = Field(default=0.2, ge=0.0, le=1.0)
+    minimum_community_size: int = Field(default=2, gt=1)
+
+    @model_validator(mode='before')
+    @classmethod
+    def merge_judge_defaults(cls, value: Any) -> Any:
+        """Preserve judge defaults when nested fields are overridden."""
+        if not isinstance(value, dict):
+            return value
+        judge = value.get('judge', {})
+        defaults = StageInferenceSettings(
+            model_server_profile='gemma-text-32k',
+            num_retries=0,
+        ).model_dump()
+        defaults.update(judge)
+        return {**value, 'judge': defaults}
+
+
+class SourceEventHubSettings(BaseModel):
+    """Similarity, filtering, community, and synthesis settings for events."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    inference: StageInferenceSettings = Field(
+        default_factory=lambda: _stage_inference('gemma-text-32k')
+    )
+    judge: StageInferenceSettings = Field(
+        default_factory=lambda: StageInferenceSettings(
+            model_server_profile='gemma-text-32k',
+            num_retries=0,
+        )
+    )
+    candidate_limit: int = Field(default=50, ge=1)
+    minimum_similarity: float = Field(default=0.82, ge=-1.0, le=1.0)
+    reranker_token_budget: int = Field(default=4096, gt=0)
+    judge_token_budget: int = Field(default=8192, gt=0)
+    judge_batch_size: int = Field(default=16, ge=1)
+    reranker_acceptance_threshold: float = Field(default=0.90, ge=-1.0, le=1.0)
+    reranker_rejection_threshold: float = Field(default=0.20, ge=-1.0, le=1.0)
+    max_iterations: int = Field(default=100, gt=0)
+    min_association_strength: float = Field(default=0.2, ge=0.0, le=1.0)
+    minimum_community_size: int = Field(default=2, gt=1)
+
+    @model_validator(mode='before')
+    @classmethod
+    def merge_judge_defaults(cls, value: Any) -> Any:
+        """Preserve judge defaults when nested fields are overridden."""
+        if not isinstance(value, dict):
+            return value
+        judge = value.get('judge', {})
+        defaults = StageInferenceSettings(
+            model_server_profile='gemma-text-32k',
+            num_retries=0,
+        ).model_dump()
+        defaults.update(judge)
+        return {**value, 'judge': defaults}
+
+
+class SourcePredicateHubSettings(BaseModel):
+    """Similarity, filtering, community, and synthesis settings for predicates."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    inference: StageInferenceSettings = Field(
+        default_factory=lambda: _stage_inference('gemma-text-32k')
+    )
+    judge: StageInferenceSettings = Field(
+        default_factory=lambda: StageInferenceSettings(
+            model_server_profile='gemma-text-32k',
+            num_retries=0,
+        )
+    )
+    candidate_limit: int = Field(default=50, ge=1)
+    minimum_similarity: float = Field(default=0.82, ge=-1.0, le=1.0)
+    reranker_token_budget: int = Field(default=4096, gt=0)
+    judge_token_budget: int = Field(default=8192, gt=0)
+    judge_batch_size: int = Field(default=16, ge=1)
+    reranker_acceptance_threshold: float = Field(default=0.90, ge=-1.0, le=1.0)
+    reranker_rejection_threshold: float = Field(default=0.20, ge=-1.0, le=1.0)
+    max_iterations: int = Field(default=100, gt=0)
+    min_association_strength: float = Field(default=0.2, ge=0.0, le=1.0)
+    minimum_community_size: int = Field(default=2, gt=1)
+
+    @model_validator(mode='before')
+    @classmethod
+    def merge_judge_defaults(cls, value: Any) -> Any:
+        """Preserve judge defaults when nested fields are overridden."""
+        if not isinstance(value, dict):
+            return value
+        judge = value.get('judge', {})
+        defaults = StageInferenceSettings(
+            model_server_profile='gemma-text-32k',
+            num_retries=0,
+        ).model_dump()
+        defaults.update(judge)
+        return {**value, 'judge': defaults}
+
+
+class SourceStatementHubSettings(SourceEntityHubSettings):
+    """Similarity, filtering, community, and synthesis settings for statements."""
+
+
+class SourceProcedureHubSettings(SourceEntityHubSettings):
+    """Similarity, filtering, community, and synthesis settings for procedures."""
+
+
 class SplitterSettings(BaseModel):
     """Language model and context-window settings for source splitting."""
 
@@ -278,6 +406,37 @@ class SemanticSettings(BaseModel):
             )
         )
     )
+    source_statement_description: TermDescriptionSettings = Field(
+        default_factory=lambda: TermDescriptionSettings(
+            inference=StageInferenceSettings(
+                model_server_profile='gemma-text-32k',
+                num_retries=0,
+            )
+        )
+    )
+    source_procedure_description: TermDescriptionSettings = Field(
+        default_factory=lambda: TermDescriptionSettings(
+            inference=StageInferenceSettings(
+                model_server_profile='gemma-text-32k',
+                num_retries=0,
+            )
+        )
+    )
+    source_entity_hubs: SourceEntityHubSettings = Field(
+        default_factory=SourceEntityHubSettings
+    )
+    source_event_hubs: SourceEventHubSettings = Field(
+        default_factory=SourceEventHubSettings
+    )
+    source_predicate_hubs: SourcePredicateHubSettings = Field(
+        default_factory=SourcePredicateHubSettings
+    )
+    source_statement_hubs: SourceStatementHubSettings = Field(
+        default_factory=SourceStatementHubSettings
+    )
+    source_procedure_hubs: SourceProcedureHubSettings = Field(
+        default_factory=SourceProcedureHubSettings
+    )
 
 
 class SourceSettings(BaseModel):
@@ -419,7 +578,9 @@ class RerankerModelSettings(BaseModel):
     model_config = ConfigDict(extra='forbid')
 
     model_id: str = 'Qwen3-Reranker-8B'
-    model_path: str = '~/models/qwen3-reranker-8b/Qwen3-Reranker-8B.Q4_K_M.gguf'
+    model_path: str = (
+        '~/models/qwen3-reranker-8b-verified/Qwen3-Reranker-8B-Q4_K_M.gguf'
+    )
 
 
 class EmbeddingSettings(BaseModel):
@@ -444,7 +605,7 @@ class EmbeddingSettings(BaseModel):
 
 
 class RerankerSettings(BaseModel):
-    """Reranker model, server, batching, and request settings."""
+    """Reranker model, server, and request settings."""
 
     model_config = ConfigDict(extra='forbid')
 
@@ -458,7 +619,6 @@ class RerankerSettings(BaseModel):
             context_size=8192,
         )
     )
-    batch_size: int = Field(default=8, gt=0)
     timeout_seconds: float = Field(default=120.0, gt=0.0)
 
 
@@ -520,5 +680,10 @@ __all__ = [
     'SourceSettings',
     'StageInferenceSettings',
     'StatementProcedureSettings',
+    'SourceEntityHubSettings',
+    'SourceEventHubSettings',
+    'SourcePredicateHubSettings',
+    'SourceProcedureHubSettings',
+    'SourceStatementHubSettings',
     'TermDescriptionSettings',
 ]

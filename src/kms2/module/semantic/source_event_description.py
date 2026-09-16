@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model import TermDescriptionInput
+from kms2.core.model import SourceEventDescriptionInput
 
 
 class SourceEventDescriptionSignature(dspy.Signature):
@@ -14,7 +14,7 @@ class SourceEventDescriptionSignature(dspy.Signature):
     explanatory clause. Do not infer unsupported facts.
     """
 
-    request: TermDescriptionInput = dspy.InputField(
+    request: SourceEventDescriptionInput = dspy.InputField(
         description=(
             'Describe only target_block as an event occurrence. '
             'context_before and context_after are reference context.'
@@ -32,11 +32,11 @@ class SourceEventDescriptionModule(dspy.Module):
         super().__init__()
         self.predictor = predictor
 
-    def forward(self, *, request: TermDescriptionInput) -> str:
+    def forward(self, *, request: SourceEventDescriptionInput) -> str:
         """Describe one event occurrence synchronously."""
         return self.predictor(request=request).description
 
-    async def aforward(self, *, request: TermDescriptionInput) -> str:
+    async def aforward(self, *, request: SourceEventDescriptionInput) -> str:
         """Describe one event occurrence asynchronously."""
         return (await self.predictor.acall(request=request)).description
 

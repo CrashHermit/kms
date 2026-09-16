@@ -63,15 +63,23 @@ def _run_tui() -> None:
 def _log_semantic_completion(source: Source, semantic) -> None:
     """Log all counts persisted by one complete semantic stage."""
     logger.info(
-        'Done: source %s (%s), semantic stage persisted %d assertion(s), '
-        '%d source entity description(s), %d source event description(s), and '
-        '%d source predicate description(s).',
+        'Done: source %s (%s), semantic stage persisted %d assertion(s); '
+        'descriptions: %d entity, %d event, %d predicate, %d statement, '
+        '%d procedure; hubs: %d entity, %d event, %d predicate, %d statement, '
+        '%d procedure.',
         source.uuid,
         source.key,
         semantic.raw_assertion_count,
         semantic.source_entity_description_count,
         semantic.source_event_description_count,
         semantic.source_predicate_description_count,
+        semantic.source_statement_description_count,
+        semantic.source_procedure_description_count,
+        semantic.source_entity_hub_count,
+        semantic.source_event_hub_count,
+        semantic.source_predicate_hub_count,
+        semantic.source_statement_hub_count,
+        semantic.source_procedure_hub_count,
     )
 
 

@@ -19,6 +19,24 @@ SCHEMA_MIGRATION_STATEMENTS: tuple[str, ...] = (
     SET vertex:SourcePredicate
     REMOVE vertex:Predicate
     """,
+    """
+    MATCH (source:Source)-[:FIRST_BLOCK]->(first:SourceBlock)
+    MATCH (first)-[:NEXT_BLOCK*0..]->(block:SourceBlock)
+    MATCH (block)-[:MEMBER_OF]->(statement:Statement)
+    WHERE statement.source_uuid IS NULL
+    WITH statement, source.uuid AS source_uuid
+    SET statement.source_uuid = source_uuid
+    """,
+    """
+    MATCH (source:Source)-[:FIRST_BLOCK]->(first:SourceBlock)
+    MATCH (first)-[:NEXT_BLOCK*0..]->(block:SourceBlock)
+    MATCH (block)-[:MEMBER_OF]->(procedure:Procedure)
+    WHERE procedure.source_uuid IS NULL
+    WITH procedure, source.uuid AS source_uuid
+    SET procedure.source_uuid = source_uuid
+    """,
+    'DROP INDEX statement_embedding IF EXISTS',
+    'DROP INDEX procedure_embedding IF EXISTS',
     'DROP CONSTRAINT entity_uuid IF EXISTS',
     'DROP CONSTRAINT event_uuid IF EXISTS',
     'DROP CONSTRAINT predicate_uuid IF EXISTS',
@@ -66,6 +84,26 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     FOR (predicate:SourcePredicate) REQUIRE predicate.uuid IS UNIQUE
     """,
     """
+    CREATE CONSTRAINT source_entity_hub_uuid IF NOT EXISTS
+    FOR (hub:SourceEntityHub) REQUIRE hub.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT source_event_hub_uuid IF NOT EXISTS
+    FOR (hub:SourceEventHub) REQUIRE hub.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT source_predicate_hub_uuid IF NOT EXISTS
+    FOR (hub:SourcePredicateHub) REQUIRE hub.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT source_statement_hub_uuid IF NOT EXISTS
+    FOR (hub:SourceStatementHub) REQUIRE hub.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT source_procedure_hub_uuid IF NOT EXISTS
+    FOR (hub:SourceProcedureHub) REQUIRE hub.uuid IS UNIQUE
+    """,
+    """
     CREATE INDEX triplet_source_uuid IF NOT EXISTS
     FOR (triplet:Triplet) ON (triplet.source_uuid)
     """,
@@ -88,6 +126,13 @@ def vector_index_statements(embedding_dimension: int) -> tuple[str, ...]:
             ('source_entity_embedding', 'SourceEntity'),
             ('source_event_embedding', 'SourceEvent'),
             ('source_predicate_embedding', 'SourcePredicate'),
+            ('source_statement_embedding', 'Statement'),
+            ('source_procedure_embedding', 'Procedure'),
+            ('source_entity_hub_embedding', 'SourceEntityHub'),
+            ('source_event_hub_embedding', 'SourceEventHub'),
+            ('source_predicate_hub_embedding', 'SourcePredicateHub'),
+            ('source_statement_hub_embedding', 'SourceStatementHub'),
+            ('source_procedure_hub_embedding', 'SourceProcedureHub'),
         )
     )
 
@@ -97,6 +142,13 @@ VECTOR_INDEX_NAMES = (
     'source_entity_embedding',
     'source_event_embedding',
     'source_predicate_embedding',
+    'source_statement_embedding',
+    'source_procedure_embedding',
+    'source_entity_hub_embedding',
+    'source_statement_hub_embedding',
+    'source_procedure_hub_embedding',
+    'source_event_hub_embedding',
+    'source_predicate_hub_embedding',
 )
 AWAIT_INDEX = 'CALL db.awaitIndex($index_name, $timeout_seconds)'
 
@@ -109,14 +161,22 @@ async def ensure_schema(
     """Migrate and create KMS2 structural and vector schema in order."""
     async with session_factory() as session:
         for statement in SCHEMA_MIGRATION_STATEMENTS:
-            await session.run(statement)
+            result = await session.run(statement)
+            if result is not None:
+                await result.consume()
         for statement in SCHEMA_STATEMENTS:
-            await session.run(statement)
+            result = await session.run(statement)
+            if result is not None:
+                await result.consume()
         for statement in vector_index_statements(embedding_dimension):
-            await session.run(statement)
+            result = await session.run(statement)
+            if result is not None:
+                await result.consume()
         for index_name in VECTOR_INDEX_NAMES:
-            await session.run(
+            result = await session.run(
                 AWAIT_INDEX,
                 index_name=index_name,
                 timeout_seconds=300,
             )
+            if result is not None:
+                await result.consume()

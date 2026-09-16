@@ -14,13 +14,61 @@ from kms2.module.semantic.source_entity_description import (
     SourceEntityDescriptionModule,
     SourceEntityDescriptionSignature,
 )
+from kms2.module.semantic.source_entity_hub import (
+    SourceEntityHubModule,
+    SourceEntityHubSignature,
+)
+from kms2.module.semantic.source_entity_hub_judge import (
+    SourceEntityHubJudgeModule,
+    SourceEntityHubJudgeSignature,
+)
 from kms2.module.semantic.source_event_description import (
     SourceEventDescriptionModule,
     SourceEventDescriptionSignature,
 )
+from kms2.module.semantic.source_event_hub import (
+    SourceEventHubModule,
+    SourceEventHubSignature,
+)
+from kms2.module.semantic.source_event_hub_judge import (
+    SourceEventHubJudgeModule,
+    SourceEventHubJudgeSignature,
+)
 from kms2.module.semantic.source_predicate_description import (
     SourcePredicateDescriptionModule,
     SourcePredicateDescriptionSignature,
+)
+from kms2.module.semantic.source_predicate_hub import (
+    SourcePredicateHubModule,
+    SourcePredicateHubSignature,
+)
+from kms2.module.semantic.source_predicate_hub_judge import (
+    SourcePredicateHubJudgeModule,
+    SourcePredicateHubJudgeSignature,
+)
+from kms2.module.semantic.source_procedure_description import (
+    SourceProcedureDescriptionModule,
+    SourceProcedureDescriptionSignature,
+)
+from kms2.module.semantic.source_procedure_hub import (
+    SourceProcedureHubModule,
+    SourceProcedureHubSignature,
+)
+from kms2.module.semantic.source_procedure_hub_judge import (
+    SourceProcedureHubJudgeModule,
+    SourceProcedureHubJudgeSignature,
+)
+from kms2.module.semantic.source_statement_description import (
+    SourceStatementDescriptionModule,
+    SourceStatementDescriptionSignature,
+)
+from kms2.module.semantic.source_statement_hub import (
+    SourceStatementHubModule,
+    SourceStatementHubSignature,
+)
+from kms2.module.semantic.source_statement_hub_judge import (
+    SourceStatementHubJudgeModule,
+    SourceStatementHubJudgeSignature,
 )
 from kms2.module.semantic.triplet import (
     FactExtractionSignature,
@@ -90,6 +138,10 @@ from kms2.node.semantic.source_entity_description_load import (
     SourceEntityDescriptionLoadNode,
 )
 from kms2.node.semantic.source_entity_embedding import SourceEntityEmbeddingNode
+from kms2.node.semantic.source_entity_hub import SourceEntityHubNode
+from kms2.node.semantic.source_entity_hub_persistence import (
+    SourceEntityHubPersistenceNode,
+)
 from kms2.node.semantic.source_entity_persistence import (
     SourceEntityPersistenceNode,
 )
@@ -100,9 +152,14 @@ from kms2.node.semantic.source_event_description_load import (
     SourceEventDescriptionLoadNode,
 )
 from kms2.node.semantic.source_event_embedding import SourceEventEmbeddingNode
+from kms2.node.semantic.source_event_hub import SourceEventHubNode
+from kms2.node.semantic.source_event_hub_persistence import (
+    SourceEventHubPersistenceNode,
+)
 from kms2.node.semantic.source_event_persistence import (
     SourceEventPersistenceNode,
 )
+from kms2.node.semantic.source_hub_join import SourceHubJoinNode
 from kms2.node.semantic.source_predicate_description import (
     SourcePredicateDescriptionNode,
 )
@@ -112,8 +169,44 @@ from kms2.node.semantic.source_predicate_description_load import (
 from kms2.node.semantic.source_predicate_embedding import (
     SourcePredicateEmbeddingNode,
 )
+from kms2.node.semantic.source_predicate_hub import SourcePredicateHubNode
+from kms2.node.semantic.source_predicate_hub_persistence import (
+    SourcePredicateHubPersistenceNode,
+)
 from kms2.node.semantic.source_predicate_persistence import (
     SourcePredicatePersistenceNode,
+)
+from kms2.node.semantic.source_procedure_description import (
+    SourceProcedureDescriptionNode,
+)
+from kms2.node.semantic.source_procedure_description_load import (
+    SourceProcedureDescriptionLoadNode,
+)
+from kms2.node.semantic.source_procedure_embedding import (
+    SourceProcedureEmbeddingNode,
+)
+from kms2.node.semantic.source_procedure_hub import SourceProcedureHubNode
+from kms2.node.semantic.source_procedure_hub_persistence import (
+    SourceProcedureHubPersistenceNode,
+)
+from kms2.node.semantic.source_procedure_persistence import (
+    SourceProcedurePersistenceNode,
+)
+from kms2.node.semantic.source_statement_description import (
+    SourceStatementDescriptionNode,
+)
+from kms2.node.semantic.source_statement_description_load import (
+    SourceStatementDescriptionLoadNode,
+)
+from kms2.node.semantic.source_statement_embedding import (
+    SourceStatementEmbeddingNode,
+)
+from kms2.node.semantic.source_statement_hub import SourceStatementHubNode
+from kms2.node.semantic.source_statement_hub_persistence import (
+    SourceStatementHubPersistenceNode,
+)
+from kms2.node.semantic.source_statement_persistence import (
+    SourceStatementPersistenceNode,
 )
 from kms2.node.semantic.triplet import (
     FactExtractionNode,
@@ -317,6 +410,71 @@ def build_semantic_graph(
             TripletDecompositionSignature,
         )
     )
+    source_entity_hub_module = SourceEntityHubModule(
+        local_models.predictor(
+            semantic.source_entity_hubs.inference,
+            SourceEntityHubSignature,
+        )
+    )
+    source_entity_hub_judge = SourceEntityHubJudgeModule(
+        local_models.predictor(
+            semantic.source_entity_hubs.judge,
+            SourceEntityHubJudgeSignature,
+        )
+    )
+    source_event_hub_module = SourceEventHubModule(
+        local_models.predictor(
+            semantic.source_event_hubs.inference,
+            SourceEventHubSignature,
+        )
+    )
+    source_event_hub_judge = SourceEventHubJudgeModule(
+        local_models.predictor(
+            semantic.source_event_hubs.judge,
+            SourceEventHubJudgeSignature,
+        )
+    )
+    source_predicate_hub_module = SourcePredicateHubModule(
+        local_models.predictor(
+            semantic.source_predicate_hubs.inference,
+            SourcePredicateHubSignature,
+        )
+    )
+    source_predicate_hub_judge = SourcePredicateHubJudgeModule(
+        local_models.predictor(
+            semantic.source_predicate_hubs.judge,
+            SourcePredicateHubJudgeSignature,
+        )
+    )
+    source_statement_hub_module = SourceStatementHubModule(
+        local_models.predictor(
+            semantic.source_statement_hubs.inference,
+            SourceStatementHubSignature,
+        )
+    )
+    source_statement_hub_judge = SourceStatementHubJudgeModule(
+        local_models.predictor(
+            semantic.source_statement_hubs.judge,
+            SourceStatementHubJudgeSignature,
+        )
+    )
+    source_procedure_hub_module = SourceProcedureHubModule(
+        local_models.predictor(
+            semantic.source_procedure_hubs.inference,
+            SourceProcedureHubSignature,
+        )
+    )
+    source_procedure_hub_judge = SourceProcedureHubJudgeModule(
+        local_models.predictor(
+            semantic.source_procedure_hubs.judge,
+            SourceProcedureHubJudgeSignature,
+        )
+    )
+    schema_initializer = partial(
+        schema.ensure_schema,
+        database.session,
+        embedding_dimension=settings.local_models.embedding.model.dimension,
+    )
     return SemanticGraph(
         triplet_source_load=TripletSourceLoadNode(source_repository),
         fact_extraction=FactExtractionNode(
@@ -326,11 +484,7 @@ def build_semantic_graph(
         triplet_decomposition=TripletDecompositionNode(triplet_decomposer),
         triplet_persistence=TripletPersistenceNode(
             semantic_repository,
-            partial(
-                schema.ensure_schema,
-                database.session,
-                embedding_dimension=settings.local_models.embedding.model.dimension,
-            ),
+            schema_initializer,
         ),
         source_entity_description_load=SourceEntityDescriptionLoadNode(
             source_repository,
@@ -350,11 +504,7 @@ def build_semantic_graph(
         ),
         source_entity_persistence=SourceEntityPersistenceNode(
             semantic_repository,
-            partial(
-                schema.ensure_schema,
-                database.session,
-                embedding_dimension=settings.local_models.embedding.model.dimension,
-            ),
+            schema_initializer,
         ),
         source_event_description_load=SourceEventDescriptionLoadNode(
             source_repository,
@@ -372,11 +522,7 @@ def build_semantic_graph(
         source_event_embedding=SourceEventEmbeddingNode(local_models.embedding),
         source_event_persistence=SourceEventPersistenceNode(
             semantic_repository,
-            partial(
-                schema.ensure_schema,
-                database.session,
-                embedding_dimension=settings.local_models.embedding.model.dimension,
-            ),
+            schema_initializer,
         ),
         source_predicate_description_load=SourcePredicateDescriptionLoadNode(
             source_repository,
@@ -396,12 +542,109 @@ def build_semantic_graph(
         ),
         source_predicate_persistence=SourcePredicatePersistenceNode(
             semantic_repository,
-            partial(
-                schema.ensure_schema,
-                database.session,
-                embedding_dimension=settings.local_models.embedding.model.dimension,
-            ),
+            schema_initializer,
         ),
+        source_statement_description_load=SourceStatementDescriptionLoadNode(
+            source_repository,
+            semantic_repository,
+            semantic.source_statement_description.context_window,
+        ),
+        source_statement_description=SourceStatementDescriptionNode(
+            SourceStatementDescriptionModule(
+                local_models.predictor(
+                    semantic.source_statement_description.inference,
+                    SourceStatementDescriptionSignature,
+                )
+            )
+        ),
+        source_statement_embedding=SourceStatementEmbeddingNode(
+            local_models.embedding
+        ),
+        source_statement_persistence=SourceStatementPersistenceNode(
+            semantic_repository,
+            schema_initializer,
+        ),
+        source_procedure_description_load=SourceProcedureDescriptionLoadNode(
+            source_repository,
+            semantic_repository,
+            semantic.source_procedure_description.context_window,
+        ),
+        source_procedure_description=SourceProcedureDescriptionNode(
+            SourceProcedureDescriptionModule(
+                local_models.predictor(
+                    semantic.source_procedure_description.inference,
+                    SourceProcedureDescriptionSignature,
+                )
+            )
+        ),
+        source_procedure_embedding=SourceProcedureEmbeddingNode(
+            local_models.embedding
+        ),
+        source_procedure_persistence=SourceProcedurePersistenceNode(
+            semantic_repository,
+            schema_initializer,
+        ),
+        source_entity_hub=SourceEntityHubNode(
+            semantic_repository,
+            source_entity_hub_module,
+            source_entity_hub_judge,
+            local_models.reranker,
+            local_models.embedding,
+            semantic.source_entity_hubs,
+            schema_initializer,
+        ),
+        source_event_hub=SourceEventHubNode(
+            semantic_repository,
+            source_event_hub_module,
+            source_event_hub_judge,
+            local_models.reranker,
+            local_models.embedding,
+            semantic.source_event_hubs,
+            schema_initializer,
+        ),
+        source_predicate_hub=SourcePredicateHubNode(
+            semantic_repository,
+            source_predicate_hub_module,
+            source_predicate_hub_judge,
+            local_models.reranker,
+            local_models.embedding,
+            semantic.source_predicate_hubs,
+            schema_initializer,
+        ),
+        source_statement_hub=SourceStatementHubNode(
+            semantic_repository,
+            source_statement_hub_module,
+            source_statement_hub_judge,
+            local_models.reranker,
+            local_models.embedding,
+            semantic.source_statement_hubs,
+            schema_initializer,
+        ),
+        source_procedure_hub=SourceProcedureHubNode(
+            semantic_repository,
+            source_procedure_hub_module,
+            source_procedure_hub_judge,
+            local_models.reranker,
+            local_models.embedding,
+            semantic.source_procedure_hubs,
+            schema_initializer,
+        ),
+        source_entity_hub_persistence=SourceEntityHubPersistenceNode(
+            semantic_repository, schema_initializer
+        ),
+        source_event_hub_persistence=SourceEventHubPersistenceNode(
+            semantic_repository, schema_initializer
+        ),
+        source_predicate_hub_persistence=SourcePredicateHubPersistenceNode(
+            semantic_repository, schema_initializer
+        ),
+        source_statement_hub_persistence=SourceStatementHubPersistenceNode(
+            semantic_repository, schema_initializer
+        ),
+        source_procedure_hub_persistence=SourceProcedureHubPersistenceNode(
+            semantic_repository, schema_initializer
+        ),
+        source_hub_join=SourceHubJoinNode(),
     )
 
 

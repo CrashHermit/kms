@@ -10,12 +10,12 @@ from kms2.core.model import (
     SemanticNodeKind,
     SourceBlock,
     SourceEntity,
+    SourceEntityDescriptionInput,
     SourceEntityDescriptionRequest,
     SourceEntityDescriptionResult,
     SourceEntityDescriptionTarget,
     SourceEvent,
     SourcePredicate,
-    TermDescriptionInput,
     TripletCandidate,
     TripletDecompositionResult,
 )
@@ -65,6 +65,30 @@ from kms2.node.semantic.source_predicate_embedding import (
 )
 from kms2.node.semantic.source_predicate_persistence import (
     SourcePredicatePersistenceNode,
+)
+from kms2.node.semantic.source_procedure_description import (
+    SourceProcedureDescriptionNode,
+)
+from kms2.node.semantic.source_procedure_description_load import (
+    SourceProcedureDescriptionLoadNode,
+)
+from kms2.node.semantic.source_procedure_embedding import (
+    SourceProcedureEmbeddingNode,
+)
+from kms2.node.semantic.source_procedure_persistence import (
+    SourceProcedurePersistenceNode,
+)
+from kms2.node.semantic.source_statement_description import (
+    SourceStatementDescriptionNode,
+)
+from kms2.node.semantic.source_statement_description_load import (
+    SourceStatementDescriptionLoadNode,
+)
+from kms2.node.semantic.source_statement_embedding import (
+    SourceStatementEmbeddingNode,
+)
+from kms2.node.semantic.source_statement_persistence import (
+    SourceStatementPersistenceNode,
 )
 from kms2.node.semantic.triplet import (
     FactExtractionNode,
@@ -334,104 +358,8 @@ class _Database:
         self.closed = True
 
 
-class _ComposedSemanticGraph:
-    def build_graph(self, raw_only=False):
-        return self
-
-    async def ainvoke(self, initial_state):
-        assert initial_state == {'source_uuid': 'source-1'}
-        return {'raw_assertions': [object(), object()]}
-
-
-def test_extract_triplets_owns_runtime_and_returns_assertion_count(monkeypatch):
-    from kms2 import application
-    from kms2.config import Settings
-
-    settings = Settings()
-    database = _Database(settings.database)
-    graph = _ComposedSemanticGraph()
-    monkeypatch.setattr(application, 'LocalModelRuntime', lambda _: _Runtime())
-    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
-    monkeypatch.setattr(application, 'build_semantic_graph', lambda *_: graph)
-
-    count = asyncio.run(application.extract_triplets(settings, 'source-1'))
-
-    assert count == 2
-    assert database.closed is True
-
-
-class _EmptySourceRepository:
-    async def load_blocks(self, source_uuid):
-        assert source_uuid == 'source-1'
-        return []
-
-
-class _EmptySemanticRepository:
-    def __init__(self):
-        self.assertions = None
-
-    async def replace_source_assertions(self, source_uuid, assertions):
-        self.assertions = (source_uuid, assertions)
-
-
 async def _noop_schema():
     return None
-
-
-def test_semantic_graph_raw_only_mode_cleans_semantic_layer():
-    from kms2.node.semantic.triplet_load import TripletSourceLoadNode
-    from kms2.node.semantic.triplet_persistence import TripletPersistenceNode
-
-    repository = _EmptySemanticRepository()
-    source_repository = _EmptySourceRepository()
-    semantic_repository = _TypedSemanticRepository([])
-    context_window = ContextWindowSettings(
-        backward_budget=400,
-        forward_budget=400,
-    )
-    graph = SemanticGraph(
-        triplet_source_load=TripletSourceLoadNode(source_repository),
-        fact_extraction=FactExtractionNode(_FactExtractor(), context_window),
-        triplet_decomposition=TripletDecompositionNode(_TripletDecomposer()),
-        triplet_persistence=TripletPersistenceNode(repository, _noop_schema),
-        source_entity_description_load=SourceEntityDescriptionLoadNode(
-            source_repository, semantic_repository, context_window
-        ),
-        source_entity_description=SourceEntityDescriptionNode(
-            _EntityDescriber()
-        ),
-        source_entity_embedding=SourceEntityEmbeddingNode(_EmbeddingClient()),
-        source_entity_persistence=SourceEntityPersistenceNode(
-            semantic_repository, _noop_schema
-        ),
-        source_event_description_load=SourceEventDescriptionLoadNode(
-            source_repository, semantic_repository, context_window
-        ),
-        source_event_description=SourceEventDescriptionNode(_EntityDescriber()),
-        source_event_embedding=SourceEventEmbeddingNode(_EmbeddingClient()),
-        source_event_persistence=SourceEventPersistenceNode(
-            semantic_repository, _noop_schema
-        ),
-        source_predicate_description_load=SourcePredicateDescriptionLoadNode(
-            source_repository, semantic_repository, context_window
-        ),
-        source_predicate_description=SourcePredicateDescriptionNode(
-            _EntityDescriber()
-        ),
-        source_predicate_embedding=SourcePredicateEmbeddingNode(
-            _EmbeddingClient()
-        ),
-        source_predicate_persistence=SourcePredicatePersistenceNode(
-            semantic_repository, _noop_schema
-        ),
-    ).build_graph(raw_only=True)
-
-    assert {'triplet_source_load', 'triplet_persistence'} <= set(graph.nodes)
-    assert 'source_entity_description_load' not in graph.nodes
-    final_state = asyncio.run(graph.ainvoke({'source_uuid': 'source-1'}))
-
-    assert final_state['raw_assertions'] == []
-    assert repository.assertions == ('source-1', [])
 
 
 class _TypedSourceRepository:
@@ -470,6 +398,18 @@ class _TypedSemanticRepository:
     async def replace_source_assertions(self, source_uuid, assertions):
         self.assertions = (source_uuid, assertions)
 
+    async def load_source_statements(self, source_uuid):
+        return []
+
+    async def load_source_procedures(self, source_uuid):
+        return []
+
+    async def update_source_statement_description(self, source_uuid, results):
+        self.updated['statement'] = (source_uuid, results)
+
+    async def update_source_procedure_description(self, source_uuid, results):
+        self.updated['procedure'] = (source_uuid, results)
+
 
 class _EntityDescriber:
     async def aforward(self, *, request):
@@ -483,6 +423,23 @@ class _EmbeddingClient:
     async def embed(self, texts):
         self.texts = list(texts)
         return [[float(index)] for index, _ in enumerate(texts)]
+
+
+class _HubNode:
+    def __init__(self, key):
+        self.key = key
+
+    async def run(self, state):
+        return {self.key: 1}
+
+
+class _FinalPersistence:
+    async def run(self, state):
+        return {
+            'source_entity_hub_count': 1,
+            'source_event_hub_count': 1,
+            'source_predicate_hub_count': 1,
+        }
 
 
 def test_entity_load_orders_occurrences_and_projects_authoritative_context():
@@ -532,7 +489,7 @@ def test_entity_description_embedding_preserves_occurrence_identity():
             source_block_uuid='block-1',
             name='Alpha',
         ),
-        model_input=TermDescriptionInput(
+        model_input=SourceEntityDescriptionInput(
             term='Alpha',
             target_block={
                 'block_type': 'paragraph',
@@ -770,13 +727,53 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
             semantic_repository,
             _noop_schema,
         ),
+        source_statement_description_load=SourceStatementDescriptionLoadNode(
+            source_repository, semantic_repository, context_window
+        ),
+        source_statement_description=SourceStatementDescriptionNode(
+            _EntityDescriber()
+        ),
+        source_statement_embedding=SourceStatementEmbeddingNode(
+            _EmbeddingClient()
+        ),
+        source_statement_persistence=SourceStatementPersistenceNode(
+            semantic_repository, _noop_schema
+        ),
+        source_procedure_description_load=SourceProcedureDescriptionLoadNode(
+            source_repository, semantic_repository, context_window
+        ),
+        source_procedure_description=SourceProcedureDescriptionNode(
+            _EntityDescriber()
+        ),
+        source_procedure_embedding=SourceProcedureEmbeddingNode(
+            _EmbeddingClient()
+        ),
+        source_procedure_persistence=SourceProcedurePersistenceNode(
+            semantic_repository, _noop_schema
+        ),
+        source_entity_hub=_HubNode('source_entity_hub_count'),
+        source_event_hub=_HubNode('source_event_hub_count'),
+        source_predicate_hub=_HubNode('source_predicate_hub_count'),
+        source_statement_hub=_HubNode('source_statement_hub_count'),
+        source_procedure_hub=_HubNode('source_procedure_hub_count'),
+        source_entity_hub_persistence=_HubNode('source_entity_hub_count'),
+        source_event_hub_persistence=_HubNode('source_event_hub_count'),
+        source_predicate_hub_persistence=_HubNode('source_predicate_hub_count'),
+        source_statement_hub_persistence=_HubNode('source_statement_hub_count'),
+        source_procedure_hub_persistence=_HubNode('source_procedure_hub_count'),
+        source_hub_join=_HubNode('joined'),
     ).build_graph()
-
     assert {
         'triplet_persistence',
         'source_entity_description_load',
         'source_event_description_load',
         'source_predicate_description_load',
+        'source_entity_hub',
+        'source_event_hub',
+        'source_predicate_hub',
+        'source_statement_hub',
+        'source_procedure_hub',
+        'source_hub_join',
     } <= set(graph.nodes)
     final_state = asyncio.run(graph.ainvoke({'source_uuid': 'source-1'}))
 
@@ -785,3 +782,8 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
     assert final_state['source_event_description_persisted_count'] == 1
     assert final_state['source_predicate_description_persisted_count'] == 1
     assert set(semantic_repository.updated) == {'entity', 'event', 'predicate'}
+    assert final_state['source_entity_hub_count'] == 1
+    assert final_state['source_event_hub_count'] == 1
+    assert final_state['source_predicate_hub_count'] == 1
+    assert final_state['source_statement_hub_count'] == 1
+    assert final_state['source_procedure_hub_count'] == 1

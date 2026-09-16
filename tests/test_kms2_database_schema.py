@@ -67,5 +67,11 @@ def test_ensure_schema_runs_migration_structural_vector_and_wait_ddl():
     assert 'SourceEntity' in schema
     assert 'SourceEvent' in schema
     assert 'SourcePredicate' in schema
+    assert 'SourceEntityHub' in schema
+    assert 'SourceEventHub' in schema
+    assert 'SourcePredicateHub' in schema
+    assert 'source_entity_hub_embedding' in schema
+    assert 'source_event_hub_embedding' in schema
+    assert 'source_predicate_hub_embedding' in schema
     assert 'HAS_PAGE' not in schema
     assert 'CONTAINS_BLOCK' not in schema

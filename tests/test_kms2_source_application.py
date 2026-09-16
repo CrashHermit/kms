@@ -18,7 +18,17 @@ from kms2.config import (
     TextSeamSettings,
 )
 from kms2.database.client import DatabaseClient
+from kms2.langgraph.semantic.graph import SemanticGraph
 from kms2.langgraph.source.graph import SourceGraph
+from kms2.module.semantic.source_entity_hub_judge import (
+    SourceEntityHubJudgeModule,
+)
+from kms2.module.semantic.source_event_hub_judge import (
+    SourceEventHubJudgeModule,
+)
+from kms2.module.semantic.source_predicate_hub_judge import (
+    SourcePredicateHubJudgeModule,
+)
 from kms2.node.source.content_correction import ContentCorrectionNode
 from kms2.node.source.embedding import EmbeddingNode
 from kms2.node.source.exercise_finder import ExerciseFinderNode
@@ -38,6 +48,7 @@ from kms2.ocr.mistral import MistralOCRProvider
 
 class _RecordingRuntime:
     embedding = object()
+    reranker = object()
     calls: list[tuple[str, PredictorStrategy, type[dspy.Signature]]]
 
     def predictor(
@@ -246,4 +257,38 @@ def test_build_source_graph_composes_all_source_dependencies():
         'exercise-start',
         'exercise-boundary',
         'instruction-governance',
+    ]
+
+
+def test_build_semantic_graph_composes_independent_hub_judges():
+    settings = _settings()
+    local_models = _RecordingRuntime()
+    local_models.calls = []
+    database = DatabaseClient(settings.database)
+
+    graph = composition.build_semantic_graph(settings, local_models, database)
+
+    assert isinstance(graph, SemanticGraph)
+    assert isinstance(
+        graph.source_entity_hub._judge_module,
+        SourceEntityHubJudgeModule,
+    )
+    assert isinstance(
+        graph.source_event_hub._judge_module,
+        SourceEventHubJudgeModule,
+    )
+    assert isinstance(
+        graph.source_predicate_hub._judge_module,
+        SourcePredicateHubJudgeModule,
+    )
+    assert local_models.reranker is graph.source_entity_hub._reranker
+    assert local_models.reranker is graph.source_event_hub._reranker
+    assert local_models.reranker is graph.source_predicate_hub._reranker
+    assert [profile for profile, _, _ in local_models.calls[-6:]] == [
+        'gemma-text-32k',
+        'gemma-text-32k',
+        'gemma-text-32k',
+        'gemma-text-32k',
+        'gemma-text-32k',
+        'gemma-text-32k',
     ]

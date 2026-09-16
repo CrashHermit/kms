@@ -13,11 +13,14 @@ from kms2.core.model import (
     SourceBlock,
     SourceEntity,
     SourceEntityDescriptionResult,
+    SourceEntityHubCandidate,
     SourceEvent,
     SourceEventDescriptionResult,
+    SourceEventHubCandidate,
     SourcePage,
     SourcePredicate,
     SourcePredicateDescriptionResult,
+    SourcePredicateHubCandidate,
     Statement,
     VisualAsset,
 )
@@ -130,6 +133,21 @@ def test_kms2_neo4j_materializes_and_replaces_source():
                     'pages': 2,
                     'blocks': 2,
                     'assets': 2,
+                }
+                result = await session.run(
+                    """
+                    MATCH (statement:Statement {uuid: $statement_uuid})
+                    MATCH (procedure:Procedure {uuid: $procedure_uuid})
+                    RETURN statement.source_uuid AS statement_source_uuid,
+                           procedure.source_uuid AS procedure_source_uuid
+                    """,
+                    statement_uuid='kms2-integration-statement-1',
+                    procedure_uuid='kms2-integration-procedure-1',
+                )
+                ownership = await result.single()
+                assert dict(ownership) == {
+                    'statement_source_uuid': source_uuid,
+                    'procedure_source_uuid': source_uuid,
                 }
 
                 result = await session.run(
@@ -685,6 +703,234 @@ def test_kms2_neo4j_migrates_labels_and_queries_vectors():
                 for match in matches
             )
         finally:
+            await database.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.skipif(
+    os.getenv('KMS2_NEO4J_GDS_IT') != '1'
+    or not all(os.getenv(name) for name in _REQUIRED_ENVIRONMENT),
+    reason='KMS2 Neo4j GDS integration environment is not enabled',
+)
+def test_kms2_neo4j_source_hub_gds_contracts():
+    async def exercise() -> None:
+        settings = Settings()
+        database = DatabaseClient(settings.database)
+        repository = SemanticRepository(database.session)
+        source_uuid = 'kms2-gds-source'
+        dimension = settings.local_models.embedding.model.dimension
+        first_vector = [1.0] + [0.0] * (dimension - 1)
+        second_vector = [0.99, 0.01] + [0.0] * (dimension - 2)
+        try:
+            await schema.ensure_schema(
+                database.session,
+                embedding_dimension=dimension,
+            )
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    UNWIND $entities AS entity_row
+                    CREATE (:SourceEntity {
+                        uuid: entity_row.uuid,
+                        source_uuid: $source_uuid,
+                        source_block_uuid: entity_row.block_uuid,
+                        name: entity_row.name,
+                        description: entity_row.description,
+                        embedding: entity_row.embedding
+                    })
+                    WITH count(*) AS _
+                    UNWIND $events AS event_row
+                    CREATE (:SourceEvent {
+                        uuid: event_row.uuid,
+                        source_uuid: $source_uuid,
+                        source_block_uuid: event_row.block_uuid,
+                        name: event_row.name,
+                        description: event_row.description,
+                        embedding: event_row.embedding
+                    })
+                    WITH count(*) AS _
+                    UNWIND $predicates AS predicate_row
+                    CREATE (:SourcePredicate {
+                        uuid: predicate_row.uuid,
+                        source_uuid: $source_uuid,
+                        source_block_uuid: predicate_row.block_uuid,
+                        predicate: predicate_row.predicate,
+                        description: predicate_row.description,
+                        embedding: predicate_row.embedding
+                    })
+                    """,
+                    source_uuid=source_uuid,
+                    entities=[
+                        {
+                            'uuid': 'kms2-gds-entity-1',
+                            'block_uuid': 'kms2-gds-block-1',
+                            'name': 'Alpha',
+                            'description': 'same entity',
+                            'embedding': first_vector,
+                        },
+                        {
+                            'uuid': 'kms2-gds-entity-2',
+                            'block_uuid': 'kms2-gds-block-2',
+                            'name': 'Alpha term',
+                            'description': 'same entity',
+                            'embedding': second_vector,
+                        },
+                    ],
+                    events=[
+                        {
+                            'uuid': 'kms2-gds-event-1',
+                            'block_uuid': 'kms2-gds-block-1',
+                            'name': 'Integrates',
+                            'description': 'same event',
+                            'embedding': first_vector,
+                        },
+                        {
+                            'uuid': 'kms2-gds-event-2',
+                            'block_uuid': 'kms2-gds-block-2',
+                            'name': 'Integration',
+                            'description': 'same event',
+                            'embedding': second_vector,
+                        },
+                    ],
+                    predicates=[
+                        {
+                            'uuid': 'kms2-gds-predicate-1',
+                            'block_uuid': 'kms2-gds-block-1',
+                            'predicate': 'supports',
+                            'description': 'same relation',
+                            'embedding': first_vector,
+                        },
+                        {
+                            'uuid': 'kms2-gds-predicate-2',
+                            'block_uuid': 'kms2-gds-block-2',
+                            'predicate': 'supports strongly',
+                            'description': 'same relation',
+                            'embedding': second_vector,
+                        },
+                    ],
+                )
+                await result.consume()
+
+            await repository.replace_source_entity_accepted_edges(
+                source_uuid,
+                [
+                    SourceEntityHubCandidate(
+                        left_uuid='kms2-gds-entity-1',
+                        left_name='Alpha',
+                        left_description='same entity',
+                        right_uuid='kms2-gds-entity-2',
+                        right_name='Alpha term',
+                        right_description='same entity',
+                        score=0.95,
+                    )
+                ],
+            )
+            await repository.replace_source_event_accepted_edges(
+                source_uuid,
+                [
+                    SourceEventHubCandidate(
+                        left_uuid='kms2-gds-event-1',
+                        left_name='Integrates',
+                        left_description='same event',
+                        right_uuid='kms2-gds-event-2',
+                        right_name='Integration',
+                        right_description='same event',
+                        score=0.95,
+                    )
+                ],
+            )
+            await repository.replace_source_predicate_accepted_edges(
+                source_uuid,
+                [
+                    SourcePredicateHubCandidate(
+                        left_uuid='kms2-gds-predicate-1',
+                        left_predicate='supports',
+                        left_description='same relation',
+                        left_subject='Alpha',
+                        left_object='Alpha term',
+                        right_uuid='kms2-gds-predicate-2',
+                        right_predicate='supports strongly',
+                        right_description='same relation',
+                        right_subject='Alpha',
+                        right_object='Alpha term',
+                        score=0.95,
+                    )
+                ],
+            )
+            community_groups = [
+                await repository.detect_source_entity_communities(
+                    source_uuid,
+                    max_iterations=10,
+                    min_association_strength=0.2,
+                    minimum_community_size=2,
+                ),
+                await repository.detect_source_event_communities(
+                    source_uuid,
+                    max_iterations=10,
+                    min_association_strength=0.2,
+                    minimum_community_size=2,
+                ),
+                await repository.detect_source_predicate_communities(
+                    source_uuid,
+                    max_iterations=10,
+                    min_association_strength=0.2,
+                    minimum_community_size=2,
+                ),
+            ]
+            assert all(
+                'embedding' not in member.model_dump()
+                for groups in community_groups
+                for group in groups
+                for member in group
+            )
+
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (left {source_uuid: $source_uuid})
+                          -[similarity:SIMILAR_TO]-
+                          (right {source_uuid: $source_uuid})
+                    WHERE left.uuid < right.uuid
+                    RETURN labels(left) AS left_labels,
+                           labels(right) AS right_labels,
+                           similarity.score AS score
+                    """,
+                    source_uuid=source_uuid,
+                )
+                rows = await result.data()
+                for label in ('SourceEntity', 'SourceEvent', 'SourcePredicate'):
+                    assert any(
+                        label in row['left_labels']
+                        and label in row['right_labels']
+                        and row['score'] >= 0.8
+                        for row in rows
+                    )
+                for graph_name in (
+                    f'kms2-source-entity-hubs-{source_uuid}',
+                    f'kms2-source-event-hubs-{source_uuid}',
+                    f'kms2-source-predicate-hubs-{source_uuid}',
+                ):
+                    result = await session.run(
+                        """
+                        CALL gds.graph.exists($graph_name)
+                        YIELD exists
+                        RETURN exists
+                        """,
+                        graph_name=graph_name,
+                    )
+                    assert not (await result.single())['exists']
+        finally:
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (node)
+                    WHERE node.source_uuid = $source_uuid
+                    DETACH DELETE node
+                    """,
+                    source_uuid=source_uuid,
+                )
+                await result.consume()
             await database.close()
 
     asyncio.run(exercise())

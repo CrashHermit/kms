@@ -2,14 +2,23 @@
 
 from pydantic import BaseModel, Field
 
+from kms2.core.model.context import SourceBlockContext
 from kms2.core.model.semantic.base import _SemanticOccurrence
-from kms2.core.model.semantic.term_description import TermDescriptionInput
 
 
 class SourcePredicate(_SemanticOccurrence):
     """Raw predicate occurrence attached to one source assertion."""
 
     predicate: str = Field(min_length=1)
+
+
+class SourcePredicateDescriptionInput(BaseModel):
+    """Predicate occurrence and its source-local model context."""
+
+    term: str = Field(min_length=1)
+    context_before: list[SourceBlockContext] = Field(default_factory=list)
+    target_block: SourceBlockContext
+    context_after: list[SourceBlockContext] = Field(default_factory=list)
 
 
 class SourcePredicateDescriptionTarget(SourcePredicate):
@@ -20,7 +29,7 @@ class SourcePredicateDescriptionRequest(BaseModel):
     """One predicate occurrence and its description input."""
 
     target: SourcePredicateDescriptionTarget
-    model_input: TermDescriptionInput
+    model_input: SourcePredicateDescriptionInput
 
 
 class SourcePredicateDescriptionResult(SourcePredicateDescriptionTarget):
@@ -32,6 +41,7 @@ class SourcePredicateDescriptionResult(SourcePredicateDescriptionTarget):
 
 __all__ = [
     'SourcePredicate',
+    'SourcePredicateDescriptionInput',
     'SourcePredicateDescriptionRequest',
     'SourcePredicateDescriptionResult',
     'SourcePredicateDescriptionTarget',

@@ -48,27 +48,12 @@ class _Graph:
         }
 
 
-class _SemanticGraph:
-    def __init__(self, fail=False, events=None):
-        self.initial_state = None
-        self.fail = fail
-        self.events = events
-
-    async def ainvoke(self, initial_state):
-        self.initial_state = initial_state
-        if self.events is not None:
-            self.events.append('semantic-invoke')
-        if self.fail:
-            raise RuntimeError('semantic graph failed')
-        return {'raw_assertions': ['triplet-1', 'triplet-2']}
-
-
 class _ComposedGraph:
     def __init__(self, graph):
         self.graph = graph
         self.build_calls = 0
 
-    def build_graph(self, raw_only=False):
+    def build_graph(self):
         self.build_calls += 1
         return self.graph
 
@@ -140,116 +125,6 @@ def test_ingest_source_closes_database_when_graph_fails(monkeypatch):
     assert database.closed is True
 
 
-def test_ingest_and_extract_triplets_reuses_resources_and_orders_graphs(
-    monkeypatch,
-):
-    settings = Settings()
-    runtime = _Runtime(settings.local_models)
-    database = _Database(settings.database)
-    events = []
-    source_graph = _Graph(events=events)
-    semantic_graph = _SemanticGraph(events=events)
-    source_composed = _ComposedGraph(source_graph)
-    semantic_composed = _ComposedGraph(semantic_graph)
-    runtime_calls = []
-    database_calls = []
-
-    def make_runtime(runtime_settings):
-        runtime_calls.append(runtime_settings)
-        return runtime
-
-    def make_database(database_settings):
-        database_calls.append(database_settings)
-        return database
-
-    def compose_source(received_settings, received_runtime, received_database):
-        assert (received_settings, received_runtime, received_database) == (
-            settings,
-            runtime,
-            database,
-        )
-        events.append('source-compose')
-        return source_composed
-
-    def compose_semantic(
-        received_settings, received_runtime, received_database
-    ):
-        assert (received_settings, received_runtime, received_database) == (
-            settings,
-            runtime,
-            database,
-        )
-        events.append('semantic-compose')
-        return semantic_composed
-
-    monkeypatch.setattr(application, 'LocalModelRuntime', make_runtime)
-    monkeypatch.setattr(application, 'DatabaseClient', make_database)
-    monkeypatch.setattr(application, 'build_source_graph', compose_source)
-    monkeypatch.setattr(application, 'build_semantic_graph', compose_semantic)
-
-    result = asyncio.run(
-        application.ingest_and_extract_triplets(
-            settings,
-            'fixtures/book.pdf',
-            [0, 2],
-        )
-    )
-
-    assert runtime_calls == [settings.local_models]
-    assert runtime.entered is True
-    assert database_calls == [settings.database]
-    assert database.closed is True
-    assert source_composed.build_calls == 1
-    assert semantic_composed.build_calls == 1
-    assert events == [
-        'source-compose',
-        'source-invoke',
-        'semantic-compose',
-        'semantic-invoke',
-    ]
-    assert semantic_graph.initial_state == {'source_uuid': 'result-source'}
-    assert result.source == Source(uuid='result-source', key='book.pdf')
-    assert result.page_count == 3
-    assert result.triplet_count == 2
-
-
-def test_ingest_and_extract_triplets_closes_database_when_extraction_fails(
-    monkeypatch,
-):
-    settings = Settings()
-    runtime = _Runtime(settings.local_models)
-    database = _Database(settings.database)
-    source_graph = _Graph()
-    semantic_graph = _SemanticGraph(fail=True)
-
-    monkeypatch.setattr(application, 'LocalModelRuntime', lambda _: runtime)
-    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
-    monkeypatch.setattr(
-        application,
-        'build_source_graph',
-        lambda *_: _ComposedGraph(source_graph),
-    )
-    monkeypatch.setattr(
-        application,
-        'build_semantic_graph',
-        lambda *_: _ComposedGraph(semantic_graph),
-    )
-
-    try:
-        asyncio.run(
-            application.ingest_and_extract_triplets(
-                settings,
-                'fixtures/book.pdf',
-            )
-        )
-    except RuntimeError as error:
-        assert str(error) == 'semantic graph failed'
-    else:
-        raise AssertionError('semantic graph failure was not propagated')
-
-    assert database.closed is True
-
-
 def test_list_sources_closes_database_and_returns_sources(monkeypatch):
     settings = Settings()
     database = _Database(settings.database)
@@ -292,6 +167,13 @@ class _CompleteSemanticGraph:
             'source_entity_description_persisted_count': 3,
             'source_event_description_persisted_count': 4,
             'source_predicate_description_persisted_count': 5,
+            'source_statement_description_persisted_count': 6,
+            'source_procedure_description_persisted_count': 7,
+            'source_entity_hub_count': 8,
+            'source_event_hub_count': 9,
+            'source_predicate_hub_count': 10,
+            'source_statement_hub_count': 11,
+            'source_procedure_hub_count': 12,
         }
 
 
@@ -313,8 +195,15 @@ def test_run_semantic_stage_uses_one_complete_semantic_graph(monkeypatch):
     result = asyncio.run(application.run_semantic_stage(settings, 'source-1'))
 
     assert result.raw_assertion_count == 2
+    assert result.source_entity_hub_count == 8
+    assert result.source_event_hub_count == 9
+    assert result.source_predicate_hub_count == 10
+    assert result.source_statement_hub_count == 11
+    assert result.source_procedure_hub_count == 12
     assert result.source_entity_description_count == 3
     assert result.source_event_description_count == 4
     assert result.source_predicate_description_count == 5
+    assert result.source_statement_description_count == 6
+    assert result.source_procedure_description_count == 7
     assert events == ['semantic-compose', 'semantic-invoke']
     assert database.closed is True

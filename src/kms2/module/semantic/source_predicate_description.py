@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model import TermDescriptionInput
+from kms2.core.model import SourcePredicateDescriptionInput
 
 
 class SourcePredicateDescriptionSignature(dspy.Signature):
@@ -14,7 +14,7 @@ class SourcePredicateDescriptionSignature(dspy.Signature):
     compact 2–12-word relation description, not a new fact or example.
     """
 
-    request: TermDescriptionInput = dspy.InputField(
+    request: SourcePredicateDescriptionInput = dspy.InputField(
         description=(
             'Describe only target_block predicate semantics. '
             'context_before and context_after are reference context.'
@@ -32,11 +32,13 @@ class SourcePredicateDescriptionModule(dspy.Module):
         super().__init__()
         self.predictor = predictor
 
-    def forward(self, *, request: TermDescriptionInput) -> str:
+    def forward(self, *, request: SourcePredicateDescriptionInput) -> str:
         """Describe one predicate occurrence synchronously."""
         return self.predictor(request=request).description
 
-    async def aforward(self, *, request: TermDescriptionInput) -> str:
+    async def aforward(
+        self, *, request: SourcePredicateDescriptionInput
+    ) -> str:
         """Describe one predicate occurrence asynchronously."""
         return (await self.predictor.acall(request=request)).description
 

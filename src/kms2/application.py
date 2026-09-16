@@ -20,15 +20,6 @@ class SourceIngestionResult:
 
 
 @dataclass(frozen=True, slots=True)
-class SourceProcessingResult:
-    """Summary of one completed source ingestion and raw triplet extraction."""
-
-    source: Source
-    page_count: int
-    triplet_count: int
-
-
-@dataclass(frozen=True, slots=True)
 class SemanticStageResult:
     """Counts persisted by one complete semantic stage."""
 
@@ -36,6 +27,13 @@ class SemanticStageResult:
     source_entity_description_count: int
     source_event_description_count: int
     source_predicate_description_count: int
+    source_statement_description_count: int
+    source_procedure_description_count: int
+    source_entity_hub_count: int
+    source_event_hub_count: int
+    source_predicate_hub_count: int
+    source_statement_hub_count: int
+    source_procedure_hub_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,19 +75,6 @@ async def _ingest_source_with_resources(
     )
 
 
-async def _extract_triplets_with_resources(
-    settings: Settings,
-    source_uuid: str,
-    local_models: LocalModelRuntime,
-    database: DatabaseClient,
-) -> int:
-    graph = build_semantic_graph(settings, local_models, database).build_graph(
-        raw_only=True
-    )
-    final_state = await graph.ainvoke({'source_uuid': source_uuid})
-    return len(final_state['raw_assertions'])
-
-
 async def _run_semantic_stage_with_resources(
     settings: Settings,
     source_uuid: str,
@@ -110,6 +95,17 @@ async def _run_semantic_stage_with_resources(
         source_predicate_description_count=final_state[
             'source_predicate_description_persisted_count'
         ],
+        source_statement_description_count=final_state[
+            'source_statement_description_persisted_count'
+        ],
+        source_procedure_description_count=final_state[
+            'source_procedure_description_persisted_count'
+        ],
+        source_entity_hub_count=final_state['source_entity_hub_count'],
+        source_event_hub_count=final_state['source_event_hub_count'],
+        source_predicate_hub_count=final_state['source_predicate_hub_count'],
+        source_statement_hub_count=final_state['source_statement_hub_count'],
+        source_procedure_hub_count=final_state['source_procedure_hub_count'],
     )
 
 
@@ -134,21 +130,6 @@ async def ingest_source(
         await database.close()
 
 
-async def extract_triplets(settings: Settings, source_uuid: str) -> int:
-    """Extract and persist raw triplets for an already persisted source."""
-    database = DatabaseClient(settings.database)
-    try:
-        async with LocalModelRuntime(settings.local_models) as local_models:
-            return await _extract_triplets_with_resources(
-                settings,
-                source_uuid,
-                local_models,
-                database,
-            )
-    finally:
-        await database.close()
-
-
 async def run_semantic_stage(
     settings: Settings,
     source_uuid: str,
@@ -165,38 +146,6 @@ async def run_semantic_stage(
             )
     finally:
         await database.close()
-
-
-async def ingest_and_extract_triplets(
-    settings: Settings,
-    pdf_path: str,
-    pages: list[int] | None = None,
-) -> SourceProcessingResult:
-    """Ingest a source and extract its raw triplets in one runtime session."""
-    database = DatabaseClient(settings.database)
-    try:
-        async with LocalModelRuntime(settings.local_models) as local_models:
-            ingestion = await _ingest_source_with_resources(
-                settings,
-                pdf_path,
-                pages,
-                local_models,
-                database,
-            )
-            triplet_count = await _extract_triplets_with_resources(
-                settings,
-                ingestion.source.uuid,
-                local_models,
-                database,
-            )
-    finally:
-        await database.close()
-
-    return SourceProcessingResult(
-        source=ingestion.source,
-        page_count=ingestion.page_count,
-        triplet_count=triplet_count,
-    )
 
 
 async def ingest_and_run_semantic_stage(
@@ -234,10 +183,7 @@ async def ingest_and_run_semantic_stage(
 __all__ = [
     'SemanticStageResult',
     'SourceIngestionResult',
-    'SourceProcessingResult',
     'SourceSemanticStageResult',
-    'extract_triplets',
-    'ingest_and_extract_triplets',
     'ingest_and_run_semantic_stage',
     'ingest_source',
     'list_sources',

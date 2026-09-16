@@ -148,11 +148,16 @@ class SourceRepository:
                 for block_uuid in instruction.member_block_uuids
             ],
             'statements': [
-                {'uuid': statement.uuid, 'is_exercise': statement.is_exercise}
+                {
+                    'uuid': statement.uuid,
+                    'source_uuid': source.uuid,
+                    'is_exercise': statement.is_exercise,
+                }
                 for statement in statements
             ],
             'procedures': [
-                {'uuid': procedure.uuid} for procedure in procedures
+                {'uuid': procedure.uuid, 'source_uuid': source.uuid}
+                for procedure in procedures
             ],
             'statement_member_pairs': [
                 {
