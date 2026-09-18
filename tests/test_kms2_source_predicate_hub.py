@@ -1,6 +1,6 @@
 import asyncio
 
-from kms2.config import SourcePredicateHubSettings
+from kms2.config.semantic import SourcePredicateHubSettings
 from kms2.core.model import (
     SourcePredicateHubCandidate,
     SourcePredicateHubDefinition,
@@ -10,12 +10,14 @@ from kms2.core.model import (
 from kms2.core.model.semantic.source_predicate_hub import (
     SourcePredicateHubJudgeDecision,
 )
-from kms2.database.semantic.queries import (
+from kms2.database.semantic.queries.source_predicate import (
     DETECT_SOURCE_PREDICATE_COMMUNITIES,
     READ_SOURCE_PREDICATE_HUB_CANDIDATES,
     REPLACE_SOURCE_PREDICATE_ACCEPTED_EDGES,
 )
-from kms2.database.semantic.repository import SemanticRepository
+from kms2.database.semantic.source_predicate_repository import (
+    SourcePredicateRepository,
+)
 from kms2.langgraph.semantic.state import SemanticState
 from kms2.node.semantic.source_predicate_hub import SourcePredicateHubNode
 
@@ -104,7 +106,7 @@ def _candidate():
 
 def test_predicate_repository_includes_directed_endpoint_context():
     session = _Session()
-    repository = SemanticRepository(lambda: _Context(session))
+    repository = SourcePredicateRepository(lambda: _Context(session))
 
     candidates = asyncio.run(
         repository.read_source_predicate_hub_candidates(
@@ -167,7 +169,7 @@ class _Embedding:
 
 class _Reranker:
     async def rerank(self, query, documents, top_n=None):
-        return [{'index': 0, 'relevance_score': 0.5}]
+        return [{'index': 0, 'relevance_score': 0.6}]
 
 
 class _Judge:
@@ -184,8 +186,49 @@ class _Judge:
         ]
 
 
-async def _noop():
-    return None
+async def _run_predicate(node, state):
+    state = state.model_copy(update=await node.load_candidates(state))
+    rerank_results = []
+    sends = node.dispatch_rerank(state)
+    if isinstance(sends, list):
+        for send in sends:
+            rerank_results.extend(
+                (await node.rerank_worker(send.arg))[
+                    'source_predicate_hub_rerank_results'
+                ]
+            )
+    state = state.model_copy(
+        update={'source_predicate_hub_rerank_results': rerank_results}
+    )
+    state = state.model_copy(update=node.collect_rerank(state))
+    judge_results = []
+    sends = node.dispatch_judge(state)
+    if isinstance(sends, list):
+        for send in sends:
+            judge_results.extend(
+                (await node.judge_worker(send.arg))[
+                    'source_predicate_hub_judge_results'
+                ]
+            )
+    state = state.model_copy(
+        update={'source_predicate_hub_judge_results': judge_results}
+    )
+    state = state.model_copy(update=node.collect_judge(state))
+    state = state.model_copy(update=await node.detect_communities(state))
+    synthesis_results = []
+    sends = node.dispatch_synthesis(state)
+    if isinstance(sends, list):
+        for send in sends:
+            synthesis_results.extend(
+                (await node.synthesis_worker(send.arg))[
+                    'source_predicate_hub_synthesis_results'
+                ]
+            )
+    state = state.model_copy(
+        update={'source_predicate_hub_synthesis_results': synthesis_results}
+    )
+    state = state.model_copy(update=node.collect_synthesis(state))
+    return await node.embed(state)
 
 
 def test_predicate_node_judge_receives_both_directed_contexts():
@@ -198,10 +241,9 @@ def test_predicate_node_judge_receives_both_directed_contexts():
         _Reranker(),
         _Embedding(),
         SourcePredicateHubSettings(),
-        _noop,
     )
 
-    asyncio.run(node.run(SemanticState(source_uuid='source-1')))
+    asyncio.run(_run_predicate(node, SemanticState(source_uuid='source-1')))
 
     request = judge.requests[0][0]
     assert request.left_subject == 'Alice'
@@ -222,9 +264,14 @@ def test_predicate_node_limits_judge_batches():
         _Reranker(),
         _Embedding(),
         SourcePredicateHubSettings(judge_batch_size=2),
-        _noop,
     )
 
-    asyncio.run(node._judge_borderline([_candidate() for _ in range(3)]))
+    state = SemanticState(
+        source_uuid='source-1',
+        source_predicate_hub_borderline_pairs=[_candidate() for _ in range(3)],
+    )
+    sends = node.dispatch_judge(state)
+    for send in sends:
+        asyncio.run(node.judge_worker(send.arg))
 
     assert [len(requests) for requests in judge.requests] == [2, 1]

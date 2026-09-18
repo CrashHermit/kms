@@ -84,12 +84,40 @@ class SourcePredicateHub(Vertex):
     embedding: list[float] = Field(min_length=1)
 
 
+class SourcePredicateHubRerankResult(BaseModel):
+    """One ordered predicate reranker batch result."""
+
+    ordinal: int = Field(ge=0)
+    direct: list[SourcePredicateHubCandidate] = Field(default_factory=list)
+    borderline: list[SourcePredicateHubCandidate] = Field(default_factory=list)
+
+
+class SourcePredicateHubJudgeResult(BaseModel):
+    """One ordered predicate judge batch result."""
+
+    ordinal: int = Field(ge=0)
+    accepted: list[SourcePredicateHubCandidate] = Field(default_factory=list)
+
+
+class SourcePredicateHubSynthesisResult(BaseModel):
+    """One ordered predicate community synthesis result."""
+
+    ordinal: int = Field(ge=0)
+    definition: SourcePredicateHubDefinition
+    membership_uuids: list[str] = Field(min_length=1)
+    aliases: list[str] = Field(min_length=1)
+
+
 __all__ = [
     'SourcePredicateHub',
     'SourcePredicateHubCandidate',
     'SourcePredicateHubDefinition',
+    'SourcePredicateHubJudgeDecision',
     'SourcePredicateHubJudgeInput',
+    'SourcePredicateHubJudgeResult',
     'SourcePredicateHubMember',
+    'SourcePredicateHubRerankResult',
     'SourcePredicateHubSynthesisInput',
     'SourcePredicateHubSynthesisMember',
+    'SourcePredicateHubSynthesisResult',
 ]

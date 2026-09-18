@@ -1,6 +1,6 @@
 import asyncio
 
-from kms2.config import PedagogicalFinderSettings
+from kms2.config.source import PedagogicalFinderSettings
 from kms2.core.model import (
     BlockType,
     ExerciseComponent,

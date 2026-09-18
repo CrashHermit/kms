@@ -1,8 +1,8 @@
 """Persist prepared source-local procedure hubs."""
 
-from collections.abc import Awaitable, Callable
-
-from kms2.database.semantic.repository import SemanticRepository
+from kms2.database.semantic.source_procedure_repository import (
+    SourceProcedureRepository,
+)
 from kms2.langgraph.semantic.state import SemanticState
 
 
@@ -11,14 +11,11 @@ class SourceProcedureHubPersistenceNode:
 
     def __init__(
         self,
-        repository: SemanticRepository,
-        schema_initializer: Callable[[], Awaitable[None]],
+        repository: SourceProcedureRepository,
     ) -> None:
         self._repository = repository
-        self._schema_initializer = schema_initializer
 
     async def run(self, state: SemanticState) -> dict[str, int]:
-        await self._schema_initializer()
         await self._repository.replace_source_procedure_hubs(
             state.source_uuid,
             state.source_procedure_hubs,

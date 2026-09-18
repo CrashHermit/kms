@@ -1,7 +1,11 @@
 import asyncio
 
-from kms2.config import SourceProcedureHubSettings
-from kms2.core.model import SourceProcedureHubCandidate
+from kms2.config.semantic import SourceProcedureHubSettings
+from kms2.core.model import (
+    SourceProcedureHubCandidate,
+    SourceProcedureHubDefinition,
+    SourceProcedureHubSynthesisResult,
+)
 from kms2.langgraph.semantic.state import SemanticState
 from kms2.node.semantic.source_procedure_hub import SourceProcedureHubNode
 
@@ -23,8 +27,18 @@ class _Embedding:
         return []
 
 
-async def _noop():
-    return None
+async def _run_empty_procedure(node, state):
+    state = state.model_copy(update=await node.load_candidates(state))
+    state = state.model_copy(update={'source_procedure_hub_rerank_results': []})
+    state = state.model_copy(update=node.collect_rerank(state))
+    state = state.model_copy(update={'source_procedure_hub_judge_results': []})
+    state = state.model_copy(update=node.collect_judge(state))
+    state = state.model_copy(update=await node.detect_communities(state))
+    state = state.model_copy(
+        update={'source_procedure_hub_synthesis_results': []}
+    )
+    state = state.model_copy(update=node.collect_synthesis(state))
+    return await node.embed(state)
 
 
 def test_procedure_hub_empty_source_is_independent():
@@ -35,9 +49,10 @@ def test_procedure_hub_empty_source_is_independent():
         None,
         _Embedding(),
         SourceProcedureHubSettings(),
-        _noop,
     )
-    result = asyncio.run(node.run(SemanticState(source_uuid='source-1')))
+    result = asyncio.run(
+        _run_empty_procedure(node, SemanticState(source_uuid='source-1'))
+    )
     assert result == {
         'source_procedure_hubs': [],
         'source_procedure_hub_memberships': [],
@@ -53,3 +68,23 @@ def test_procedure_hub_candidate_preserves_ordered_description_evidence():
         score=0.9,
     )
     assert candidate.left_description == candidate.right_description
+
+
+def test_procedure_synthesis_result_contains_only_embedding_inputs():
+    result = SourceProcedureHubSynthesisResult(
+        ordinal=0,
+        definition=SourceProcedureHubDefinition(
+            canonical_name='Differentiate a polynomial',
+            description='Apply the power rule to each term.',
+        ),
+        membership_uuids=['procedure-1'],
+    )
+
+    assert result.model_dump() == {
+        'ordinal': 0,
+        'definition': {
+            'canonical_name': 'Differentiate a polynomial',
+            'description': 'Apply the power rule to each term.',
+        },
+        'membership_uuids': ['procedure-1'],
+    }

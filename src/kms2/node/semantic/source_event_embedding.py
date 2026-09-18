@@ -4,6 +4,7 @@ from typing import Literal, TypedDict
 
 from langgraph.types import Send
 
+from kms2.core.embedding import EmbeddingClient
 from kms2.core.model import SourceEventDescriptionResult
 from kms2.langgraph.semantic.state import SemanticState
 
@@ -17,7 +18,7 @@ class SourceEventEmbeddingWorkerState(TypedDict):
 class SourceEventEmbeddingNode:
     """Batch event descriptions and retain occurrence UUID alignment."""
 
-    def __init__(self, client) -> None:
+    def __init__(self, client: EmbeddingClient) -> None:
         self._client = client
 
     def dispatch(

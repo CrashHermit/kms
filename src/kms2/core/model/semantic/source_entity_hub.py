@@ -76,12 +76,40 @@ class SourceEntityHub(Vertex):
     embedding: list[float] = Field(min_length=1)
 
 
+class SourceEntityHubRerankResult(BaseModel):
+    """One ordered entity reranker batch result."""
+
+    ordinal: int = Field(ge=0)
+    direct: list[SourceEntityHubCandidate] = Field(default_factory=list)
+    borderline: list[SourceEntityHubCandidate] = Field(default_factory=list)
+
+
+class SourceEntityHubJudgeResult(BaseModel):
+    """One ordered entity judge batch result."""
+
+    ordinal: int = Field(ge=0)
+    accepted: list[SourceEntityHubCandidate] = Field(default_factory=list)
+
+
+class SourceEntityHubSynthesisResult(BaseModel):
+    """One ordered entity community synthesis result."""
+
+    ordinal: int = Field(ge=0)
+    definition: SourceEntityHubDefinition
+    membership_uuids: list[str] = Field(min_length=1)
+    aliases: list[str] = Field(min_length=1)
+
+
 __all__ = [
     'SourceEntityHub',
     'SourceEntityHubCandidate',
     'SourceEntityHubDefinition',
+    'SourceEntityHubJudgeDecision',
     'SourceEntityHubJudgeInput',
+    'SourceEntityHubJudgeResult',
     'SourceEntityHubMember',
+    'SourceEntityHubRerankResult',
     'SourceEntityHubSynthesisInput',
     'SourceEntityHubSynthesisMember',
+    'SourceEntityHubSynthesisResult',
 ]

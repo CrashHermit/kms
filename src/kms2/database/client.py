@@ -2,7 +2,7 @@
 
 from neo4j import AsyncDriver, AsyncGraphDatabase, AsyncSession
 
-from kms2.config import DatabaseSettings
+from kms2.config.services import DatabaseSettings
 
 
 class DatabaseClient:

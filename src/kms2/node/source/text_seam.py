@@ -10,10 +10,8 @@ from kms2.core.model.source_stage.text_seam import (
     TextSeamResult,
 )
 from kms2.langgraph.source.state import SourceState
-from kms2.module.source.text_seam import (
-    TextSeamJudgeModule,
-    TextSeamRewriterModule,
-)
+from kms2.module.source.text_seam_judge import TextSeamJudgeModule
+from kms2.module.source.text_seam_rewriter import TextSeamRewriterModule
 
 
 class TextSeamWorkerState(TypedDict):

@@ -1,8 +1,6 @@
 """LangGraph node for KMS2 source persistence."""
 
-from collections.abc import Awaitable, Callable
-
-from kms2.database.source.repository import SourceRepository
+from kms2.database.source.source_graph_repository import SourceGraphRepository
 from kms2.langgraph.source.state import SourceState
 
 
@@ -11,15 +9,12 @@ class SourcePersistenceNode:
 
     def __init__(
         self,
-        repository: SourceRepository,
-        schema_initializer: Callable[[], Awaitable[None]],
+        repository: SourceGraphRepository,
     ) -> None:
         self._repository = repository
-        self._schema_initializer = schema_initializer
 
     async def run(self, state: SourceState) -> dict[str, object]:
-        """Initialize the schema and replace the final embedded source graph."""
-        await self._schema_initializer()
+        """Replace the final embedded source graph."""
         await self._repository.replace_source(
             state.source,
             state.embedded_pages,

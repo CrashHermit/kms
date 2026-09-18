@@ -4,9 +4,9 @@ from typing import Literal, TypedDict, cast
 
 from langgraph.types import Send
 
+from kms2.core.embedding import EmbeddingClient
 from kms2.core.model import EmbeddingRequest, EmbeddingResult, SourcePage
 from kms2.langgraph.source.state import SourceState
-from kms2.local_models.inference import _EmbeddingClient
 
 
 class EmbeddingWorkerState(TypedDict):
@@ -18,7 +18,7 @@ class EmbeddingWorkerState(TypedDict):
 class EmbeddingNode:
     """Dispatch, embed, and collect the final split source blocks."""
 
-    def __init__(self, client: _EmbeddingClient) -> None:
+    def __init__(self, client: EmbeddingClient) -> None:
         self._client = client
 
     def dispatch(

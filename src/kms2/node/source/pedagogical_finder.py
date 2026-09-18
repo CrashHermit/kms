@@ -2,7 +2,7 @@
 
 import logging
 
-from kms2.config import PedagogicalFinderSettings
+from kms2.config.source import PedagogicalFinderSettings
 from kms2.core.model import PedagogicalComponent
 from kms2.core.windowing import select_window
 from kms2.langgraph.source.state import SourceState

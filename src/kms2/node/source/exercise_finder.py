@@ -1,6 +1,6 @@
 """LangGraph node for discovering exercise components."""
 
-from kms2.config import ExerciseFinderSettings
+from kms2.config.source import ExerciseFinderSettings
 from kms2.core.model import ExerciseComponent
 from kms2.core.windowing import select_window
 from kms2.langgraph.source.state import SourceState

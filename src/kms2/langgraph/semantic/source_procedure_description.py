@@ -18,7 +18,9 @@ def add_source_procedure_description_phase(
     graph.add_node('source_procedure_description_load', description_load.run)
     graph.add_node('source_procedure_description_worker', description.worker)
     graph.add_node('source_procedure_description_collect', description.collect)
-    graph.add_edge('triplet_persistence', 'source_procedure_description_load')
+    graph.add_edge(
+        'source_statement_persistence', 'source_procedure_description_load'
+    )
     graph.add_conditional_edges(
         'source_procedure_description_load',
         description.dispatch,

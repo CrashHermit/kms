@@ -1,13 +1,13 @@
 import asyncio
 
-from kms2.config import InstructionGovernanceSettings
+from kms2.config.source import InstructionGovernanceSettings
 from kms2.core.model import (
     BlockType,
     Instruction,
     Source,
     SourceBlock,
     SourcePage,
-    Statement,
+    StatementDraft,
 )
 from kms2.langgraph.source.state import SourceState
 from kms2.node.source.instruction_governance import InstructionGovernanceNode
@@ -48,11 +48,11 @@ def _state() -> SourceState:
             Instruction(member_block_uuids=['block-4']),
         ],
         statements=[
-            Statement(
+            StatementDraft(
                 member_block_uuids=['block-1', 'block-2'], is_exercise=True
             ),
-            Statement(member_block_uuids=['block-3'], is_exercise=False),
-            Statement(member_block_uuids=['block-5'], is_exercise=True),
+            StatementDraft(member_block_uuids=['block-3'], is_exercise=False),
+            StatementDraft(member_block_uuids=['block-5'], is_exercise=True),
         ],
     )
 

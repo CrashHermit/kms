@@ -1,7 +1,6 @@
 import asyncio
 
 from kms2.database.schema import (
-    SCHEMA_MIGRATION_STATEMENTS,
     SCHEMA_STATEMENTS,
     VECTOR_INDEX_NAMES,
     ensure_schema,
@@ -28,7 +27,7 @@ class _SessionContext:
         return None
 
 
-def test_ensure_schema_runs_migration_structural_vector_and_wait_ddl():
+def test_ensure_schema_runs_structural_vector_and_wait_ddl():
     session = _RecordingSession()
 
     asyncio.run(
@@ -40,7 +39,6 @@ def test_ensure_schema_runs_migration_structural_vector_and_wait_ddl():
 
     statements = [statement for statement, _ in session.calls]
     expected_prefix = (
-        *SCHEMA_MIGRATION_STATEMENTS,
         *SCHEMA_STATEMENTS,
         *vector_index_statements(4096),
     )
@@ -63,13 +61,21 @@ def test_ensure_schema_runs_migration_structural_vector_and_wait_ddl():
     assert 'SourcePage' not in schema
     assert 'SourceBlock' in schema
     assert 'VisualAsset' in schema
-    assert 'Triplet' in schema
+    assert 'SourceTriplet' in schema
+    assert 'FOR (statement:Statement)' not in schema
+    assert 'FOR (procedure:Procedure)' not in schema
+    assert 'FOR (triplet:Triplet)' not in schema
+    assert 'SourceFact' in schema
     assert 'SourceEntity' in schema
     assert 'SourceEvent' in schema
     assert 'SourcePredicate' in schema
     assert 'SourceEntityHub' in schema
     assert 'SourceEventHub' in schema
     assert 'SourcePredicateHub' in schema
+    assert 'SourceTripletHub' in schema
+    assert 'source_triplet_hub_uuid' in schema
+    assert 'source_triplet_hub_source_uuid' in schema
+    assert 'source_triplet_hub_embedding' in schema
     assert 'source_entity_hub_embedding' in schema
     assert 'source_event_hub_embedding' in schema
     assert 'source_predicate_hub_embedding' in schema

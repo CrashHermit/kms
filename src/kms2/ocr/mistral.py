@@ -9,7 +9,7 @@ import pypdfium2 as pdfium
 from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
-from kms2.config import OCRSettings
+from kms2.config.services import OCRSettings
 from kms2.core.model.block_types import BlockType
 from kms2.core.model.source_stage.ocr import (
     OCRArtifact,
@@ -80,7 +80,7 @@ class OCRPage(BaseModel):
     markdown: str
     images: list[OCRImage] = Field(default_factory=list)
     tables: list[dict[str, object]] = Field(default_factory=list)
-    hyperlinks: list[dict[str, object]] = Field(default_factory=list)
+    hyperlinks: list[dict[str, object] | str] = Field(default_factory=list)
     header: str | None = None
     footer: str | None = None
     dimensions: PageDimensions

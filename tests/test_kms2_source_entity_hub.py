@@ -1,6 +1,6 @@
 import asyncio
 
-from kms2.config import SourceEntityHubSettings
+from kms2.config.semantic import SourceEntityHubSettings
 from kms2.core.model import (
     SourceEntityHubCandidate,
     SourceEntityHubDefinition,
@@ -10,13 +10,15 @@ from kms2.core.model import (
 from kms2.core.model.semantic.source_entity_hub import (
     SourceEntityHubJudgeDecision,
 )
-from kms2.database.semantic.queries import (
+from kms2.database.semantic.queries.source_entity import (
     DETECT_SOURCE_ENTITY_COMMUNITIES,
     DROP_SOURCE_ENTITY_HUB_GRAPH,
     READ_SOURCE_ENTITY_HUB_CANDIDATES,
     REPLACE_SOURCE_ENTITY_ACCEPTED_EDGES,
 )
-from kms2.database.semantic.repository import SemanticRepository
+from kms2.database.semantic.source_entity_repository import (
+    SourceEntityRepository,
+)
 from kms2.langgraph.semantic.state import SemanticState
 from kms2.node.semantic.source_entity_hub import SourceEntityHubNode
 
@@ -97,7 +99,7 @@ def _candidate(left_uuid='entity-1', right_uuid='entity-2'):
 
 def test_entity_repository_reads_candidates_and_replaces_only_accepted_edges():
     session = _Session()
-    repository = SemanticRepository(lambda: _Context(session))
+    repository = SourceEntityRepository(lambda: _Context(session))
 
     candidates = asyncio.run(
         repository.read_source_entity_hub_candidates(
@@ -122,7 +124,7 @@ def test_entity_repository_reads_candidates_and_replaces_only_accepted_edges():
 
 def test_entity_community_detection_is_weighted_and_temporary():
     session = _Session()
-    repository = SemanticRepository(lambda: _Context(session))
+    repository = SourceEntityRepository(lambda: _Context(session))
 
     communities = asyncio.run(
         repository.detect_source_entity_communities(
@@ -190,7 +192,7 @@ class _Reranker:
         self.calls.append((query, list(documents), top_n))
         return [
             {'index': index, 'relevance_score': score}
-            for index, score in enumerate((1.0, 0.1, 0.5)[: len(documents)])
+            for index, score in enumerate((1.0, 0.1, 0.6)[: len(documents)])
         ]
 
 
@@ -206,8 +208,34 @@ class _Judge:
         ]
 
 
-async def _noop():
-    return None
+async def _run_entity(node, state):
+    state = state.model_copy(update=await node.load_candidates(state))
+    rerank_results = []
+    for send in node.dispatch_rerank(state):
+        result = await node.rerank_worker(send.arg)
+        rerank_results.extend(result['source_entity_hub_rerank_results'])
+    state = state.model_copy(
+        update={'source_entity_hub_rerank_results': rerank_results}
+    )
+    state = state.model_copy(update=node.collect_rerank(state))
+    judge_results = []
+    for send in node.dispatch_judge(state):
+        result = await node.judge_worker(send.arg)
+        judge_results.extend(result['source_entity_hub_judge_results'])
+    state = state.model_copy(
+        update={'source_entity_hub_judge_results': judge_results}
+    )
+    state = state.model_copy(update=node.collect_judge(state))
+    state = state.model_copy(update=await node.detect_communities(state))
+    synthesis_results = []
+    for send in node.dispatch_synthesis(state):
+        result = await node.synthesis_worker(send.arg)
+        synthesis_results.extend(result['source_entity_hub_synthesis_results'])
+    state = state.model_copy(
+        update={'source_entity_hub_synthesis_results': synthesis_results}
+    )
+    state = state.model_copy(update=node.collect_synthesis(state))
+    return await node.embed(state)
 
 
 def test_entity_node_routes_scores_and_stages_without_durable_hub_write():
@@ -224,10 +252,11 @@ def test_entity_node_routes_scores_and_stages_without_durable_hub_write():
         reranker,
         _Embedding(),
         SourceEntityHubSettings(),
-        _noop,
     )
 
-    result = asyncio.run(node.run(SemanticState(source_uuid='source-1')))
+    result = asyncio.run(
+        _run_entity(node, SemanticState(source_uuid='source-1'))
+    )
 
     assert reranker.calls[0][2] is None
     assert [pair.right_uuid for pair in repository.accepted[1]] == [
@@ -247,13 +276,16 @@ def test_entity_node_limits_judge_batches():
         _Reranker(),
         _Embedding(),
         SourceEntityHubSettings(judge_batch_size=2),
-        _noop,
     )
 
-    asyncio.run(
-        node._judge_borderline(
-            [_candidate(right_uuid=f'entity-{index}') for index in range(3)]
-        )
+    state = SemanticState(
+        source_uuid='source-1',
+        source_entity_hub_borderline_pairs=[
+            _candidate(right_uuid=f'entity-{index}') for index in range(3)
+        ],
     )
+    sends = node.dispatch_judge(state)
+    for send in sends:
+        asyncio.run(node.judge_worker(send.arg))
 
     assert [len(requests) for requests in judge.requests] == [2, 1]

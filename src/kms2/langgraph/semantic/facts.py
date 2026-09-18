@@ -1,6 +1,6 @@
 """LangGraph registration for semantic fact extraction."""
 
-from kms2.node.semantic.triplet import FactExtractionNode
+from kms2.node.semantic.fact_extraction import FactExtractionNode
 from langgraph.graph import StateGraph
 
 

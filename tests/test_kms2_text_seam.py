@@ -14,7 +14,7 @@ from kms2.core.model.source_stage.text_seam import (
     TextSeamResult,
 )
 from kms2.langgraph.source.state import SourceState
-from kms2.module.source import text_seam
+from kms2.module.source import text_seam_judge, text_seam_rewriter
 from kms2.node.source.text_seam import TextSeamNode
 
 
@@ -50,8 +50,8 @@ def _block(
 
 
 def _module(
-    module_type: type[text_seam.TextSeamJudgeModule]
-    | type[text_seam.TextSeamRewriterModule],
+    module_type: type[text_seam_judge.TextSeamJudgeModule]
+    | type[text_seam_rewriter.TextSeamRewriterModule],
     predictor: _Predictor,
 ):
     return module_type(predictor)
@@ -66,14 +66,14 @@ def _state(pages: list[SourcePage]) -> SourceState:
 
 
 def test_signatures_and_module_calls_preserve_exact_text_boundary():
-    assert set(text_seam.TextSeamSignature.input_fields) == {
+    assert set(text_seam_judge.TextSeamSignature.input_fields) == {
         'top_node_context',
         'top_bottom_edge_node',
         'bottom_top_edge_node',
         'bottom_node_context',
     }
-    assert set(text_seam.TextSeamSignature.output_fields) == {'is_split'}
-    assert set(text_seam.TextSeamRewriteSignature.input_fields) == {
+    assert set(text_seam_judge.TextSeamSignature.output_fields) == {'is_split'}
+    assert set(text_seam_rewriter.TextSeamRewriteSignature.input_fields) == {
         'tail',
         'head',
         'tail_kind',
@@ -81,12 +81,14 @@ def test_signatures_and_module_calls_preserve_exact_text_boundary():
         'before_tail',
         'after_head',
     }
-    assert set(text_seam.TextSeamRewriteSignature.output_fields) == {'merged'}
+    assert set(text_seam_rewriter.TextSeamRewriteSignature.output_fields) == {
+        'merged'
+    }
 
     tail = _block(1, 'tail')
     head = _block(2, 'head', BlockType.PARAGRAPH)
     judge_predictor = _Predictor(is_split=True)
-    judge = _module(text_seam.TextSeamJudgeModule, judge_predictor)
+    judge = _module(text_seam_judge.TextSeamJudgeModule, judge_predictor)
     assert (
         judge(
             tail=tail,
@@ -114,7 +116,9 @@ def test_signatures_and_module_calls_preserve_exact_text_boundary():
     )
 
     rewriter_predictor = _Predictor(merged='tail head')
-    rewriter = _module(text_seam.TextSeamRewriterModule, rewriter_predictor)
+    rewriter = _module(
+        text_seam_rewriter.TextSeamRewriterModule, rewriter_predictor
+    )
     assert (
         rewriter(
             tail=tail,

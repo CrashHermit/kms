@@ -1,27 +1,25 @@
 """LangGraph node for triplet extraction persistence."""
 
-from collections.abc import Awaitable, Callable
-
-from kms2.database.semantic.repository import SemanticRepository
+from kms2.database.semantic.source_triplet_repository import (
+    SourceTripletRepository,
+)
 from kms2.langgraph.semantic.state import SemanticState
 
 
 class TripletPersistenceNode:
-    """Persist raw triplet assertions as a terminal graph side effect."""
+    """Persist source facts and their decomposed triplet occurrences."""
 
     def __init__(
         self,
-        repository: SemanticRepository,
-        schema_initializer: Callable[[], Awaitable[None]],
+        repository: SourceTripletRepository,
     ) -> None:
         self._repository = repository
-        self._schema_initializer = schema_initializer
 
     async def run(self, state: SemanticState) -> dict[str, object]:
-        """Initialize structural schema and replace source assertions."""
-        await self._schema_initializer()
-        await self._repository.replace_source_assertions(
+        """Replace source facts and their decomposed triplet occurrences."""
+        await self._repository.replace_source_facts_and_triplets(
             state.source_uuid,
-            state.raw_assertions,
+            state.source_facts,
+            state.triplet_occurrences,
         )
         return {}

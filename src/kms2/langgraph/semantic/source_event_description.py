@@ -18,7 +18,7 @@ def add_source_event_description_phase(
     graph.add_node('source_event_description_load', description_load.run)
     graph.add_node('source_event_description_worker', description.worker)
     graph.add_node('source_event_description_collect', description.collect)
-    graph.add_edge('triplet_persistence', 'source_event_description_load')
+    graph.add_edge('source_entity_persistence', 'source_event_description_load')
     graph.add_conditional_edges(
         'source_event_description_load',
         description.dispatch,

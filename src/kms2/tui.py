@@ -2,7 +2,9 @@
 
 import asyncio
 import logging
+import signal
 import sys
+from collections.abc import Awaitable
 from pathlib import Path
 
 from InquirerPy import inquirer
@@ -13,7 +15,7 @@ from kms2.application import (
     list_sources,
     run_semantic_stage,
 )
-from kms2.config import Settings
+from kms2.config.settings import Settings
 from kms2.core.model import Source
 
 PDF_DIRECTORY = Path('pdfs')
@@ -36,7 +38,7 @@ def run() -> None:
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     try:
         _run_tui()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, asyncio.CancelledError):
         logger.info('Cancelled.')
         sys.exit(0)
 
@@ -60,16 +62,39 @@ def _run_tui() -> None:
     _run_new_source(settings)
 
 
+def _run_async[T](awaitable: Awaitable[T]) -> T:
+    """Run one application coroutine with graceful signal cancellation."""
+
+    async def runner() -> T:
+        task = asyncio.create_task(awaitable)
+        loop = asyncio.get_running_loop()
+        installed: list[signal.Signals] = []
+        for signum in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(signum, task.cancel)
+            except (NotImplementedError, RuntimeError):
+                continue
+            installed.append(signum)
+        try:
+            return await task
+        finally:
+            for signum in installed:
+                loop.remove_signal_handler(signum)
+
+    return asyncio.run(runner())
+
+
 def _log_semantic_completion(source: Source, semantic) -> None:
     """Log all counts persisted by one complete semantic stage."""
     logger.info(
-        'Done: source %s (%s), semantic stage persisted %d assertion(s); '
-        'descriptions: %d entity, %d event, %d predicate, %d statement, '
-        '%d procedure; hubs: %d entity, %d event, %d predicate, %d statement, '
-        '%d procedure.',
+        'Done: source %s (%s), semantic stage persisted %d source fact(s), '
+        '%d triplet(s); descriptions: %d entity, %d event, %d predicate, '
+        '%d statement, %d procedure; hubs: %d entity, %d event, %d predicate, '
+        '%d triplet, %d statement, %d procedure.',
         source.uuid,
         source.key,
-        semantic.raw_assertion_count,
+        semantic.source_fact_count,
+        semantic.triplet_count,
         semantic.source_entity_description_count,
         semantic.source_event_description_count,
         semantic.source_predicate_description_count,
@@ -78,6 +103,7 @@ def _log_semantic_completion(source: Source, semantic) -> None:
         semantic.source_entity_hub_count,
         semantic.source_event_hub_count,
         semantic.source_predicate_hub_count,
+        semantic.source_triplet_hub_count,
         semantic.source_statement_hub_count,
         semantic.source_procedure_hub_count,
     )
@@ -100,12 +126,12 @@ def _run_new_source(settings: Settings) -> None:
         if not raw_pages
         else [int(page.strip()) for page in raw_pages.split(',')]
     )
-    result = asyncio.run(ingest_source(settings, pdf_path, pages))
+    result = _run_async(ingest_source(settings, pdf_path, pages))
     logger.info(
         'Done: source %s (%s), ingested %d page(s).',
         result.source.uuid,
         result.source.key,
-        result.page_count,
+        result.split_page_count,
     )
 
 
@@ -132,7 +158,7 @@ def _run_existing_source(
         logger.info('Cancelled.')
         return
 
-    semantic = asyncio.run(run_semantic_stage(settings, source.uuid))
+    semantic = _run_async(run_semantic_stage(settings, source.uuid))
     _log_semantic_completion(source, semantic)
 
 

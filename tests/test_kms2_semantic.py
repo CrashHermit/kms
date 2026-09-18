@@ -1,13 +1,10 @@
 import asyncio
 
-from kms2.config import ContextWindowSettings
+from kms2.config.inference import ContextWindowSettings
 from kms2.core.model import (
     AtomicFact,
     ExtractedFact,
     FactExtractionRequest,
-    RawAssertion,
-    RawTriplet,
-    SemanticNodeKind,
     SourceBlock,
     SourceEntity,
     SourceEntityDescriptionInput,
@@ -15,25 +12,45 @@ from kms2.core.model import (
     SourceEntityDescriptionResult,
     SourceEntityDescriptionTarget,
     SourceEvent,
+    SourceFact,
     SourcePredicate,
-    TripletCandidate,
+    SourceTriplet,
+    SourceTripletOccurrence,
+    TripletDecompositionCandidate,
     TripletDecompositionResult,
+    TripletEndpointKind,
 )
 from kms2.core.windowing import select_window
-from kms2.database.semantic.queries import (
-    CLEAR_SOURCE_ASSERTIONS,
+from kms2.database.semantic.queries.source_entity import (
     FIND_SIMILAR_SOURCE_ENTITIES,
-    FIND_SIMILAR_SOURCE_EVENTS,
-    FIND_SIMILAR_SOURCE_PREDICATES,
     READ_SOURCE_ENTITIES,
-    REPLACE_SOURCE_ASSERTIONS,
     UPDATE_SOURCE_ENTITY_DESCRIPTION,
 )
-from kms2.database.semantic.repository import SemanticRepository
-from kms2.database.source.queries import READ_SOURCE_BLOCKS
-from kms2.database.source.repository import SourceRepository
+from kms2.database.semantic.queries.source_event import (
+    FIND_SIMILAR_SOURCE_EVENTS,
+)
+from kms2.database.semantic.queries.source_predicate import (
+    FIND_SIMILAR_SOURCE_PREDICATES,
+)
+from kms2.database.semantic.queries.source_triplet import (
+    CLEAR_SOURCE_FACTS_AND_TRIPLETS,
+    REPLACE_SOURCE_FACTS_AND_TRIPLETS,
+)
+from kms2.database.semantic.source_entity_repository import (
+    SourceEntityRepository,
+)
+from kms2.database.semantic.source_event_repository import SourceEventRepository
+from kms2.database.semantic.source_predicate_repository import (
+    SourcePredicateRepository,
+)
+from kms2.database.semantic.source_triplet_repository import (
+    SourceTripletRepository,
+)
+from kms2.database.source.queries.source_blocks import READ_SOURCE_BLOCKS
+from kms2.database.source.source_block_repository import SourceBlockRepository
 from kms2.langgraph.semantic.graph import SemanticGraph
 from kms2.langgraph.semantic.state import SemanticState
+from kms2.node.semantic.fact_extraction import FactExtractionNode
 from kms2.node.semantic.source_entity_description import (
     SourceEntityDescriptionNode,
 )
@@ -90,10 +107,7 @@ from kms2.node.semantic.source_statement_embedding import (
 from kms2.node.semantic.source_statement_persistence import (
     SourceStatementPersistenceNode,
 )
-from kms2.node.semantic.triplet import (
-    FactExtractionNode,
-    TripletDecompositionNode,
-)
+from kms2.node.semantic.triplet_decomposition import TripletDecompositionNode
 from kms2.node.semantic.triplet_load import TripletSourceLoadNode
 from kms2.node.semantic.triplet_persistence import TripletPersistenceNode
 
@@ -155,12 +169,12 @@ class _FactExtractor:
 class _TripletDecomposer:
     async def aforward(self, *, request):
         return [
-            TripletCandidate(
+            TripletDecompositionCandidate(
                 subject='Alice',
                 predicate='works for',
                 object='Acme',
-                subject_kind=SemanticNodeKind.ENTITY,
-                object_kind=SemanticNodeKind.ENTITY,
+                subject_kind=TripletEndpointKind.ENTITY,
+                object_kind=TripletEndpointKind.ENTITY,
             )
         ]
 
@@ -222,36 +236,52 @@ def test_triplet_collection_creates_fresh_vertex_ids_and_preserves_provenance():
             TripletDecompositionResult(
                 fact=fact,
                 triplets=[
-                    TripletCandidate(
+                    TripletDecompositionCandidate(
                         subject='Alice',
                         predicate='works for',
                         object='Acme',
-                        subject_kind=SemanticNodeKind.ENTITY,
-                        object_kind=SemanticNodeKind.ENTITY,
+                        subject_kind=TripletEndpointKind.ENTITY,
+                        object_kind=TripletEndpointKind.ENTITY,
                     ),
-                    TripletCandidate(
+                    TripletDecompositionCandidate(
                         subject='Alice',
                         predicate='works for',
                         object='Acme',
-                        subject_kind=SemanticNodeKind.ENTITY,
-                        object_kind=SemanticNodeKind.ENTITY,
+                        subject_kind=TripletEndpointKind.ENTITY,
+                        object_kind=TripletEndpointKind.ENTITY,
                     ),
                 ],
             )
         ],
     )
 
-    assertions = node.collect(state)['raw_assertions']
+    collected = node.collect(state)
+    source_facts = collected['source_facts']
+    triplet_occurrences = collected['triplet_occurrences']
 
-    assert len(assertions) == 2
-    assert assertions[0].triplet.uuid != assertions[1].triplet.uuid
-    assert assertions[0].subject.uuid != assertions[1].subject.uuid
-    assert all(
-        assertion.triplet.source_block_uuid == 'block-1'
-        for assertion in assertions
+    assert len(triplet_occurrences) == 2
+    assert (
+        triplet_occurrences[0].triplet.uuid
+        != triplet_occurrences[1].triplet.uuid
+    )
+    assert (
+        triplet_occurrences[0].subject.uuid
+        != triplet_occurrences[1].subject.uuid
     )
     assert all(
-        isinstance(assertion.subject, SourceEntity) for assertion in assertions
+        occurrence.triplet.source_block_uuid == 'block-1'
+        for occurrence in triplet_occurrences
+    )
+    assert all(
+        isinstance(occurrence.subject, SourceEntity)
+        for occurrence in triplet_occurrences
+    )
+    assert len(source_facts) == 1
+    assert source_facts[0].source_block_uuid == 'block-1'
+    assert source_facts[0].text == 'Alice works for Acme'
+    assert all(
+        occurrence.fact.uuid == source_facts[0].uuid
+        for occurrence in triplet_occurrences
     )
 
 
@@ -287,7 +317,7 @@ class _SessionContext:
 
 def test_source_repository_loads_ordered_blocks():
     session = _Session()
-    repository = SourceRepository(lambda: _SessionContext(session))
+    repository = SourceBlockRepository(lambda: _SessionContext(session))
 
     blocks = asyncio.run(repository.load_blocks('source-1'))
 
@@ -298,9 +328,16 @@ def test_source_repository_loads_ordered_blocks():
 
 def test_semantic_repository_replace_uses_exact_query_parameters():
     session = _Session()
-    repository = SemanticRepository(lambda: _SessionContext(session))
-    assertion = RawAssertion(
-        triplet=RawTriplet(
+    repository = SourceTripletRepository(lambda: _SessionContext(session))
+    source_fact = SourceFact(
+        uuid='fact-1',
+        source_uuid='source-1',
+        source_block_uuid='block-1',
+        text='Alice works for Acme.',
+    )
+    triplet_occurrence = SourceTripletOccurrence(
+        fact=source_fact,
+        triplet=SourceTriplet(
             source_uuid='source-1',
             source_block_uuid='block-1',
             subject_uuid='subject-1',
@@ -327,19 +364,46 @@ def test_semantic_repository_replace_uses_exact_query_parameters():
         ),
     )
 
-    asyncio.run(repository.replace_source_assertions('source-1', [assertion]))
-    assert session.calls[-1][0] is REPLACE_SOURCE_ASSERTIONS
+    asyncio.run(
+        repository.replace_source_facts_and_triplets(
+            'source-1',
+            [source_fact],
+            [triplet_occurrence],
+        )
+    )
+    assert session.calls[-1][0] is REPLACE_SOURCE_FACTS_AND_TRIPLETS
     assert session.calls[-1][1]['source_uuid'] == 'source-1'
-    assert session.calls[-1][1]['triplets'][0]['uuid'] == assertion.triplet.uuid
+    assert session.calls[-1][1]['source_facts'] == [
+        {
+            'uuid': 'fact-1',
+            'source_uuid': 'source-1',
+            'source_block_uuid': 'block-1',
+            'text': 'Alice works for Acme.',
+        }
+    ]
+    assert (
+        session.calls[-1][1]['triplets'][0]['uuid']
+        == triplet_occurrence.triplet.uuid
+    )
+    assert session.calls[-1][1]['fact_triplet_pairs'] == [
+        {
+            'source_fact_uuid': 'fact-1',
+            'triplet_uuid': triplet_occurrence.triplet.uuid,
+        }
+    ]
     query = session.calls[-1][0]
-    assert 'CREATE (block)-[:HAS_TRIPLET]->(triplet)' in query
+    assert 'CREATE (block)-[:HAS_FACT]->(fact)' in query
+    assert 'CREATE (fact)-[:HAS_TRIPLET]->(triplet)' in query
+    assert 'CREATE (block)-[:HAS_TRIPLET]->(triplet)' not in query
     assert 'CREATE (source)-[:HAS_TRIPLET]->(triplet)' not in query
     assert 'CREATE (triplet)-[:HAS_SUBJECT]->(subject)' in query
     assert 'CREATE (triplet)-[:HAS_OBJECT]->(object)' in query
     assert 'CREATE (triplet)-[:HAS_PREDICATE]->(source_predicate)' in query
 
-    asyncio.run(repository.replace_source_assertions('source-1', []))
-    assert session.calls[-1][0] is CLEAR_SOURCE_ASSERTIONS
+    asyncio.run(
+        repository.replace_source_facts_and_triplets('source-1', [], [])
+    )
+    assert session.calls[-1][0] is CLEAR_SOURCE_FACTS_AND_TRIPLETS
 
 
 class _Runtime:
@@ -356,10 +420,6 @@ class _Database:
 
     async def close(self):
         self.closed = True
-
-
-async def _noop_schema():
-    return None
 
 
 class _TypedSourceRepository:
@@ -395,8 +455,17 @@ class _TypedSemanticRepository:
     async def update_source_predicate_description(self, source_uuid, results):
         self.updated['predicate'] = (source_uuid, results)
 
-    async def replace_source_assertions(self, source_uuid, assertions):
-        self.assertions = (source_uuid, assertions)
+    async def replace_source_facts_and_triplets(
+        self,
+        source_uuid,
+        source_facts,
+        triplet_occurrences,
+    ):
+        self.source_facts_and_triplet_occurrences = (
+            source_uuid,
+            source_facts,
+            triplet_occurrences,
+        )
 
     async def load_source_statements(self, source_uuid):
         return []
@@ -425,11 +494,92 @@ class _EmbeddingClient:
         return [[float(index)] for index, _ in enumerate(texts)]
 
 
-class _HubNode:
-    def __init__(self, key):
-        self.key = key
+class _RecordingNode:
+    def __init__(self, node, marker, events):
+        self.node = node
+        self.marker = marker
+        self.events = events
+
+    def __getattr__(self, name):
+        return getattr(self.node, name)
 
     async def run(self, state):
+        self.events.append(self.marker)
+        return await self.node.run(state)
+
+
+class _HubNode:
+    def __init__(self, key, events=None, event_name=None, requires=()):
+        self.key = key
+        self.events = events
+        self.event_name = event_name or key
+        self.requires = requires
+        self.kind = key.removesuffix('_count')
+
+    def _record(self, marker):
+        if self.events is not None:
+            assert all(
+                requirement in self.events for requirement in self.requires
+            )
+            self.events.append(marker)
+
+    async def load_candidates(self, state):
+        self._record(f'{self.kind}_candidate_load')
+        return {f'{self.kind}_candidates': []}
+
+    def dispatch_rerank(self, state):
+        return f'{self.kind}_rerank_collect'
+
+    async def rerank_worker(self, state):
+        return {}
+
+    async def judge_worker(self, state):
+        return {}
+
+    def collect_rerank(self, state):
+        self._record(f'{self.kind}_rerank_collect')
+        return {}
+
+    def dispatch_judge(self, state):
+        return f'{self.kind}_judge_collect'
+
+    def collect_judge(self, state):
+        self._record(f'{self.kind}_judge_collect')
+        return {}
+
+    async def detect_communities(self, state):
+        self._record(f'{self.kind}_communities')
+        return {f'{self.kind}_communities': []}
+
+    def dispatch_synthesis(self, state):
+        return f'{self.kind}_synthesis_collect'
+
+    def collect_synthesis(self, state):
+        self._record(f'{self.kind}_synthesis_collect')
+        return {}
+
+    async def embed(self, state):
+        self._record(f'{self.kind}_embedding')
+        if self.kind == 'source_triplet_hub':
+            return {
+                'source_triplet_hubs': [],
+                'source_triplet_hub_memberships': [],
+            }
+        kind = self.kind.removeprefix('source_').removesuffix('_hub')
+        return {
+            f'source_{kind}_hubs': [],
+            f'source_{kind}_hub_memberships': [],
+        }
+
+    async def load_groups(self, state):
+        self._record(self.event_name)
+        return {'source_triplet_hub_groups': []}
+
+    async def synthesis_worker(self, state):
+        return {}
+
+    async def run(self, state):
+        self._record(self.event_name)
         return {self.key: 1}
 
 
@@ -557,16 +707,20 @@ class _RowsSession:
 
 def test_semantic_repository_typed_reads_and_updates_are_source_scoped():
     session = _RowsSession()
-    repository = SemanticRepository(lambda: _SessionContext(session))
+    entity_repository = SourceEntityRepository(lambda: _SessionContext(session))
+    event_repository = SourceEventRepository(lambda: _SessionContext(session))
+    predicate_repository = SourcePredicateRepository(
+        lambda: _SessionContext(session)
+    )
 
-    entities = asyncio.run(repository.load_source_entities('source-1'))
+    entities = asyncio.run(entity_repository.load_source_entities('source-1'))
     result = SourceEntityDescriptionResult(
         **entities[0].model_dump(),
         description='a local description',
         embedding=[0.1, 0.2],
     )
     asyncio.run(
-        repository.update_source_entity_description('source-1', [result])
+        entity_repository.update_source_entity_description('source-1', [result])
     )
 
     assert session.calls[0] == (
@@ -585,13 +739,15 @@ def test_semantic_repository_typed_reads_and_updates_are_source_scoped():
         ],
     }
     entity_matches = asyncio.run(
-        repository.find_similar_source_entities('entity-1', top_k=2)
+        entity_repository.find_similar_source_entities('entity-1', top_k=2)
     )
     event_matches = asyncio.run(
-        repository.find_similar_source_events('event-1', top_k=2)
+        event_repository.find_similar_source_events('event-1', top_k=2)
     )
     predicate_matches = asyncio.run(
-        repository.find_similar_source_predicates('predicate-1', top_k=2)
+        predicate_repository.find_similar_source_predicates(
+            'predicate-1', top_k=2
+        )
     )
 
     assert [match.uuid for match in entity_matches] == ['entity-1', 'entity-2']
@@ -680,42 +836,54 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
         forward_budget=400,
     )
 
+    events = []
     graph = SemanticGraph(
         triplet_source_load=TripletSourceLoadNode(source_repository),
         fact_extraction=FactExtractionNode(_FactExtractor(), context_window),
         triplet_decomposition=TripletDecompositionNode(_TripletDecomposer()),
-        triplet_persistence=TripletPersistenceNode(
-            semantic_repository,
-            _noop_schema,
-        ),
-        source_entity_description_load=SourceEntityDescriptionLoadNode(
-            source_repository,
-            semantic_repository,
-            context_window,
+        triplet_persistence=TripletPersistenceNode(semantic_repository),
+        source_entity_description_load=_RecordingNode(
+            SourceEntityDescriptionLoadNode(
+                source_repository,
+                semantic_repository,
+                context_window,
+            ),
+            'entity_description_load',
+            events,
         ),
         source_entity_description=SourceEntityDescriptionNode(
             _EntityDescriber()
         ),
         source_entity_embedding=SourceEntityEmbeddingNode(_EmbeddingClient()),
-        source_entity_persistence=SourceEntityPersistenceNode(
-            semantic_repository,
-            _noop_schema,
+        source_entity_persistence=_RecordingNode(
+            SourceEntityPersistenceNode(semantic_repository),
+            'entity_description_persist',
+            events,
         ),
-        source_event_description_load=SourceEventDescriptionLoadNode(
-            source_repository,
-            semantic_repository,
-            context_window,
+        source_event_description_load=_RecordingNode(
+            SourceEventDescriptionLoadNode(
+                source_repository,
+                semantic_repository,
+                context_window,
+            ),
+            'event_description_load',
+            events,
         ),
         source_event_description=SourceEventDescriptionNode(_EntityDescriber()),
         source_event_embedding=SourceEventEmbeddingNode(_EmbeddingClient()),
-        source_event_persistence=SourceEventPersistenceNode(
-            semantic_repository,
-            _noop_schema,
+        source_event_persistence=_RecordingNode(
+            SourceEventPersistenceNode(semantic_repository),
+            'event_description_persist',
+            events,
         ),
-        source_predicate_description_load=SourcePredicateDescriptionLoadNode(
-            source_repository,
-            semantic_repository,
-            context_window,
+        source_predicate_description_load=_RecordingNode(
+            SourcePredicateDescriptionLoadNode(
+                source_repository,
+                semantic_repository,
+                context_window,
+            ),
+            'predicate_description_load',
+            events,
         ),
         source_predicate_description=SourcePredicateDescriptionNode(
             _EntityDescriber()
@@ -723,12 +891,19 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
         source_predicate_embedding=SourcePredicateEmbeddingNode(
             _EmbeddingClient()
         ),
-        source_predicate_persistence=SourcePredicatePersistenceNode(
-            semantic_repository,
-            _noop_schema,
+        source_predicate_persistence=_RecordingNode(
+            SourcePredicatePersistenceNode(semantic_repository),
+            'predicate_description_persist',
+            events,
         ),
-        source_statement_description_load=SourceStatementDescriptionLoadNode(
-            source_repository, semantic_repository, context_window
+        source_statement_description_load=_RecordingNode(
+            SourceStatementDescriptionLoadNode(
+                source_repository,
+                semantic_repository,
+                context_window,
+            ),
+            'statement_description_load',
+            events,
         ),
         source_statement_description=SourceStatementDescriptionNode(
             _EntityDescriber()
@@ -736,11 +911,19 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
         source_statement_embedding=SourceStatementEmbeddingNode(
             _EmbeddingClient()
         ),
-        source_statement_persistence=SourceStatementPersistenceNode(
-            semantic_repository, _noop_schema
+        source_statement_persistence=_RecordingNode(
+            SourceStatementPersistenceNode(semantic_repository),
+            'statement_description_persist',
+            events,
         ),
-        source_procedure_description_load=SourceProcedureDescriptionLoadNode(
-            source_repository, semantic_repository, context_window
+        source_procedure_description_load=_RecordingNode(
+            SourceProcedureDescriptionLoadNode(
+                source_repository,
+                semantic_repository,
+                context_window,
+            ),
+            'procedure_description_load',
+            events,
         ),
         source_procedure_description=SourceProcedureDescriptionNode(
             _EntityDescriber()
@@ -748,36 +931,99 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
         source_procedure_embedding=SourceProcedureEmbeddingNode(
             _EmbeddingClient()
         ),
-        source_procedure_persistence=SourceProcedurePersistenceNode(
-            semantic_repository, _noop_schema
+        source_procedure_persistence=_RecordingNode(
+            SourceProcedurePersistenceNode(semantic_repository),
+            'procedure_description_persist',
+            events,
         ),
-        source_entity_hub=_HubNode('source_entity_hub_count'),
+        source_entity_hub=_HubNode(
+            'source_entity_hub_count',
+            events=events,
+        ),
         source_event_hub=_HubNode('source_event_hub_count'),
         source_predicate_hub=_HubNode('source_predicate_hub_count'),
+        source_triplet_hub=_HubNode(
+            'source_triplet_hub_count',
+            events=events,
+            event_name='triplet_staged',
+            requires=(
+                'entity_persisted',
+                'event_persisted',
+                'predicate_persisted',
+                'statement_persisted',
+                'procedure_persisted',
+            ),
+        ),
         source_statement_hub=_HubNode('source_statement_hub_count'),
         source_procedure_hub=_HubNode('source_procedure_hub_count'),
-        source_entity_hub_persistence=_HubNode('source_entity_hub_count'),
-        source_event_hub_persistence=_HubNode('source_event_hub_count'),
-        source_predicate_hub_persistence=_HubNode('source_predicate_hub_count'),
-        source_statement_hub_persistence=_HubNode('source_statement_hub_count'),
-        source_procedure_hub_persistence=_HubNode('source_procedure_hub_count'),
-        source_hub_join=_HubNode('joined'),
+        source_entity_hub_persistence=_HubNode(
+            'source_entity_hub_count',
+            events=events,
+            event_name='entity_persisted',
+        ),
+        source_event_hub_persistence=_HubNode(
+            'source_event_hub_count',
+            events=events,
+            event_name='event_persisted',
+        ),
+        source_predicate_hub_persistence=_HubNode(
+            'source_predicate_hub_count',
+            events=events,
+            event_name='predicate_persisted',
+        ),
+        source_statement_hub_persistence=_HubNode(
+            'source_statement_hub_count',
+            events=events,
+            event_name='statement_persisted',
+        ),
+        source_procedure_hub_persistence=_HubNode(
+            'source_procedure_hub_count',
+            events=events,
+            event_name='procedure_persisted',
+        ),
+        source_triplet_hub_persistence=_HubNode(
+            'source_triplet_hub_count',
+            events=events,
+            event_name='triplet_persisted',
+        ),
     ).build_graph()
     assert {
         'triplet_persistence',
         'source_entity_description_load',
         'source_event_description_load',
         'source_predicate_description_load',
-        'source_entity_hub',
-        'source_event_hub',
-        'source_predicate_hub',
-        'source_statement_hub',
-        'source_procedure_hub',
-        'source_hub_join',
+        'source_entity_hub_load',
+        'source_event_hub_load',
+        'source_predicate_hub_load',
+        'source_statement_hub_load',
+        'source_procedure_hub_load',
+        'source_triplet_hub_load',
+        'source_triplet_hub_persistence',
     } <= set(graph.nodes)
     final_state = asyncio.run(graph.ainvoke({'source_uuid': 'source-1'}))
+    kinds = ('entity', 'event', 'predicate', 'statement', 'procedure')
+    for previous, current in zip(kinds, kinds[1:], strict=False):
+        assert events.index(f'{previous}_description_persist') < events.index(
+            f'{current}_description_load'
+        )
+    persistence_positions = [
+        events.index(f'{kind}_description_persist') for kind in kinds
+    ]
+    assert persistence_positions == sorted(persistence_positions)
+    assert events.index('source_entity_hub_candidate_load') > events.index(
+        'procedure_description_persist'
+    )
+    assert events.index('triplet_staged') > max(
+        events.index('entity_persisted'),
+        events.index('event_persisted'),
+        events.index('predicate_persisted'),
+        events.index('statement_persisted'),
+        events.index('procedure_persisted'),
+    )
+    assert events.index('triplet_persisted') > events.index('triplet_staged')
 
-    assert len(final_state['raw_assertions']) == 1
+    assert len(final_state['triplet_occurrences']) == 1
+    assert len(final_state['source_facts']) == 1
     assert final_state['source_entity_description_persisted_count'] == 1
     assert final_state['source_event_description_persisted_count'] == 1
     assert final_state['source_predicate_description_persisted_count'] == 1
@@ -785,5 +1031,6 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
     assert final_state['source_entity_hub_count'] == 1
     assert final_state['source_event_hub_count'] == 1
     assert final_state['source_predicate_hub_count'] == 1
+    assert final_state['source_triplet_hub_count'] == 1
     assert final_state['source_statement_hub_count'] == 1
     assert final_state['source_procedure_hub_count'] == 1

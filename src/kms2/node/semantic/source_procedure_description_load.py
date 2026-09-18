@@ -1,14 +1,16 @@
 """Load and project source-local procedure description requests."""
 
-from kms2.config import ContextWindowSettings
+from kms2.config.inference import ContextWindowSettings
 from kms2.core.model import (
     SourceProcedureDescriptionInput,
     SourceProcedureDescriptionRequest,
     SourceProcedureDescriptionTarget,
 )
 from kms2.core.windowing import select_window
-from kms2.database.semantic.repository import SemanticRepository
-from kms2.database.source.repository import SourceRepository
+from kms2.database.semantic.source_procedure_repository import (
+    SourceProcedureRepository,
+)
+from kms2.database.source.source_block_repository import SourceBlockRepository
 from kms2.langgraph.semantic.state import SemanticState
 
 
@@ -17,8 +19,8 @@ class SourceProcedureDescriptionLoadNode:
 
     def __init__(
         self,
-        source_repository: SourceRepository,
-        semantic_repository: SemanticRepository,
+        source_repository: SourceBlockRepository,
+        semantic_repository: SourceProcedureRepository,
         context_window: ContextWindowSettings,
     ) -> None:
         self._source_repository = source_repository

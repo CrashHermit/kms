@@ -2,7 +2,7 @@ import asyncio
 
 import dspy
 
-from kms2.config import ContextWindowSettings
+from kms2.config.inference import ContextWindowSettings
 from kms2.core.model import (
     BlockType,
     ImageDescriptionRequest,

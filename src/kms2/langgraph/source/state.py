@@ -10,6 +10,7 @@ from kms2.core.model.source_stage.content_correction import (
     ContentCorrectionResult,
 )
 from kms2.core.model.source_stage.embedding import EmbeddingResult
+from kms2.core.model.source_stage.exercise_splitter import SplitResult
 from kms2.core.model.source_stage.formatting import FormattingResult
 from kms2.core.model.source_stage.image_description import (
     ImageDescriptionResult,
@@ -19,10 +20,9 @@ from kms2.core.model.source_stage.instruction import Instruction
 from kms2.core.model.source_stage.pedagogical import (
     ExerciseComponent,
     PedagogicalComponent,
-    Procedure,
-    Statement,
+    ProcedureDraft,
+    StatementDraft,
 )
-from kms2.core.model.source_stage.splitter import SplitResult
 from kms2.core.model.source_stage.text_seam import TextSeamResult
 
 
@@ -72,8 +72,8 @@ class SourceState(BaseModel):
     pedagogical_components: list[PedagogicalComponent] = Field(
         default_factory=list
     )
-    statements: list[Statement] = Field(default_factory=list)
-    procedures: list[Procedure] = Field(default_factory=list)
+    statements: list[StatementDraft] = Field(default_factory=list)
+    procedures: list[ProcedureDraft] = Field(default_factory=list)
     embedded_pages: list[SourcePage] = Field(default_factory=list)
 
     embedding_results: Annotated[list[EmbeddingResult], operator.add] = Field(

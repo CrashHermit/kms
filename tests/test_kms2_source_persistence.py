@@ -2,11 +2,11 @@ import asyncio
 
 from kms2.core.model import (
     Instruction,
-    Procedure,
+    ProcedureDraft,
     Source,
     SourceBlock,
     SourcePage,
-    Statement,
+    StatementDraft,
 )
 from kms2.langgraph.source.state import SourceState
 from kms2.node.source.persistence import SourcePersistenceNode
@@ -21,15 +21,15 @@ class _RecordingRepository:
         source: Source,
         pages: list[SourcePage],
         instructions: list[Instruction],
-        statements: list[Statement],
-        procedures: list[Procedure],
+        statements: list[StatementDraft],
+        procedures: list[ProcedureDraft],
     ) -> None:
         self._events.append(
             ('repository', source, pages, instructions, statements, procedures)
         )
 
 
-def test_persistence_initializes_schema_before_replacing_source():
+def test_persistence_replaces_source_without_schema_side_effects():
     events: list[object] = []
     source = Source(uuid='source-1', key='book.pdf')
     pages = [
@@ -44,16 +44,12 @@ def test_persistence_initializes_schema_before_replacing_source():
             ],
         )
     ]
-    statements = [Statement(uuid='statement-1', is_exercise=True)]
-    procedures = [Procedure(uuid='procedure-1')]
-
-    async def initialize_schema() -> None:
-        events.append('schema')
+    statements = [StatementDraft(uuid='statement-1', is_exercise=True)]
+    procedures = [ProcedureDraft(uuid='procedure-1')]
 
     result = asyncio.run(
         SourcePersistenceNode(
             _RecordingRepository(events),
-            initialize_schema,
         ).run(
             SourceState(
                 pdf_path='book.pdf',
@@ -67,7 +63,6 @@ def test_persistence_initializes_schema_before_replacing_source():
     )
 
     assert events == [
-        'schema',
         (
             'repository',
             source,
@@ -75,6 +70,6 @@ def test_persistence_initializes_schema_before_replacing_source():
             [Instruction(uuid='instruction-1')],
             statements,
             procedures,
-        ),
+        )
     ]
     assert result == {}

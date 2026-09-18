@@ -1,19 +1,23 @@
 import dspy
 
 from kms2 import composition
-from kms2.config import (
+from kms2.config.inference import (
     ContextWindowSettings,
+    PredictorStrategy,
+    StageInferenceSettings,
+    TextInferenceSettings,
+    VisionInferenceSettings,
+)
+from kms2.config.services import OCRSettings
+from kms2.config.settings import Settings
+from kms2.config.source import (
     ExerciseFinderSettings,
+    ExerciseSplitterSettings,
     ImageDescriptionSettings,
     InstructionFinderSettings,
     InstructionGovernanceSettings,
-    OCRSettings,
     PedagogicalFinderSettings,
-    PredictorStrategy,
-    Settings,
     SourceSettings,
-    SplitterSettings,
-    StageInferenceSettings,
     StatementProcedureSettings,
     TextSeamSettings,
 )
@@ -29,9 +33,15 @@ from kms2.module.semantic.source_event_hub_judge import (
 from kms2.module.semantic.source_predicate_hub_judge import (
     SourcePredicateHubJudgeModule,
 )
+from kms2.module.semantic.source_triplet_hub import (
+    SourceTripletHubModule,
+    SourceTripletHubSignature,
+)
+from kms2.node.semantic.source_triplet_hub import SourceTripletHubNode
 from kms2.node.source.content_correction import ContentCorrectionNode
 from kms2.node.source.embedding import EmbeddingNode
 from kms2.node.source.exercise_finder import ExerciseFinderNode
+from kms2.node.source.exercise_splitter import ExerciseSplitterNode
 from kms2.node.source.formatting import FormattingNode
 from kms2.node.source.image_description import ImageDescriptionNode
 from kms2.node.source.image_seam import ImageSeamNode
@@ -40,15 +50,13 @@ from kms2.node.source.instruction_governance import InstructionGovernanceNode
 from kms2.node.source.ocr import OCRNode
 from kms2.node.source.pedagogical_finder import PedagogicalFinderNode
 from kms2.node.source.persistence import SourcePersistenceNode
-from kms2.node.source.splitter import SplitterNode
 from kms2.node.source.statement_procedure import StatementProcedureNode
 from kms2.node.source.text_seam import TextSeamNode
 from kms2.ocr.mistral import MistralOCRProvider
+from kms2.train.recorder import Recorder, RecordingModule
 
 
 class _RecordingRuntime:
-    embedding = object()
-    reranker = object()
     calls: list[tuple[str, PredictorStrategy, type[dspy.Signature]]]
 
     def predictor(
@@ -71,8 +79,18 @@ class _RecordingRuntime:
 def _stage_inference(
     model_server_profile: str,
     strategy: PredictorStrategy,
-) -> StageInferenceSettings:
-    return StageInferenceSettings(
+) -> TextInferenceSettings:
+    return TextInferenceSettings(
+        model_server_profile=model_server_profile,
+        strategy=strategy,
+    )
+
+
+def _vision_inference(
+    model_server_profile: str,
+    strategy: PredictorStrategy,
+) -> VisionInferenceSettings:
+    return VisionInferenceSettings(
         model_server_profile=model_server_profile,
         strategy=strategy,
     )
@@ -81,7 +99,7 @@ def _stage_inference(
 def _settings() -> Settings:
     return Settings(
         source=SourceSettings(
-            content_correction=_stage_inference(
+            content_correction=_vision_inference(
                 'content-correction', PredictorStrategy.PREDICT
             ),
             formatting=_stage_inference(
@@ -93,11 +111,11 @@ def _settings() -> Settings:
                     'text-rewriter', PredictorStrategy.CHAIN_OF_THOUGHT
                 ),
             ),
-            image_seam=_stage_inference(
+            image_seam=_vision_inference(
                 'image-judge', PredictorStrategy.PREDICT
             ),
             image_description=ImageDescriptionSettings(
-                inference=_stage_inference(
+                inference=_vision_inference(
                     'image-description', PredictorStrategy.PREDICT
                 ),
                 context_window=ContextWindowSettings(
@@ -105,12 +123,12 @@ def _settings() -> Settings:
                     forward_budget=200,
                 ),
             ),
-            splitter=SplitterSettings(
+            exercise_splitter=ExerciseSplitterSettings(
                 router=_stage_inference(
-                    'splitter-router', PredictorStrategy.PREDICT
+                    'exercise-splitter-router', PredictorStrategy.PREDICT
                 ),
                 splitter=_stage_inference(
-                    'splitter', PredictorStrategy.CHAIN_OF_THOUGHT
+                    'exercise-splitter', PredictorStrategy.CHAIN_OF_THOUGHT
                 ),
                 context_window=ContextWindowSettings(
                     backward_budget=4,
@@ -180,11 +198,12 @@ def test_build_source_graph_composes_all_source_dependencies():
     assert isinstance(graph.image_seam, ImageSeamNode)
     assert isinstance(graph.embedding, EmbeddingNode)
     assert isinstance(graph.image_description, ImageDescriptionNode)
-    assert isinstance(graph.splitter, SplitterNode)
+    assert isinstance(graph.exercise_splitter, ExerciseSplitterNode)
     assert isinstance(graph.persistence, SourcePersistenceNode)
+    assert not hasattr(graph.persistence, '_schema_initializer')
     assert (
-        graph.splitter._context_window
-        == settings.source.splitter.context_window
+        graph.exercise_splitter._context_window
+        == settings.source.exercise_splitter.context_window
     )
     assert isinstance(graph.instruction_finder, InstructionFinderNode)
     assert isinstance(graph.pedagogical_finder, PedagogicalFinderNode)
@@ -202,8 +221,11 @@ def test_build_source_graph_composes_all_source_dependencies():
         == settings.source.image_description.context_window
     )
     assert type(graph.image_description._describer.predictor) is dspy.Predict
-    assert type(graph.splitter._router.predictor) is dspy.Predict
-    assert type(graph.splitter._splitter.predictor) is dspy.ChainOfThought
+    assert type(graph.exercise_splitter._router.predictor) is dspy.Predict
+    assert (
+        type(graph.exercise_splitter._exercise_splitter.predictor)
+        is dspy.ChainOfThought
+    )
 
     assert (
         type(graph.instruction_finder._start_router.predictor) is dspy.Predict
@@ -245,8 +267,8 @@ def test_build_source_graph_composes_all_source_dependencies():
         'text-rewriter',
         'image-judge',
         'image-description',
-        'splitter-router',
-        'splitter',
+        'exercise-splitter-router',
+        'exercise-splitter',
         'instruction-start',
         'instruction-boundary',
         'pedagogical-start',
@@ -258,6 +280,52 @@ def test_build_source_graph_composes_all_source_dependencies():
         'exercise-boundary',
         'instruction-governance',
     ]
+
+
+def test_build_source_graph_wraps_predictors_when_recording_is_enabled(
+    tmp_path,
+):
+    settings = _settings()
+    local_models = _RecordingRuntime()
+    local_models.calls = []
+    database = DatabaseClient(settings.database)
+    recorder = Recorder(tmp_path)
+
+    graph = composition.build_source_graph(
+        settings,
+        local_models,
+        database,
+        recorder=recorder,
+    )
+
+    assert isinstance(
+        graph.content_correction._corrector.predictor, RecordingModule
+    )
+    assert (
+        type(graph.content_correction._corrector.predictor.module)
+        is dspy.Predict
+    )
+
+
+def test_build_semantic_graph_wraps_predictors_when_recording_is_enabled(
+    tmp_path,
+):
+    settings = _settings()
+    local_models = _RecordingRuntime()
+    local_models.calls = []
+    database = DatabaseClient(settings.database)
+    recorder = Recorder(tmp_path)
+
+    graph = composition.build_semantic_graph(
+        settings,
+        local_models,
+        database,
+        recorder=recorder,
+    )
+
+    predictor = graph.fact_extraction._extractor.predictor
+    assert isinstance(predictor, RecordingModule)
+    assert type(predictor.module) is dspy.Predict
 
 
 def test_build_semantic_graph_composes_independent_hub_judges():
@@ -281,14 +349,21 @@ def test_build_semantic_graph_composes_independent_hub_judges():
         graph.source_predicate_hub._judge_module,
         SourcePredicateHubJudgeModule,
     )
-    assert local_models.reranker is graph.source_entity_hub._reranker
-    assert local_models.reranker is graph.source_event_hub._reranker
-    assert local_models.reranker is graph.source_predicate_hub._reranker
-    assert [profile for profile, _, _ in local_models.calls[-6:]] == [
-        'gemma-text-32k',
-        'gemma-text-32k',
-        'gemma-text-32k',
-        'gemma-text-32k',
+    assert isinstance(graph.source_triplet_hub, SourceTripletHubNode)
+    assert isinstance(
+        graph.source_triplet_hub._module,
+        SourceTripletHubModule,
+    )
+    assert type(graph.source_triplet_hub._module.predictor) is dspy.Predict
+    assert [
+        profile
+        for profile, _, signature in local_models.calls
+        if signature is SourceTripletHubSignature
+    ] == ['gemma-text-32k']
+    assert [profile for profile, _, _ in local_models.calls[:2]] == [
         'gemma-text-32k',
         'gemma-text-32k',
     ]
+    assert [profile for profile, _, _ in local_models.calls[2:12]] == [
+        'gemma-text-32k',
+    ] * 10

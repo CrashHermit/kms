@@ -5,25 +5,41 @@ from kms2.langgraph.semantic.source_entity import add_source_entity_phase
 from kms2.langgraph.semantic.source_entity_description import (
     add_source_entity_description_phase,
 )
+from kms2.langgraph.semantic.source_entity_hub import (
+    add_source_entity_hub_phase,
+)
 from kms2.langgraph.semantic.source_event import add_source_event_phase
 from kms2.langgraph.semantic.source_event_description import (
     add_source_event_description_phase,
 )
-from kms2.langgraph.semantic.source_hubs import add_source_hub_phase
+from kms2.langgraph.semantic.source_event_hub import add_source_event_hub_phase
 from kms2.langgraph.semantic.source_predicate import add_source_predicate_phase
 from kms2.langgraph.semantic.source_predicate_description import (
     add_source_predicate_description_phase,
+)
+from kms2.langgraph.semantic.source_predicate_hub import (
+    add_source_predicate_hub_phase,
 )
 from kms2.langgraph.semantic.source_procedure import add_source_procedure_phase
 from kms2.langgraph.semantic.source_procedure_description import (
     add_source_procedure_description_phase,
 )
+from kms2.langgraph.semantic.source_procedure_hub import (
+    add_source_procedure_hub_phase,
+)
 from kms2.langgraph.semantic.source_statement import add_source_statement_phase
 from kms2.langgraph.semantic.source_statement_description import (
     add_source_statement_description_phase,
 )
+from kms2.langgraph.semantic.source_statement_hub import (
+    add_source_statement_hub_phase,
+)
+from kms2.langgraph.semantic.source_triplet_hub import (
+    add_source_triplet_hub_phase,
+)
 from kms2.langgraph.semantic.state import SemanticState
 from kms2.langgraph.semantic.triplets import add_triplet_phase
+from kms2.node.semantic.fact_extraction import FactExtractionNode
 from kms2.node.semantic.source_entity_description import (
     SourceEntityDescriptionNode,
 )
@@ -52,7 +68,6 @@ from kms2.node.semantic.source_event_hub_persistence import (
 from kms2.node.semantic.source_event_persistence import (
     SourceEventPersistenceNode,
 )
-from kms2.node.semantic.source_hub_join import SourceHubJoinNode
 from kms2.node.semantic.source_predicate_description import (
     SourcePredicateDescriptionNode,
 )
@@ -101,13 +116,14 @@ from kms2.node.semantic.source_statement_hub_persistence import (
 from kms2.node.semantic.source_statement_persistence import (
     SourceStatementPersistenceNode,
 )
-from kms2.node.semantic.triplet import (
-    FactExtractionNode,
-    TripletDecompositionNode,
+from kms2.node.semantic.source_triplet_hub import SourceTripletHubNode
+from kms2.node.semantic.source_triplet_hub_persistence import (
+    SourceTripletHubPersistenceNode,
 )
+from kms2.node.semantic.triplet_decomposition import TripletDecompositionNode
 from kms2.node.semantic.triplet_load import TripletSourceLoadNode
 from kms2.node.semantic.triplet_persistence import TripletPersistenceNode
-from langgraph.graph import START, StateGraph
+from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 
@@ -143,6 +159,7 @@ class SemanticGraph:
         source_entity_hub: SourceEntityHubNode,
         source_event_hub: SourceEventHubNode,
         source_predicate_hub: SourcePredicateHubNode,
+        source_triplet_hub: SourceTripletHubNode,
         source_statement_hub: SourceStatementHubNode,
         source_procedure_hub: SourceProcedureHubNode,
         source_entity_hub_persistence: SourceEntityHubPersistenceNode,
@@ -150,7 +167,7 @@ class SemanticGraph:
         source_predicate_hub_persistence: SourcePredicateHubPersistenceNode,
         source_statement_hub_persistence: SourceStatementHubPersistenceNode,
         source_procedure_hub_persistence: SourceProcedureHubPersistenceNode,
-        source_hub_join: SourceHubJoinNode,
+        source_triplet_hub_persistence: SourceTripletHubPersistenceNode,
     ) -> None:
         self.graph = StateGraph(SemanticState)
         self.triplet_source_load = triplet_source_load
@@ -186,14 +203,17 @@ class SemanticGraph:
         self.source_entity_hub = source_entity_hub
         self.source_event_hub = source_event_hub
         self.source_predicate_hub = source_predicate_hub
+        self.source_triplet_hub = source_triplet_hub
+
         self.source_statement_hub = source_statement_hub
         self.source_procedure_hub = source_procedure_hub
         self.source_entity_hub_persistence = source_entity_hub_persistence
         self.source_event_hub_persistence = source_event_hub_persistence
         self.source_predicate_hub_persistence = source_predicate_hub_persistence
         self.source_statement_hub_persistence = source_statement_hub_persistence
+        self.source_triplet_hub_persistence = source_triplet_hub_persistence
+
         self.source_procedure_hub_persistence = source_procedure_hub_persistence
-        self.source_hub_join = source_hub_join
 
     def build_graph(self) -> CompiledStateGraph:
         """Compile the complete semantic graph."""
@@ -254,18 +274,60 @@ class SemanticGraph:
             self.source_procedure_embedding,
             self.source_procedure_persistence,
         )
-        add_source_hub_phase(
+        add_source_entity_hub_phase(
             self.graph,
             self.source_entity_hub,
-            self.source_event_hub,
-            self.source_predicate_hub,
-            self.source_statement_hub,
-            self.source_procedure_hub,
             self.source_entity_hub_persistence,
-            self.source_event_hub_persistence,
-            self.source_predicate_hub_persistence,
-            self.source_statement_hub_persistence,
-            self.source_procedure_hub_persistence,
-            self.source_hub_join,
         )
+        add_source_event_hub_phase(
+            self.graph,
+            self.source_event_hub,
+            self.source_event_hub_persistence,
+        )
+        add_source_predicate_hub_phase(
+            self.graph,
+            self.source_predicate_hub,
+            self.source_predicate_hub_persistence,
+        )
+        add_source_statement_hub_phase(
+            self.graph,
+            self.source_statement_hub,
+            self.source_statement_hub_persistence,
+        )
+        add_source_procedure_hub_phase(
+            self.graph,
+            self.source_procedure_hub,
+            self.source_procedure_hub_persistence,
+        )
+        add_source_triplet_hub_phase(
+            self.graph,
+            self.source_triplet_hub,
+            self.source_triplet_hub_persistence,
+        )
+        self.graph.add_edge(
+            [
+                'source_entity_persistence',
+                'source_event_persistence',
+                'source_predicate_persistence',
+                'source_statement_persistence',
+                'source_procedure_persistence',
+            ],
+            'source_entity_hub_load',
+        )
+        self.graph.add_edge(
+            'source_entity_hub_persistence', 'source_event_hub_load'
+        )
+        self.graph.add_edge(
+            'source_event_hub_persistence', 'source_predicate_hub_load'
+        )
+        self.graph.add_edge(
+            'source_predicate_hub_persistence', 'source_statement_hub_load'
+        )
+        self.graph.add_edge(
+            'source_statement_hub_persistence', 'source_procedure_hub_load'
+        )
+        self.graph.add_edge(
+            'source_procedure_hub_persistence', 'source_triplet_hub_load'
+        )
+        self.graph.add_edge('source_triplet_hub_persistence', END)
         return self.graph.compile()

@@ -4,7 +4,7 @@ import pytest
 from PIL import Image
 from pydantic import ValidationError
 
-from kms2.config import OCRSettings
+from kms2.config.services import OCRSettings
 from kms2.ocr import mistral
 
 
@@ -124,6 +124,16 @@ def test_ocr_response_retains_raw_response():
 
     assert response.pages[0].blocks[0].content == 'hi'
     assert response.raw_response is raw
+
+
+def test_ocr_response_accepts_string_hyperlinks():
+    page = _page_payload()
+    page['hyperlinks'] = ['https://example.com/reference']
+    raw = {'pages': [page]}
+
+    response = mistral.OCRResponse.from_raw(raw)
+
+    assert response.pages[0].hyperlinks == ['https://example.com/reference']
 
 
 def test_ocr_pdf_sends_pdf_bytes_and_applies_pages(monkeypatch):

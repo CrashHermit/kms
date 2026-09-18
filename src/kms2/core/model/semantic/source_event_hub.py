@@ -76,12 +76,40 @@ class SourceEventHub(Vertex):
     embedding: list[float] = Field(min_length=1)
 
 
+class SourceEventHubRerankResult(BaseModel):
+    """One ordered event reranker batch result."""
+
+    ordinal: int = Field(ge=0)
+    direct: list[SourceEventHubCandidate] = Field(default_factory=list)
+    borderline: list[SourceEventHubCandidate] = Field(default_factory=list)
+
+
+class SourceEventHubJudgeResult(BaseModel):
+    """One ordered event judge batch result."""
+
+    ordinal: int = Field(ge=0)
+    accepted: list[SourceEventHubCandidate] = Field(default_factory=list)
+
+
+class SourceEventHubSynthesisResult(BaseModel):
+    """One ordered event community synthesis result."""
+
+    ordinal: int = Field(ge=0)
+    definition: SourceEventHubDefinition
+    membership_uuids: list[str] = Field(min_length=1)
+    aliases: list[str] = Field(min_length=1)
+
+
 __all__ = [
     'SourceEventHub',
     'SourceEventHubCandidate',
     'SourceEventHubDefinition',
+    'SourceEventHubJudgeDecision',
     'SourceEventHubJudgeInput',
+    'SourceEventHubJudgeResult',
     'SourceEventHubMember',
+    'SourceEventHubRerankResult',
     'SourceEventHubSynthesisInput',
     'SourceEventHubSynthesisMember',
+    'SourceEventHubSynthesisResult',
 ]

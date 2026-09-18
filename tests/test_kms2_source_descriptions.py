@@ -1,7 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
-from kms2.config import ContextWindowSettings
+from kms2.config.inference import ContextWindowSettings
 from kms2.core.model import SourceBlock, SourceProcedure, SourceStatement
 from kms2.langgraph.semantic.state import SemanticState
 from kms2.node.semantic.source_procedure_description_load import (

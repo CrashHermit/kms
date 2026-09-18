@@ -1,6 +1,6 @@
 """LangGraph node for constructing statement and procedure pointers."""
 
-from kms2.core.model import Procedure, Statement
+from kms2.core.model import ProcedureDraft, StatementDraft
 from kms2.core.model.source_stage.pedagogical import PedagogicalMember
 from kms2.core.windowing import project_block
 from kms2.langgraph.source.state import SourceState
@@ -26,7 +26,7 @@ class StatementProcedureNode:
 
     async def run(
         self, state: SourceState
-    ) -> dict[str, list[Statement] | list[Procedure]]:
+    ) -> dict[str, list[StatementDraft] | list[ProcedureDraft]]:
         """Construct pointers without mutating canonical source blocks."""
         blocks_by_uuid = {
             block.uuid: block
@@ -40,13 +40,13 @@ class StatementProcedureNode:
             )
         }
         statements = [
-            Statement(
+            StatementDraft(
                 member_block_uuids=component.member_block_uuids,
                 is_exercise=True,
             )
             for component in state.exercise_components
         ]
-        procedures: list[Procedure] = []
+        procedures: list[ProcedureDraft] = []
 
         for component in state.pedagogical_components:
             members = [
@@ -65,12 +65,16 @@ class StatementProcedureNode:
                 continue
             if has_statement and not has_procedure:
                 statements.append(
-                    Statement(member_block_uuids=component.member_block_uuids)
+                    StatementDraft(
+                        member_block_uuids=component.member_block_uuids
+                    )
                 )
                 continue
             if has_procedure and not has_statement:
                 procedures.append(
-                    Procedure(member_block_uuids=component.member_block_uuids)
+                    ProcedureDraft(
+                        member_block_uuids=component.member_block_uuids
+                    )
                 )
                 continue
 
@@ -81,7 +85,7 @@ class StatementProcedureNode:
                 members=members
             )
             statements.append(
-                Statement(
+                StatementDraft(
                     member_block_uuids=[
                         component.member_block_uuids[position]
                         for position in statement_positions
@@ -89,7 +93,7 @@ class StatementProcedureNode:
                 )
             )
             procedures.append(
-                Procedure(
+                ProcedureDraft(
                     member_block_uuids=[
                         component.member_block_uuids[position]
                         for position in procedure_positions

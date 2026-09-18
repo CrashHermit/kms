@@ -8,6 +8,13 @@ from kms2.core.model.source_stage.embedding import (
     EmbeddingRequest,
     EmbeddingResult,
 )
+from kms2.core.model.source_stage.exercise_splitter import (
+    SplitCandidate,
+    SplitDecision,
+    SplitPiece,
+    SplitRequest,
+    SplitResult,
+)
 from kms2.core.model.source_stage.formatting import (
     FormattingRequest,
     FormattingResult,
@@ -30,15 +37,8 @@ from kms2.core.model.source_stage.pedagogical import (
     ExerciseComponent,
     PedagogicalComponent,
     PedagogicalMember,
-    Procedure,
-    Statement,
-)
-from kms2.core.model.source_stage.splitter import (
-    SplitCandidate,
-    SplitDecision,
-    SplitPiece,
-    SplitRequest,
-    SplitResult,
+    ProcedureDraft,
+    StatementDraft,
 )
 from kms2.core.model.source_stage.text_seam import (
     TextSeamRequest,
@@ -63,13 +63,13 @@ __all__ = [
     'OCRPageArtifact',
     'PedagogicalComponent',
     'PedagogicalMember',
-    'Procedure',
+    'ProcedureDraft',
     'SplitCandidate',
     'SplitDecision',
     'SplitPiece',
     'SplitRequest',
     'SplitResult',
-    'Statement',
+    'StatementDraft',
     'TextSeamRequest',
     'TextSeamResult',
 ]

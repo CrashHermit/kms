@@ -1,8 +1,6 @@
 """Persist typed event descriptions without changing graph topology."""
 
-from collections.abc import Awaitable, Callable
-
-from kms2.database.semantic.repository import SemanticRepository
+from kms2.database.semantic.source_event_repository import SourceEventRepository
 from kms2.langgraph.semantic.state import SemanticState
 
 
@@ -11,15 +9,12 @@ class SourceEventPersistenceNode:
 
     def __init__(
         self,
-        repository: SemanticRepository,
-        schema_initializer: Callable[[], Awaitable[None]],
+        repository: SourceEventRepository,
     ) -> None:
         self._repository = repository
-        self._schema_initializer = schema_initializer
 
     async def run(self, state: SemanticState) -> dict[str, int]:
         """Persist all embedded events and return their count."""
-        await self._schema_initializer()
         if state.source_event_embedding_results:
             await self._repository.update_source_event_description(
                 state.source_uuid,

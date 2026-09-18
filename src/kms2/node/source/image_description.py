@@ -4,7 +4,7 @@ from typing import Literal, TypedDict
 
 from langgraph.types import Send
 
-from kms2.config import ContextWindowSettings
+from kms2.config.inference import ContextWindowSettings
 from kms2.core.model import BlockType, SourceBlock, SourcePage
 from kms2.core.model.source_stage.image_description import (
     ImageDescriptionRequest,

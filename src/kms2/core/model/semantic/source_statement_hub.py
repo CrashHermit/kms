@@ -70,13 +70,39 @@ class SourceStatementHub(Vertex):
     embedding: list[float] = Field(min_length=1)
 
 
+class SourceStatementHubRerankResult(BaseModel):
+    """One ordered statement reranker batch result."""
+
+    ordinal: int = Field(ge=0)
+    direct: list[SourceStatementHubCandidate] = Field(default_factory=list)
+    borderline: list[SourceStatementHubCandidate] = Field(default_factory=list)
+
+
+class SourceStatementHubJudgeResult(BaseModel):
+    """One ordered statement judge batch result."""
+
+    ordinal: int = Field(ge=0)
+    accepted: list[SourceStatementHubCandidate] = Field(default_factory=list)
+
+
+class SourceStatementHubSynthesisResult(BaseModel):
+    """One ordered statement community synthesis result."""
+
+    ordinal: int = Field(ge=0)
+    definition: SourceStatementHubDefinition
+    membership_uuids: list[str] = Field(min_length=1)
+
+
 __all__ = [
     'SourceStatementHub',
     'SourceStatementHubCandidate',
     'SourceStatementHubDefinition',
     'SourceStatementHubJudgeDecision',
     'SourceStatementHubJudgeInput',
+    'SourceStatementHubJudgeResult',
     'SourceStatementHubMember',
+    'SourceStatementHubRerankResult',
     'SourceStatementHubSynthesisInput',
     'SourceStatementHubSynthesisMember',
+    'SourceStatementHubSynthesisResult',
 ]

@@ -8,11 +8,12 @@ from kms2.core.model import (
     Instruction,
     OCRArtifact,
     OCRImageArtifact,
-    Procedure,
+    ProcedureDraft,
     Source,
     SourceBlock,
+    SourceFact,
     SourcePage,
-    Statement,
+    StatementDraft,
     Vertex,
     VisualAsset,
 )
@@ -26,6 +27,22 @@ def test_vertex_generates_uuid4_and_rejects_extra_fields():
 
     with pytest.raises(ValidationError):
         Vertex(label='unexpected')
+
+
+def test_source_fact_preserves_source_provenance_and_text():
+    fact = SourceFact(
+        uuid='fact-1',
+        source_uuid='source-1',
+        source_block_uuid='block-1',
+        text='Alice works for Acme.',
+    )
+
+    assert fact.model_dump() == {
+        'uuid': 'fact-1',
+        'source_uuid': 'source-1',
+        'source_block_uuid': 'block-1',
+        'text': 'Alice works for Acme.',
+    }
 
 
 def test_edge_contains_directed_vertex_references():
@@ -151,8 +168,8 @@ def test_pointer_models_preserve_ordered_uuid_lists_and_defaults():
         member_block_uuids=['block-1', 'block-2'],
         governed_statement_uuids=['statement-1'],
     )
-    statement = Statement(member_block_uuids=['block-3', 'block-4'])
-    procedure = Procedure(member_block_uuids=['block-5', 'block-6'])
+    statement = StatementDraft(member_block_uuids=['block-3', 'block-4'])
+    procedure = ProcedureDraft(member_block_uuids=['block-5', 'block-6'])
 
     assert instruction.member_block_uuids == ['block-1', 'block-2']
     assert instruction.governed_statement_uuids == ['statement-1']

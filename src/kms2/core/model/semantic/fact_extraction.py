@@ -7,6 +7,7 @@ from kms2.core.model.context import (
     SourceBlockContext,
     SourceContextWindow,
 )
+from kms2.core.model.semantic.base import _SemanticOccurrence
 
 
 class FactExtractionInput(BaseModel):
@@ -34,7 +35,7 @@ class FactExtractionRequest(BaseModel):
 
 
 class AtomicFact(BaseModel):
-    """One source-faithful atomic assertion returned by the first pass."""
+    """One source-faithful atomic fact returned by the first pass."""
 
     text: str = Field(min_length=1)
 
@@ -44,6 +45,12 @@ class ExtractedFact(BaseModel):
 
     source_uuid: str
     source_block_uuid: str
+    text: str = Field(min_length=1)
+
+
+class SourceFact(_SemanticOccurrence):
+    """Durable source-scoped atomic fact."""
+
     text: str = Field(min_length=1)
 
 
@@ -60,4 +67,5 @@ __all__ = [
     'FactExtractionInput',
     'FactExtractionRequest',
     'FactExtractionResult',
+    'SourceFact',
 ]

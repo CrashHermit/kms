@@ -1,6 +1,6 @@
 import asyncio
 
-from kms2.config import ExerciseFinderSettings
+from kms2.config.source import ExerciseFinderSettings
 from kms2.core.model import (
     BlockType,
     Instruction,

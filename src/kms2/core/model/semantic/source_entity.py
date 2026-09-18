@@ -7,7 +7,7 @@ from kms2.core.model.semantic.base import _SemanticOccurrence
 
 
 class SourceEntity(_SemanticOccurrence):
-    """Raw entity occurrence attached to one source assertion."""
+    """Source-scoped entity occurrence attached to one triplet."""
 
     name: str = Field(min_length=1)
 

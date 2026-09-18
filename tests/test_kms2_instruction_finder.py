@@ -1,6 +1,6 @@
 import asyncio
 
-from kms2.config import InstructionFinderSettings
+from kms2.config.source import InstructionFinderSettings
 from kms2.core.model import BlockType, Source, SourceBlock, SourcePage
 from kms2.langgraph.source.state import SourceState
 from kms2.node.source.instruction_finder import InstructionFinderNode

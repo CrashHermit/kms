@@ -1,6 +1,6 @@
 """LangGraph registration for semantic triplet decomposition."""
 
-from kms2.node.semantic.triplet import TripletDecompositionNode
+from kms2.node.semantic.triplet_decomposition import TripletDecompositionNode
 from langgraph.graph import StateGraph
 
 

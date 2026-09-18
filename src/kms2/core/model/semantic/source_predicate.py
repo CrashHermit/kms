@@ -7,7 +7,7 @@ from kms2.core.model.semantic.base import _SemanticOccurrence
 
 
 class SourcePredicate(_SemanticOccurrence):
-    """Raw predicate occurrence attached to one source assertion."""
+    """Source-scoped predicate occurrence attached to one triplet."""
 
     predicate: str = Field(min_length=1)
 

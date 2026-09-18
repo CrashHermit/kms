@@ -1,6 +1,6 @@
 import asyncio
 
-from kms2.config import ContextWindowSettings
+from kms2.config.inference import ContextWindowSettings
 from kms2.core.model import Source, SourceBlock, SourcePage
 from kms2.core.model.source_stage.content_correction import (
     ContentCorrectionResult,
@@ -14,10 +14,10 @@ from kms2.langgraph.source import OCRNode, SourceState
 from kms2.langgraph.source.graph import SourceGraph
 from kms2.node.source.content_correction import ContentCorrectionNode
 from kms2.node.source.embedding import EmbeddingNode
+from kms2.node.source.exercise_splitter import ExerciseSplitterNode
 from kms2.node.source.formatting import FormattingNode
 from kms2.node.source.image_description import ImageDescriptionNode
 from kms2.node.source.image_seam import ImageSeamNode
-from kms2.node.source.splitter import SplitterNode
 from kms2.node.source.text_seam import TextSeamNode
 from kms2.ocr.provider import OCRProvider
 
@@ -59,8 +59,8 @@ def _embedding_node() -> EmbeddingNode:
     return EmbeddingNode(_RecordingEmbeddingClient())
 
 
-def _no_splitter() -> SplitterNode:
-    return SplitterNode(
+def _no_exercise_splitter() -> ExerciseSplitterNode:
+    return ExerciseSplitterNode(
         _FalseRouter(),
         _UnexpectedSplitter(),
         ContextWindowSettings(
@@ -334,7 +334,7 @@ def test_source_graph_runs_correction_formatting_and_text_seams():
         TextSeamNode(FakeJudge(), FakeRewriter()),
         ImageSeamNode(FakeImageJudge()),
         _no_describer(),
-        _no_splitter(),
+        _no_exercise_splitter(),
         _NoInstructionFinder(),
         _NoExerciseFinder(),
         _NoPedagogicalFinder(),
@@ -465,7 +465,7 @@ def test_source_graph_merges_adjacent_image_artifacts_after_text_seams():
             FakeDescriber(),
             ContextWindowSettings(backward_budget=100, forward_budget=100),
         ),
-        _no_splitter(),
+        _no_exercise_splitter(),
         _NoInstructionFinder(),
         _NoExerciseFinder(),
         _NoPedagogicalFinder(),

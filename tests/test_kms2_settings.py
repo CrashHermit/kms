@@ -1,4 +1,4 @@
-from kms2 import config
+from kms2.config.settings import Settings
 
 _SOURCE_ENVIRONMENT = {
     'KMS2_SOURCE__INSTRUCTION_FINDER__START_ROUTER__MODEL_SERVER_PROFILE': (
@@ -32,7 +32,7 @@ def test_kms2_defaults_include_pointer_source_stages(monkeypatch):
     for name in _SOURCE_ENVIRONMENT:
         monkeypatch.delenv(name, raising=False)
 
-    settings = config.Settings()
+    settings = Settings()
     assert settings.local_models.reranker.model.model_id == 'Qwen3-Reranker-8B'
     assert settings.local_models.reranker.model.model_path == (
         '~/models/qwen3-reranker-8b-verified/Qwen3-Reranker-8B-Q4_K_M.gguf'
@@ -78,7 +78,7 @@ def test_kms2_source_uses_nested_environment(monkeypatch):
     for name, value in _SOURCE_ENVIRONMENT.items():
         monkeypatch.setenv(name, value)
 
-    settings = config.Settings()
+    settings = Settings()
 
     assert (
         settings.source.instruction_finder.start_router.model_server_profile
@@ -123,19 +123,19 @@ def test_kms2_source_hub_settings_are_independent(monkeypatch):
     for name in names:
         monkeypatch.delenv(name, raising=False)
 
-    settings = config.Settings()
+    settings = Settings()
 
     assert (
         settings.semantic.source_entity_hubs.inference.model_server_profile
         == ('gemma-text-32k')
     )
-    assert settings.semantic.source_event_hubs.candidate_limit == 50
-    assert settings.semantic.source_predicate_hubs.minimum_similarity == 0.82
+    assert settings.semantic.source_event_hubs.candidate_limit == 32
+    assert settings.semantic.source_predicate_hubs.minimum_similarity == 0.86
 
     monkeypatch.setenv(names[0], 'entity-hub-profile')
     monkeypatch.setenv(names[1], '17')
     monkeypatch.setenv(names[2], '0.91')
-    settings = config.Settings()
+    settings = Settings()
 
     assert (
         settings.semantic.source_entity_hubs.inference.model_server_profile
@@ -159,7 +159,7 @@ def test_kms2_hub_filtering_settings_are_independent(monkeypatch):
         '16384',
     )
 
-    settings = config.Settings()
+    settings = Settings()
 
     assert settings.semantic.source_entity_hubs.judge.model_server_profile == (
         'entity-judge'
@@ -167,8 +167,71 @@ def test_kms2_hub_filtering_settings_are_independent(monkeypatch):
     assert settings.semantic.source_entity_hubs.judge.num_retries == 0
     assert settings.semantic.source_event_hubs.reranker_token_budget == 2048
     assert settings.semantic.source_predicate_hubs.judge_token_budget == 16384
+    hub_settings = (
+        settings.semantic.source_entity_hubs,
+        settings.semantic.source_event_hubs,
+        settings.semantic.source_predicate_hubs,
+        settings.semantic.source_statement_hubs,
+        settings.semantic.source_procedure_hubs,
+    )
+    assert all(hub.reranker_rejection_threshold == 0.60 for hub in hub_settings)
     assert settings.semantic.source_entity_hubs.reranker_token_budget == 4096
     assert settings.semantic.source_entity_hubs.judge_batch_size == 16
     assert settings.semantic.source_event_hubs.judge.model_server_profile == (
         'gemma-text-32k'
     )
+
+
+def test_kms2_training_examples_are_opt_in(monkeypatch):
+    monkeypatch.delenv(
+        'KMS2_TRAINING__EXAMPLES_DIRECTORY',
+        raising=False,
+    )
+
+    settings = Settings()
+
+    assert settings.training.examples_directory is None
+
+
+def test_kms2_training_examples_use_nested_environment(monkeypatch, tmp_path):
+    monkeypatch.setenv(
+        'KMS2_TRAINING__EXAMPLES_DIRECTORY',
+        str(tmp_path),
+    )
+
+    settings = Settings()
+
+    assert settings.training.examples_directory == tmp_path
+
+
+def test_kms2_semantic_defaults_survive_nested_environment(monkeypatch):
+    monkeypatch.setenv(
+        'KMS2_SEMANTIC__FACT_EXTRACTION__MAX_TOKENS',
+        '4096',
+    )
+
+    settings = Settings()
+
+    assert settings.semantic.fact_extraction.max_tokens == 4096
+    assert settings.semantic.fact_extraction.model_server_profile == (
+        'gemma-text-32k'
+    )
+    assert settings.semantic.triplet_decomposition.model_server_profile == (
+        'gemma-text-32k'
+    )
+    assert settings.semantic.fact_extraction.num_retries == 0
+
+
+def test_kms2_source_triplet_hub_inference_is_independent(monkeypatch):
+    variable = (
+        'KMS2_SEMANTIC__SOURCE_TRIPLET_HUBS__INFERENCE__MODEL_SERVER_PROFILE'
+    )
+    monkeypatch.setenv(variable, 'triplet-hub-profile')
+
+    settings = Settings()
+
+    assert (
+        settings.semantic.source_triplet_hubs.inference.model_server_profile
+        == 'triplet-hub-profile'
+    )
+    assert settings.semantic.source_triplet_hubs.inference.num_retries == 0

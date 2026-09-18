@@ -1,9 +1,13 @@
+import asyncio
 import logging
+import signal
 from types import SimpleNamespace
+
+import pytest
 
 from kms2 import tui
 from kms2.application import SemanticStageResult
-from kms2.config import Settings
+from kms2.config.settings import Settings
 from kms2.core.model import Source
 
 
@@ -17,7 +21,8 @@ class _Prompt:
 
 def _semantic_result() -> SemanticStageResult:
     return SemanticStageResult(
-        raw_assertion_count=4,
+        source_fact_count=5,
+        triplet_count=4,
         source_entity_description_count=3,
         source_event_description_count=2,
         source_predicate_description_count=1,
@@ -26,6 +31,7 @@ def _semantic_result() -> SemanticStageResult:
         source_entity_hub_count=6,
         source_event_hub_count=7,
         source_predicate_hub_count=8,
+        source_triplet_hub_count=0,
         source_statement_hub_count=0,
         source_procedure_hub_count=0,
     )
@@ -65,7 +71,7 @@ def test_tui_ingests_new_source_without_semantic_prompt(monkeypatch, caplog):
         calls.append((settings, pdf_path, pages))
         return SimpleNamespace(
             source=Source(uuid='source-1', key='book.pdf'),
-            page_count=3,
+            split_page_count=3,
         )
 
     monkeypatch.setattr(tui, 'inquirer', fake_inquirer)
@@ -143,10 +149,10 @@ def test_tui_runs_complete_stage_from_existing_source(monkeypatch, caplog):
     ]
     assert len(calls) == 1
     assert (
-        'Done: source source-1 (book.pdf), semantic stage persisted 4 assertion(s); '
-        'descriptions: 3 entity, 2 event, 1 predicate, 0 statement, 0 procedure; '
-        'hubs: 6 entity, 7 event, 8 predicate, 0 statement, 0 procedure.'
-        in caplog.messages
+        'Done: source source-1 (book.pdf), semantic stage persisted 5 source '
+        'fact(s), 4 triplet(s); descriptions: 3 entity, 2 event, 1 predicate, '
+        '0 statement, 0 procedure; hubs: 6 entity, 7 event, 8 predicate, 0 '
+        'triplet, 0 statement, 0 procedure.' in caplog.messages
     )
 
 
@@ -159,3 +165,26 @@ def test_pdf_directory_is_created_under_working_directory(
 
     assert directory == tmp_path / 'pdfs'
     assert directory.is_dir()
+
+
+def test_tui_reports_cancelled_pipeline(monkeypatch, caplog):
+    def cancel():
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(tui, '_run_tui', cancel)
+    caplog.set_level(logging.INFO, logger='kms2.tui')
+
+    with pytest.raises(SystemExit) as exit_info:
+        tui.run()
+
+    assert exit_info.value.code == 0
+    assert 'Cancelled.' in caplog.messages
+
+
+def test_run_async_cancels_pipeline_on_sigint():
+    async def pipeline():
+        signal.raise_signal(signal.SIGINT)
+        await asyncio.sleep(60)
+
+    with pytest.raises(asyncio.CancelledError):
+        tui._run_async(pipeline())

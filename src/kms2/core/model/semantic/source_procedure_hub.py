@@ -70,13 +70,39 @@ class SourceProcedureHub(Vertex):
     embedding: list[float] = Field(min_length=1)
 
 
+class SourceProcedureHubRerankResult(BaseModel):
+    """One ordered procedure reranker batch result."""
+
+    ordinal: int = Field(ge=0)
+    direct: list[SourceProcedureHubCandidate] = Field(default_factory=list)
+    borderline: list[SourceProcedureHubCandidate] = Field(default_factory=list)
+
+
+class SourceProcedureHubJudgeResult(BaseModel):
+    """One ordered procedure judge batch result."""
+
+    ordinal: int = Field(ge=0)
+    accepted: list[SourceProcedureHubCandidate] = Field(default_factory=list)
+
+
+class SourceProcedureHubSynthesisResult(BaseModel):
+    """One ordered procedure community synthesis result."""
+
+    ordinal: int = Field(ge=0)
+    definition: SourceProcedureHubDefinition
+    membership_uuids: list[str] = Field(min_length=1)
+
+
 __all__ = [
     'SourceProcedureHub',
     'SourceProcedureHubCandidate',
     'SourceProcedureHubDefinition',
     'SourceProcedureHubJudgeDecision',
     'SourceProcedureHubJudgeInput',
+    'SourceProcedureHubJudgeResult',
     'SourceProcedureHubMember',
+    'SourceProcedureHubRerankResult',
     'SourceProcedureHubSynthesisInput',
     'SourceProcedureHubSynthesisMember',
+    'SourceProcedureHubSynthesisResult',
 ]

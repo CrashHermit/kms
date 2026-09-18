@@ -2,19 +2,23 @@ import asyncio
 
 from kms2.core.model import (
     Instruction,
-    Procedure,
+    ProcedureDraft,
     Source,
     SourceBlock,
     SourcePage,
-    Statement,
+    StatementDraft,
     VisualAsset,
 )
-from kms2.database.source.queries import (
+from kms2.database.source.queries.source_blocks import (
     FIND_SIMILAR_SOURCE_BLOCKS,
-    READ_SOURCES,
-    REPLACE_SOURCE,
 )
-from kms2.database.source.repository import SourceRepository
+from kms2.database.source.queries.source_catalog import READ_SOURCES
+from kms2.database.source.queries.source_graph import REPLACE_SOURCE
+from kms2.database.source.source_block_repository import SourceBlockRepository
+from kms2.database.source.source_catalog_repository import (
+    SourceCatalogRepository,
+)
+from kms2.database.source.source_graph_repository import SourceGraphRepository
 
 
 class _RecordingResult:
@@ -71,17 +75,19 @@ def test_replace_source_projects_pointer_rows_and_governance_once():
         )
     ]
     statements = [
-        Statement(
+        StatementDraft(
             uuid='statement-1',
             member_block_uuids=['block-2'],
             is_exercise=True,
         )
     ]
-    procedures = [Procedure(uuid='procedure-1', member_block_uuids=['block-1'])]
+    procedures = [
+        ProcedureDraft(uuid='procedure-1', member_block_uuids=['block-1'])
+    ]
     session = _RecordingSession()
 
     asyncio.run(
-        SourceRepository(lambda: _SessionContext(session)).replace_source(
+        SourceGraphRepository(lambda: _SessionContext(session)).replace_source(
             Source(uuid='source-1', key='book.pdf', metadata={'kind': 'book'}),
             pages,
             instructions,
@@ -92,6 +98,8 @@ def test_replace_source_projects_pointer_rows_and_governance_once():
 
     assert len(session.calls) == 1
     query, parameters = session.calls[0]
+    assert 'SET block:' not in query
+    assert 'FOREACH (_ IN CASE WHEN row.block_type' not in query
     assert query is REPLACE_SOURCE
     assert parameters['statements'] == [
         {
@@ -130,7 +138,7 @@ def test_list_sources_returns_stable_source_summaries():
     )
 
     sources = asyncio.run(
-        SourceRepository(lambda: _SessionContext(session)).list_sources()
+        SourceCatalogRepository(lambda: _SessionContext(session)).list_sources()
     )
 
     assert sources == [
@@ -159,7 +167,7 @@ def test_find_similar_blocks_uses_neo4j_vector_index_and_omits_embedding():
             ]
         )
     )
-    repository = SourceRepository(lambda: _SessionContext(session))
+    repository = SourceBlockRepository(lambda: _SessionContext(session))
 
     results = asyncio.run(
         repository.find_similar_blocks('query-block', top_k=2)

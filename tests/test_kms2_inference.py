@@ -1,17 +1,16 @@
 import asyncio
 
 import dspy
-import pytest
 
-from kms2.config import PredictorStrategy, StageInferenceSettings
-from kms2.local_models.coordinator import _GpuCoordinator
-from kms2.local_models.inference import _predictor, _RouterProfilePredictor
+from kms2.config.inference import PredictorStrategy, StageInferenceSettings
+from kms2.config.runtime import LocalModelRuntimeSettings
+from kms2.local_models.runtime import ResidentRole, RuntimePredictor
 
 
 class _RecordingLM:
     calls: list[tuple[str, dict[str, object]]]
 
-    def __init__(self, model: str, **kwargs: object) -> None:
+    def __init__(self, model: str, **kwargs: object):
         self.calls.append((model, kwargs))
 
 
@@ -36,33 +35,12 @@ class _Router:
     endpoint = 'http://router'
 
 
-class _Coordinator:
-    async def execute(self, role, activate, deactivate, operation):
-        del role, activate, deactivate
-        return await operation()
-
-
-class _ModelServerRouter:
-    endpoint = 'http://router'
-
-    def __init__(self) -> None:
-        self.ensured_model_servers: list[str] = []
-
-    async def ensure_model_server(self, model_server_profile: str) -> None:
-        self.ensured_model_servers.append(model_server_profile)
-
-    async def release_model_server(self) -> None:
-        return None
-
-
 class _AsyncPredictor:
     async def acall(self, **kwargs: object) -> dict[str, object]:
         return dict(kwargs)
 
 
-def _stage_inference(
-    strategy: PredictorStrategy,
-) -> StageInferenceSettings:
+def _stage_inference(strategy: PredictorStrategy) -> StageInferenceSettings:
     return StageInferenceSettings(
         model_server_profile='text',
         strategy=strategy,
@@ -72,22 +50,25 @@ def _stage_inference(
     )
 
 
-def test_local_model_predictor_forwards_inference_options(monkeypatch):
-    _RecordingLM.calls = []
-    monkeypatch.setattr('kms2.local_models.inference.dspy.LM', _RecordingLM)
+def test_runtime_predictor_forwards_inference_options(monkeypatch):
+    calls: list[tuple[str, dict[str, object]]] = []
+    _RecordingLM.calls = calls
+    monkeypatch.setattr('kms2.local_models.runtime.dspy.LM', _RecordingLM)
     monkeypatch.setattr(
-        'kms2.local_models.inference.dspy.Predict', _RecordingPredictor
+        'kms2.local_models.runtime.dspy.Predict', _RecordingPredictor
     )
 
-    predictor = _predictor(
-        _Router(),
-        _Coordinator(),
+    from kms2.local_models import LocalModelRuntime
+
+    runtime = LocalModelRuntime(LocalModelRuntimeSettings())
+    runtime._router = _Router()
+    predictor = runtime.predictor(
         _stage_inference(PredictorStrategy.PREDICT),
         _Signature,
     )
 
-    assert isinstance(predictor.predictor, _RecordingPredictor)
-    assert _RecordingLM.calls == [
+    assert isinstance(predictor, RuntimePredictor)
+    assert calls == [
         (
             'text',
             {
@@ -103,20 +84,19 @@ def test_local_model_predictor_forwards_inference_options(monkeypatch):
     ]
 
 
-def test_local_model_predictor_supports_configured_strategies(monkeypatch):
-    _RecordingLM.calls = []
-    monkeypatch.setattr('kms2.local_models.inference.dspy.LM', _RecordingLM)
+def test_runtime_predictor_supports_configured_strategies(monkeypatch):
+    calls: list[tuple[str, dict[str, object]]] = []
+    _RecordingLM.calls = calls
+    monkeypatch.setattr('kms2.local_models.runtime.dspy.LM', _RecordingLM)
     monkeypatch.setattr(
-        'kms2.local_models.inference.dspy.Predict', _RecordingPredictor
-    )
-    monkeypatch.setattr(
-        'kms2.local_models.inference.dspy.ChainOfThought',
+        'kms2.local_models.runtime.dspy.ChainOfThought',
         _RecordingChainOfThought,
     )
+    from kms2.local_models import LocalModelRuntime
 
-    predictor = _predictor(
-        _Router(),
-        _Coordinator(),
+    runtime = LocalModelRuntime(LocalModelRuntimeSettings())
+    runtime._router = _Router()
+    predictor = runtime.predictor(
         _stage_inference(PredictorStrategy.CHAIN_OF_THOUGHT),
         _Signature,
     )
@@ -124,32 +104,26 @@ def test_local_model_predictor_supports_configured_strategies(monkeypatch):
     assert isinstance(predictor.predictor, _RecordingChainOfThought)
 
 
-def test_stage_inference_rejects_cache_override():
-    with pytest.raises(ValueError):
-        StageInferenceSettings(model_server_profile='text', cache=True)
+def test_runtime_predictor_executes_through_requested_residency():
+    asyncio.run(_test_runtime_predictor_executes_through_requested_residency())
 
 
-def test_router_profile_predictor_switches_model_server_profiles():
-    router = _ModelServerRouter()
-    coordinator = _GpuCoordinator()
-    text = _RouterProfilePredictor(
-        router,
-        coordinator,
-        'text',
-        _AsyncPredictor(),
-    )
-    vision = _RouterProfilePredictor(
-        router,
-        coordinator,
-        'vision',
-        _AsyncPredictor(),
-    )
+async def _test_runtime_predictor_executes_through_requested_residency():
+    calls: list[tuple[ResidentRole, str | None]] = []
 
-    async def run_predictions() -> None:
-        assert await text.acall(content='first') == {'content': 'first'}
-        assert await text.acall(content='second') == {'content': 'second'}
-        assert await vision.acall(content='third') == {'content': 'third'}
+    class Runtime:
+        async def _execute(self, role, profile, operation):
+            calls.append((role, profile))
+            return await operation()
 
-    asyncio.run(run_predictions())
+    text = RuntimePredictor(Runtime(), 'text', _AsyncPredictor())
+    vision = RuntimePredictor(Runtime(), 'vision', _AsyncPredictor())
 
-    assert router.ensured_model_servers == ['text', 'vision']
+    assert await text.acall(content='first') == {'content': 'first'}
+    assert await text.acall(content='second') == {'content': 'second'}
+    assert await vision.acall(content='third') == {'content': 'third'}
+    assert calls == [
+        (ResidentRole.LLM, 'text'),
+        (ResidentRole.LLM, 'text'),
+        (ResidentRole.LLM, 'vision'),
+    ]

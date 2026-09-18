@@ -3,45 +3,6 @@
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 
-SCHEMA_MIGRATION_STATEMENTS: tuple[str, ...] = (
-    """
-    MATCH (vertex:Entity)
-    SET vertex:SourceEntity
-    REMOVE vertex:Entity
-    """,
-    """
-    MATCH (vertex:Event)
-    SET vertex:SourceEvent
-    REMOVE vertex:Event
-    """,
-    """
-    MATCH (vertex:Predicate)
-    SET vertex:SourcePredicate
-    REMOVE vertex:Predicate
-    """,
-    """
-    MATCH (source:Source)-[:FIRST_BLOCK]->(first:SourceBlock)
-    MATCH (first)-[:NEXT_BLOCK*0..]->(block:SourceBlock)
-    MATCH (block)-[:MEMBER_OF]->(statement:Statement)
-    WHERE statement.source_uuid IS NULL
-    WITH statement, source.uuid AS source_uuid
-    SET statement.source_uuid = source_uuid
-    """,
-    """
-    MATCH (source:Source)-[:FIRST_BLOCK]->(first:SourceBlock)
-    MATCH (first)-[:NEXT_BLOCK*0..]->(block:SourceBlock)
-    MATCH (block)-[:MEMBER_OF]->(procedure:Procedure)
-    WHERE procedure.source_uuid IS NULL
-    WITH procedure, source.uuid AS source_uuid
-    SET procedure.source_uuid = source_uuid
-    """,
-    'DROP INDEX statement_embedding IF EXISTS',
-    'DROP INDEX procedure_embedding IF EXISTS',
-    'DROP CONSTRAINT entity_uuid IF EXISTS',
-    'DROP CONSTRAINT event_uuid IF EXISTS',
-    'DROP CONSTRAINT predicate_uuid IF EXISTS',
-)
-
 SCHEMA_STATEMENTS: tuple[str, ...] = (
     """
     CREATE CONSTRAINT source_uuid IF NOT EXISTS
@@ -57,11 +18,11 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     """,
     """
     CREATE CONSTRAINT statement_uuid IF NOT EXISTS
-    FOR (statement:Statement) REQUIRE statement.uuid IS UNIQUE
+    FOR (statement:SourceStatement) REQUIRE statement.uuid IS UNIQUE
     """,
     """
     CREATE CONSTRAINT procedure_uuid IF NOT EXISTS
-    FOR (procedure:Procedure) REQUIRE procedure.uuid IS UNIQUE
+    FOR (procedure:SourceProcedure) REQUIRE procedure.uuid IS UNIQUE
     """,
     """
     CREATE CONSTRAINT visual_asset_uuid IF NOT EXISTS
@@ -69,7 +30,11 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     """,
     """
     CREATE CONSTRAINT triplet_uuid IF NOT EXISTS
-    FOR (triplet:Triplet) REQUIRE triplet.uuid IS UNIQUE
+    FOR (triplet:SourceTriplet) REQUIRE triplet.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT source_fact_uuid IF NOT EXISTS
+    FOR (fact:SourceFact) REQUIRE fact.uuid IS UNIQUE
     """,
     """
     CREATE CONSTRAINT source_entity_uuid IF NOT EXISTS
@@ -104,8 +69,20 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     FOR (hub:SourceProcedureHub) REQUIRE hub.uuid IS UNIQUE
     """,
     """
+    CREATE CONSTRAINT source_triplet_hub_uuid IF NOT EXISTS
+    FOR (hub:SourceTripletHub) REQUIRE hub.uuid IS UNIQUE
+    """,
+    """
     CREATE INDEX triplet_source_uuid IF NOT EXISTS
-    FOR (triplet:Triplet) ON (triplet.source_uuid)
+    FOR (triplet:SourceTriplet) ON (triplet.source_uuid)
+    """,
+    """
+    CREATE INDEX source_fact_source_uuid IF NOT EXISTS
+    FOR (fact:SourceFact) ON (fact.source_uuid)
+    """,
+    """
+    CREATE INDEX source_triplet_hub_source_uuid IF NOT EXISTS
+    FOR (hub:SourceTripletHub) ON (hub.source_uuid)
     """,
 )
 
@@ -126,13 +103,14 @@ def vector_index_statements(embedding_dimension: int) -> tuple[str, ...]:
             ('source_entity_embedding', 'SourceEntity'),
             ('source_event_embedding', 'SourceEvent'),
             ('source_predicate_embedding', 'SourcePredicate'),
-            ('source_statement_embedding', 'Statement'),
-            ('source_procedure_embedding', 'Procedure'),
+            ('source_statement_embedding', 'SourceStatement'),
+            ('source_procedure_embedding', 'SourceProcedure'),
             ('source_entity_hub_embedding', 'SourceEntityHub'),
             ('source_event_hub_embedding', 'SourceEventHub'),
             ('source_predicate_hub_embedding', 'SourcePredicateHub'),
             ('source_statement_hub_embedding', 'SourceStatementHub'),
             ('source_procedure_hub_embedding', 'SourceProcedureHub'),
+            ('source_triplet_hub_embedding', 'SourceTripletHub'),
         )
     )
 
@@ -149,6 +127,7 @@ VECTOR_INDEX_NAMES = (
     'source_procedure_hub_embedding',
     'source_event_hub_embedding',
     'source_predicate_hub_embedding',
+    'source_triplet_hub_embedding',
 )
 AWAIT_INDEX = 'CALL db.awaitIndex($index_name, $timeout_seconds)'
 
@@ -158,12 +137,8 @@ async def ensure_schema(
     *,
     embedding_dimension: int,
 ) -> None:
-    """Migrate and create KMS2 structural and vector schema in order."""
+    """Create KMS2 structural and vector schema in order."""
     async with session_factory() as session:
-        for statement in SCHEMA_MIGRATION_STATEMENTS:
-            result = await session.run(statement)
-            if result is not None:
-                await result.consume()
         for statement in SCHEMA_STATEMENTS:
             result = await session.run(statement)
             if result is not None:

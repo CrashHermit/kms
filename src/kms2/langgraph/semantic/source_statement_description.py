@@ -18,7 +18,9 @@ def add_source_statement_description_phase(
     graph.add_node('source_statement_description_load', description_load.run)
     graph.add_node('source_statement_description_worker', description.worker)
     graph.add_node('source_statement_description_collect', description.collect)
-    graph.add_edge('triplet_persistence', 'source_statement_description_load')
+    graph.add_edge(
+        'source_predicate_persistence', 'source_statement_description_load'
+    )
     graph.add_conditional_edges(
         'source_statement_description_load',
         description.dispatch,

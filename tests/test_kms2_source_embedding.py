@@ -1,6 +1,7 @@
 import asyncio
 from collections.abc import Sequence
 
+from kms2.core.embedding import EmbeddingClient
 from kms2.core.model import Source, SourceBlock, SourcePage, VisualAsset
 from kms2.langgraph.source.state import SourceState
 from kms2.node.source.embedding import EmbeddingNode
@@ -16,6 +17,10 @@ class _RecordingEmbeddingClient:
         return [
             [float(index), float(index + 1)] for index in range(len(values))
         ]
+
+
+def test_embedding_client_protocol_is_structural():
+    assert isinstance(_RecordingEmbeddingClient(), EmbeddingClient)
 
 
 def test_embedding_dispatch_worker_collect_preserves_final_block_order():

@@ -18,14 +18,14 @@ class ExerciseComponent(BaseModel):
     member_block_uuids: list[str] = Field(default_factory=list)
 
 
-class Statement(Vertex):
+class StatementDraft(Vertex):
     """An ordered pointer to source blocks forming a statement."""
 
     member_block_uuids: list[str] = Field(default_factory=list)
     is_exercise: bool = False
 
 
-class Procedure(Vertex):
+class ProcedureDraft(Vertex):
     """An ordered pointer to source blocks forming a procedure."""
 
     member_block_uuids: list[str] = Field(default_factory=list)

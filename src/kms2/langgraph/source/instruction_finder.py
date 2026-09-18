@@ -9,4 +9,4 @@ def add_instruction_finder_phase(
 ) -> None:
     """Register the sequential instruction finder node."""
     graph.add_node('instruction_finder', node.run)
-    graph.add_edge('splitter_collect', 'instruction_finder')
+    graph.add_edge('exercise_splitter_collect', 'instruction_finder')

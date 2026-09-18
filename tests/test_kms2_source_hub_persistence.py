@@ -8,6 +8,7 @@ from kms2.core.model import (
     SourcePredicateHub,
     SourceProcedureHub,
     SourceStatementHub,
+    SourceTripletHub,
 )
 from kms2.langgraph.semantic.state import SemanticState
 from kms2.node.semantic.source_entity_hub_persistence import (
@@ -24,6 +25,9 @@ from kms2.node.semantic.source_procedure_hub_persistence import (
 )
 from kms2.node.semantic.source_statement_hub_persistence import (
     SourceStatementHubPersistenceNode,
+)
+from kms2.node.semantic.source_triplet_hub_persistence import (
+    SourceTripletHubPersistenceNode,
 )
 
 
@@ -46,9 +50,8 @@ class _Repository:
     async def replace_source_procedure_hubs(self, *args):
         self.calls.append(('procedure', args))
 
-
-async def _noop():
-    return None
+    async def replace_source_triplet_hubs(self, *args):
+        self.calls.append(('triplet', args))
 
 
 def _state(kind, hub):
@@ -114,12 +117,25 @@ def _state(kind, hub):
                 embedding=[0.5],
             ),
         ),
+        (
+            'triplet',
+            SourceTripletHubPersistenceNode,
+            SourceTripletHub(
+                source_uuid='source-1',
+                canonical_name='support',
+                description='relation',
+                embedding=[0.6],
+                subject_hub_uuid='subject-hub',
+                predicate_hub_uuid='predicate-hub',
+                object_hub_uuid='object-hub',
+            ),
+        ),
     ],
 )
 def test_each_hub_persistence_node_writes_only_its_typed_result(
     kind, node, hub
 ):
     repository = _Repository()
-    result = asyncio.run(node(repository, _noop).run(_state(kind, hub)))
+    result = asyncio.run(node(repository).run(_state(kind, hub)))
     assert [call[0] for call in repository.calls] == [kind]
     assert result == {f'source_{kind}_hub_count': 1}

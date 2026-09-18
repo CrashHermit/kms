@@ -1,6 +1,6 @@
 """LangGraph node for discovering shared source instructions."""
 
-from kms2.config import InstructionFinderSettings
+from kms2.config.source import InstructionFinderSettings
 from kms2.core.model import Instruction
 from kms2.core.windowing import select_window
 from kms2.langgraph.source.state import SourceState

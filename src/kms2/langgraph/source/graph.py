@@ -5,6 +5,9 @@ from kms2.langgraph.source.content_correction import (
 )
 from kms2.langgraph.source.embedding import add_embedding_phase
 from kms2.langgraph.source.exercise_finder import add_exercise_finder_phase
+from kms2.langgraph.source.exercise_splitter import (
+    add_exercise_splitter_phase,
+)
 from kms2.langgraph.source.formatting import add_formatter_phase
 from kms2.langgraph.source.image_description import add_image_description_phase
 from kms2.langgraph.source.image_seam import add_image_seam_phase
@@ -19,7 +22,6 @@ from kms2.langgraph.source.pedagogical_finder import (
     add_pedagogical_finder_phase,
 )
 from kms2.langgraph.source.persistence import add_persistence_phase
-from kms2.langgraph.source.splitter import add_splitter_phase
 from kms2.langgraph.source.state import SourceState
 from kms2.langgraph.source.statement_procedure import (
     add_statement_procedure_phase,
@@ -28,6 +30,7 @@ from kms2.langgraph.source.text_seam import add_text_seam_phase
 from kms2.node.source.content_correction import ContentCorrectionNode
 from kms2.node.source.embedding import EmbeddingNode
 from kms2.node.source.exercise_finder import ExerciseFinderNode
+from kms2.node.source.exercise_splitter import ExerciseSplitterNode
 from kms2.node.source.formatting import FormattingNode
 from kms2.node.source.image_description import ImageDescriptionNode
 from kms2.node.source.image_seam import ImageSeamNode
@@ -36,7 +39,6 @@ from kms2.node.source.instruction_governance import InstructionGovernanceNode
 from kms2.node.source.ocr import OCRNode
 from kms2.node.source.pedagogical_finder import PedagogicalFinderNode
 from kms2.node.source.persistence import SourcePersistenceNode
-from kms2.node.source.splitter import SplitterNode
 from kms2.node.source.statement_procedure import StatementProcedureNode
 from kms2.node.source.text_seam import TextSeamNode
 from langgraph.graph import StateGraph
@@ -54,7 +56,7 @@ class SourceGraph:
         text_seam: TextSeamNode,
         image_seam: ImageSeamNode,
         image_description: ImageDescriptionNode,
-        splitter: SplitterNode,
+        exercise_splitter: ExerciseSplitterNode,
         instruction_finder: InstructionFinderNode,
         exercise_finder: ExerciseFinderNode,
         pedagogical_finder: PedagogicalFinderNode,
@@ -70,7 +72,7 @@ class SourceGraph:
         self.text_seam = text_seam
         self.image_seam = image_seam
         self.image_description = image_description
-        self.splitter = splitter
+        self.exercise_splitter = exercise_splitter
         self.instruction_finder = instruction_finder
         self.exercise_finder = exercise_finder
         self.pedagogical_finder = pedagogical_finder
@@ -87,7 +89,7 @@ class SourceGraph:
         add_text_seam_phase(self.graph, self.text_seam)
         add_image_seam_phase(self.graph, self.image_seam)
         add_image_description_phase(self.graph, self.image_description)
-        add_splitter_phase(self.graph, self.splitter)
+        add_exercise_splitter_phase(self.graph, self.exercise_splitter)
         add_instruction_finder_phase(self.graph, self.instruction_finder)
         add_exercise_finder_phase(self.graph, self.exercise_finder)
         add_pedagogical_finder_phase(self.graph, self.pedagogical_finder)
