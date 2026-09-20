@@ -1,6 +1,6 @@
 import asyncio
 
-from kms2.config.source import PedagogicalFinderSettings
+from kms2.config.source_processing import PedagogicalFinderSettings
 from kms2.core.model import (
     BlockType,
     ExerciseComponent,
@@ -9,8 +9,8 @@ from kms2.core.model import (
     SourceBlock,
     SourcePage,
 )
-from kms2.langgraph.source.state import SourceState
-from kms2.node.source.pedagogical_finder import PedagogicalFinderNode
+from kms2.langgraph.source_processing.state import SourceProcessingState
+from kms2.node.source_processing.pedagogical_finder import PedagogicalFinderNode
 
 
 class StartRouter:
@@ -33,7 +33,7 @@ class BoundaryRouter:
         return candidate_block.content in self.boundaries
 
 
-def _state() -> SourceState:
+def _state() -> SourceProcessingState:
     blocks = [
         SourceBlock(
             uuid=f'block-{index}',
@@ -51,7 +51,7 @@ def _state() -> SourceState:
             ]
         )
     ]
-    return SourceState(
+    return SourceProcessingState(
         pdf_path='source.pdf',
         source=Source(key='source-1'),
         split_pages=[SourcePage(index=0, blocks=blocks)],

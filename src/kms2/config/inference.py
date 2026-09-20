@@ -17,7 +17,9 @@ class StageInferenceSettings(BaseModel):
 
     model_server_profile: str
     strategy: PredictorStrategy = PredictorStrategy.PREDICT
-    temperature: float = 0.0
+    temperature: float = 1.0
+    top_p: float = 0.95
+    top_k: int = 64
     max_tokens: int = 8192
     num_retries: int = 3
 
@@ -26,6 +28,7 @@ class TextInferenceSettings(StageInferenceSettings):
     """Request-time inference settings for text model-server stages."""
 
     model_server_profile: str = 'gemma-text-32k'
+    max_tokens: int = 16384
 
 
 class VisionInferenceSettings(StageInferenceSettings):

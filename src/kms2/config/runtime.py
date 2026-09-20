@@ -39,6 +39,7 @@ class RouterServerSettings(LlamaServerSettings):
         default_factory=lambda: {
             'gemma-text-32k': ModelServerProfileSettings(
                 model_path='~/models/gemma-4-e4b-qat/gemma-4-E4B_q4_0-it.gguf',
+                reasoning='on',
             ),
             'gemma-vision-8k': ModelServerProfileSettings(
                 model_path='~/models/gemma-4-e4b-qat/gemma-4-E4B_q4_0-it.gguf',
@@ -47,6 +48,15 @@ class RouterServerSettings(LlamaServerSettings):
                 ),
                 context_size=8192,
                 cache_type_k='q4_0',
+                reasoning='on',
+            ),
+            'qwen3.8-9b-distill-text': ModelServerProfileSettings(
+                model_path=(
+                    '~/models/qwen3.8-9b-distill/Qwen3.8-9B-Q4_K_M.gguf'
+                ),
+                context_size=32768,
+                cache_type_v='q4_0',
+                reasoning='on',
             ),
         }
     )

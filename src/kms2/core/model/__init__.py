@@ -7,8 +7,116 @@ from kms2.core.model.context import (
     SourceBlockContext,
     SourceContextWindow,
 )
+from kms2.core.model.global_semantic import (
+    GlobalEntityHub,
+    GlobalEntityHubCandidate,
+    GlobalEntityHubDefinition,
+    GlobalEntityHubJudgeDecision,
+    GlobalEntityHubJudgeInput,
+    GlobalEntityHubJudgeResult,
+    GlobalEntityHubMember,
+    GlobalEntityHubRerankResult,
+    GlobalEntityHubSynthesisInput,
+    GlobalEntityHubSynthesisMember,
+    GlobalEntityHubSynthesisResult,
+    GlobalEventHub,
+    GlobalEventHubCandidate,
+    GlobalEventHubDefinition,
+    GlobalEventHubJudgeDecision,
+    GlobalEventHubJudgeInput,
+    GlobalEventHubJudgeResult,
+    GlobalEventHubMember,
+    GlobalEventHubRerankResult,
+    GlobalEventHubSynthesisInput,
+    GlobalEventHubSynthesisMember,
+    GlobalEventHubSynthesisResult,
+    GlobalPredicateHub,
+    GlobalPredicateHubCandidate,
+    GlobalPredicateHubDefinition,
+    GlobalPredicateHubJudgeDecision,
+    GlobalPredicateHubJudgeInput,
+    GlobalPredicateHubJudgeResult,
+    GlobalPredicateHubMember,
+    GlobalPredicateHubRerankResult,
+    GlobalPredicateHubSynthesisInput,
+    GlobalPredicateHubSynthesisMember,
+    GlobalPredicateHubSynthesisResult,
+    GlobalProcedureHub,
+    GlobalProcedureHubCandidate,
+    GlobalProcedureHubDefinition,
+    GlobalProcedureHubJudgeDecision,
+    GlobalProcedureHubJudgeInput,
+    GlobalProcedureHubJudgeResult,
+    GlobalProcedureHubMember,
+    GlobalProcedureHubRerankResult,
+    GlobalProcedureHubSynthesisInput,
+    GlobalProcedureHubSynthesisMember,
+    GlobalProcedureHubSynthesisResult,
+    GlobalStatementHub,
+    GlobalStatementHubCandidate,
+    GlobalStatementHubDefinition,
+    GlobalStatementHubJudgeDecision,
+    GlobalStatementHubJudgeInput,
+    GlobalStatementHubJudgeResult,
+    GlobalStatementHubMember,
+    GlobalStatementHubRerankResult,
+    GlobalStatementHubSynthesisInput,
+    GlobalStatementHubSynthesisMember,
+    GlobalStatementHubSynthesisResult,
+)
 from kms2.core.model.page import SourcePage
-from kms2.core.model.semantic import (
+from kms2.core.model.similarity import (
+    SourceBlockSimilarityMatch,
+    SourceEntitySimilarityMatch,
+    SourceEventSimilarityMatch,
+    SourcePredicateSimilarityMatch,
+)
+from kms2.core.model.source import Source
+from kms2.core.model.source_processing.content_correction import (
+    ContentCorrectionRequest,
+    ContentCorrectionResult,
+)
+from kms2.core.model.source_processing.embedding import (
+    EmbeddingRequest,
+    EmbeddingResult,
+)
+from kms2.core.model.source_processing.exercise_splitter import (
+    SplitCandidate,
+    SplitDecision,
+    SplitPiece,
+    SplitRequest,
+    SplitResult,
+)
+from kms2.core.model.source_processing.formatting import (
+    FormattingRequest,
+    FormattingResult,
+)
+from kms2.core.model.source_processing.image_description import (
+    ImageDescriptionRequest,
+    ImageDescriptionResult,
+)
+from kms2.core.model.source_processing.image_seam import (
+    ImageSeamRequest,
+    ImageSeamResult,
+)
+from kms2.core.model.source_processing.instruction import Instruction
+from kms2.core.model.source_processing.ocr import (
+    OCRArtifact,
+    OCRImageArtifact,
+    OCRPageArtifact,
+)
+from kms2.core.model.source_processing.pedagogical import (
+    ExerciseComponent,
+    PedagogicalComponent,
+    PedagogicalMember,
+    ProcedureDraft,
+    StatementDraft,
+)
+from kms2.core.model.source_processing.text_seam import (
+    TextSeamRequest,
+    TextSeamResult,
+)
+from kms2.core.model.source_semantic import (
     AtomicFact,
     ExtractedFact,
     FactExtractionInput,
@@ -106,57 +214,6 @@ from kms2.core.model.semantic import (
     TripletDecompositionResult,
     TripletEndpointKind,
 )
-from kms2.core.model.similarity import (
-    SourceBlockSimilarityMatch,
-    SourceEntitySimilarityMatch,
-    SourceEventSimilarityMatch,
-    SourcePredicateSimilarityMatch,
-)
-from kms2.core.model.source import Source
-from kms2.core.model.source_stage.content_correction import (
-    ContentCorrectionRequest,
-    ContentCorrectionResult,
-)
-from kms2.core.model.source_stage.embedding import (
-    EmbeddingRequest,
-    EmbeddingResult,
-)
-from kms2.core.model.source_stage.exercise_splitter import (
-    SplitCandidate,
-    SplitDecision,
-    SplitPiece,
-    SplitRequest,
-    SplitResult,
-)
-from kms2.core.model.source_stage.formatting import (
-    FormattingRequest,
-    FormattingResult,
-)
-from kms2.core.model.source_stage.image_description import (
-    ImageDescriptionRequest,
-    ImageDescriptionResult,
-)
-from kms2.core.model.source_stage.image_seam import (
-    ImageSeamRequest,
-    ImageSeamResult,
-)
-from kms2.core.model.source_stage.instruction import Instruction
-from kms2.core.model.source_stage.ocr import (
-    OCRArtifact,
-    OCRImageArtifact,
-    OCRPageArtifact,
-)
-from kms2.core.model.source_stage.pedagogical import (
-    ExerciseComponent,
-    PedagogicalComponent,
-    PedagogicalMember,
-    ProcedureDraft,
-    StatementDraft,
-)
-from kms2.core.model.source_stage.text_seam import (
-    TextSeamRequest,
-    TextSeamResult,
-)
 from kms2.core.model.visual_asset import VisualAsset
 
 __all__ = [
@@ -195,6 +252,61 @@ __all__ = [
     'TextSeamResult',
     'Vertex',
     'VisualAsset',
+    'GlobalEntityHub',
+    'GlobalEntityHubCandidate',
+    'GlobalEntityHubDefinition',
+    'GlobalEntityHubJudgeDecision',
+    'GlobalEntityHubJudgeInput',
+    'GlobalEntityHubJudgeResult',
+    'GlobalEntityHubMember',
+    'GlobalEntityHubRerankResult',
+    'GlobalEntityHubSynthesisInput',
+    'GlobalEntityHubSynthesisMember',
+    'GlobalEntityHubSynthesisResult',
+    'GlobalEventHub',
+    'GlobalEventHubCandidate',
+    'GlobalEventHubDefinition',
+    'GlobalEventHubJudgeDecision',
+    'GlobalEventHubJudgeInput',
+    'GlobalEventHubJudgeResult',
+    'GlobalEventHubMember',
+    'GlobalEventHubRerankResult',
+    'GlobalEventHubSynthesisInput',
+    'GlobalEventHubSynthesisMember',
+    'GlobalEventHubSynthesisResult',
+    'GlobalProcedureHub',
+    'GlobalProcedureHubCandidate',
+    'GlobalProcedureHubDefinition',
+    'GlobalProcedureHubJudgeDecision',
+    'GlobalProcedureHubJudgeInput',
+    'GlobalProcedureHubJudgeResult',
+    'GlobalProcedureHubMember',
+    'GlobalProcedureHubRerankResult',
+    'GlobalProcedureHubSynthesisInput',
+    'GlobalProcedureHubSynthesisMember',
+    'GlobalProcedureHubSynthesisResult',
+    'GlobalStatementHub',
+    'GlobalStatementHubCandidate',
+    'GlobalStatementHubDefinition',
+    'GlobalStatementHubJudgeDecision',
+    'GlobalStatementHubJudgeInput',
+    'GlobalStatementHubJudgeResult',
+    'GlobalStatementHubMember',
+    'GlobalStatementHubRerankResult',
+    'GlobalStatementHubSynthesisInput',
+    'GlobalStatementHubSynthesisMember',
+    'GlobalStatementHubSynthesisResult',
+    'GlobalPredicateHub',
+    'GlobalPredicateHubCandidate',
+    'GlobalPredicateHubDefinition',
+    'GlobalPredicateHubJudgeDecision',
+    'GlobalPredicateHubJudgeInput',
+    'GlobalPredicateHubJudgeResult',
+    'GlobalPredicateHubMember',
+    'GlobalPredicateHubRerankResult',
+    'GlobalPredicateHubSynthesisInput',
+    'GlobalPredicateHubSynthesisMember',
+    'GlobalPredicateHubSynthesisResult',
     'AtomicFact',
     'SourceEntity',
     'SourceEntityDescriptionInput',

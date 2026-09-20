@@ -5,7 +5,11 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from kms2.composition import build_semantic_graph, build_source_graph
+from kms2.composition import (
+    build_global_semantic_graph,
+    build_source_processing_graph,
+    build_source_semantic_graph,
+)
 from kms2.config.settings import Settings
 from kms2.core.model import Source
 from kms2.database import schema
@@ -18,8 +22,8 @@ from kms2.train.recorder import Recorder
 
 
 @dataclass(frozen=True, slots=True)
-class SourceStageResult:
-    """Counts materialized by one complete source stage."""
+class SourceProcessingStageResult:
+    """Counts materialized by one complete source processing stage."""
 
     source: Source
     ocr_page_count: int
@@ -38,8 +42,8 @@ class SourceStageResult:
 
 
 @dataclass(frozen=True, slots=True)
-class SemanticStageResult:
-    """Counts persisted by one complete semantic stage."""
+class SourceSemanticStageResult:
+    """Counts persisted by one complete source semantic stage."""
 
     source_fact_count: int
     triplet_count: int
@@ -57,11 +61,22 @@ class SemanticStageResult:
 
 
 @dataclass(frozen=True, slots=True)
-class SourcePipelineResult:
-    """Summary of source ingestion and its complete semantic stage."""
+class GlobalSemanticStageResult:
+    """Counts persisted by one complete global semantic stage."""
 
-    source_stage: SourceStageResult
-    semantic_stage: SemanticStageResult
+    global_entity_hub_count: int
+    global_event_hub_count: int
+    global_predicate_hub_count: int
+    global_statement_hub_count: int
+    global_procedure_hub_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class SourcePipelineResult:
+    """Summary of source processing and source semantic stages."""
+
+    source_processing_stage: SourceProcessingStageResult
+    source_semantic_stage: SourceSemanticStageResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,9 +110,11 @@ async def _application_resources(
         await database.close()
 
 
-def _source_stage_result(final_state: dict[str, object]) -> SourceStageResult:
-    """Convert the final source graph state to its public result."""
-    return SourceStageResult(
+def _source_processing_stage_result(
+    final_state: dict[str, object],
+) -> SourceProcessingStageResult:
+    """Convert the final source processing graph state to its public result."""
+    return SourceProcessingStageResult(
         source=final_state['source'],
         ocr_page_count=len(final_state['ocr_pages']),
         corrected_page_count=len(final_state['corrected_pages']),
@@ -115,11 +132,11 @@ def _source_stage_result(final_state: dict[str, object]) -> SourceStageResult:
     )
 
 
-def _semantic_stage_result(
+def _source_semantic_stage_result(
     final_state: dict[str, object],
-) -> SemanticStageResult:
-    """Convert the final semantic graph state to its public result."""
-    return SemanticStageResult(
+) -> SourceSemanticStageResult:
+    """Convert the final source semantic graph state to its public result."""
+    return SourceSemanticStageResult(
         source_fact_count=len(final_state['source_facts']),
         triplet_count=len(final_state['triplet_occurrences']),
         source_entity_description_count=final_state[
@@ -146,6 +163,19 @@ def _semantic_stage_result(
     )
 
 
+def _global_semantic_stage_result(
+    final_state: dict[str, object],
+) -> GlobalSemanticStageResult:
+    """Convert the final global semantic graph state to its public result."""
+    return GlobalSemanticStageResult(
+        global_entity_hub_count=final_state['global_entity_hub_count'],
+        global_event_hub_count=final_state['global_event_hub_count'],
+        global_predicate_hub_count=final_state['global_predicate_hub_count'],
+        global_statement_hub_count=final_state['global_statement_hub_count'],
+        global_procedure_hub_count=final_state['global_procedure_hub_count'],
+    )
+
+
 async def list_sources(settings: Settings) -> list[Source]:
     """Return persisted sources for interactive source selection."""
     database = DatabaseClient(settings.database)
@@ -155,95 +185,124 @@ async def list_sources(settings: Settings) -> list[Source]:
         await database.close()
 
 
-async def _run_source_stage(
+async def _run_source_processing_stage(
     settings: Settings,
     resources: _ApplicationResources,
     pdf_path: str,
     pages: list[int] | None,
-) -> SourceStageResult:
-    """Run the source graph and return its materialized stage summary."""
+) -> SourceProcessingStageResult:
+    """Run the source processing graph and return its stage summary."""
     source = Source(key=Path(pdf_path).name)
     initial_state = {
         'pdf_path': pdf_path,
         'pages': pages,
         'source': source,
     }
-    graph = build_source_graph(
+    graph = build_source_processing_graph(
         settings,
         resources.local_models,
         resources.database,
         recorder=resources.recorder,
     ).build_graph()
     final_state = await graph.ainvoke(initial_state)
-    return _source_stage_result(final_state)
+    return _source_processing_stage_result(final_state)
 
 
-async def _run_semantic_stage(
+async def _run_source_semantic_stage(
     settings: Settings,
     resources: _ApplicationResources,
     source_uuid: str,
-) -> SemanticStageResult:
-    """Run one complete semantic graph in dependency order."""
-    graph = build_semantic_graph(
+) -> SourceSemanticStageResult:
+    """Run one complete source semantic graph in dependency order."""
+    graph = build_source_semantic_graph(
         settings,
         resources.local_models,
         resources.database,
         recorder=resources.recorder,
     ).build_graph()
     final_state = await graph.ainvoke({'source_uuid': source_uuid})
-    return _semantic_stage_result(final_state)
+    return _source_semantic_stage_result(final_state)
+
+
+async def _run_global_semantic_stage(
+    settings: Settings,
+    resources: _ApplicationResources,
+) -> GlobalSemanticStageResult:
+    """Run the global semantic graph over persisted source hubs."""
+    graph = build_global_semantic_graph(
+        settings,
+        resources.local_models,
+        resources.database,
+        recorder=resources.recorder,
+    ).build_graph()
+    final_state = await graph.ainvoke({})
+    return _global_semantic_stage_result(final_state)
 
 
 async def ingest_source(
     settings: Settings,
     pdf_path: str,
     pages: list[int] | None = None,
-) -> SourceStageResult:
-    """Run the source pipeline and return its materialized stage summary."""
+) -> SourceProcessingStageResult:
+    """Run source processing and return its materialized stage summary."""
     async with _application_resources(settings) as resources:
-        return await _run_source_stage(settings, resources, pdf_path, pages)
+        return await _run_source_processing_stage(
+            settings, resources, pdf_path, pages
+        )
 
 
-async def run_semantic_stage(
+async def run_source_semantic_stage(
     settings: Settings,
     source_uuid: str,
-) -> SemanticStageResult:
-    """Run the complete semantic stage for an existing source."""
+) -> SourceSemanticStageResult:
+    """Run source semantic processing for an existing source."""
     async with _application_resources(settings) as resources:
-        return await _run_semantic_stage(settings, resources, source_uuid)
+        return await _run_source_semantic_stage(
+            settings, resources, source_uuid
+        )
 
 
-async def ingest_and_run_semantic_stage(
+async def run_global_semantic_stage(
+    settings: Settings,
+) -> GlobalSemanticStageResult:
+    """Run global semantic consolidation over all persisted source hubs."""
+    async with _application_resources(settings) as resources:
+        return await _run_global_semantic_stage(settings, resources)
+
+
+async def ingest_and_run_source_semantic_stage(
     settings: Settings,
     pdf_path: str,
     pages: list[int] | None = None,
 ) -> SourcePipelineResult:
-    """Ingest a source and run its complete semantic stage in one session."""
+    """Ingest a source and run its source semantic stage in one session."""
     async with _application_resources(settings) as resources:
-        source_stage = await _run_source_stage(
+        source_processing_stage = await _run_source_processing_stage(
             settings,
             resources,
             pdf_path,
             pages,
         )
-        semantic_stage = await _run_semantic_stage(
+        source_semantic_stage = await _run_source_semantic_stage(
             settings,
             resources,
-            source_stage.source.uuid,
+            source_processing_stage.source.uuid,
         )
 
     return SourcePipelineResult(
-        source_stage=source_stage,
-        semantic_stage=semantic_stage,
+        source_processing_stage=source_processing_stage,
+        source_semantic_stage=source_semantic_stage,
     )
 
 
 __all__ = [
-    'SemanticStageResult',
+    'GlobalSemanticStageResult',
     'SourcePipelineResult',
-    'SourceStageResult',
-    'ingest_and_run_semantic_stage',
+    'SourceProcessingStageResult',
+    'SourceSemanticStageResult',
+    'ingest_and_run_source_semantic_stage',
     'ingest_source',
     'list_sources',
-    'run_semantic_stage',
+    'run_global_semantic_stage',
+    'run_source_semantic_stage',
 ]

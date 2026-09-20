@@ -5,6 +5,11 @@ import pytest
 
 from kms2.config.settings import Settings
 from kms2.core.model import (
+    GlobalEntityHub,
+    GlobalEventHub,
+    GlobalPredicateHub,
+    GlobalProcedureHub,
+    GlobalStatementHub,
     Instruction,
     ProcedureDraft,
     Source,
@@ -27,18 +32,35 @@ from kms2.core.model import (
 )
 from kms2.database import schema
 from kms2.database.client import DatabaseClient
-from kms2.database.semantic.source_entity_repository import (
-    SourceEntityRepository,
+from kms2.database.global_semantic.entity_hub_repository import (
+    GlobalEntityHubRepository,
 )
-from kms2.database.semantic.source_event_repository import SourceEventRepository
-from kms2.database.semantic.source_predicate_repository import (
-    SourcePredicateRepository,
+from kms2.database.global_semantic.event_hub_repository import (
+    GlobalEventHubRepository,
 )
-from kms2.database.semantic.source_triplet_repository import (
-    SourceTripletRepository,
+from kms2.database.global_semantic.predicate_hub_repository import (
+    GlobalPredicateHubRepository,
+)
+from kms2.database.global_semantic.procedure_hub_repository import (
+    GlobalProcedureHubRepository,
+)
+from kms2.database.global_semantic.statement_hub_repository import (
+    GlobalStatementHubRepository,
 )
 from kms2.database.source.source_block_repository import SourceBlockRepository
 from kms2.database.source.source_graph_repository import SourceGraphRepository
+from kms2.database.source_semantic.source_entity_repository import (
+    SourceEntityRepository,
+)
+from kms2.database.source_semantic.source_event_repository import (
+    SourceEventRepository,
+)
+from kms2.database.source_semantic.source_predicate_repository import (
+    SourcePredicateRepository,
+)
+from kms2.database.source_semantic.source_triplet_repository import (
+    SourceTripletRepository,
+)
 
 _REQUIRED_ENVIRONMENT = (
     'KMS2_DATABASE__URI',
@@ -952,6 +974,530 @@ def test_kms2_neo4j_source_hub_gds_contracts():
                     DETACH DELETE node
                     """,
                     source_uuid=source_uuid,
+                )
+                await result.consume()
+            await database.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.skipif(
+    os.getenv('KMS2_NEO4J_GDS_IT') != '1'
+    or not all(os.getenv(name) for name in _REQUIRED_ENVIRONMENT),
+    reason='KMS2 Neo4j GDS integration environment is not enabled',
+)
+def test_kms2_neo4j_global_predicate_hub_contracts():
+    async def exercise() -> None:
+        settings = Settings()
+        database = DatabaseClient(settings.database)
+        repository = GlobalPredicateHubRepository(database.session)
+        dimension = settings.local_models.embedding.model.dimension
+        first_vector = [1.0] + [0.0] * (dimension - 1)
+        second_vector = [0.99, 0.01] + [0.0] * (dimension - 2)
+        hub_rows = [
+            {
+                'uuid': 'kms2-global-source-hub-1',
+                'source_uuid': 'kms2-global-source-1',
+                'predicate': 'supports',
+                'description': 'provides support',
+                'embedding': first_vector,
+            },
+            {
+                'uuid': 'kms2-global-source-hub-2',
+                'source_uuid': 'kms2-global-source-2',
+                'predicate': 'supports strongly',
+                'description': 'provides support',
+                'embedding': second_vector,
+            },
+            {
+                'uuid': 'kms2-global-source-hub-3',
+                'source_uuid': 'kms2-global-source-1',
+                'predicate': 'supports firmly',
+                'description': 'provides support',
+                'embedding': second_vector,
+            },
+        ]
+        try:
+            await schema.ensure_schema(
+                database.session,
+                embedding_dimension=dimension,
+            )
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    UNWIND $hubs AS row
+                    CREATE (:SourcePredicateHub {
+                        uuid: row.uuid,
+                        source_uuid: row.source_uuid,
+                        predicate: row.predicate,
+                        description: row.description,
+                        aliases: [row.predicate],
+                        embedding: row.embedding
+                    })
+                    """,
+                    hubs=hub_rows,
+                )
+                await result.consume()
+                result = await session.run(
+                    """
+                    UNWIND $hubs AS row
+                    CREATE (member:SourcePredicate {
+                        uuid: row.member_uuid,
+                        source_uuid: row.source_uuid,
+                        predicate: row.predicate,
+                        description: row.description,
+                        embedding: row.embedding
+                    })
+                    WITH member, row
+                    MATCH (hub:SourcePredicateHub {uuid: row.uuid})
+                    CREATE (member)-[:IN_SOURCE_HUB]->(hub)
+                    """,
+                    hubs=[
+                        {
+                            **row,
+                            'member_uuid': f'{row["uuid"]}-member',
+                        }
+                        for row in hub_rows
+                    ],
+                )
+                await result.consume()
+
+            candidates = await repository.read_global_predicate_hub_candidates(
+                candidate_limit=10,
+                minimum_similarity=0.8,
+            )
+            assert candidates
+            assert all(
+                left['source_uuid'] != right['source_uuid']
+                for candidate in candidates
+                for left, right in (
+                    (
+                        next(
+                            row
+                            for row in hub_rows
+                            if row['uuid'] == candidate.left_uuid
+                        ),
+                        next(
+                            row
+                            for row in hub_rows
+                            if row['uuid'] == candidate.right_uuid
+                        ),
+                    ),
+                )
+            )
+
+            first_candidate = next(
+                candidate
+                for candidate in candidates
+                if {candidate.left_uuid, candidate.right_uuid}
+                == {
+                    'kms2-global-source-hub-1',
+                    'kms2-global-source-hub-2',
+                }
+            )
+            await repository.replace_global_predicate_hub_accepted_edges(
+                [first_candidate]
+            )
+            communities = (
+                await repository.detect_global_predicate_hub_communities(
+                    max_iterations=10,
+                    min_association_strength=0.2,
+                    minimum_community_size=2,
+                )
+            )
+            assert len(communities) == 1
+            global_hub = GlobalPredicateHub(
+                predicate='supports',
+                aliases=['supports', 'supports strongly'],
+                description='provides support',
+                embedding=first_vector,
+            )
+            await repository.replace_global_predicate_hubs(
+                [global_hub],
+                [[member.uuid for member in communities[0]]],
+            )
+
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (source_hub:SourcePredicateHub)
+                    WHERE source_hub.uuid STARTS WITH 'kms2-global-source-hub-'
+                    OPTIONAL MATCH (member:SourcePredicate)-[:IN_SOURCE_HUB]->(source_hub)
+                    RETURN source_hub.uuid AS uuid,
+                           source_hub.source_uuid AS source_uuid,
+                           source_hub.predicate AS predicate,
+                           source_hub.description AS description,
+                           count(member) AS source_members
+                    ORDER BY uuid
+                    """
+                )
+                source_snapshot = await result.data()
+                result = await session.run(
+                    """
+                    MATCH (member:SourcePredicateHub)
+                          -[:IN_GLOBAL_HUB]->
+                          (global_hub:GlobalPredicateHub)
+                    RETURN count(DISTINCT global_hub) AS hubs,
+                           count(member) AS memberships
+                    """
+                )
+                global_snapshot = await result.single()
+            assert global_snapshot == {'hubs': 1, 'memberships': 2}
+
+            await repository.replace_global_predicate_hub_accepted_edges([])
+            await repository.replace_global_predicate_hubs([], [])
+
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (source_hub:SourcePredicateHub)
+                    WHERE source_hub.uuid STARTS WITH 'kms2-global-source-hub-'
+                    OPTIONAL MATCH (member:SourcePredicate)-[:IN_SOURCE_HUB]->(source_hub)
+                    RETURN source_hub.uuid AS uuid,
+                           source_hub.source_uuid AS source_uuid,
+                           source_hub.predicate AS predicate,
+                           source_hub.description AS description,
+                           count(member) AS source_members
+                    ORDER BY uuid
+                    """
+                )
+                assert await result.data() == source_snapshot
+                result = await session.run(
+                    'MATCH (hub:GlobalPredicateHub) RETURN count(hub) AS count'
+                )
+                assert (await result.single())['count'] == 0
+        finally:
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (node)
+                    WHERE node.uuid STARTS WITH 'kms2-global-'
+                    DETACH DELETE node
+                    """
+                )
+                await result.consume()
+            await database.close()
+
+    asyncio.run(exercise())
+
+
+async def _exercise_global_hub_contract(
+    *,
+    database,
+    source_label: str,
+    source_member_label: str,
+    source_value_property: str,
+    global_label: str,
+    source_prefix: str,
+    global_hub,
+    read_candidates,
+    replace_edges,
+    detect_communities,
+    replace_hubs,
+) -> None:
+    """Exercise one complete cross-source global hub repository contract."""
+    settings = Settings()
+    dimension = settings.local_models.embedding.model.dimension
+    first_vector = _embedding(1.0, 0.0, dimension)
+    second_vector = _embedding(0.99, 0.01, dimension)
+    hub_rows = [
+        {
+            'uuid': f'{source_prefix}1',
+            'source_uuid': f'{source_prefix}source-1',
+            'value': 'Alpha',
+            'description': 'same concept',
+            'embedding': first_vector,
+        },
+        {
+            'uuid': f'{source_prefix}2',
+            'source_uuid': f'{source_prefix}source-2',
+            'value': 'Alpha term',
+            'description': 'same concept',
+            'embedding': second_vector,
+        },
+        {
+            'uuid': f'{source_prefix}3',
+            'source_uuid': f'{source_prefix}source-1',
+            'value': 'Alpha near match',
+            'description': 'same concept',
+            'embedding': second_vector,
+        },
+    ]
+    await schema.ensure_schema(
+        database.session,
+        embedding_dimension=dimension,
+    )
+    async with database.session() as session:
+        result = await session.run(
+            f"""
+            UNWIND $hubs AS row
+            CREATE (hub:{source_label} {{
+                uuid: row.uuid,
+                source_uuid: row.source_uuid,
+                {source_value_property}: row.value,
+                description: row.description,
+                aliases: [row.value],
+                embedding: row.embedding
+            }})
+            WITH row
+            CREATE (member:{source_member_label} {{
+                uuid: row.uuid + '-member',
+                source_uuid: row.source_uuid,
+                description: row.description
+            }})
+            WITH row, member
+            MATCH (hub:{source_label} {{uuid: row.uuid}})
+            CREATE (member)-[:IN_SOURCE_HUB]->(hub)
+            """,
+            hubs=hub_rows,
+        )
+        await result.consume()
+
+    candidates = await read_candidates(
+        candidate_limit=10,
+        minimum_similarity=0.8,
+    )
+    source_uuids = {row['uuid']: row['source_uuid'] for row in hub_rows}
+    assert candidates
+    assert all(
+        source_uuids[candidate.left_uuid] != source_uuids[candidate.right_uuid]
+        for candidate in candidates
+    )
+    first_candidate = next(
+        candidate
+        for candidate in candidates
+        if {candidate.left_uuid, candidate.right_uuid}
+        == {f'{source_prefix}1', f'{source_prefix}2'}
+    )
+    await replace_edges([first_candidate])
+    communities = await detect_communities(
+        max_iterations=10,
+        min_association_strength=0.2,
+        minimum_community_size=2,
+    )
+    assert len(communities) == 1
+    assert {member.uuid for member in communities[0]} == {
+        f'{source_prefix}1',
+        f'{source_prefix}2',
+    }
+    await replace_hubs(
+        [global_hub],
+        [[member.uuid for member in communities[0]]],
+    )
+
+    source_snapshot_query = f"""
+        MATCH (source_hub:{source_label})
+        WHERE source_hub.uuid STARTS WITH '{source_prefix}'
+        OPTIONAL MATCH (member:{source_member_label})
+                       -[:IN_SOURCE_HUB]->(source_hub)
+        RETURN source_hub.uuid AS uuid,
+               properties(source_hub) AS properties,
+               count(member) AS source_members
+        ORDER BY uuid
+    """
+    async with database.session() as session:
+        result = await session.run(source_snapshot_query)
+        source_snapshot = await result.data()
+        result = await session.run(
+            f"""
+            MATCH (member:{source_label})-[:IN_GLOBAL_HUB]->
+                  (global_hub:{global_label})
+            RETURN count(DISTINCT global_hub) AS hubs,
+                   count(member) AS memberships
+            """
+        )
+        global_snapshot = await result.single()
+    assert global_snapshot == {'hubs': 1, 'memberships': 2}
+
+    await replace_edges([])
+    await replace_hubs([], [])
+
+    async with database.session() as session:
+        result = await session.run(source_snapshot_query)
+        assert await result.data() == source_snapshot
+        result = await session.run(
+            f'MATCH (hub:{global_label}) RETURN count(hub) AS count'
+        )
+        assert (await result.single())['count'] == 0
+
+
+@pytest.mark.skipif(
+    os.getenv('KMS2_NEO4J_GDS_IT') != '1'
+    or not all(os.getenv(name) for name in _REQUIRED_ENVIRONMENT),
+    reason='KMS2 Neo4j GDS integration environment is not enabled',
+)
+def test_kms2_neo4j_global_entity_hub_contracts():
+    async def exercise() -> None:
+        settings = Settings()
+        database = DatabaseClient(settings.database)
+        repository = GlobalEntityHubRepository(database.session)
+        dimension = settings.local_models.embedding.model.dimension
+        try:
+            await _exercise_global_hub_contract(
+                database=database,
+                source_label='SourceEntityHub',
+                source_member_label='SourceEntity',
+                source_value_property='canonical_name',
+                global_label='GlobalEntityHub',
+                source_prefix='kms2-global-entity-hub-',
+                global_hub=GlobalEntityHub(
+                    canonical_name='Alpha',
+                    aliases=['Alpha', 'Alpha term'],
+                    description='same concept',
+                    embedding=_embedding(1.0, 0.0, dimension),
+                ),
+                read_candidates=repository.read_global_entity_hub_candidates,
+                replace_edges=repository.replace_global_entity_hub_accepted_edges,
+                detect_communities=repository.detect_global_entity_hub_communities,
+                replace_hubs=repository.replace_global_entity_hubs,
+            )
+        finally:
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (node)
+                    WHERE node.uuid STARTS WITH 'kms2-global-entity-hub-'
+                       OR node:GlobalEntityHub
+                    DETACH DELETE node
+                    """
+                )
+                await result.consume()
+            await database.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.skipif(
+    os.getenv('KMS2_NEO4J_GDS_IT') != '1'
+    or not all(os.getenv(name) for name in _REQUIRED_ENVIRONMENT),
+    reason='KMS2 Neo4j GDS integration environment is not enabled',
+)
+def test_kms2_neo4j_global_event_hub_contracts():
+    async def exercise() -> None:
+        settings = Settings()
+        database = DatabaseClient(settings.database)
+        repository = GlobalEventHubRepository(database.session)
+        dimension = settings.local_models.embedding.model.dimension
+        try:
+            await _exercise_global_hub_contract(
+                database=database,
+                source_label='SourceEventHub',
+                source_member_label='SourceEvent',
+                source_value_property='name',
+                global_label='GlobalEventHub',
+                source_prefix='kms2-global-event-hub-',
+                global_hub=GlobalEventHub(
+                    name='Alpha',
+                    aliases=['Alpha', 'Alpha term'],
+                    description='same concept',
+                    embedding=_embedding(1.0, 0.0, dimension),
+                ),
+                read_candidates=repository.read_global_event_hub_candidates,
+                replace_edges=repository.replace_global_event_hub_accepted_edges,
+                detect_communities=repository.detect_global_event_hub_communities,
+                replace_hubs=repository.replace_global_event_hubs,
+            )
+        finally:
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (node)
+                    WHERE node.uuid STARTS WITH 'kms2-global-event-hub-'
+                       OR node:GlobalEventHub
+                    DETACH DELETE node
+                    """
+                )
+                await result.consume()
+            await database.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.skipif(
+    os.getenv('KMS2_NEO4J_GDS_IT') != '1'
+    or not all(os.getenv(name) for name in _REQUIRED_ENVIRONMENT),
+    reason='KMS2 Neo4j GDS integration environment is not enabled',
+)
+def test_kms2_neo4j_global_statement_hub_contracts():
+    async def exercise() -> None:
+        settings = Settings()
+        database = DatabaseClient(settings.database)
+        repository = GlobalStatementHubRepository(database.session)
+        dimension = settings.local_models.embedding.model.dimension
+        try:
+            await _exercise_global_hub_contract(
+                database=database,
+                source_label='SourceStatementHub',
+                source_member_label='SourceStatement',
+                source_value_property='canonical_name',
+                global_label='GlobalStatementHub',
+                source_prefix='kms2-global-statement-hub-',
+                global_hub=GlobalStatementHub(
+                    canonical_name='Alpha',
+                    aliases=['Alpha', 'Alpha term'],
+                    description='same concept',
+                    embedding=_embedding(1.0, 0.0, dimension),
+                ),
+                read_candidates=repository.read_global_statement_hub_candidates,
+                replace_edges=repository.replace_global_statement_hub_accepted_edges,
+                detect_communities=repository.detect_global_statement_hub_communities,
+                replace_hubs=repository.replace_global_statement_hubs,
+            )
+        finally:
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (node)
+                    WHERE node.uuid STARTS WITH 'kms2-global-statement-hub-'
+                       OR node:GlobalStatementHub
+                    DETACH DELETE node
+                    """
+                )
+                await result.consume()
+            await database.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.skipif(
+    os.getenv('KMS2_NEO4J_GDS_IT') != '1'
+    or not all(os.getenv(name) for name in _REQUIRED_ENVIRONMENT),
+    reason='KMS2 Neo4j GDS integration environment is not enabled',
+)
+def test_kms2_neo4j_global_procedure_hub_contracts():
+    async def exercise() -> None:
+        settings = Settings()
+        database = DatabaseClient(settings.database)
+        repository = GlobalProcedureHubRepository(database.session)
+        dimension = settings.local_models.embedding.model.dimension
+        try:
+            await _exercise_global_hub_contract(
+                database=database,
+                source_label='SourceProcedureHub',
+                source_member_label='SourceProcedure',
+                source_value_property='canonical_name',
+                global_label='GlobalProcedureHub',
+                source_prefix='kms2-global-procedure-hub-',
+                global_hub=GlobalProcedureHub(
+                    canonical_name='Alpha',
+                    aliases=['Alpha', 'Alpha term'],
+                    description='same concept',
+                    embedding=_embedding(1.0, 0.0, dimension),
+                ),
+                read_candidates=repository.read_global_procedure_hub_candidates,
+                replace_edges=repository.replace_global_procedure_hub_accepted_edges,
+                detect_communities=repository.detect_global_procedure_hub_communities,
+                replace_hubs=repository.replace_global_procedure_hubs,
+            )
+        finally:
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (node)
+                    WHERE node.uuid STARTS WITH 'kms2-global-procedure-hub-'
+                       OR node:GlobalProcedureHub
+                    DETACH DELETE node
+                    """
                 )
                 await result.consume()
             await database.close()

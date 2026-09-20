@@ -1,26 +1,26 @@
 import asyncio
 
-from kms2.config.semantic import SourceEntityHubSettings
+from kms2.config.source_semantic import SourceEntityHubSettings
 from kms2.core.model import (
     SourceEntityHubCandidate,
     SourceEntityHubDefinition,
     SourceEntityHubJudgeInput,
     SourceEntityHubMember,
 )
-from kms2.core.model.semantic.source_entity_hub import (
+from kms2.core.model.source_semantic.source_entity_hub import (
     SourceEntityHubJudgeDecision,
 )
-from kms2.database.semantic.queries.source_entity import (
+from kms2.database.source_semantic.queries.source_entity import (
     DETECT_SOURCE_ENTITY_COMMUNITIES,
     DROP_SOURCE_ENTITY_HUB_GRAPH,
     READ_SOURCE_ENTITY_HUB_CANDIDATES,
     REPLACE_SOURCE_ENTITY_ACCEPTED_EDGES,
 )
-from kms2.database.semantic.source_entity_repository import (
+from kms2.database.source_semantic.source_entity_repository import (
     SourceEntityRepository,
 )
-from kms2.langgraph.semantic.state import SemanticState
-from kms2.node.semantic.source_entity_hub import SourceEntityHubNode
+from kms2.langgraph.source_semantic.state import SourceSemanticState
+from kms2.node.source_semantic.source_entity_hub import SourceEntityHubNode
 
 
 class _Result:
@@ -255,7 +255,7 @@ def test_entity_node_routes_scores_and_stages_without_durable_hub_write():
     )
 
     result = asyncio.run(
-        _run_entity(node, SemanticState(source_uuid='source-1'))
+        _run_entity(node, SourceSemanticState(source_uuid='source-1'))
     )
 
     assert reranker.calls[0][2] is None
@@ -278,7 +278,7 @@ def test_entity_node_limits_judge_batches():
         SourceEntityHubSettings(judge_batch_size=2),
     )
 
-    state = SemanticState(
+    state = SourceSemanticState(
         source_uuid='source-1',
         source_entity_hub_borderline_pairs=[
             _candidate(right_uuid=f'entity-{index}') for index in range(3)

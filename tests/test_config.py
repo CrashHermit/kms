@@ -122,9 +122,42 @@ def test_statement_hub_settings_can_be_overridden(monkeypatch):
 
 
 def test_presets_are_loaded_from_toml():
-    presets = config.load_settings().serving.presets
-    assert presets['gemma-4-e4b-qat-text'].ctx_size == 32768
-    assert presets['gemma-4-e4b-qat-text'].reasoning == 'off'
+    settings = config.load_settings()
+    presets = settings.serving.presets
+    text_preset = presets['gemma-4-e4b-qat-text']
+    vision_preset = presets['gemma-4-e4b-qat-vision']
+    formatter = settings.models.modules['formatter']
+
+    assert text_preset.ctx_size == 32768
+    assert text_preset.reasoning == 'on'
+    assert text_preset.temperature == 1.0
+    assert vision_preset.reasoning == 'on'
+    assert vision_preset.temperature == 1.0
+    assert formatter.temperature == 1.0
+    assert formatter.top_p == 0.95
+    assert formatter.top_k == 64
+
+
+def test_module_lm_forwards_gemma_sampling_defaults(monkeypatch):
+    from kms.core import llm
+
+    calls = []
+
+    class _RecordingLM:
+        def __init__(self, model, **kwargs):
+            calls.append((model, kwargs))
+
+    monkeypatch.setattr(llm.dspy, 'LM', _RecordingLM)
+    llm.module_lm.cache_clear()
+    try:
+        language_model = llm.module_lm('formatter')
+    finally:
+        llm.module_lm.cache_clear()
+
+    assert language_model is not None
+    assert calls[0][1]['temperature'] == 1.0
+    assert calls[0][1]['top_p'] == 0.95
+    assert calls[0][1]['top_k'] == 64
 
 
 def test_local_model_must_match_serving_preset():

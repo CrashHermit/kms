@@ -16,9 +16,12 @@ from kms2.core.model import (
     SplitResult,
     VisualAsset,
 )
-from kms2.langgraph.source.state import SourceState
-from kms2.module.source import exercise_splitter, exercise_strip_router
-from kms2.node.source.exercise_splitter import ExerciseSplitterNode
+from kms2.langgraph.source_processing.state import SourceProcessingState
+from kms2.module.source_processing import (
+    exercise_splitter,
+    exercise_strip_router,
+)
+from kms2.node.source_processing.exercise_splitter import ExerciseSplitterNode
 
 
 class _Predictor:
@@ -163,8 +166,8 @@ class _Splitter:
         return self.decisions
 
 
-def _state(pages: list[SourcePage]) -> SourceState:
-    return SourceState(
+def _state(pages: list[SourcePage]) -> SourceProcessingState:
+    return SourceProcessingState(
         pdf_path='document.pdf',
         source=Source(uuid='source-1', key='document.pdf'),
         image_described_pages=pages,

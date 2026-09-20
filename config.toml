@@ -335,7 +335,8 @@ cache_type_v = "q4_0"
 n_gpu_layers = 999
 no_warmup = true
 parallel = 1
-reasoning = "off"
+reasoning = "on"
+temperature = 1.0
 [serving.presets."gemma-4-e4b-qat-vision"]
 model = "~/models/gemma-4-e4b-qat/gemma-4-E4B_q4_0-it.gguf"
 mmproj = "~/models/gemma-4-e4b-qat/gemma-4-E4B-it-mmproj.gguf"
@@ -346,8 +347,18 @@ cache_type_v = "q4_0"
 n_gpu_layers = 999
 no_warmup = true
 parallel = 1
-reasoning = "off"
-temperature = 0.0
+reasoning = "on"
+temperature = 1.0
+
+[serving.presets."qwen3.8-9b-distill-text"]
+model = "~/models/qwen3.8-9b-distill/Qwen3.8-9B-Q4_K_M.gguf"
+ctx_size = 32768
+cache_type_v = "q4_0"
+n_gpu_layers = 999
+no_warmup = true
+parallel = 1
+flash_attn = "on"
+reasoning = "on"
 
 # ── external services ────────────────────────────────────────────────
 

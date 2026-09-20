@@ -9,13 +9,13 @@ from kms2.core.model import (
     SourcePage,
     VisualAsset,
 )
-from kms2.core.model.source_stage.text_seam import (
+from kms2.core.model.source_processing.text_seam import (
     TextSeamRequest,
     TextSeamResult,
 )
-from kms2.langgraph.source.state import SourceState
-from kms2.module.source import text_seam_judge, text_seam_rewriter
-from kms2.node.source.text_seam import TextSeamNode
+from kms2.langgraph.source_processing.state import SourceProcessingState
+from kms2.module.source_processing import text_seam_judge, text_seam_rewriter
+from kms2.node.source_processing.text_seam import TextSeamNode
 
 
 class _Predictor:
@@ -57,8 +57,8 @@ def _module(
     return module_type(predictor)
 
 
-def _state(pages: list[SourcePage]) -> SourceState:
-    return SourceState(
+def _state(pages: list[SourcePage]) -> SourceProcessingState:
+    return SourceProcessingState(
         pdf_path='document.pdf',
         source=Source(uuid='source-1', key='document.pdf'),
         formatted_pages=pages,

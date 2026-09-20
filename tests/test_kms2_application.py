@@ -48,7 +48,7 @@ class _SchemaSession:
         self.calls.append((statement, parameters))
 
 
-class _SourceGraph:
+class _SourceProcessingGraph:
     def __init__(self, fail=False):
         self.initial_state = None
         self.fail = fail
@@ -75,7 +75,7 @@ class _SourceGraph:
         }
 
 
-class _SemanticGraph:
+class _SourceSemanticGraph:
     async def ainvoke(self, initial_state):
         assert initial_state == {'source_uuid': 'result-source'}
         return {
@@ -109,7 +109,7 @@ def test_ingest_source_reports_all_final_state_counts(monkeypatch):
     settings = Settings()
     runtime = _Runtime(settings.local_models)
     database = _Database(settings.database)
-    graph = _SourceGraph()
+    graph = _SourceProcessingGraph()
     composed = _ComposedGraph(graph)
     composition_calls = []
     schema_calls = []
@@ -135,7 +135,7 @@ def test_ingest_source_reports_all_final_state_counts(monkeypatch):
         )
         return composed
 
-    monkeypatch.setattr(application, 'build_source_graph', compose)
+    monkeypatch.setattr(application, 'build_source_processing_graph', compose)
 
     result = asyncio.run(
         application.ingest_source(settings, 'fixtures/book.pdf', [0, 2])
@@ -172,13 +172,13 @@ def test_ingest_source_reports_all_final_state_counts(monkeypatch):
 def test_ingest_source_closes_database_when_graph_fails(monkeypatch):
     settings = Settings()
     database = _Database(settings.database)
-    graph = _SourceGraph(fail=True)
+    graph = _SourceProcessingGraph(fail=True)
 
     monkeypatch.setattr(application, 'LocalModelRuntime', _Runtime)
     monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
     monkeypatch.setattr(
         application,
-        'build_source_graph',
+        'build_source_processing_graph',
         lambda *args, **kwargs: _ComposedGraph(graph),
     )
 
@@ -194,7 +194,7 @@ def test_ingest_source_passes_one_opt_in_recorder(monkeypatch, tmp_path):
     )
     database = _Database(settings.database)
     runtime = _Runtime(settings.local_models)
-    graph = _SourceGraph()
+    graph = _SourceProcessingGraph()
     recorder_calls = []
 
     monkeypatch.setattr(application, 'LocalModelRuntime', lambda _: runtime)
@@ -204,13 +204,15 @@ def test_ingest_source_passes_one_opt_in_recorder(monkeypatch, tmp_path):
         recorder_calls.append(recorder)
         return _ComposedGraph(graph)
 
-    monkeypatch.setattr(application, 'build_source_graph', compose)
+    monkeypatch.setattr(application, 'build_source_processing_graph', compose)
 
     asyncio.run(application.ingest_source(settings, 'fixtures/book.pdf'))
 
     assert len(recorder_calls) == 1
     assert isinstance(recorder_calls[0], application.Recorder)
     assert recorder_calls[0]._directory == tmp_path
+    assert recorder_calls[0]._run_directory.parent == tmp_path
+    assert recorder_calls[0]._run_directory.name.endswith('Z')
 
 
 def test_list_sources_closes_database_and_returns_sources(monkeypatch):
@@ -241,11 +243,13 @@ def test_list_sources_closes_database_and_returns_sources(monkeypatch):
     assert database.closed is True
 
 
-def test_run_semantic_stage_uses_one_complete_semantic_graph(monkeypatch):
+def test_run_source_semantic_stage_uses_one_complete_semantic_graph(
+    monkeypatch,
+):
     settings = Settings()
     runtime = _Runtime(settings.local_models)
     database = _Database(settings.database)
-    graph = _SemanticGraph()
+    graph = _SourceSemanticGraph()
     composed = _ComposedGraph(graph)
     composition_calls = []
 
@@ -265,10 +269,10 @@ def test_run_semantic_stage_uses_one_complete_semantic_graph(monkeypatch):
         )
         return composed
 
-    monkeypatch.setattr(application, 'build_semantic_graph', compose)
+    monkeypatch.setattr(application, 'build_source_semantic_graph', compose)
 
     result = asyncio.run(
-        application.run_semantic_stage(settings, 'result-source')
+        application.run_source_semantic_stage(settings, 'result-source')
     )
 
     assert result.triplet_count == 2
@@ -294,8 +298,8 @@ def test_combined_pipeline_reuses_resources_and_recorder(monkeypatch, tmp_path):
     )
     runtime = _Runtime(settings.local_models)
     database = _Database(settings.database)
-    source_graph = _SourceGraph()
-    semantic_graph = _SemanticGraph()
+    source_graph = _SourceProcessingGraph()
+    semantic_graph = _SourceSemanticGraph()
     source_composed = _ComposedGraph(source_graph)
     semantic_composed = _ComposedGraph(semantic_graph)
     source_calls = []
@@ -318,11 +322,15 @@ def test_combined_pipeline_reuses_resources_and_recorder(monkeypatch, tmp_path):
         semantic_calls.append((*args, recorder))
         return semantic_composed
 
-    monkeypatch.setattr(application, 'build_source_graph', compose_source)
-    monkeypatch.setattr(application, 'build_semantic_graph', compose_semantic)
+    monkeypatch.setattr(
+        application, 'build_source_processing_graph', compose_source
+    )
+    monkeypatch.setattr(
+        application, 'build_source_semantic_graph', compose_semantic
+    )
 
     result = asyncio.run(
-        application.ingest_and_run_semantic_stage(
+        application.ingest_and_run_source_semantic_stage(
             settings,
             'fixtures/book.pdf',
         )
@@ -330,9 +338,9 @@ def test_combined_pipeline_reuses_resources_and_recorder(monkeypatch, tmp_path):
     assert len(schema_calls) == 1
     assert schema_calls[0][1] == settings.local_models.embedding.model.dimension
 
-    assert result.source_stage.source.uuid == 'result-source'
-    assert result.semantic_stage.triplet_count == 2
-    assert result.semantic_stage.source_fact_count == 3
+    assert result.source_processing_stage.source.uuid == 'result-source'
+    assert result.source_semantic_stage.triplet_count == 2
+    assert result.source_semantic_stage.source_fact_count == 3
     assert source_calls[0][1:3] == (runtime, database)
     assert semantic_calls[0][1:3] == (runtime, database)
     assert source_calls[0][3] is semantic_calls[0][3]
@@ -354,7 +362,7 @@ def test_schema_failure_closes_database_before_starting_runtime(monkeypatch):
     monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
     monkeypatch.setattr(
         application,
-        'build_source_graph',
+        'build_source_processing_graph',
         lambda *args, **kwargs: graph_built.append(True),
     )
 
@@ -395,7 +403,7 @@ def test_ingest_source_cancellation_closes_runtime_before_database(monkeypatch):
     monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
     monkeypatch.setattr(
         application,
-        'build_source_graph',
+        'build_source_processing_graph',
         lambda *args, **kwargs: _ComposedGraph(BlockingGraph()),
     )
 
@@ -410,3 +418,37 @@ def test_ingest_source_cancellation_closes_runtime_before_database(monkeypatch):
 
     asyncio.run(exercise())
     assert events == ['runtime-close', 'database-close']
+
+
+def test_run_global_semantic_stage_reports_global_hub_count(monkeypatch):
+    settings = Settings()
+    runtime = _Runtime(settings.local_models)
+    database = _Database(settings.database)
+
+    class _GlobalSemanticGraph:
+        async def ainvoke(self, initial_state):
+            assert initial_state == {}
+            return {
+                'global_entity_hub_count': 1,
+                'global_event_hub_count': 2,
+                'global_predicate_hub_count': 4,
+                'global_statement_hub_count': 3,
+                'global_procedure_hub_count': 5,
+            }
+
+    monkeypatch.setattr(application, 'LocalModelRuntime', lambda _: runtime)
+    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
+    monkeypatch.setattr(
+        application,
+        'build_global_semantic_graph',
+        lambda *args, **kwargs: _ComposedGraph(_GlobalSemanticGraph()),
+    )
+
+    result = asyncio.run(application.run_global_semantic_stage(settings))
+
+    assert result.global_entity_hub_count == 1
+    assert result.global_event_hub_count == 2
+    assert result.global_predicate_hub_count == 4
+    assert result.global_statement_hub_count == 3
+    assert result.global_procedure_hub_count == 5
+    assert database.closed is True

@@ -1,13 +1,15 @@
 import asyncio
 
-from kms2.config.semantic import SourceStatementHubSettings
+from kms2.config.source_semantic import SourceStatementHubSettings
 from kms2.core.model import (
     SourceStatementHubCandidate,
     SourceStatementHubDefinition,
     SourceStatementHubSynthesisResult,
 )
-from kms2.langgraph.semantic.state import SemanticState
-from kms2.node.semantic.source_statement_hub import SourceStatementHubNode
+from kms2.langgraph.source_semantic.state import SourceSemanticState
+from kms2.node.source_semantic.source_statement_hub import (
+    SourceStatementHubNode,
+)
 
 
 class _Repository:
@@ -51,7 +53,7 @@ def test_statement_hub_empty_source_is_independent_and_has_no_exercise_input():
         SourceStatementHubSettings(),
     )
     result = asyncio.run(
-        _run_empty_statement(node, SemanticState(source_uuid='source-1'))
+        _run_empty_statement(node, SourceSemanticState(source_uuid='source-1'))
     )
     assert result == {
         'source_statement_hubs': [],

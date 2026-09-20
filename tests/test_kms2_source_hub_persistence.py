@@ -10,23 +10,23 @@ from kms2.core.model import (
     SourceStatementHub,
     SourceTripletHub,
 )
-from kms2.langgraph.semantic.state import SemanticState
-from kms2.node.semantic.source_entity_hub_persistence import (
+from kms2.langgraph.source_semantic.state import SourceSemanticState
+from kms2.node.source_semantic.source_entity_hub_persistence import (
     SourceEntityHubPersistenceNode,
 )
-from kms2.node.semantic.source_event_hub_persistence import (
+from kms2.node.source_semantic.source_event_hub_persistence import (
     SourceEventHubPersistenceNode,
 )
-from kms2.node.semantic.source_predicate_hub_persistence import (
+from kms2.node.source_semantic.source_predicate_hub_persistence import (
     SourcePredicateHubPersistenceNode,
 )
-from kms2.node.semantic.source_procedure_hub_persistence import (
+from kms2.node.source_semantic.source_procedure_hub_persistence import (
     SourceProcedureHubPersistenceNode,
 )
-from kms2.node.semantic.source_statement_hub_persistence import (
+from kms2.node.source_semantic.source_statement_hub_persistence import (
     SourceStatementHubPersistenceNode,
 )
-from kms2.node.semantic.source_triplet_hub_persistence import (
+from kms2.node.source_semantic.source_triplet_hub_persistence import (
     SourceTripletHubPersistenceNode,
 )
 
@@ -55,7 +55,7 @@ class _Repository:
 
 
 def _state(kind, hub):
-    return SemanticState(
+    return SourceSemanticState(
         source_uuid='source-1',
         **{
             f'source_{kind}_hubs': [hub],

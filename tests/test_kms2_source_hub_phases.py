@@ -2,31 +2,33 @@ import asyncio
 
 from langgraph.graph import START, StateGraph
 
-from kms2.config.semantic import SourceEntityHubSettings
+from kms2.config.source_semantic import SourceEntityHubSettings
 from kms2.core.model import (
     SourceEntityHubCandidate,
     SourceEntityHubDefinition,
     SourceEntityHubRerankResult,
     SourceEntityHubSynthesisResult,
 )
-from kms2.langgraph.semantic.source_entity_hub import (
+from kms2.langgraph.source_semantic.source_entity_hub import (
     add_source_entity_hub_phase,
 )
-from kms2.langgraph.semantic.source_event_hub import add_source_event_hub_phase
-from kms2.langgraph.semantic.source_predicate_hub import (
+from kms2.langgraph.source_semantic.source_event_hub import (
+    add_source_event_hub_phase,
+)
+from kms2.langgraph.source_semantic.source_predicate_hub import (
     add_source_predicate_hub_phase,
 )
-from kms2.langgraph.semantic.source_procedure_hub import (
+from kms2.langgraph.source_semantic.source_procedure_hub import (
     add_source_procedure_hub_phase,
 )
-from kms2.langgraph.semantic.source_statement_hub import (
+from kms2.langgraph.source_semantic.source_statement_hub import (
     add_source_statement_hub_phase,
 )
-from kms2.langgraph.semantic.source_triplet_hub import (
+from kms2.langgraph.source_semantic.source_triplet_hub import (
     add_source_triplet_hub_phase,
 )
-from kms2.langgraph.semantic.state import SemanticState
-from kms2.node.semantic.source_entity_hub import SourceEntityHubNode
+from kms2.langgraph.source_semantic.state import SourceSemanticState
+from kms2.node.source_semantic.source_entity_hub import SourceEntityHubNode
 
 
 class _TraceNode:
@@ -108,7 +110,7 @@ class _Persistence:
 
 
 def _phase_graph(trace):
-    graph = StateGraph(SemanticState)
+    graph = StateGraph(SourceSemanticState)
     kinds = ('entity', 'event', 'predicate', 'statement', 'procedure')
     for kind in kinds:
         name = f'source_{kind}_persistence'
@@ -199,7 +201,7 @@ def test_entity_collectors_restore_ordinal_order_after_reversed_workers():
         _Embedding(),
         SourceEntityHubSettings(),
     )
-    state = SemanticState(
+    state = SourceSemanticState(
         source_uuid='source-1',
         source_entity_hub_rerank_results=[
             SourceEntityHubRerankResult(ordinal=1, direct=[second]),

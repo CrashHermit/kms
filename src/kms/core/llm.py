@@ -81,6 +81,8 @@ def module_lm(module_name: str) -> dspy.LM:
             api_base=module_config.base_url,
             api_key=module_config.api_key or 'not-needed',
             temperature=module_config.temperature,
+            top_p=module_config.top_p,
+            top_k=module_config.top_k,
             max_tokens=module_config.max_tokens,
             cache=True,
         )
@@ -101,6 +103,8 @@ def module_lm(module_name: str) -> dspy.LM:
             else 'sk-...',
         ),
         temperature=module_config.temperature,
+        top_p=module_config.top_p,
+        top_k=module_config.top_k,
         max_tokens=module_config.max_tokens,
         cache=True,
         **_provider_routing(module_config.provider or None),

@@ -8,8 +8,8 @@ from kms2.core.model import (
     SourcePage,
     StatementDraft,
 )
-from kms2.langgraph.source.state import SourceState
-from kms2.node.source.persistence import SourcePersistenceNode
+from kms2.langgraph.source_processing.state import SourceProcessingState
+from kms2.node.source_processing.persistence import SourcePersistenceNode
 
 
 class _RecordingRepository:
@@ -51,7 +51,7 @@ def test_persistence_replaces_source_without_schema_side_effects():
         SourcePersistenceNode(
             _RecordingRepository(events),
         ).run(
-            SourceState(
+            SourceProcessingState(
                 pdf_path='book.pdf',
                 source=source,
                 embedded_pages=pages,

@@ -2,7 +2,11 @@ import asyncio
 
 import dspy
 
-from kms2.config.inference import PredictorStrategy, StageInferenceSettings
+from kms2.config.inference import (
+    PredictorStrategy,
+    StageInferenceSettings,
+    TextInferenceSettings,
+)
 from kms2.config.runtime import LocalModelRuntimeSettings
 from kms2.local_models.runtime import ResidentRole, RuntimePredictor
 
@@ -45,9 +49,22 @@ def _stage_inference(strategy: PredictorStrategy) -> StageInferenceSettings:
         model_server_profile='text',
         strategy=strategy,
         temperature=0.2,
+        top_p=0.8,
+        top_k=12,
         max_tokens=123,
         num_retries=4,
     )
+
+
+def test_stage_inference_defaults_match_gemma_sampling_recommendations():
+    settings = StageInferenceSettings(model_server_profile='text')
+    text_settings = TextInferenceSettings()
+
+    assert settings.temperature == 1.0
+    assert settings.top_p == 0.95
+    assert settings.top_k == 64
+    assert settings.max_tokens == 8192
+    assert text_settings.max_tokens == 16384
 
 
 def test_runtime_predictor_forwards_inference_options(monkeypatch):
@@ -76,6 +93,8 @@ def test_runtime_predictor_forwards_inference_options(monkeypatch):
                 'api_key': 'not-needed',
                 'custom_llm_provider': 'openai',
                 'temperature': 0.2,
+                'top_p': 0.8,
+                'top_k': 12,
                 'max_tokens': 123,
                 'num_retries': 4,
                 'cache': True,

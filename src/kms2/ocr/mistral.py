@@ -11,7 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from kms2.config.services import OCRSettings
 from kms2.core.model.block_types import BlockType
-from kms2.core.model.source_stage.ocr import (
+from kms2.core.model.source_processing.ocr import (
     OCRArtifact,
     OCRImageArtifact,
     OCRPageArtifact,

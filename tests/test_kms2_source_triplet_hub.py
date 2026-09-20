@@ -7,16 +7,16 @@ from kms2.core.model import (
     SourceTripletHubGroup,
     SourceTripletHubRole,
 )
-from kms2.database.semantic.queries.source_triplet import (
+from kms2.database.source_semantic.queries.source_triplet import (
     READ_SOURCE_TRIPLET_HUB_GROUPS,
     REPLACE_SOURCE_TRIPLET_HUBS,
 )
-from kms2.database.semantic.source_triplet_repository import (
+from kms2.database.source_semantic.source_triplet_repository import (
     SourceTripletRepository,
 )
-from kms2.langgraph.semantic.state import SemanticState
-from kms2.node.semantic.source_triplet_hub import SourceTripletHubNode
-from kms2.node.semantic.source_triplet_hub_persistence import (
+from kms2.langgraph.source_semantic.state import SourceSemanticState
+from kms2.node.source_semantic.source_triplet_hub import SourceTripletHubNode
+from kms2.node.source_semantic.source_triplet_hub_persistence import (
     SourceTripletHubPersistenceNode,
 )
 
@@ -208,7 +208,7 @@ def test_source_triplet_node_deduplicates_model_evidence_and_retains_ids():
     )
 
     result = asyncio.run(
-        _run_triplet(node, SemanticState(source_uuid='source-1'))
+        _run_triplet(node, SourceSemanticState(source_uuid='source-1'))
     )
 
     request = module.requests[0]
@@ -244,7 +244,7 @@ def test_source_triplet_node_skips_synthesis_and_embedding_for_empty_groups():
     )
 
     result = asyncio.run(
-        _run_triplet(node, SemanticState(source_uuid='source-1'))
+        _run_triplet(node, SourceSemanticState(source_uuid='source-1'))
     )
 
     assert result == {
@@ -270,7 +270,7 @@ def test_source_triplet_persistence_replaces_roles_and_raw_evidence():
 
     result = asyncio.run(
         node.run(
-            SemanticState(
+            SourceSemanticState(
                 source_uuid='source-1',
                 source_triplet_hubs=[hub],
                 source_triplet_hub_memberships=[['triplet-a', 'triplet-b']],

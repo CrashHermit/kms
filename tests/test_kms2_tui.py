@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from kms2 import tui
-from kms2.application import SemanticStageResult
+from kms2.application import SourceSemanticStageResult
 from kms2.config.settings import Settings
 from kms2.core.model import Source
 
@@ -19,8 +19,8 @@ class _Prompt:
         return self.value
 
 
-def _semantic_result() -> SemanticStageResult:
-    return SemanticStageResult(
+def _semantic_result() -> SourceSemanticStageResult:
+    return SourceSemanticStageResult(
         source_fact_count=5,
         triplet_count=4,
         source_entity_description_count=3,
@@ -40,6 +40,7 @@ def _semantic_result() -> SemanticStageResult:
 def test_tui_ingests_new_source_without_semantic_prompt(monkeypatch, caplog):
     prompts = iter(
         [
+            _Prompt(tui.NEW_SOURCE_OPTION),
             _Prompt('book.pdf'),
             _Prompt('0,2'),
         ]
@@ -81,7 +82,13 @@ def test_tui_ingests_new_source_without_semantic_prompt(monkeypatch, caplog):
 
     tui._run_tui()
 
-    assert select_calls == []
+    assert select_calls[0] == {
+        'message': 'What would you like to do?',
+        'choices': [
+            tui.NEW_SOURCE_OPTION,
+            tui.GLOBAL_SEMANTIC_OPTION,
+        ],
+    }
     assert len(calls) == 1
     settings, pdf_path, pages = calls[0]
     assert isinstance(settings, Settings)
@@ -89,7 +96,7 @@ def test_tui_ingests_new_source_without_semantic_prompt(monkeypatch, caplog):
     assert pages == [0, 2]
     assert confirm_calls == []
     assert (
-        'Done: source source-1 (book.pdf), ingested 3 page(s).'
+        'Done: source source-1 (book.pdf), Source Processing ingested 3 page(s).'
         in caplog.messages
     )
 
@@ -126,7 +133,7 @@ def test_tui_runs_complete_stage_from_existing_source(monkeypatch, caplog):
 
     monkeypatch.setattr(tui, 'inquirer', fake_inquirer)
     monkeypatch.setattr(tui, 'list_sources', fake_list_sources)
-    monkeypatch.setattr(tui, 'run_semantic_stage', fake_run)
+    monkeypatch.setattr(tui, 'run_source_semantic_stage', fake_run)
     caplog.set_level(logging.INFO, logger='kms2.tui')
 
     tui._run_tui()
@@ -136,6 +143,7 @@ def test_tui_runs_complete_stage_from_existing_source(monkeypatch, caplog):
         'choices': [
             tui.NEW_SOURCE_OPTION,
             tui.EXISTING_SOURCE_OPTION,
+            tui.GLOBAL_SEMANTIC_OPTION,
         ],
     }
     source_choice = select_calls[1]['choices'][0]
@@ -143,13 +151,13 @@ def test_tui_runs_complete_stage_from_existing_source(monkeypatch, caplog):
     assert source_choice.name == 'book.pdf (source-1)'
     assert confirm_calls == [
         {
-            'message': 'Run the semantic stage on the selected source?',
+            'message': 'Run Source Semantic on the selected source?',
             'default': True,
         }
     ]
     assert len(calls) == 1
     assert (
-        'Done: source source-1 (book.pdf), semantic stage persisted 5 source '
+        'Done: source source-1 (book.pdf), Source Semantic persisted 5 source '
         'fact(s), 4 triplet(s); descriptions: 3 entity, 2 event, 1 predicate, '
         '0 statement, 0 procedure; hubs: 6 entity, 7 event, 8 predicate, 0 '
         'triplet, 0 statement, 0 procedure.' in caplog.messages
@@ -173,12 +181,71 @@ def test_tui_reports_cancelled_pipeline(monkeypatch, caplog):
 
     monkeypatch.setattr(tui, '_run_tui', cancel)
     caplog.set_level(logging.INFO, logger='kms2.tui')
-
     with pytest.raises(SystemExit) as exit_info:
         tui.run()
 
     assert exit_info.value.code == 0
     assert 'Cancelled.' in caplog.messages
+
+
+def test_tui_runs_global_semantic_without_source_selection(monkeypatch, caplog):
+    source = Source(uuid='source-1', key='book.pdf')
+    prompts = iter(
+        [
+            _Prompt(tui.GLOBAL_SEMANTIC_OPTION),
+            _Prompt(True),
+        ]
+    )
+    select_calls = []
+    confirm_calls = []
+
+    def select(**kwargs):
+        select_calls.append(kwargs)
+        return next(prompts)
+
+    def confirm(**kwargs):
+        confirm_calls.append(kwargs)
+        return next(prompts)
+
+    fake_inquirer = SimpleNamespace(select=select, confirm=confirm)
+    calls = []
+
+    async def fake_list_sources(settings):
+        return [source]
+
+    async def fake_run(settings):
+        calls.append(settings)
+        return SimpleNamespace(
+            global_entity_hub_count=1,
+            global_event_hub_count=2,
+            global_predicate_hub_count=3,
+            global_statement_hub_count=4,
+            global_procedure_hub_count=5,
+        )
+
+    monkeypatch.setattr(tui, 'inquirer', fake_inquirer)
+    monkeypatch.setattr(tui, 'list_sources', fake_list_sources)
+    monkeypatch.setattr(tui, 'run_global_semantic_stage', fake_run)
+    caplog.set_level(logging.INFO, logger='kms2.tui')
+
+    tui._run_tui()
+
+    assert select_calls[0]['choices'] == [
+        tui.NEW_SOURCE_OPTION,
+        tui.EXISTING_SOURCE_OPTION,
+        tui.GLOBAL_SEMANTIC_OPTION,
+    ]
+    assert confirm_calls == [
+        {
+            'message': 'Run Global Semantic over all persisted source hubs?',
+            'default': True,
+        }
+    ]
+    assert len(calls) == 1
+    assert (
+        'Done: Global Semantic persisted 1 entity, 2 event, 3 predicate, '
+        '4 statement, and 5 procedure global hub(s).' in caplog.messages
+    )
 
 
 def test_run_async_cancels_pipeline_on_sigint():

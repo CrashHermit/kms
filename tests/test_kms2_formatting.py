@@ -3,13 +3,13 @@ import asyncio
 import dspy
 
 from kms2.core.model import Source, SourceBlock, SourcePage
-from kms2.core.model.source_stage.formatting import (
+from kms2.core.model.source_processing.formatting import (
     FormattingRequest,
     FormattingResult,
 )
-from kms2.langgraph.source.state import SourceState
-from kms2.module.source import formatting
-from kms2.node.source.formatting import FormattingNode
+from kms2.langgraph.source_processing.state import SourceProcessingState
+from kms2.module.source_processing import formatting
+from kms2.node.source_processing.formatting import FormattingNode
 
 
 class _Predictor:
@@ -31,8 +31,8 @@ def _module() -> tuple[formatting.FormatterModule, _Predictor]:
     return module, predictor
 
 
-def _state(contents: list[SourceBlock]) -> SourceState:
-    return SourceState(
+def _state(contents: list[SourceBlock]) -> SourceProcessingState:
+    return SourceProcessingState(
         pdf_path='document.pdf',
         source=Source(uuid='source-1', key='document.pdf'),
         corrected_pages=[SourcePage(index=3, blocks=contents)],

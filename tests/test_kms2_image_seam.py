@@ -11,9 +11,9 @@ from kms2.core.model import (
     SourcePage,
     VisualAsset,
 )
-from kms2.langgraph.source.state import SourceState
-from kms2.module.source import image_seam
-from kms2.node.source.image_seam import ImageSeamNode
+from kms2.langgraph.source_processing.state import SourceProcessingState
+from kms2.module.source_processing import image_seam
+from kms2.node.source_processing.image_seam import ImageSeamNode
 
 
 class _Predictor:
@@ -47,8 +47,8 @@ def _block(
     )
 
 
-def _state(pages: list[SourcePage]) -> SourceState:
-    return SourceState(
+def _state(pages: list[SourcePage]) -> SourceProcessingState:
+    return SourceProcessingState(
         pdf_path='document.pdf',
         source=Source(uuid='source-1', key='document.pdf'),
         text_seam_pages=pages,

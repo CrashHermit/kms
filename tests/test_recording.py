@@ -183,7 +183,7 @@ def test_same_source_gets_a_fresh_run_namespace(tmp_path):
     assert len(runs) == 2
 
 
-def test_run_metadata_records_source_stage_and_model(tmp_path):
+def test_run_metadata_records_source_processing_stage_and_model(tmp_path):
     recorder = recording.Recorder(
         'src', output_dir=str(tmp_path / 'ex'), title='A Book'
     )

@@ -1,13 +1,15 @@
 import asyncio
 
-from kms2.config.semantic import SourceProcedureHubSettings
+from kms2.config.source_semantic import SourceProcedureHubSettings
 from kms2.core.model import (
     SourceProcedureHubCandidate,
     SourceProcedureHubDefinition,
     SourceProcedureHubSynthesisResult,
 )
-from kms2.langgraph.semantic.state import SemanticState
-from kms2.node.semantic.source_procedure_hub import SourceProcedureHubNode
+from kms2.langgraph.source_semantic.state import SourceSemanticState
+from kms2.node.source_semantic.source_procedure_hub import (
+    SourceProcedureHubNode,
+)
 
 
 class _Repository:
@@ -51,7 +53,7 @@ def test_procedure_hub_empty_source_is_independent():
         SourceProcedureHubSettings(),
     )
     result = asyncio.run(
-        _run_empty_procedure(node, SemanticState(source_uuid='source-1'))
+        _run_empty_procedure(node, SourceSemanticState(source_uuid='source-1'))
     )
     assert result == {
         'source_procedure_hubs': [],

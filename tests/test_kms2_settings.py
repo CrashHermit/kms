@@ -1,34 +1,34 @@
 from kms2.config.settings import Settings
 
 _SOURCE_ENVIRONMENT = {
-    'KMS2_SOURCE__INSTRUCTION_FINDER__START_ROUTER__MODEL_SERVER_PROFILE': (
+    'KMS2_SOURCE_PROCESSING__INSTRUCTION_FINDER__START_ROUTER__MODEL_SERVER_PROFILE': (
         'custom-instruction-start-profile'
     ),
-    'KMS2_SOURCE__PEDAGOGICAL_FINDER__START_ROUTER__MODEL_SERVER_PROFILE': (
+    'KMS2_SOURCE_PROCESSING__PEDAGOGICAL_FINDER__START_ROUTER__MODEL_SERVER_PROFILE': (
         'custom-pedagogical-start-profile'
     ),
-    'KMS2_SOURCE__PEDAGOGICAL_FINDER__BOUNDARY_ROUTER__MODEL_SERVER_PROFILE': (
+    'KMS2_SOURCE_PROCESSING__PEDAGOGICAL_FINDER__BOUNDARY_ROUTER__MODEL_SERVER_PROFILE': (
         'custom-pedagogical-boundary-profile'
     ),
-    'KMS2_SOURCE__STATEMENT_PROCEDURE__ROLE_TYPER__MODEL_SERVER_PROFILE': (
+    'KMS2_SOURCE_PROCESSING__STATEMENT_PROCEDURE__ROLE_TYPER__MODEL_SERVER_PROFILE': (
         'custom-role-profile'
     ),
-    'KMS2_SOURCE__STATEMENT_PROCEDURE__STATEMENT_PARTITIONER__MODEL_SERVER_PROFILE': (
+    'KMS2_SOURCE_PROCESSING__STATEMENT_PROCEDURE__STATEMENT_PARTITIONER__MODEL_SERVER_PROFILE': (
         'custom-statement-profile'
     ),
-    'KMS2_SOURCE__STATEMENT_PROCEDURE__PROCEDURE_PARTITIONER__MODEL_SERVER_PROFILE': (
+    'KMS2_SOURCE_PROCESSING__STATEMENT_PROCEDURE__PROCEDURE_PARTITIONER__MODEL_SERVER_PROFILE': (
         'custom-procedure-profile'
     ),
-    'KMS2_SOURCE__EXERCISE_FINDER__START_ROUTER__MODEL_SERVER_PROFILE': (
+    'KMS2_SOURCE_PROCESSING__EXERCISE_FINDER__START_ROUTER__MODEL_SERVER_PROFILE': (
         'custom-exercise-start-profile'
     ),
-    'KMS2_SOURCE__EXERCISE_FINDER__BOUNDARY_ROUTER__MODEL_SERVER_PROFILE': (
+    'KMS2_SOURCE_PROCESSING__EXERCISE_FINDER__BOUNDARY_ROUTER__MODEL_SERVER_PROFILE': (
         'custom-exercise-boundary-profile'
     ),
 }
 
 
-def test_kms2_defaults_include_pointer_source_stages(monkeypatch):
+def test_kms2_defaults_include_pointer_source_processing_stages(monkeypatch):
     for name in _SOURCE_ENVIRONMENT:
         monkeypatch.delenv(name, raising=False)
 
@@ -39,37 +39,37 @@ def test_kms2_defaults_include_pointer_source_stages(monkeypatch):
     )
 
     zero_context_windows = [
-        settings.source.instruction_finder.start_context_window,
-        settings.source.exercise_finder.start_context_window,
-        settings.source.exercise_finder.boundary_context_window,
+        settings.source_processing.instruction_finder.start_context_window,
+        settings.source_processing.exercise_finder.start_context_window,
+        settings.source_processing.exercise_finder.boundary_context_window,
     ]
     assert all(
         window.backward_budget == 0 and window.forward_budget == 0
         for window in zero_context_windows
     )
     instruction_boundary_window = (
-        settings.source.instruction_finder.boundary_context_window
+        settings.source_processing.instruction_finder.boundary_context_window
     )
     assert instruction_boundary_window.backward_budget == 300
     assert instruction_boundary_window.forward_budget == 0
     context_windows = [
-        settings.source.pedagogical_finder.start_context_window,
-        settings.source.pedagogical_finder.boundary_context_window,
+        settings.source_processing.pedagogical_finder.start_context_window,
+        settings.source_processing.pedagogical_finder.boundary_context_window,
     ]
     assert all(
         window.backward_budget == 300 and window.forward_budget == 300
         for window in context_windows
     )
     assert (
-        settings.source.statement_procedure.role_typer.model_server_profile
+        settings.source_processing.statement_procedure.role_typer.model_server_profile
         == ('gemma-text-32k')
     )
     assert (
-        settings.source.exercise_finder.start_router.model_server_profile
+        settings.source_processing.exercise_finder.start_router.model_server_profile
         == 'gemma-text-32k'
     )
     assert (
-        settings.source.instruction_governance.context_window.forward_budget
+        settings.source_processing.instruction_governance.context_window.forward_budget
         == 500
     )
 
@@ -81,44 +81,44 @@ def test_kms2_source_uses_nested_environment(monkeypatch):
     settings = Settings()
 
     assert (
-        settings.source.instruction_finder.start_router.model_server_profile
+        settings.source_processing.instruction_finder.start_router.model_server_profile
         == ('custom-instruction-start-profile')
     )
     assert (
-        settings.source.pedagogical_finder.start_router.model_server_profile
+        settings.source_processing.pedagogical_finder.start_router.model_server_profile
         == ('custom-pedagogical-start-profile')
     )
     assert (
-        settings.source.pedagogical_finder.boundary_router.model_server_profile
+        settings.source_processing.pedagogical_finder.boundary_router.model_server_profile
         == ('custom-pedagogical-boundary-profile')
     )
     assert (
-        settings.source.statement_procedure.role_typer.model_server_profile
+        settings.source_processing.statement_procedure.role_typer.model_server_profile
         == ('custom-role-profile')
     )
     assert (
-        settings.source.statement_procedure.statement_partitioner.model_server_profile
+        settings.source_processing.statement_procedure.statement_partitioner.model_server_profile
         == 'custom-statement-profile'
     )
     assert (
-        settings.source.statement_procedure.procedure_partitioner.model_server_profile
+        settings.source_processing.statement_procedure.procedure_partitioner.model_server_profile
         == 'custom-procedure-profile'
     )
     assert (
-        settings.source.exercise_finder.start_router.model_server_profile
+        settings.source_processing.exercise_finder.start_router.model_server_profile
         == 'custom-exercise-start-profile'
     )
     assert (
-        settings.source.exercise_finder.boundary_router.model_server_profile
+        settings.source_processing.exercise_finder.boundary_router.model_server_profile
         == 'custom-exercise-boundary-profile'
     )
 
 
 def test_kms2_source_hub_settings_are_independent(monkeypatch):
     names = (
-        'KMS2_SEMANTIC__SOURCE_ENTITY_HUBS__INFERENCE__MODEL_SERVER_PROFILE',
-        'KMS2_SEMANTIC__SOURCE_EVENT_HUBS__CANDIDATE_LIMIT',
-        'KMS2_SEMANTIC__SOURCE_PREDICATE_HUBS__MINIMUM_SIMILARITY',
+        'KMS2_SOURCE_SEMANTIC__SOURCE_ENTITY_HUBS__INFERENCE__MODEL_SERVER_PROFILE',
+        'KMS2_SOURCE_SEMANTIC__SOURCE_EVENT_HUBS__CANDIDATE_LIMIT',
+        'KMS2_SOURCE_SEMANTIC__SOURCE_PREDICATE_HUBS__MINIMUM_SIMILARITY',
     )
     for name in names:
         monkeypatch.delenv(name, raising=False)
@@ -126,11 +126,14 @@ def test_kms2_source_hub_settings_are_independent(monkeypatch):
     settings = Settings()
 
     assert (
-        settings.semantic.source_entity_hubs.inference.model_server_profile
+        settings.source_semantic.source_entity_hubs.inference.model_server_profile
         == ('gemma-text-32k')
     )
-    assert settings.semantic.source_event_hubs.candidate_limit == 32
-    assert settings.semantic.source_predicate_hubs.minimum_similarity == 0.86
+    assert settings.source_semantic.source_event_hubs.candidate_limit == 32
+    assert (
+        settings.source_semantic.source_predicate_hubs.minimum_similarity
+        == 0.86
+    )
 
     monkeypatch.setenv(names[0], 'entity-hub-profile')
     monkeypatch.setenv(names[1], '17')
@@ -138,47 +141,60 @@ def test_kms2_source_hub_settings_are_independent(monkeypatch):
     settings = Settings()
 
     assert (
-        settings.semantic.source_entity_hubs.inference.model_server_profile
+        settings.source_semantic.source_entity_hubs.inference.model_server_profile
         == 'entity-hub-profile'
     )
-    assert settings.semantic.source_event_hubs.candidate_limit == 17
-    assert settings.semantic.source_predicate_hubs.minimum_similarity == 0.91
+    assert settings.source_semantic.source_event_hubs.candidate_limit == 17
+    assert (
+        settings.source_semantic.source_predicate_hubs.minimum_similarity
+        == 0.91
+    )
 
 
 def test_kms2_hub_filtering_settings_are_independent(monkeypatch):
     monkeypatch.setenv(
-        'KMS2_SEMANTIC__SOURCE_ENTITY_HUBS__JUDGE__MODEL_SERVER_PROFILE',
+        'KMS2_SOURCE_SEMANTIC__SOURCE_ENTITY_HUBS__JUDGE__MODEL_SERVER_PROFILE',
         'entity-judge',
     )
     monkeypatch.setenv(
-        'KMS2_SEMANTIC__SOURCE_EVENT_HUBS__RERANKER_TOKEN_BUDGET',
+        'KMS2_SOURCE_SEMANTIC__SOURCE_EVENT_HUBS__RERANKER_TOKEN_BUDGET',
         '2048',
     )
     monkeypatch.setenv(
-        'KMS2_SEMANTIC__SOURCE_PREDICATE_HUBS__JUDGE_TOKEN_BUDGET',
+        'KMS2_SOURCE_SEMANTIC__SOURCE_PREDICATE_HUBS__JUDGE_TOKEN_BUDGET',
         '16384',
     )
 
     settings = Settings()
 
-    assert settings.semantic.source_entity_hubs.judge.model_server_profile == (
-        'entity-judge'
+    assert (
+        settings.source_semantic.source_entity_hubs.judge.model_server_profile
+        == ('entity-judge')
     )
-    assert settings.semantic.source_entity_hubs.judge.num_retries == 0
-    assert settings.semantic.source_event_hubs.reranker_token_budget == 2048
-    assert settings.semantic.source_predicate_hubs.judge_token_budget == 16384
+    assert settings.source_semantic.source_entity_hubs.judge.num_retries == 0
+    assert (
+        settings.source_semantic.source_event_hubs.reranker_token_budget == 2048
+    )
+    assert (
+        settings.source_semantic.source_predicate_hubs.judge_token_budget
+        == 16384
+    )
     hub_settings = (
-        settings.semantic.source_entity_hubs,
-        settings.semantic.source_event_hubs,
-        settings.semantic.source_predicate_hubs,
-        settings.semantic.source_statement_hubs,
-        settings.semantic.source_procedure_hubs,
+        settings.source_semantic.source_entity_hubs,
+        settings.source_semantic.source_event_hubs,
+        settings.source_semantic.source_predicate_hubs,
+        settings.source_semantic.source_statement_hubs,
+        settings.source_semantic.source_procedure_hubs,
     )
     assert all(hub.reranker_rejection_threshold == 0.60 for hub in hub_settings)
-    assert settings.semantic.source_entity_hubs.reranker_token_budget == 4096
-    assert settings.semantic.source_entity_hubs.judge_batch_size == 16
-    assert settings.semantic.source_event_hubs.judge.model_server_profile == (
-        'gemma-text-32k'
+    assert (
+        settings.source_semantic.source_entity_hubs.reranker_token_budget
+        == 4096
+    )
+    assert settings.source_semantic.source_entity_hubs.judge_batch_size == 16
+    assert (
+        settings.source_semantic.source_event_hubs.judge.model_server_profile
+        == ('gemma-text-32k')
     )
 
 
@@ -206,32 +222,33 @@ def test_kms2_training_examples_use_nested_environment(monkeypatch, tmp_path):
 
 def test_kms2_semantic_defaults_survive_nested_environment(monkeypatch):
     monkeypatch.setenv(
-        'KMS2_SEMANTIC__FACT_EXTRACTION__MAX_TOKENS',
+        'KMS2_SOURCE_SEMANTIC__FACT_EXTRACTION__MAX_TOKENS',
         '4096',
     )
 
     settings = Settings()
 
-    assert settings.semantic.fact_extraction.max_tokens == 4096
-    assert settings.semantic.fact_extraction.model_server_profile == (
+    assert settings.source_semantic.fact_extraction.max_tokens == 4096
+    assert settings.source_semantic.fact_extraction.model_server_profile == (
         'gemma-text-32k'
     )
-    assert settings.semantic.triplet_decomposition.model_server_profile == (
-        'gemma-text-32k'
+    assert (
+        settings.source_semantic.triplet_decomposition.model_server_profile
+        == ('gemma-text-32k')
     )
-    assert settings.semantic.fact_extraction.num_retries == 0
+    assert settings.source_semantic.fact_extraction.num_retries == 0
 
 
 def test_kms2_source_triplet_hub_inference_is_independent(monkeypatch):
-    variable = (
-        'KMS2_SEMANTIC__SOURCE_TRIPLET_HUBS__INFERENCE__MODEL_SERVER_PROFILE'
-    )
+    variable = 'KMS2_SOURCE_SEMANTIC__SOURCE_TRIPLET_HUBS__INFERENCE__MODEL_SERVER_PROFILE'
     monkeypatch.setenv(variable, 'triplet-hub-profile')
 
     settings = Settings()
 
     assert (
-        settings.semantic.source_triplet_hubs.inference.model_server_profile
+        settings.source_semantic.source_triplet_hubs.inference.model_server_profile
         == 'triplet-hub-profile'
     )
-    assert settings.semantic.source_triplet_hubs.inference.num_retries == 0
+    assert (
+        settings.source_semantic.source_triplet_hubs.inference.num_retries == 0
+    )

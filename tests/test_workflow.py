@@ -9,7 +9,7 @@ from kms.core import recording
 MODULE_DIR = Path(__file__).resolve().parent.parent / 'src' / 'kms'
 
 
-def test_workflow_builds_independent_semantic_stage_modules(monkeypatch):
+def test_workflow_builds_independent_source_semantic_stage_modules(monkeypatch):
     calls = []
 
     def fake_module_lm(module_name):

@@ -13,14 +13,19 @@ from InquirerPy.base.control import Choice
 from kms2.application import (
     ingest_source,
     list_sources,
-    run_semantic_stage,
+    run_global_semantic_stage,
+    run_source_semantic_stage,
 )
 from kms2.config.settings import Settings
 from kms2.core.model import Source
 
 PDF_DIRECTORY = Path('pdfs')
-NEW_SOURCE_OPTION = 'Ingest a new PDF'
-EXISTING_SOURCE_OPTION = 'Run the semantic stage on an existing source'
+NEW_SOURCE_OPTION = 'Run Source Processing for a new PDF'
+EXISTING_SOURCE_OPTION = 'Run Source Semantic for an existing source'
+GLOBAL_SEMANTIC_OPTION = 'Run Global Semantic'
+
+
+logger = logging.getLogger(__name__)
 
 
 def _pdf_directory() -> Path:
@@ -28,9 +33,6 @@ def _pdf_directory() -> Path:
     directory = Path.cwd() / PDF_DIRECTORY
     directory.mkdir(parents=True, exist_ok=True)
     return directory
-
-
-logger = logging.getLogger(__name__)
 
 
 def run() -> None:
@@ -44,22 +46,23 @@ def run() -> None:
 
 
 def _run_tui() -> None:
-    """Prompt for a source and run the selected semantic stage workflow."""
+    """Prompt for and run one independently executable pipeline stage."""
     settings = Settings()
     sources = asyncio.run(list_sources(settings))
-
-    if not sources:
-        _run_new_source(settings)
-        return
-
+    choices = [NEW_SOURCE_OPTION]
+    if sources:
+        choices.append(EXISTING_SOURCE_OPTION)
+    choices.append(GLOBAL_SEMANTIC_OPTION)
     action = inquirer.select(
         message='What would you like to do?',
-        choices=[NEW_SOURCE_OPTION, EXISTING_SOURCE_OPTION],
+        choices=choices,
     ).execute()
     if action == EXISTING_SOURCE_OPTION:
         _run_existing_source(settings, sources)
-        return
-    _run_new_source(settings)
+    elif action == GLOBAL_SEMANTIC_OPTION:
+        _run_global_semantic(settings)
+    else:
+        _run_new_source(settings)
 
 
 def _run_async[T](awaitable: Awaitable[T]) -> T:
@@ -84,10 +87,10 @@ def _run_async[T](awaitable: Awaitable[T]) -> T:
     return asyncio.run(runner())
 
 
-def _log_semantic_completion(source: Source, semantic) -> None:
-    """Log all counts persisted by one complete semantic stage."""
+def _log_source_semantic_completion(source: Source, semantic) -> None:
+    """Log all counts persisted by one source semantic stage."""
     logger.info(
-        'Done: source %s (%s), semantic stage persisted %d source fact(s), '
+        'Done: source %s (%s), Source Semantic persisted %d source fact(s), '
         '%d triplet(s); descriptions: %d entity, %d event, %d predicate, '
         '%d statement, %d procedure; hubs: %d entity, %d event, %d predicate, '
         '%d triplet, %d statement, %d procedure.',
@@ -110,6 +113,7 @@ def _log_semantic_completion(source: Source, semantic) -> None:
 
 
 def _run_new_source(settings: Settings) -> None:
+    """Run Source Processing for a newly selected PDF."""
     pdf_path = inquirer.filepath(
         message='Select the PDF to process:',
         default=str(_pdf_directory()),
@@ -128,19 +132,17 @@ def _run_new_source(settings: Settings) -> None:
     )
     result = _run_async(ingest_source(settings, pdf_path, pages))
     logger.info(
-        'Done: source %s (%s), ingested %d page(s).',
+        'Done: source %s (%s), Source Processing ingested %d page(s).',
         result.source.uuid,
         result.source.key,
         result.split_page_count,
     )
 
 
-def _run_existing_source(
-    settings: Settings,
-    sources: list[Source],
-) -> None:
+def _run_existing_source(settings: Settings, sources: list[Source]) -> None:
+    """Run Source Semantic for a selected existing source."""
     source = inquirer.select(
-        message='Select the source for the semantic stage:',
+        message='Select the source for Source Semantic:',
         choices=[
             Choice(
                 value=source,
@@ -150,7 +152,7 @@ def _run_existing_source(
         ],
     ).execute()
     proceed = inquirer.confirm(
-        message='Run the semantic stage on the selected source?',
+        message='Run Source Semantic on the selected source?',
         default=True,
     ).execute()
 
@@ -158,8 +160,31 @@ def _run_existing_source(
         logger.info('Cancelled.')
         return
 
-    semantic = _run_async(run_semantic_stage(settings, source.uuid))
-    _log_semantic_completion(source, semantic)
+    semantic = _run_async(run_source_semantic_stage(settings, source.uuid))
+    _log_source_semantic_completion(source, semantic)
+
+
+def _run_global_semantic(settings: Settings) -> None:
+    """Run Global Semantic over all persisted source hubs."""
+    proceed = inquirer.confirm(
+        message='Run Global Semantic over all persisted source hubs?',
+        default=True,
+    ).execute()
+    if not proceed:
+        logger.info('Cancelled.')
+        return
+    result = _run_async(run_global_semantic_stage(settings))
+    logger.info(
+        (
+            'Done: Global Semantic persisted %d entity, %d event, %d predicate, '
+            '%d statement, and %d procedure global hub(s).'
+        ),
+        result.global_entity_hub_count,
+        result.global_event_hub_count,
+        result.global_predicate_hub_count,
+        result.global_statement_hub_count,
+        result.global_procedure_hub_count,
+    )
 
 
 if __name__ == '__main__':

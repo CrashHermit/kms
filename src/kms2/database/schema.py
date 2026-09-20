@@ -61,6 +61,26 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     FOR (hub:SourcePredicateHub) REQUIRE hub.uuid IS UNIQUE
     """,
     """
+    CREATE CONSTRAINT global_entity_hub_uuid IF NOT EXISTS
+    FOR (hub:GlobalEntityHub) REQUIRE hub.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT global_event_hub_uuid IF NOT EXISTS
+    FOR (hub:GlobalEventHub) REQUIRE hub.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT global_statement_hub_uuid IF NOT EXISTS
+    FOR (hub:GlobalStatementHub) REQUIRE hub.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT global_procedure_hub_uuid IF NOT EXISTS
+    FOR (hub:GlobalProcedureHub) REQUIRE hub.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT global_predicate_hub_uuid IF NOT EXISTS
+    FOR (hub:GlobalPredicateHub) REQUIRE hub.uuid IS UNIQUE
+    """,
+    """
     CREATE CONSTRAINT source_statement_hub_uuid IF NOT EXISTS
     FOR (hub:SourceStatementHub) REQUIRE hub.uuid IS UNIQUE
     """,
@@ -107,6 +127,11 @@ def vector_index_statements(embedding_dimension: int) -> tuple[str, ...]:
             ('source_procedure_embedding', 'SourceProcedure'),
             ('source_entity_hub_embedding', 'SourceEntityHub'),
             ('source_event_hub_embedding', 'SourceEventHub'),
+            ('global_entity_hub_embedding', 'GlobalEntityHub'),
+            ('global_event_hub_embedding', 'GlobalEventHub'),
+            ('global_statement_hub_embedding', 'GlobalStatementHub'),
+            ('global_procedure_hub_embedding', 'GlobalProcedureHub'),
+            ('global_predicate_hub_embedding', 'GlobalPredicateHub'),
             ('source_predicate_hub_embedding', 'SourcePredicateHub'),
             ('source_statement_hub_embedding', 'SourceStatementHub'),
             ('source_procedure_hub_embedding', 'SourceProcedureHub'),
@@ -126,6 +151,11 @@ VECTOR_INDEX_NAMES = (
     'source_statement_hub_embedding',
     'source_procedure_hub_embedding',
     'source_event_hub_embedding',
+    'global_entity_hub_embedding',
+    'global_event_hub_embedding',
+    'global_predicate_hub_embedding',
+    'global_statement_hub_embedding',
+    'global_procedure_hub_embedding',
     'source_predicate_hub_embedding',
     'source_triplet_hub_embedding',
 )

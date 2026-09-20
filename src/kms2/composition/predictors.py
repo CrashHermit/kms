@@ -20,6 +20,7 @@ class PredictorFactory:
 
     def create(
         self,
+        module: type[dspy.Module],
         inference: StageInferenceSettings,
         signature: type[dspy.Signature],
     ) -> dspy.Module:
@@ -27,4 +28,4 @@ class PredictorFactory:
         predictor = self._local_models.predictor(inference, signature)
         if self._recorder is None:
             return predictor
-        return RecordingModule(predictor, signature, self._recorder)
+        return RecordingModule(predictor, module, signature, self._recorder)

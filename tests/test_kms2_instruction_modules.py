@@ -1,25 +1,25 @@
 import asyncio
 
 from kms2.core.model import BlockType, PedagogicalMember, SourceBlockContext
-from kms2.module.source.exercise_finder import (
+from kms2.module.source_processing.exercise_finder import (
     ExerciseBoundaryRouterModule,
     ExerciseBoundaryRouterSignature,
     ExerciseStartRouterModule,
     ExerciseStartRouterSignature,
 )
-from kms2.module.source.instruction_finder import (
+from kms2.module.source_processing.instruction_finder import (
     InstructionBoundaryRouterModule,
     InstructionStartRouterModule,
 )
-from kms2.module.source.instruction_governance import (
+from kms2.module.source_processing.instruction_governance import (
     InstructionGovernanceModule,
 )
-from kms2.module.source.pedagogical_finder import (
+from kms2.module.source_processing.pedagogical_finder import (
     PedagogicalBoundaryRouterModule,
     PedagogicalBoundaryRouterSignature,
     PedagogicalStartRouterModule,
 )
-from kms2.module.source.statement_procedure import (
+from kms2.module.source_processing.statement_procedure import (
     PedagogicalRoleModule,
     ProcedurePartitionModule,
     StatementPartitionModule,

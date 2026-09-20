@@ -3,17 +3,17 @@ from types import SimpleNamespace
 
 from kms2.config.inference import ContextWindowSettings
 from kms2.core.model import SourceBlock, SourceProcedure, SourceStatement
-from kms2.langgraph.semantic.state import SemanticState
-from kms2.node.semantic.source_procedure_description_load import (
+from kms2.langgraph.source_semantic.state import SourceSemanticState
+from kms2.node.source_semantic.source_procedure_description_load import (
     SourceProcedureDescriptionLoadNode,
 )
-from kms2.node.semantic.source_statement_description import (
+from kms2.node.source_semantic.source_statement_description import (
     SourceStatementDescriptionNode,
 )
-from kms2.node.semantic.source_statement_description_load import (
+from kms2.node.source_semantic.source_statement_description_load import (
     SourceStatementDescriptionLoadNode,
 )
-from kms2.node.semantic.source_statement_embedding import (
+from kms2.node.source_semantic.source_statement_embedding import (
     SourceStatementEmbeddingNode,
 )
 
@@ -81,7 +81,7 @@ def test_statement_loader_orders_targets_and_skips_missing_members():
         ContextWindowSettings(backward_budget=0, forward_budget=0),
     )
 
-    result = asyncio.run(node.run(SemanticState(source_uuid='source-1')))
+    result = asyncio.run(node.run(SourceSemanticState(source_uuid='source-1')))
 
     assert [
         request.target.uuid
@@ -104,7 +104,7 @@ def test_procedure_loader_projects_multi_block_targets():
         ContextWindowSettings(backward_budget=0, forward_budget=0),
     )
 
-    result = asyncio.run(node.run(SemanticState(source_uuid='source-1')))
+    result = asyncio.run(node.run(SourceSemanticState(source_uuid='source-1')))
 
     request = result['source_procedure_description_requests'][0]
     assert request.target.member_block_uuids == ['block-1', 'block-2']

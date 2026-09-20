@@ -1,23 +1,25 @@
 import asyncio
 
-from kms2.config.semantic import SourceEventHubSettings
+from kms2.config.source_semantic import SourceEventHubSettings
 from kms2.core.model import (
     SourceEventHubCandidate,
     SourceEventHubDefinition,
     SourceEventHubJudgeInput,
     SourceEventHubMember,
 )
-from kms2.core.model.semantic.source_event_hub import (
+from kms2.core.model.source_semantic.source_event_hub import (
     SourceEventHubJudgeDecision,
 )
-from kms2.database.semantic.queries.source_event import (
+from kms2.database.source_semantic.queries.source_event import (
     DETECT_SOURCE_EVENT_COMMUNITIES,
     READ_SOURCE_EVENT_HUB_CANDIDATES,
     REPLACE_SOURCE_EVENT_ACCEPTED_EDGES,
 )
-from kms2.database.semantic.source_event_repository import SourceEventRepository
-from kms2.langgraph.semantic.state import SemanticState
-from kms2.node.semantic.source_event_hub import SourceEventHubNode
+from kms2.database.source_semantic.source_event_repository import (
+    SourceEventRepository,
+)
+from kms2.langgraph.source_semantic.state import SourceSemanticState
+from kms2.node.source_semantic.source_event_hub import SourceEventHubNode
 
 
 class _Result:
@@ -229,7 +231,7 @@ def test_event_node_sends_borderline_pairs_only_to_event_judge():
     )
 
     result = asyncio.run(
-        _run_event(node, SemanticState(source_uuid='source-1'))
+        _run_event(node, SourceSemanticState(source_uuid='source-1'))
     )
 
     assert len(judge.requests) == 1
@@ -249,7 +251,7 @@ def test_event_node_limits_judge_batches():
         SourceEventHubSettings(judge_batch_size=2),
     )
 
-    state = SemanticState(
+    state = SourceSemanticState(
         source_uuid='source-1',
         source_event_hub_borderline_pairs=[_candidate() for _ in range(3)],
     )

@@ -3,8 +3,8 @@ from collections.abc import Sequence
 
 from kms2.core.embedding import EmbeddingClient
 from kms2.core.model import Source, SourceBlock, SourcePage, VisualAsset
-from kms2.langgraph.source.state import SourceState
-from kms2.node.source.embedding import EmbeddingNode
+from kms2.langgraph.source_processing.state import SourceProcessingState
+from kms2.node.source_processing.embedding import EmbeddingNode
 
 
 class _RecordingEmbeddingClient:
@@ -44,7 +44,7 @@ def test_embedding_dispatch_worker_collect_preserves_final_block_order():
     ]
     client = _RecordingEmbeddingClient()
     node = EmbeddingNode(client)
-    state = SourceState(
+    state = SourceProcessingState(
         pdf_path='book.pdf',
         source=Source(uuid='source-1', key='book.pdf'),
         split_pages=pages,
@@ -76,7 +76,7 @@ def test_embedding_dispatch_worker_collect_preserves_final_block_order():
 def test_embedding_collect_passes_empty_split_pages_through():
     pages = [SourcePage(index=0)]
     node = EmbeddingNode(_RecordingEmbeddingClient())
-    state = SourceState(
+    state = SourceProcessingState(
         pdf_path='book.pdf',
         source=Source(uuid='source-1', key='book.pdf'),
         split_pages=pages,

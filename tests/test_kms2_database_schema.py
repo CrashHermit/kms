@@ -68,7 +68,6 @@ def test_ensure_schema_runs_structural_vector_and_wait_ddl():
     assert 'SourceFact' in schema
     assert 'SourceEntity' in schema
     assert 'SourceEvent' in schema
-    assert 'SourcePredicate' in schema
     assert 'SourceEntityHub' in schema
     assert 'SourceEventHub' in schema
     assert 'SourcePredicateHub' in schema
@@ -79,5 +78,20 @@ def test_ensure_schema_runs_structural_vector_and_wait_ddl():
     assert 'source_entity_hub_embedding' in schema
     assert 'source_event_hub_embedding' in schema
     assert 'source_predicate_hub_embedding' in schema
+    assert 'GlobalEntityHub' in schema
+    assert 'global_entity_hub_uuid' in schema
+    assert 'global_entity_hub_embedding' in schema
+    assert 'GlobalEventHub' in schema
+    assert 'global_event_hub_uuid' in schema
+    assert 'global_event_hub_embedding' in schema
+    assert 'GlobalPredicateHub' in schema
+    assert 'global_predicate_hub_uuid' in schema
+    assert 'global_predicate_hub_embedding' in schema
+    assert 'GlobalStatementHub' in schema
+    assert 'global_statement_hub_uuid' in schema
+    assert 'global_statement_hub_embedding' in schema
+    assert 'GlobalProcedureHub' in schema
+    assert 'global_procedure_hub_uuid' in schema
+    assert 'global_procedure_hub_embedding' in schema
     assert 'HAS_PAGE' not in schema
     assert 'CONTAINS_BLOCK' not in schema

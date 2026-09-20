@@ -1,25 +1,27 @@
 import asyncio
 
-from kms2.config.semantic import SourcePredicateHubSettings
+from kms2.config.source_semantic import SourcePredicateHubSettings
 from kms2.core.model import (
     SourcePredicateHubCandidate,
     SourcePredicateHubDefinition,
     SourcePredicateHubJudgeInput,
     SourcePredicateHubMember,
 )
-from kms2.core.model.semantic.source_predicate_hub import (
+from kms2.core.model.source_semantic.source_predicate_hub import (
     SourcePredicateHubJudgeDecision,
 )
-from kms2.database.semantic.queries.source_predicate import (
+from kms2.database.source_semantic.queries.source_predicate import (
     DETECT_SOURCE_PREDICATE_COMMUNITIES,
     READ_SOURCE_PREDICATE_HUB_CANDIDATES,
     REPLACE_SOURCE_PREDICATE_ACCEPTED_EDGES,
 )
-from kms2.database.semantic.source_predicate_repository import (
+from kms2.database.source_semantic.source_predicate_repository import (
     SourcePredicateRepository,
 )
-from kms2.langgraph.semantic.state import SemanticState
-from kms2.node.semantic.source_predicate_hub import SourcePredicateHubNode
+from kms2.langgraph.source_semantic.state import SourceSemanticState
+from kms2.node.source_semantic.source_predicate_hub import (
+    SourcePredicateHubNode,
+)
 
 
 class _Result:
@@ -243,7 +245,9 @@ def test_predicate_node_judge_receives_both_directed_contexts():
         SourcePredicateHubSettings(),
     )
 
-    asyncio.run(_run_predicate(node, SemanticState(source_uuid='source-1')))
+    asyncio.run(
+        _run_predicate(node, SourceSemanticState(source_uuid='source-1'))
+    )
 
     request = judge.requests[0][0]
     assert request.left_subject == 'Alice'
@@ -266,7 +270,7 @@ def test_predicate_node_limits_judge_batches():
         SourcePredicateHubSettings(judge_batch_size=2),
     )
 
-    state = SemanticState(
+    state = SourceSemanticState(
         source_uuid='source-1',
         source_predicate_hub_borderline_pairs=[_candidate() for _ in range(3)],
     )

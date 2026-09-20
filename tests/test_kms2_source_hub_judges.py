@@ -5,24 +5,24 @@ from kms2.core.model import (
     SourceEventHubJudgeInput,
     SourcePredicateHubJudgeInput,
 )
-from kms2.core.model.semantic.source_entity_hub import (
+from kms2.core.model.source_semantic.source_entity_hub import (
     SourceEntityHubJudgeDecision,
 )
-from kms2.core.model.semantic.source_event_hub import (
+from kms2.core.model.source_semantic.source_event_hub import (
     SourceEventHubJudgeDecision,
 )
-from kms2.core.model.semantic.source_predicate_hub import (
+from kms2.core.model.source_semantic.source_predicate_hub import (
     SourcePredicateHubJudgeDecision,
 )
-from kms2.module.semantic.source_entity_hub_judge import (
+from kms2.module.source_semantic.source_entity_hub_judge import (
     SourceEntityHubJudgeModule,
     SourceEntityHubJudgeSignature,
 )
-from kms2.module.semantic.source_event_hub_judge import (
+from kms2.module.source_semantic.source_event_hub_judge import (
     SourceEventHubJudgeModule,
     SourceEventHubJudgeSignature,
 )
-from kms2.module.semantic.source_predicate_hub_judge import (
+from kms2.module.source_semantic.source_predicate_hub_judge import (
     SourcePredicateHubJudgeModule,
     SourcePredicateHubJudgeSignature,
 )

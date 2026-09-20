@@ -49,7 +49,9 @@ class LMModel(_ConfigModel):
     api_key: str = ''
     api_key_source: str = 'deepseek'
     model: str = ''
-    temperature: float = Field(default=0.0, ge=0.0)
+    temperature: float = Field(default=1.0, ge=0.0)
+    top_p: float = 0.95
+    top_k: int = 64
     max_tokens: int = Field(default=8192, gt=0)
 
 

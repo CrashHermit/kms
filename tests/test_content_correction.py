@@ -2,7 +2,7 @@ import asyncio
 
 import dspy
 
-from kms2.module.source import content_correction
+from kms2.module.source_processing import content_correction
 
 
 class _Predictor:

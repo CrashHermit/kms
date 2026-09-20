@@ -259,6 +259,8 @@ class LocalModelRuntime:
             api_key='not-needed',
             custom_llm_provider='openai',
             temperature=inference.temperature,
+            top_p=inference.top_p,
+            top_k=inference.top_k,
             max_tokens=inference.max_tokens,
             num_retries=inference.num_retries,
             cache=True,

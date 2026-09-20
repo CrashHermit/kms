@@ -1,0 +1,386 @@
+"""Dispatch and collect source-local procedure hub phases."""
+
+from typing import Literal, TypedDict
+
+from langgraph.types import Send
+
+from kms2.config.source_semantic import SourceProcedureHubSettings
+from kms2.core.embedding import EmbeddingClient
+from kms2.core.model import (
+    SourceProcedureHub,
+    SourceProcedureHubCandidate,
+    SourceProcedureHubJudgeInput,
+    SourceProcedureHubJudgeResult,
+    SourceProcedureHubMember,
+    SourceProcedureHubRerankResult,
+    SourceProcedureHubSynthesisInput,
+    SourceProcedureHubSynthesisMember,
+    SourceProcedureHubSynthesisResult,
+)
+from kms2.core.reranking import RerankerClient
+from kms2.core.windowing import estimate_text_tokens
+from kms2.database.source_semantic.source_procedure_repository import (
+    SourceProcedureRepository,
+)
+from kms2.langgraph.source_semantic.state import SourceSemanticState
+from kms2.module.source_semantic.source_procedure_hub import (
+    SourceProcedureHubModule,
+)
+from kms2.module.source_semantic.source_procedure_hub_judge import (
+    SourceProcedureHubJudgeModule,
+)
+
+
+class SourceProcedureHubRerankWorkerState(TypedDict):
+    """State supplied to one procedure reranker worker."""
+
+    source_procedure_hub_rerank_ordinal: int
+    source_procedure_hub_left_text: str
+    source_procedure_hub_batch: list[SourceProcedureHubCandidate]
+
+
+class SourceProcedureHubJudgeWorkerState(TypedDict):
+    """State supplied to one procedure judge worker."""
+
+    source_procedure_hub_judge_ordinal: int
+    source_procedure_hub_batch: list[SourceProcedureHubCandidate]
+
+
+class SourceProcedureHubSynthesisWorkerState(TypedDict):
+    """State supplied to one procedure synthesis worker."""
+
+    source_procedure_hub_synthesis_ordinal: int
+    source_procedure_hub_community: list[SourceProcedureHubMember]
+
+
+class SourceProcedureHubNode:
+    """Run procedure hub discovery as ordered LangGraph phases."""
+
+    def __init__(
+        self,
+        repository: SourceProcedureRepository,
+        module: SourceProcedureHubModule,
+        judge_module: SourceProcedureHubJudgeModule,
+        reranker: RerankerClient,
+        embedding_client: EmbeddingClient,
+        settings: SourceProcedureHubSettings,
+    ) -> None:
+        self._repository = repository
+        self._module = module
+        self._judge_module = judge_module
+        self._reranker = reranker
+        self._embedding_client = embedding_client
+        self._settings = settings
+
+    async def load_candidates(
+        self, state: SourceSemanticState
+    ) -> dict[str, object]:
+        """Read procedure vector candidates for this source."""
+        candidates = (
+            await self._repository.read_source_procedure_hub_candidates(
+                state.source_uuid,
+                candidate_limit=self._settings.candidate_limit,
+                minimum_similarity=self._settings.minimum_similarity,
+            )
+        )
+        return {'source_procedure_hub_candidates': candidates}
+
+    def dispatch_rerank(
+        self, state: SourceSemanticState
+    ) -> list[Send] | Literal['source_procedure_hub_rerank_collect']:
+        """Partition procedure candidates into ordered reranker batches."""
+        if not state.source_procedure_hub_candidates:
+            return 'source_procedure_hub_rerank_collect'
+        sends: list[Send] = []
+        ordinal = 0
+        grouped: dict[str, list[SourceProcedureHubCandidate]] = {}
+        for candidate in state.source_procedure_hub_candidates:
+            grouped.setdefault(candidate.left_uuid, []).append(candidate)
+        for group in grouped.values():
+            left = group[0]
+            left_text = left.left_description
+            left_cost = estimate_text_tokens(left_text)
+            batch: list[SourceProcedureHubCandidate] = []
+            batch_cost = left_cost
+            for candidate in group:
+                right_cost = estimate_text_tokens(candidate.right_description)
+                if (
+                    batch
+                    and batch_cost + right_cost
+                    > self._settings.reranker_token_budget
+                ):
+                    sends.append(
+                        Send(
+                            'source_procedure_hub_rerank_worker',
+                            {
+                                'source_procedure_hub_rerank_ordinal': ordinal,
+                                'source_procedure_hub_left_text': left_text,
+                                'source_procedure_hub_batch': batch,
+                            },
+                        )
+                    )
+                    ordinal += 1
+                    batch = []
+                    batch_cost = left_cost
+                batch.append(candidate)
+                batch_cost += right_cost
+            if batch:
+                sends.append(
+                    Send(
+                        'source_procedure_hub_rerank_worker',
+                        {
+                            'source_procedure_hub_rerank_ordinal': ordinal,
+                            'source_procedure_hub_left_text': left_text,
+                            'source_procedure_hub_batch': batch,
+                        },
+                    )
+                )
+                ordinal += 1
+        return sends
+
+    async def rerank_worker(
+        self, state: SourceProcedureHubRerankWorkerState
+    ) -> dict[str, list[SourceProcedureHubRerankResult]]:
+        """Rerank one procedure candidate batch."""
+        batch = state['source_procedure_hub_batch']
+        results = await self._reranker.rerank(
+            state['source_procedure_hub_left_text'],
+            [candidate.right_description for candidate in batch],
+            top_n=None,
+        )
+        direct: list[SourceProcedureHubCandidate] = []
+        borderline: list[SourceProcedureHubCandidate] = []
+        for result in sorted(results, key=lambda item: item['index']):
+            candidate = batch[result['index']]
+            score = result['relevance_score']
+            if score >= self._settings.reranker_acceptance_threshold:
+                direct.append(candidate)
+            elif score >= self._settings.reranker_rejection_threshold:
+                borderline.append(candidate)
+        return {
+            'source_procedure_hub_rerank_results': [
+                SourceProcedureHubRerankResult(
+                    ordinal=state['source_procedure_hub_rerank_ordinal'],
+                    direct=direct,
+                    borderline=borderline,
+                )
+            ]
+        }
+
+    def collect_rerank(self, state: SourceSemanticState) -> dict[str, object]:
+        """Collect reranker results in source order."""
+        results = sorted(
+            state.source_procedure_hub_rerank_results, key=lambda x: x.ordinal
+        )
+        return {
+            'source_procedure_hub_direct_pairs': [
+                candidate for result in results for candidate in result.direct
+            ],
+            'source_procedure_hub_borderline_pairs': [
+                candidate
+                for result in results
+                for candidate in result.borderline
+            ],
+        }
+
+    def dispatch_judge(
+        self, state: SourceSemanticState
+    ) -> list[Send] | Literal['source_procedure_hub_judge_collect']:
+        """Partition borderline procedure pairs into ordered judge batches."""
+        if not state.source_procedure_hub_borderline_pairs:
+            return 'source_procedure_hub_judge_collect'
+        sends: list[Send] = []
+        batch: list[SourceProcedureHubCandidate] = []
+        batch_cost = 0
+        ordinal = 0
+        for candidate in state.source_procedure_hub_borderline_pairs:
+            cost = estimate_text_tokens(_procedure_judge_text(candidate))
+            if batch and (
+                len(batch) >= self._settings.judge_batch_size
+                or batch_cost + cost > self._settings.judge_token_budget
+            ):
+                sends.append(
+                    Send(
+                        'source_procedure_hub_judge_worker',
+                        {
+                            'source_procedure_hub_judge_ordinal': ordinal,
+                            'source_procedure_hub_batch': batch,
+                        },
+                    )
+                )
+                ordinal += 1
+                batch = []
+                batch_cost = 0
+            batch.append(candidate)
+            batch_cost += cost
+        if batch:
+            sends.append(
+                Send(
+                    'source_procedure_hub_judge_worker',
+                    {
+                        'source_procedure_hub_judge_ordinal': ordinal,
+                        'source_procedure_hub_batch': batch,
+                    },
+                )
+            )
+        return sends
+
+    async def judge_worker(
+        self, state: SourceProcedureHubJudgeWorkerState
+    ) -> dict[str, list[SourceProcedureHubJudgeResult]]:
+        """Judge one procedure borderline batch."""
+        batch = state['source_procedure_hub_batch']
+        decisions = await self._judge_module.aforward(
+            requests=[
+                _procedure_judge_input(index, item)
+                for index, item in enumerate(batch)
+            ]
+        )
+        accepted = [
+            batch[decision.index]
+            for decision in decisions
+            if decision.belongs_in_same_hub
+        ]
+        return {
+            'source_procedure_hub_judge_results': [
+                SourceProcedureHubJudgeResult(
+                    ordinal=state['source_procedure_hub_judge_ordinal'],
+                    accepted=accepted,
+                )
+            ]
+        }
+
+    def collect_judge(self, state: SourceSemanticState) -> dict[str, object]:
+        """Merge direct and judged procedure pairs in stable order."""
+        accepted = list(state.source_procedure_hub_direct_pairs)
+        for result in sorted(
+            state.source_procedure_hub_judge_results, key=lambda x: x.ordinal
+        ):
+            accepted.extend(result.accepted)
+        unique: dict[tuple[str, str], SourceProcedureHubCandidate] = {}
+        for candidate in accepted:
+            unique.setdefault(
+                (candidate.left_uuid, candidate.right_uuid), candidate
+            )
+        return {'source_procedure_hub_accepted_pairs': list(unique.values())}
+
+    async def detect_communities(
+        self, state: SourceSemanticState
+    ) -> dict[str, object]:
+        """Replace accepted edges and detect procedure communities."""
+        await self._repository.replace_source_procedure_accepted_edges(
+            state.source_uuid, state.source_procedure_hub_accepted_pairs
+        )
+        communities = await self._repository.detect_source_procedure_communities(
+            state.source_uuid,
+            max_iterations=self._settings.max_iterations,
+            min_association_strength=self._settings.min_association_strength,
+            minimum_community_size=self._settings.minimum_community_size,
+        )
+        return {'source_procedure_hub_communities': communities}
+
+    def dispatch_synthesis(
+        self, state: SourceSemanticState
+    ) -> list[Send] | Literal['source_procedure_hub_synthesis_collect']:
+        """Dispatch one synthesis worker per ordered procedure community."""
+        if not state.source_procedure_hub_communities:
+            return 'source_procedure_hub_synthesis_collect'
+        sends = [
+            Send(
+                'source_procedure_hub_synthesis_worker',
+                {
+                    'source_procedure_hub_synthesis_ordinal': ordinal,
+                    'source_procedure_hub_community': community,
+                },
+            )
+            for ordinal, community in enumerate(
+                state.source_procedure_hub_communities
+            )
+        ]
+        return sends
+
+    async def synthesis_worker(
+        self, state: SourceProcedureHubSynthesisWorkerState
+    ) -> dict[str, list[SourceProcedureHubSynthesisResult]]:
+        """Synthesize one procedure community."""
+        community = state['source_procedure_hub_community']
+        definition = await self._module.aforward(
+            request=SourceProcedureHubSynthesisInput(
+                members=[
+                    SourceProcedureHubSynthesisMember(
+                        description=member.description
+                    )
+                    for member in community
+                ]
+            )
+        )
+        return {
+            'source_procedure_hub_synthesis_results': [
+                SourceProcedureHubSynthesisResult(
+                    ordinal=state['source_procedure_hub_synthesis_ordinal'],
+                    definition=definition,
+                    membership_uuids=[member.uuid for member in community],
+                )
+            ]
+        }
+
+    def collect_synthesis(
+        self, state: SourceSemanticState
+    ) -> dict[str, object]:
+        """Collect procedure definitions in community order."""
+        return {
+            'source_procedure_hub_synthesis_results_ordered': sorted(
+                state.source_procedure_hub_synthesis_results,
+                key=lambda item: item.ordinal,
+            )
+        }
+
+    async def embed(self, state: SourceSemanticState) -> dict[str, object]:
+        """Embed ordered procedure definitions and construct typed hubs."""
+        results = state.source_procedure_hub_synthesis_results_ordered
+        definitions = [result.definition for result in results]
+        if not definitions:
+            return {
+                'source_procedure_hubs': [],
+                'source_procedure_hub_memberships': [],
+            }
+        vectors = await self._embedding_client.embed(
+            [
+                f'{definition.canonical_name}: {definition.description}'
+                for definition in definitions
+            ]
+        )
+        hubs = [
+            SourceProcedureHub(
+                source_uuid=state.source_uuid,
+                canonical_name=definition.canonical_name,
+                description=definition.description,
+                embedding=vector,
+            )
+            for definition, vector in zip(definitions, vectors, strict=True)
+        ]
+        return {
+            'source_procedure_hubs': hubs,
+            'source_procedure_hub_memberships': [
+                result.membership_uuids for result in results
+            ],
+        }
+
+
+def _procedure_judge_text(candidate: SourceProcedureHubCandidate) -> str:
+    """Render complete procedure evidence for judge token accounting."""
+    return f'{candidate.left_description}\n{candidate.right_description}'
+
+
+def _procedure_judge_input(
+    index: int, candidate: SourceProcedureHubCandidate
+) -> SourceProcedureHubJudgeInput:
+    """Build one indexed procedure judge request."""
+    return SourceProcedureHubJudgeInput(
+        index=index,
+        left_description=candidate.left_description,
+        right_description=candidate.right_description,
+    )
+
+
+__all__ = ['SourceProcedureHubNode']

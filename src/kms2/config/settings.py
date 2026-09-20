@@ -5,10 +5,11 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from kms2.config.global_semantic import GlobalSemanticSettings
 from kms2.config.runtime import LocalModelRuntimeSettings
-from kms2.config.semantic import SemanticSettings
 from kms2.config.services import DatabaseSettings, OCRSettings, TrainingSettings
-from kms2.config.source import SourceSettings
+from kms2.config.source_processing import SourceProcessingSettings
+from kms2.config.source_semantic import SourceSemanticSettings
 
 _DEFAULT_ENV = Path(__file__).resolve().parents[3] / '.env'
 
@@ -22,8 +23,15 @@ class Settings(BaseSettings):
         env_file=_DEFAULT_ENV,
     )
 
-    source: SourceSettings = Field(default_factory=SourceSettings)
-    semantic: SemanticSettings = Field(default_factory=SemanticSettings)
+    source_processing: SourceProcessingSettings = Field(
+        default_factory=SourceProcessingSettings
+    )
+    source_semantic: SourceSemanticSettings = Field(
+        default_factory=SourceSemanticSettings
+    )
+    global_semantic: GlobalSemanticSettings = Field(
+        default_factory=GlobalSemanticSettings
+    )
     local_models: LocalModelRuntimeSettings = Field(
         default_factory=LocalModelRuntimeSettings
     )

@@ -56,7 +56,7 @@ def test_router_preset_contains_text_and_vision_model_server_profiles():
     assert '[gemma-text-32k]' in preset
     assert '[gemma-vision-8k]' in preset
     assert 'ctx-size = 32768' in preset
-    assert 'reasoning = off' in preset
+    assert preset.count('reasoning = on') == 3
     assert 'no-warmup = true' in preset
     assert 'mmproj = ' in preset
 

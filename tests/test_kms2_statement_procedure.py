@@ -8,8 +8,10 @@ from kms2.core.model import (
     SourceBlock,
     SourcePage,
 )
-from kms2.langgraph.source.state import SourceState
-from kms2.node.source.statement_procedure import StatementProcedureNode
+from kms2.langgraph.source_processing.state import SourceProcessingState
+from kms2.node.source_processing.statement_procedure import (
+    StatementProcedureNode,
+)
 
 
 class RoleTyper:
@@ -41,7 +43,7 @@ class FixedRoleTyper:
         return self.result
 
 
-def _state() -> SourceState:
+def _state() -> SourceProcessingState:
     blocks = [
         SourceBlock(
             uuid=f'block-{index}',
@@ -50,7 +52,7 @@ def _state() -> SourceState:
         )
         for index in range(3)
     ]
-    return SourceState(
+    return SourceProcessingState(
         pdf_path='source.pdf',
         source=Source(key='source-1'),
         split_pages=[SourcePage(index=0, blocks=blocks)],
@@ -62,7 +64,7 @@ def _state() -> SourceState:
     )
 
 
-def _interleaved_state() -> SourceState:
+def _interleaved_state() -> SourceProcessingState:
     blocks = [
         SourceBlock(
             uuid=f'block-{index}',
@@ -71,7 +73,7 @@ def _interleaved_state() -> SourceState:
         )
         for index in range(4)
     ]
-    return SourceState(
+    return SourceProcessingState(
         pdf_path='source.pdf',
         source=Source(key='source-1'),
         split_pages=[SourcePage(index=0, blocks=blocks)],

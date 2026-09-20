@@ -1,6 +1,6 @@
 import asyncio
 
-from kms2.config.source import InstructionGovernanceSettings
+from kms2.config.source_processing import InstructionGovernanceSettings
 from kms2.core.model import (
     BlockType,
     Instruction,
@@ -9,8 +9,10 @@ from kms2.core.model import (
     SourcePage,
     StatementDraft,
 )
-from kms2.langgraph.source.state import SourceState
-from kms2.node.source.instruction_governance import InstructionGovernanceNode
+from kms2.langgraph.source_processing.state import SourceProcessingState
+from kms2.node.source_processing.instruction_governance import (
+    InstructionGovernanceNode,
+)
 
 
 class Judge:
@@ -22,7 +24,7 @@ class Judge:
         return kwargs['statement_blocks'][0].content == 'exercise one'
 
 
-def _state() -> SourceState:
+def _state() -> SourceProcessingState:
     contents = [
         'instruction one',
         'exercise one',
@@ -39,7 +41,7 @@ def _state() -> SourceState:
         )
         for index, content in enumerate(contents)
     ]
-    return SourceState(
+    return SourceProcessingState(
         pdf_path='source.pdf',
         source=Source(key='source-1'),
         split_pages=[SourcePage(index=0, blocks=blocks)],
