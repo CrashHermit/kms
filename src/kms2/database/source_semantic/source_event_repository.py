@@ -2,13 +2,15 @@
 
 from collections.abc import Callable
 
-from kms2.core.model import (
+from kms2.core.model.similarity import SourceEventSimilarityMatch
+from kms2.core.model.source_semantic.source_event import (
     SourceEvent,
     SourceEventDescriptionResult,
+)
+from kms2.core.model.source_semantic.source_event_hub import (
     SourceEventHub,
     SourceEventHubCandidate,
     SourceEventHubMember,
-    SourceEventSimilarityMatch,
 )
 from kms2.database.source_semantic.queries.source_event import (
     DETECT_SOURCE_EVENT_COMMUNITIES,

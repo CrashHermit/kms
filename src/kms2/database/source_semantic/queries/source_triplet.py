@@ -1,49 +1,34 @@
-"""Cypher statements for source triplet."""
+"""Cypher statements for source triplets and triplet hubs."""
 
-REPLACE_SOURCE_FACTS_AND_TRIPLETS = """
+REPLACE_SOURCE_TRIPLETS = """
 MATCH (source:Source {uuid: $source_uuid})
-OPTIONAL MATCH (old_triplet:SourceTriplet {source_uuid: $source_uuid})
-OPTIONAL MATCH (old_fact:SourceFact {source_uuid: $source_uuid})
-OPTIONAL MATCH (old_triplet)-[:HAS_SUBJECT|HAS_OBJECT]->(old_endpoint)
-OPTIONAL MATCH (old_triplet)-[:HAS_PREDICATE]->(old_source_predicate:SourcePredicate)
-WITH source,
-     collect(DISTINCT old_triplet) AS old_triplets,
-     collect(DISTINCT old_fact) AS old_facts,
-     collect(DISTINCT old_endpoint) AS old_endpoints,
-     collect(DISTINCT old_source_predicate) AS old_source_predicates
-FOREACH (node IN old_triplets | DETACH DELETE node)
-FOREACH (node IN old_facts | DETACH DELETE node)
-FOREACH (node IN old_endpoints | DETACH DELETE node)
-FOREACH (node IN old_source_predicates | DETACH DELETE node)
-WITH source
-CALL (source) {
-    UNWIND $source_facts AS row
-    CREATE (fact:SourceFact {
-        uuid: row.uuid,
-        source_uuid: row.source_uuid,
-        source_block_uuid: row.source_block_uuid,
-        text: row.text
-    })
-    WITH fact, row
-    MATCH (block:SourceBlock {uuid: row.source_block_uuid})
-    CREATE (block)-[:HAS_FACT]->(fact)
-    RETURN count(*) AS _
+CALL {
+    WITH source
+    MATCH (source)-[:FIRST_BLOCK]->(first:SourceBlock)
+    MATCH (first)-[:NEXT_BLOCK*0..]->(source_block:SourceBlock)
+    MATCH (source_block)<-[:HAS_SOURCE_BLOCK]-(:SourceFactTarget)
+        <-[:HAS_TARGET]-(fact:SourceFact)-[:HAS_TRIPLET]->(
+        old_triplet:SourceTriplet
+    )
+    OPTIONAL MATCH (old_triplet)-[:HAS_SUBJECT|HAS_OBJECT]->(old_endpoint)
+    OPTIONAL MATCH (old_triplet)-[:HAS_PREDICATE]->(
+        old_predicate:SourcePredicate
+    )
+    WITH collect(DISTINCT old_triplet) AS old_triplets,
+         collect(DISTINCT old_endpoint) AS old_endpoints,
+         collect(DISTINCT old_predicate) AS old_predicates
+    FOREACH (node IN old_triplets | DETACH DELETE node)
+    FOREACH (node IN old_endpoints | DETACH DELETE node)
+    FOREACH (node IN old_predicates | DETACH DELETE node)
+    RETURN count(*) AS old_triplets_deleted
 }
 WITH source
-CALL (source) {
+CALL {
     UNWIND $triplets AS row
-    CREATE (triplet:SourceTriplet {
-        uuid: row.uuid,
-        source_uuid: row.source_uuid,
-        source_block_uuid: row.source_block_uuid,
-        subject_uuid: row.subject_uuid,
-        object_uuid: row.object_uuid,
-        predicate_uuid: row.predicate_uuid
-    })
-    RETURN count(*) AS _
+    CREATE (triplet:SourceTriplet {uuid: row.uuid})
+    RETURN count(*) AS triplets_persisted
 }
-WITH source
-CALL (source) {
+CALL {
     UNWIND $source_entities AS row
     CREATE (source_entity:SourceEntity {
         uuid: row.uuid,
@@ -51,10 +36,9 @@ CALL (source) {
         source_block_uuid: row.source_block_uuid,
         name: row.name
     })
-    RETURN count(*) AS _
+    RETURN count(*) AS source_entities_persisted
 }
-WITH source
-CALL (source) {
+CALL {
     UNWIND $source_events AS row
     CREATE (source_event:SourceEvent {
         uuid: row.uuid,
@@ -62,10 +46,9 @@ CALL (source) {
         source_block_uuid: row.source_block_uuid,
         name: row.name
     })
-    RETURN count(*) AS _
+    RETURN count(*) AS source_events_persisted
 }
-WITH source
-CALL (source) {
+CALL {
     UNWIND $source_predicates AS row
     CREATE (source_predicate:SourcePredicate {
         uuid: row.uuid,
@@ -73,18 +56,16 @@ CALL (source) {
         source_block_uuid: row.source_block_uuid,
         predicate: row.predicate
     })
-    RETURN count(*) AS _
+    RETURN count(*) AS source_predicates_persisted
 }
-WITH source
-CALL (source) {
+CALL {
     UNWIND $fact_triplet_pairs AS row
     MATCH (fact:SourceFact {uuid: row.source_fact_uuid})
     MATCH (triplet:SourceTriplet {uuid: row.triplet_uuid})
     CREATE (fact)-[:HAS_TRIPLET]->(triplet)
-    RETURN count(*) AS _
+    RETURN count(*) AS fact_triplet_pairs_persisted
 }
-WITH source
-CALL (source) {
+CALL {
     UNWIND $triplets AS row
     MATCH (triplet:SourceTriplet {uuid: row.uuid})
     MATCH (subject {uuid: row.subject_uuid})
@@ -93,32 +74,16 @@ CALL (source) {
     CREATE (triplet)-[:HAS_SUBJECT]->(subject)
     CREATE (triplet)-[:HAS_OBJECT]->(object)
     CREATE (triplet)-[:HAS_PREDICATE]->(source_predicate)
-    RETURN count(*) AS _
+    RETURN count(*) AS triplet_roles_persisted
 }
-RETURN source.uuid AS uuid
-"""
-
-CLEAR_SOURCE_FACTS_AND_TRIPLETS = """
-MATCH (source:Source {uuid: $source_uuid})
-OPTIONAL MATCH (old_triplet:SourceTriplet {source_uuid: $source_uuid})
-OPTIONAL MATCH (old_fact:SourceFact {source_uuid: $source_uuid})
-OPTIONAL MATCH (old_triplet)-[:HAS_SUBJECT|HAS_OBJECT]->(old_endpoint)
-OPTIONAL MATCH (old_triplet)-[:HAS_PREDICATE]->(old_source_predicate:SourcePredicate)
-WITH collect(DISTINCT old_triplet) AS old_triplets,
-     collect(DISTINCT old_fact) AS old_facts,
-     collect(DISTINCT old_endpoint) AS old_endpoints,
-     collect(DISTINCT old_source_predicate) AS old_source_predicates
-FOREACH (node IN old_triplets | DETACH DELETE node)
-FOREACH (node IN old_facts | DETACH DELETE node)
-FOREACH (node IN old_endpoints | DETACH DELETE node)
-FOREACH (node IN old_source_predicates | DETACH DELETE node)
-RETURN count(*) AS cleared
+RETURN count(*) AS persisted
 """
 
 READ_SOURCE_TRIPLET_HUB_GROUPS = """
-MATCH (fact:SourceFact {source_uuid: $source_uuid})-[:HAS_TRIPLET]->(
-    triplet:SourceTriplet {source_uuid: $source_uuid}
-)
+MATCH (source:Source {uuid: $source_uuid})-[:FIRST_BLOCK]->(first:SourceBlock)
+MATCH (first)-[:NEXT_BLOCK*0..]->(source_block:SourceBlock)
+MATCH (source_block)<-[:HAS_SOURCE_BLOCK]-(:SourceFactTarget)
+    <-[:HAS_TARGET]-(fact:SourceFact)-[:HAS_TRIPLET]->(triplet:SourceTriplet)
 MATCH (triplet)-[:HAS_SUBJECT]->(subject)
 WHERE (subject:SourceEntity OR subject:SourceEvent)
   AND subject.source_uuid = $source_uuid
@@ -198,7 +163,7 @@ CREATE (hub)-[:HAS_PREDICATE_HUB]->(predicate_hub)
 CREATE (hub)-[:HAS_OBJECT_HUB]->(object_hub)
 WITH hub, hub_data
 UNWIND hub_data.triplet_uuids AS triplet_uuid
-MATCH (triplet:SourceTriplet {uuid: triplet_uuid, source_uuid: $source_uuid})
+MATCH (triplet:SourceTriplet {uuid: triplet_uuid})
 CREATE (triplet)-[:IN_SOURCE_HUB]->(hub)
 RETURN count(DISTINCT hub) AS persisted
 """

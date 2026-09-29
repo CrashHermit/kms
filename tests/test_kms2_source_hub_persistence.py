@@ -2,14 +2,18 @@ import asyncio
 
 import pytest
 
-from kms2.core.model import (
-    SourceEntityHub,
-    SourceEventHub,
+from kms2.core.model.source_semantic.source_entity_hub import SourceEntityHub
+from kms2.core.model.source_semantic.source_event_hub import SourceEventHub
+from kms2.core.model.source_semantic.source_predicate_hub import (
     SourcePredicateHub,
-    SourceProcedureHub,
-    SourceStatementHub,
-    SourceTripletHub,
 )
+from kms2.core.model.source_semantic.source_procedure_hub import (
+    SourceProcedureHub,
+)
+from kms2.core.model.source_semantic.source_statement_hub import (
+    SourceStatementHub,
+)
+from kms2.core.model.source_semantic.source_triplet_hub import SourceTripletHub
 from kms2.langgraph.source_semantic.state import SourceSemanticState
 from kms2.node.source_semantic.source_entity_hub_persistence import (
     SourceEntityHubPersistenceNode,

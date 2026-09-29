@@ -27,7 +27,9 @@ class StageInferenceSettings(BaseModel):
 class TextInferenceSettings(StageInferenceSettings):
     """Request-time inference settings for text model-server stages."""
 
-    model_server_profile: str = 'gemma-text-32k'
+    model_server_profile: str = 'qwen3.8-9b-distill-text'
+    temperature: float = 0.6
+    top_k: int = 20
     max_tokens: int = 16384
 
 

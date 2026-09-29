@@ -2,7 +2,9 @@
 
 import dspy
 
-from kms2.core.model import BlockType, PedagogicalMember, SourceBlockContext
+from kms2.core.model.block_types import BlockType
+from kms2.core.model.context import SourceBlockContext
+from kms2.core.model.source_processing.pedagogical import PedagogicalMember
 
 
 def _member(position: int, content: str) -> PedagogicalMember:

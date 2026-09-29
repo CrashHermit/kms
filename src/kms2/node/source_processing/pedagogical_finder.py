@@ -3,7 +3,7 @@
 import logging
 
 from kms2.config.source_processing import PedagogicalFinderSettings
-from kms2.core.model import PedagogicalComponent
+from kms2.core.model.source_processing.pedagogical import PedagogicalComponent
 from kms2.core.windowing import select_window
 from kms2.langgraph.source_processing.state import SourceProcessingState
 from kms2.module.source_processing.pedagogical_finder import (

@@ -2,7 +2,9 @@
 
 import dspy
 
-from kms2.core.model import SourceProcedureDescriptionInput
+from kms2.core.model.source_semantic.source_procedure import (
+    SourceProcedureDescriptionInput,
+)
 
 
 class SourceProcedureDescriptionSignature(dspy.Signature):
@@ -40,9 +42,3 @@ class SourceProcedureDescriptionModule(dspy.Module):
     ) -> str:
         """Describe one source procedure asynchronously."""
         return (await self.predictor.acall(request=request)).description
-
-
-__all__ = [
-    'SourceProcedureDescriptionModule',
-    'SourceProcedureDescriptionSignature',
-]

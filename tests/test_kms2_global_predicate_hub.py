@@ -1,7 +1,7 @@
 import asyncio
 
 from kms2.config.global_semantic import GlobalPredicateHubSettings
-from kms2.core.model import (
+from kms2.core.model.global_semantic.global_predicate_hub import (
     GlobalPredicateHub,
     GlobalPredicateHubCandidate,
     GlobalPredicateHubDefinition,
@@ -9,18 +9,20 @@ from kms2.core.model import (
     GlobalPredicateHubJudgeInput,
     GlobalPredicateHubMember,
 )
-from kms2.database.global_semantic.predicate_hub_repository import (
+from kms2.database.global_semantic.global_predicate_hub_repository import (
     GlobalPredicateHubRepository,
 )
-from kms2.database.global_semantic.queries.predicate_hub import (
+from kms2.database.global_semantic.queries.global_predicate_hub import (
     DETECT_GLOBAL_PREDICATE_HUB_COMMUNITIES,
     READ_GLOBAL_PREDICATE_HUB_CANDIDATES,
     REPLACE_GLOBAL_PREDICATE_HUB_ACCEPTED_EDGES,
 )
 from kms2.langgraph.global_semantic.graph import GlobalSemanticGraph
 from kms2.langgraph.global_semantic.state import GlobalSemanticState
-from kms2.node.global_semantic.predicate_hub import GlobalPredicateHubNode
-from kms2.node.global_semantic.predicate_hub_persistence import (
+from kms2.node.global_semantic.global_predicate_hub import (
+    GlobalPredicateHubNode,
+)
+from kms2.node.global_semantic.global_predicate_hub_persistence import (
     GlobalPredicateHubPersistenceNode,
 )
 
@@ -252,6 +254,12 @@ class _PhaseNode:
     def load_candidates(self, state):
         return {}
 
+    def load_groups(self, state):
+        return {}
+
+    def run(self, state):
+        return {}
+
     def dispatch_rerank(self, state):
         return 'global_predicate_hub_rerank_collect'
 
@@ -309,6 +317,9 @@ def test_global_graph_exposes_complete_phase_topology():
         persistence,
         node,
         GlobalPredicateHubPersistenceNode(_Repository()),
+        persistence,
+        phase_node,
+        persistence,
         phase_node,
         persistence,
         phase_node,

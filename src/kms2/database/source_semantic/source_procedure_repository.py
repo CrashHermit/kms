@@ -2,9 +2,11 @@
 
 from collections.abc import Callable
 
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_procedure import (
     SourceProcedure,
     SourceProcedureDescriptionResult,
+)
+from kms2.core.model.source_semantic.source_procedure_hub import (
     SourceProcedureHub,
     SourceProcedureHubCandidate,
     SourceProcedureHubMember,

@@ -37,12 +37,3 @@ class SourceEventDescriptionResult(SourceEventDescriptionTarget):
 
     description: str = Field(min_length=1)
     embedding: list[float] | None = None
-
-
-__all__ = [
-    'SourceEvent',
-    'SourceEventDescriptionInput',
-    'SourceEventDescriptionRequest',
-    'SourceEventDescriptionResult',
-    'SourceEventDescriptionTarget',
-]

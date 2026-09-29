@@ -1,7 +1,7 @@
 """Load and project source-local entity description requests."""
 
 from kms2.config.inference import ContextWindowSettings
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_entity import (
     SourceEntityDescriptionInput,
     SourceEntityDescriptionRequest,
     SourceEntityDescriptionTarget,

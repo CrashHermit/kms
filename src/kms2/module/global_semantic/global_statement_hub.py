@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model import (
+from kms2.core.model.global_semantic.global_statement_hub import (
     GlobalStatementHubDefinition,
     GlobalStatementHubSynthesisInput,
 )
@@ -46,6 +46,3 @@ class GlobalStatementHubModule(dspy.Module):
     ) -> GlobalStatementHubDefinition:
         """Synthesize a statement hub asynchronously."""
         return (await self.predictor.acall(request=request)).definition
-
-
-__all__ = ['GlobalStatementHubModule', 'GlobalStatementHubSignature']

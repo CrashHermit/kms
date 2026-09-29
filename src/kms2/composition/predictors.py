@@ -3,7 +3,7 @@
 import dspy
 
 from kms2.config.inference import StageInferenceSettings
-from kms2.local_models import LocalModelRuntime
+from kms2.local_models.runtime import LocalModelRuntime
 from kms2.train.recorder import Recorder, RecordingModule
 
 

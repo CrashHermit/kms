@@ -5,20 +5,18 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from kms2.composition import (
-    build_global_semantic_graph,
-    build_source_processing_graph,
-    build_source_semantic_graph,
-)
+from kms2.composition.global_semantic import build_global_semantic_graph
+from kms2.composition.source_learning import build_source_learning_graph
+from kms2.composition.source_processing import build_source_processing_graph
+from kms2.composition.source_semantic import build_source_semantic_graph
 from kms2.config.settings import Settings
-from kms2.core.model import Source
+from kms2.core.model.source import Source
+from kms2.core.model.user import User
 from kms2.database import schema
 from kms2.database.client import DatabaseClient
-from kms2.database.source.source_catalog_repository import (
-    SourceCatalogRepository,
-)
-from kms2.local_models import LocalModelRuntime
+from kms2.local_models.runtime import LocalModelRuntime
 from kms2.train.recorder import Recorder
+from kms2.user_service import UserService
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,12 +59,28 @@ class SourceSemanticStageResult:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceLearningStageResult:
+    """Counts persisted by one complete source-learning stage."""
+
+    entity_learning_fact_count: int
+    entity_flashcard_count: int
+    event_learning_fact_count: int
+    event_flashcard_count: int
+    predicate_learning_fact_count: int
+    predicate_flashcard_count: int
+    triplet_learning_fact_count: int
+    triplet_flashcard_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class GlobalSemanticStageResult:
     """Counts persisted by one complete global semantic stage."""
 
     global_entity_hub_count: int
     global_event_hub_count: int
     global_predicate_hub_count: int
+    global_triplet_count: int
+    global_triplet_hub_count: int
     global_statement_hub_count: int
     global_procedure_hub_count: int
 
@@ -163,6 +177,24 @@ def _source_semantic_stage_result(
     )
 
 
+def _source_learning_stage_result(
+    final_state: dict[str, object],
+) -> SourceLearningStageResult:
+    """Convert the final source-learning graph state to its public result."""
+    return SourceLearningStageResult(
+        entity_learning_fact_count=final_state['entity_learning_fact_count'],
+        entity_flashcard_count=final_state['entity_flashcard_count'],
+        event_learning_fact_count=final_state['event_learning_fact_count'],
+        event_flashcard_count=final_state['event_flashcard_count'],
+        predicate_learning_fact_count=final_state[
+            'predicate_learning_fact_count'
+        ],
+        predicate_flashcard_count=final_state['predicate_flashcard_count'],
+        triplet_learning_fact_count=final_state['triplet_learning_fact_count'],
+        triplet_flashcard_count=final_state['triplet_flashcard_count'],
+    )
+
+
 def _global_semantic_stage_result(
     final_state: dict[str, object],
 ) -> GlobalSemanticStageResult:
@@ -171,16 +203,62 @@ def _global_semantic_stage_result(
         global_entity_hub_count=final_state['global_entity_hub_count'],
         global_event_hub_count=final_state['global_event_hub_count'],
         global_predicate_hub_count=final_state['global_predicate_hub_count'],
+        global_triplet_count=final_state['global_triplet_count'],
+        global_triplet_hub_count=final_state['global_triplet_hub_count'],
         global_statement_hub_count=final_state['global_statement_hub_count'],
         global_procedure_hub_count=final_state['global_procedure_hub_count'],
     )
 
 
-async def list_sources(settings: Settings) -> list[Source]:
-    """Return persisted sources for interactive source selection."""
+async def list_users(settings: Settings) -> list[User]:
+    """Return users for terminal onboarding and selection."""
     database = DatabaseClient(settings.database)
     try:
-        return await SourceCatalogRepository(database.session).list_sources()
+        return await UserService(database.session).list_users()
+    finally:
+        await database.close()
+
+
+async def create_user(settings: Settings, name: str) -> User:
+    """Create a user after ensuring only structural schema."""
+    database = DatabaseClient(settings.database)
+    try:
+        await schema.ensure_structural_schema(database.session)
+        return await UserService(database.session).create_user(name)
+    finally:
+        await database.close()
+
+
+async def list_unowned_sources(settings: Settings) -> list[Source]:
+    """Return legacy sources available for explicit adoption."""
+    database = DatabaseClient(settings.database)
+    try:
+        return await UserService(database.session).list_unowned_sources()
+    finally:
+        await database.close()
+
+
+async def adopt_source(
+    settings: Settings,
+    user_uuid: str,
+    source_uuid: str,
+) -> None:
+    """Explicitly associate an unowned source with a user."""
+    database = DatabaseClient(settings.database)
+    try:
+        await UserService(database.session).adopt_source(
+            user_uuid,
+            source_uuid,
+        )
+    finally:
+        await database.close()
+
+
+async def list_sources(settings: Settings, user_uuid: str) -> list[Source]:
+    """Return persisted sources owned by one user."""
+    database = DatabaseClient(settings.database)
+    try:
+        return await UserService(database.session).list_sources(user_uuid)
     finally:
         await database.close()
 
@@ -224,6 +302,22 @@ async def _run_source_semantic_stage(
     return _source_semantic_stage_result(final_state)
 
 
+async def _run_source_learning_stage(
+    settings: Settings,
+    resources: _ApplicationResources,
+    source_uuid: str,
+) -> SourceLearningStageResult:
+    """Run one complete source-learning graph in dependency order."""
+    graph = build_source_learning_graph(
+        settings,
+        resources.local_models,
+        resources.database,
+        recorder=resources.recorder,
+    ).build_graph()
+    final_state = await graph.ainvoke({'source_uuid': source_uuid})
+    return _source_learning_stage_result(final_state)
+
+
 async def _run_global_semantic_stage(
     settings: Settings,
     resources: _ApplicationResources,
@@ -241,24 +335,60 @@ async def _run_global_semantic_stage(
 
 async def ingest_source(
     settings: Settings,
+    user_uuid: str,
     pdf_path: str,
     pages: list[int] | None = None,
 ) -> SourceProcessingStageResult:
-    """Run source processing and return its materialized stage summary."""
+    """Process and attach a new source to its user."""
     async with _application_resources(settings) as resources:
-        return await _run_source_processing_stage(
-            settings, resources, pdf_path, pages
+        result = await _run_source_processing_stage(
+            settings,
+            resources,
+            pdf_path,
+            pages,
         )
+        await UserService(resources.database.session).attach_new_source(
+            user_uuid,
+            result.source.uuid,
+        )
+        return result
 
 
 async def run_source_semantic_stage(
     settings: Settings,
+    user_uuid: str,
     source_uuid: str,
 ) -> SourceSemanticStageResult:
-    """Run source semantic processing for an existing source."""
+    """Run source semantics only for a source owned by the user."""
+    sources = await list_sources(settings, user_uuid)
+    if source_uuid not in {source.uuid for source in sources}:
+        raise ValueError(
+            f'Source {source_uuid} is not owned by user {user_uuid}'
+        )
     async with _application_resources(settings) as resources:
         return await _run_source_semantic_stage(
-            settings, resources, source_uuid
+            settings,
+            resources,
+            source_uuid,
+        )
+
+
+async def run_source_learning_stage(
+    settings: Settings,
+    user_uuid: str,
+    source_uuid: str,
+) -> SourceLearningStageResult:
+    """Run source learning only for a source owned by the user."""
+    sources = await list_sources(settings, user_uuid)
+    if source_uuid not in {source.uuid for source in sources}:
+        raise ValueError(
+            f'Source {source_uuid} is not owned by user {user_uuid}'
+        )
+    async with _application_resources(settings) as resources:
+        return await _run_source_learning_stage(
+            settings,
+            resources,
+            source_uuid,
         )
 
 
@@ -272,16 +402,21 @@ async def run_global_semantic_stage(
 
 async def ingest_and_run_source_semantic_stage(
     settings: Settings,
+    user_uuid: str,
     pdf_path: str,
     pages: list[int] | None = None,
 ) -> SourcePipelineResult:
-    """Ingest a source and run its source semantic stage in one session."""
+    """Ingest, attach, then run semantics in one application session."""
     async with _application_resources(settings) as resources:
         source_processing_stage = await _run_source_processing_stage(
             settings,
             resources,
             pdf_path,
             pages,
+        )
+        await UserService(resources.database.session).attach_new_source(
+            user_uuid,
+            source_processing_stage.source.uuid,
         )
         source_semantic_stage = await _run_source_semantic_stage(
             settings,
@@ -293,16 +428,3 @@ async def ingest_and_run_source_semantic_stage(
         source_processing_stage=source_processing_stage,
         source_semantic_stage=source_semantic_stage,
     )
-
-
-__all__ = [
-    'GlobalSemanticStageResult',
-    'SourcePipelineResult',
-    'SourceProcessingStageResult',
-    'SourceSemanticStageResult',
-    'ingest_and_run_source_semantic_stage',
-    'ingest_source',
-    'list_sources',
-    'run_global_semantic_stage',
-    'run_source_semantic_stage',
-]

@@ -3,12 +3,12 @@
 import json
 from collections.abc import Callable
 
-from kms2.core.model import (
-    Instruction,
+from kms2.core.model.block import SourceBlock
+from kms2.core.model.page import SourcePage
+from kms2.core.model.source import Source
+from kms2.core.model.source_processing.instruction import Instruction
+from kms2.core.model.source_processing.pedagogical import (
     ProcedureDraft,
-    Source,
-    SourceBlock,
-    SourcePage,
     StatementDraft,
 )
 from kms2.database.source.queries.source_graph import REPLACE_SOURCE

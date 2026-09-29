@@ -1,7 +1,8 @@
 """LangGraph registration for the source-content formatting phase."""
 
-from kms2.node.source_processing.formatting import FormattingNode
 from langgraph.graph import StateGraph
+
+from kms2.node.source_processing.formatting import FormattingNode
 
 
 def add_formatter_phase(graph: StateGraph, node: FormattingNode) -> None:

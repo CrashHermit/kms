@@ -2,7 +2,9 @@
 
 import dspy
 
-from kms2.core.model import SourceEventDescriptionInput
+from kms2.core.model.source_semantic.source_event import (
+    SourceEventDescriptionInput,
+)
 
 
 class SourceEventDescriptionSignature(dspy.Signature):
@@ -39,6 +41,3 @@ class SourceEventDescriptionModule(dspy.Module):
     async def aforward(self, *, request: SourceEventDescriptionInput) -> str:
         """Describe one event occurrence asynchronously."""
         return (await self.predictor.acall(request=request)).description
-
-
-__all__ = ['SourceEventDescriptionModule', 'SourceEventDescriptionSignature']

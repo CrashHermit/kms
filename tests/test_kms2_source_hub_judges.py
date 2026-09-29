@@ -1,18 +1,16 @@
 import asyncio
 
-from kms2.core.model import (
-    SourceEntityHubJudgeInput,
-    SourceEventHubJudgeInput,
-    SourcePredicateHubJudgeInput,
-)
 from kms2.core.model.source_semantic.source_entity_hub import (
     SourceEntityHubJudgeDecision,
+    SourceEntityHubJudgeInput,
 )
 from kms2.core.model.source_semantic.source_event_hub import (
     SourceEventHubJudgeDecision,
+    SourceEventHubJudgeInput,
 )
 from kms2.core.model.source_semantic.source_predicate_hub import (
     SourcePredicateHubJudgeDecision,
+    SourcePredicateHubJudgeInput,
 )
 from kms2.module.source_semantic.source_entity_hub_judge import (
     SourceEntityHubJudgeModule,

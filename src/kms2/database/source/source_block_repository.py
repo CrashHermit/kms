@@ -2,7 +2,8 @@
 
 from collections.abc import Callable
 
-from kms2.core.model import SourceBlock, SourceBlockSimilarityMatch
+from kms2.core.model.block import SourceBlock
+from kms2.core.model.similarity import SourceBlockSimilarityMatch
 from kms2.database.source.queries.source_blocks import (
     FIND_SIMILAR_SOURCE_BLOCKS,
     READ_SOURCE_BLOCKS,

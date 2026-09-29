@@ -11,18 +11,27 @@ from InquirerPy import inquirer
 from InquirerPy.base.control import Choice
 
 from kms2.application import (
+    adopt_source,
+    create_user,
     ingest_source,
     list_sources,
+    list_unowned_sources,
+    list_users,
     run_global_semantic_stage,
+    run_source_learning_stage,
     run_source_semantic_stage,
 )
 from kms2.config.settings import Settings
-from kms2.core.model import Source
+from kms2.core.model.source import Source
+from kms2.core.model.user import User
 
 PDF_DIRECTORY = Path('pdfs')
 NEW_SOURCE_OPTION = 'Run Source Processing for a new PDF'
 EXISTING_SOURCE_OPTION = 'Run Source Semantic for an existing source'
+SOURCE_LEARNING_OPTION = 'Run Source Learning for an existing source'
+ADOPT_SOURCE_OPTION = 'Adopt existing source'
 GLOBAL_SEMANTIC_OPTION = 'Run Global Semantic'
+CREATE_USER_OPTION = 'Create user'
 
 
 logger = logging.getLogger(__name__)
@@ -46,23 +55,60 @@ def run() -> None:
 
 
 def _run_tui() -> None:
-    """Prompt for and run one independently executable pipeline stage."""
+    """Resolve a user, then prompt for one user-scoped operation."""
     settings = Settings()
-    sources = asyncio.run(list_sources(settings))
+    user = _select_user(settings)
+    sources = _run_async(list_sources(settings, user.uuid))
+    unowned_sources = _run_async(list_unowned_sources(settings))
     choices = [NEW_SOURCE_OPTION]
     if sources:
-        choices.append(EXISTING_SOURCE_OPTION)
+        choices.extend([EXISTING_SOURCE_OPTION, SOURCE_LEARNING_OPTION])
+    if unowned_sources:
+        choices.append(ADOPT_SOURCE_OPTION)
     choices.append(GLOBAL_SEMANTIC_OPTION)
     action = inquirer.select(
         message='What would you like to do?',
         choices=choices,
     ).execute()
     if action == EXISTING_SOURCE_OPTION:
-        _run_existing_source(settings, sources)
+        _run_existing_source(settings, user, sources)
+    elif action == SOURCE_LEARNING_OPTION:
+        _run_existing_source_learning(settings, user, sources)
+    elif action == ADOPT_SOURCE_OPTION:
+        _adopt_existing_source(settings, user, unowned_sources)
     elif action == GLOBAL_SEMANTIC_OPTION:
         _run_global_semantic(settings)
     else:
-        _run_new_source(settings)
+        _run_new_source(settings, user)
+
+
+def _select_user(settings: Settings) -> User:
+    """Create the first user, reuse the sole user, or prompt among users."""
+    users = _run_async(list_users(settings))
+    if not users:
+        return _create_user(settings)
+    if len(users) == 1:
+        return users[0]
+
+    selection = inquirer.select(
+        message='Select a user:',
+        choices=[
+            *[
+                Choice(value=user, name=f'{user.name} ({user.uuid})')
+                for user in users
+            ],
+            CREATE_USER_OPTION,
+        ],
+    ).execute()
+    return (
+        _create_user(settings) if selection == CREATE_USER_OPTION else selection
+    )
+
+
+def _create_user(settings: Settings) -> User:
+    """Prompt for and persist a user display name."""
+    name = inquirer.text(message='Name for the new user:').execute()
+    return _run_async(create_user(settings, name))
 
 
 def _run_async[T](awaitable: Awaitable[T]) -> T:
@@ -112,7 +158,7 @@ def _log_source_semantic_completion(source: Source, semantic) -> None:
     )
 
 
-def _run_new_source(settings: Settings) -> None:
+def _run_new_source(settings: Settings, user: User) -> None:
     """Run Source Processing for a newly selected PDF."""
     pdf_path = inquirer.filepath(
         message='Select the PDF to process:',
@@ -130,7 +176,7 @@ def _run_new_source(settings: Settings) -> None:
         if not raw_pages
         else [int(page.strip()) for page in raw_pages.split(',')]
     )
-    result = _run_async(ingest_source(settings, pdf_path, pages))
+    result = _run_async(ingest_source(settings, user.uuid, pdf_path, pages))
     logger.info(
         'Done: source %s (%s), Source Processing ingested %d page(s).',
         result.source.uuid,
@@ -139,8 +185,12 @@ def _run_new_source(settings: Settings) -> None:
     )
 
 
-def _run_existing_source(settings: Settings, sources: list[Source]) -> None:
-    """Run Source Semantic for a selected existing source."""
+def _run_existing_source(
+    settings: Settings,
+    user: User,
+    sources: list[Source],
+) -> None:
+    """Run Source Semantic for a source owned by the selected user."""
     source = inquirer.select(
         message='Select the source for Source Semantic:',
         choices=[
@@ -160,8 +210,84 @@ def _run_existing_source(settings: Settings, sources: list[Source]) -> None:
         logger.info('Cancelled.')
         return
 
-    semantic = _run_async(run_source_semantic_stage(settings, source.uuid))
+    semantic = _run_async(
+        run_source_semantic_stage(settings, user.uuid, source.uuid)
+    )
     _log_source_semantic_completion(source, semantic)
+
+
+def _log_source_learning_completion(source: Source, learning) -> None:
+    """Log all counts persisted by one source-learning stage."""
+    logger.info(
+        'Done: source %s (%s), Source Learning persisted %d/%d entity '
+        'learning fact(s)/card(s), %d/%d event, %d/%d predicate, and %d/%d '
+        'triplet learning fact(s)/card(s).',
+        source.uuid,
+        source.key,
+        learning.entity_learning_fact_count,
+        learning.entity_flashcard_count,
+        learning.event_learning_fact_count,
+        learning.event_flashcard_count,
+        learning.predicate_learning_fact_count,
+        learning.predicate_flashcard_count,
+        learning.triplet_learning_fact_count,
+        learning.triplet_flashcard_count,
+    )
+
+
+def _run_existing_source_learning(
+    settings: Settings,
+    user: User,
+    sources: list[Source],
+) -> None:
+    """Run Source Learning for a source owned by the selected user."""
+    source = inquirer.select(
+        message='Select the source for Source Learning:',
+        choices=[
+            Choice(
+                value=source,
+                name=f'{source.key} ({source.uuid})',
+            )
+            for source in sources
+        ],
+    ).execute()
+    proceed = inquirer.confirm(
+        message='Run Source Learning on the selected source?',
+        default=True,
+    ).execute()
+
+    if not proceed:
+        logger.info('Cancelled.')
+        return
+
+    learning = _run_async(
+        run_source_learning_stage(settings, user.uuid, source.uuid)
+    )
+    _log_source_learning_completion(source, learning)
+
+
+def _adopt_existing_source(
+    settings: Settings,
+    user: User,
+    sources: list[Source],
+) -> None:
+    """Confirm explicit ownership of one legacy source."""
+    source = inquirer.select(
+        message='Select an unowned source to adopt:',
+        choices=[
+            Choice(value=source, name=f'{source.key} ({source.uuid})')
+            for source in sources
+        ],
+    ).execute()
+    proceed = inquirer.confirm(
+        message=f'Adopt {source.key} for {user.name}?',
+        default=False,
+    ).execute()
+    if proceed:
+        _run_async(adopt_source(settings, user.uuid, source.uuid))
+        logger.info('Adopted source %s (%s).', source.key, source.uuid)
+    else:
+        logger.info('Cancelled.')
 
 
 def _run_global_semantic(settings: Settings) -> None:

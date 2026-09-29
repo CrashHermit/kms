@@ -8,6 +8,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from kms2.config.global_semantic import GlobalSemanticSettings
 from kms2.config.runtime import LocalModelRuntimeSettings
 from kms2.config.services import DatabaseSettings, OCRSettings, TrainingSettings
+from kms2.config.source_learning import SourceLearningSettings
 from kms2.config.source_processing import SourceProcessingSettings
 from kms2.config.source_semantic import SourceSemanticSettings
 
@@ -28,6 +29,9 @@ class Settings(BaseSettings):
     )
     source_semantic: SourceSemanticSettings = Field(
         default_factory=SourceSemanticSettings
+    )
+    source_learning: SourceLearningSettings = Field(
+        default_factory=SourceLearningSettings
     )
     global_semantic: GlobalSemanticSettings = Field(
         default_factory=GlobalSemanticSettings

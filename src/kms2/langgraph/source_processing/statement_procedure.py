@@ -1,9 +1,10 @@
 """LangGraph registration for statement and procedure construction."""
 
+from langgraph.graph import StateGraph
+
 from kms2.node.source_processing.statement_procedure import (
     StatementProcedureNode,
 )
-from langgraph.graph import StateGraph
 
 
 def add_statement_procedure_phase(

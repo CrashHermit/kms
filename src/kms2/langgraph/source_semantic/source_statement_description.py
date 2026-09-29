@@ -1,12 +1,13 @@
 """LangGraph registration for source statement descriptions."""
 
+from langgraph.graph import StateGraph
+
 from kms2.node.source_semantic.source_statement_description import (
     SourceStatementDescriptionNode,
 )
 from kms2.node.source_semantic.source_statement_description_load import (
     SourceStatementDescriptionLoadNode,
 )
-from langgraph.graph import StateGraph
 
 
 def add_source_statement_description_phase(

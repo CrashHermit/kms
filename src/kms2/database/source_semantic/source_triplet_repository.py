@@ -1,85 +1,68 @@
-"""Persistence access for source facts, triplets, and triplet hubs."""
+"""Persistence access for source triplets and triplet hubs."""
 
 from collections.abc import Callable
 
-from kms2.core.model import (
-    SourceEntity,
-    SourceEvent,
-    SourceFact,
-    SourceTripletHub,
-    SourceTripletHubGroup,
+from kms2.core.model.source_semantic.source_entity import SourceEntity
+from kms2.core.model.source_semantic.source_event import SourceEvent
+from kms2.core.model.source_semantic.source_triplet import (
     SourceTripletOccurrence,
 )
+from kms2.core.model.source_semantic.source_triplet_hub import (
+    SourceTripletHub,
+    SourceTripletHubGroup,
+)
 from kms2.database.source_semantic.queries.source_triplet import (
-    CLEAR_SOURCE_FACTS_AND_TRIPLETS,
     READ_SOURCE_TRIPLET_HUB_GROUPS,
-    REPLACE_SOURCE_FACTS_AND_TRIPLETS,
     REPLACE_SOURCE_TRIPLET_HUBS,
+    REPLACE_SOURCE_TRIPLETS,
+)
+from kms2.database.source_semantic.source_fact_repository import (
+    SourceFactRepository,
 )
 
 
 class SourceTripletRepository:
-    """Access persisted source facts, triplets, and triplet hubs."""
+    """Access persisted source triplets and triplet hubs."""
 
     def __init__(self, session_factory: Callable) -> None:
         self._session_factory = session_factory
+        self._fact_repository = SourceFactRepository(session_factory)
 
-    async def replace_source_facts_and_triplets(
+    async def replace_source_triplets(
         self,
         source_uuid: str,
-        source_facts: list[SourceFact],
-        triplet_occurrences: list[SourceTripletOccurrence],
+        occurrences: list[SourceTripletOccurrence],
     ) -> None:
-        """Replace all source facts and their decomposed triplets."""
-        if not source_facts:
-            async with self._session_factory() as session:
-                result = await session.run(
-                    CLEAR_SOURCE_FACTS_AND_TRIPLETS,
-                    source_uuid=source_uuid,
-                )
-                await result.consume()
-            return
-
+        """Replace only the triplets and typed occurrences for one source."""
         parameters = {
             'source_uuid': source_uuid,
-            'source_facts': [
-                {
-                    'uuid': fact.uuid,
-                    'source_uuid': fact.source_uuid,
-                    'source_block_uuid': fact.source_block_uuid,
-                    'text': fact.text,
-                }
-                for fact in source_facts
-            ],
             'triplets': [
                 {
                     'uuid': occurrence.triplet.uuid,
-                    'source_uuid': occurrence.triplet.source_uuid,
-                    'source_block_uuid': occurrence.triplet.source_block_uuid,
-                    'subject_uuid': occurrence.triplet.subject_uuid,
-                    'object_uuid': occurrence.triplet.object_uuid,
-                    'predicate_uuid': occurrence.triplet.predicate_uuid,
+                    'subject_uuid': occurrence.subject.uuid,
+                    'object_uuid': occurrence.object.uuid,
+                    'predicate_uuid': occurrence.predicate.uuid,
                 }
-                for occurrence in triplet_occurrences
+                for occurrence in occurrences
             ],
             'source_entities': [
                 _endpoint_row(occurrence.subject)
-                for occurrence in triplet_occurrences
+                for occurrence in occurrences
                 if isinstance(occurrence.subject, SourceEntity)
             ]
             + [
                 _endpoint_row(occurrence.object)
-                for occurrence in triplet_occurrences
+                for occurrence in occurrences
                 if isinstance(occurrence.object, SourceEntity)
             ],
             'source_events': [
                 _endpoint_row(occurrence.subject)
-                for occurrence in triplet_occurrences
+                for occurrence in occurrences
                 if isinstance(occurrence.subject, SourceEvent)
             ]
             + [
                 _endpoint_row(occurrence.object)
-                for occurrence in triplet_occurrences
+                for occurrence in occurrences
                 if isinstance(occurrence.object, SourceEvent)
             ],
             'source_predicates': [
@@ -89,22 +72,26 @@ class SourceTripletRepository:
                     'source_block_uuid': occurrence.predicate.source_block_uuid,
                     'predicate': occurrence.predicate.predicate,
                 }
-                for occurrence in triplet_occurrences
+                for occurrence in occurrences
             ],
             'fact_triplet_pairs': [
                 {
                     'source_fact_uuid': occurrence.fact.uuid,
                     'triplet_uuid': occurrence.triplet.uuid,
                 }
-                for occurrence in triplet_occurrences
+                for occurrence in occurrences
             ],
         }
         async with self._session_factory() as session:
             result = await session.run(
-                REPLACE_SOURCE_FACTS_AND_TRIPLETS,
+                REPLACE_SOURCE_TRIPLETS,
                 **parameters,
             )
             await result.consume()
+
+    async def load_source_facts(self, source_uuid: str):
+        """Load durable facts for the next source-semantic phase."""
+        return await self._fact_repository.load_source_facts(source_uuid)
 
     async def read_source_triplet_hub_groups(
         self, source_uuid: str

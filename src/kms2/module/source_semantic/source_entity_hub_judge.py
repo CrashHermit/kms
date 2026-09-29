@@ -44,6 +44,3 @@ class SourceEntityHubJudgeModule(dspy.Module):
         """Judge entity pairs asynchronously."""
         prediction = await self.predictor.acall(requests=requests)
         return prediction.decisions
-
-
-__all__ = ['SourceEntityHubJudgeModule', 'SourceEntityHubJudgeSignature']

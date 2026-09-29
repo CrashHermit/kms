@@ -6,7 +6,7 @@ from langgraph.types import Send
 
 from kms2.config.source_semantic import SourceEntityHubSettings
 from kms2.core.embedding import EmbeddingClient
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_entity_hub import (
     SourceEntityHub,
     SourceEntityHubCandidate,
     SourceEntityHubJudgeInput,
@@ -402,6 +402,3 @@ def _entity_judge_input(
         right_name=candidate.right_name,
         right_description=candidate.right_description,
     )
-
-
-__all__ = ['SourceEntityHubNode']

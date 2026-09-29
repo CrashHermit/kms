@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model.global_semantic.event_hub import (
+from kms2.core.model.global_semantic.global_event_hub import (
     GlobalEventHubJudgeDecision,
     GlobalEventHubJudgeInput,
 )
@@ -45,6 +45,3 @@ class GlobalEventHubJudgeModule(dspy.Module):
         """Judge event pairs asynchronously."""
         prediction = await self.predictor.acall(requests=requests)
         return prediction.decisions
-
-
-__all__ = ['GlobalEventHubJudgeModule', 'GlobalEventHubJudgeSignature']

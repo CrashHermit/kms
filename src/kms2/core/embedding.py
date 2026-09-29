@@ -10,6 +10,3 @@ class EmbeddingClient(Protocol):
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Return vectors in the same order as the supplied texts."""
         ...
-
-
-__all__ = ['EmbeddingClient']

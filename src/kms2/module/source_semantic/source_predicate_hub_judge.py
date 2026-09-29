@@ -46,6 +46,3 @@ class SourcePredicateHubJudgeModule(dspy.Module):
         """Judge predicate pairs asynchronously."""
         prediction = await self.predictor.acall(requests=requests)
         return prediction.decisions
-
-
-__all__ = ['SourcePredicateHubJudgeModule', 'SourcePredicateHubJudgeSignature']

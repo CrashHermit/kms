@@ -4,6 +4,7 @@ from kms2.database.schema import (
     SCHEMA_STATEMENTS,
     VECTOR_INDEX_NAMES,
     ensure_schema,
+    ensure_structural_schema,
     vector_index_statements,
 )
 
@@ -25,6 +26,16 @@ class _SessionContext:
 
     async def __aexit__(self, *args: object) -> None:
         return None
+
+
+def test_ensure_structural_schema_runs_only_structural_ddl():
+    session = _RecordingSession()
+
+    asyncio.run(ensure_structural_schema(lambda: _SessionContext(session)))
+
+    assert [statement for statement, _ in session.calls] == list(
+        SCHEMA_STATEMENTS
+    )
 
 
 def test_ensure_schema_runs_structural_vector_and_wait_ddl():

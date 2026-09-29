@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_triplet_hub import (
     SourceTripletHubDefinition,
     SourceTripletHubSynthesisInput,
 )
@@ -44,6 +44,3 @@ class SourceTripletHubModule(dspy.Module):
     ) -> SourceTripletHubDefinition:
         """Synthesize a triplet hub asynchronously."""
         return (await self.predictor.acall(request=request)).definition
-
-
-__all__ = ['SourceTripletHubModule', 'SourceTripletHubSignature']

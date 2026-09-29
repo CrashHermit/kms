@@ -1,0 +1,52 @@
+import asyncio
+
+from fsrs import Scheduler
+
+from kms2.database.user.queries import CREATE_USER
+from kms2.user_service import UserService
+
+
+class _Result:
+    async def consume(self) -> None:
+        return None
+
+    async def data(self) -> list[dict[str, str]]:
+        return []
+
+
+class _Session:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    async def run(self, query: str, **parameters: object) -> _Result:
+        self.calls.append((query, parameters))
+        return _Result()
+
+
+class _SessionContext:
+    def __init__(self, session: _Session) -> None:
+        self.session = session
+
+    async def __aenter__(self) -> _Session:
+        return self.session
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+
+def test_create_user_provisions_default_deck_with_fsrs_settings():
+    session = _Session()
+    service = UserService(lambda: _SessionContext(session))
+
+    user = asyncio.run(service.create_user('Alex'))
+
+    assert user.name == 'Alex'
+    assert len(session.calls) == 1
+    query, parameters = session.calls[0]
+    assert query == CREATE_USER
+    assert parameters['user_uuid'] == user.uuid
+    assert parameters['user_name'] == 'Alex'
+    assert parameters['deck_name'] == 'Default'
+    scheduler_json = parameters['scheduler_json']
+    assert isinstance(scheduler_json, str)
+    assert Scheduler.from_json(scheduler_json).to_json() == scheduler_json

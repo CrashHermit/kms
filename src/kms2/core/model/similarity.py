@@ -45,11 +45,3 @@ class SourcePredicateSimilarityMatch(BaseModel):
     predicate: str
     description: str
     score: float
-
-
-__all__ = [
-    'SourceBlockSimilarityMatch',
-    'SourceEntitySimilarityMatch',
-    'SourceEventSimilarityMatch',
-    'SourcePredicateSimilarityMatch',
-]

@@ -10,7 +10,10 @@ import httpx
 import pytest
 
 from kms2.config.runtime import LlamaServerSettings, LocalModelRuntimeSettings
-from kms2.local_models import ownership, posix_ownership
+from kms2.local_models import (
+    ownership,
+    posix_ownership,
+)
 from kms2.local_models.ownership import create_process_owner
 from kms2.local_models.posix_ownership import PosixProcessOwner
 from kms2.local_models.process import (

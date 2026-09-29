@@ -37,12 +37,3 @@ class SourcePredicateDescriptionResult(SourcePredicateDescriptionTarget):
 
     description: str = Field(min_length=1)
     embedding: list[float] | None = None
-
-
-__all__ = [
-    'SourcePredicate',
-    'SourcePredicateDescriptionInput',
-    'SourcePredicateDescriptionRequest',
-    'SourcePredicateDescriptionResult',
-    'SourcePredicateDescriptionTarget',
-]

@@ -1,6 +1,6 @@
 """Select ordered, budgeted context around source blocks."""
 
-from kms2.core.model import SourceBlock
+from kms2.core.model.block import SourceBlock
 from kms2.core.model.context import (
     SourceBlockContext,
     SourceContextWindow,

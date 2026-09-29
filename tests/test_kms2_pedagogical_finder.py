@@ -1,14 +1,12 @@
 import asyncio
 
 from kms2.config.source_processing import PedagogicalFinderSettings
-from kms2.core.model import (
-    BlockType,
-    ExerciseComponent,
-    Instruction,
-    Source,
-    SourceBlock,
-    SourcePage,
-)
+from kms2.core.model.block import SourceBlock
+from kms2.core.model.block_types import BlockType
+from kms2.core.model.page import SourcePage
+from kms2.core.model.source import Source
+from kms2.core.model.source_processing.instruction import Instruction
+from kms2.core.model.source_processing.pedagogical import ExerciseComponent
 from kms2.langgraph.source_processing.state import SourceProcessingState
 from kms2.node.source_processing.pedagogical_finder import PedagogicalFinderNode
 

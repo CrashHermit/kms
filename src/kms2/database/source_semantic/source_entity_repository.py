@@ -2,13 +2,15 @@
 
 from collections.abc import Callable
 
-from kms2.core.model import (
+from kms2.core.model.similarity import SourceEntitySimilarityMatch
+from kms2.core.model.source_semantic.source_entity import (
     SourceEntity,
     SourceEntityDescriptionResult,
+)
+from kms2.core.model.source_semantic.source_entity_hub import (
     SourceEntityHub,
     SourceEntityHubCandidate,
     SourceEntityHubMember,
-    SourceEntitySimilarityMatch,
 )
 from kms2.database.source_semantic.queries.source_entity import (
     DETECT_SOURCE_ENTITY_COMMUNITIES,

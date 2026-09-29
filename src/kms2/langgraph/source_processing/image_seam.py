@@ -1,7 +1,8 @@
 """LangGraph registration for the source image seam phase."""
 
-from kms2.node.source_processing.image_seam import ImageSeamNode
 from langgraph.graph import StateGraph
+
+from kms2.node.source_processing.image_seam import ImageSeamNode
 
 
 def add_image_seam_phase(graph: StateGraph, node: ImageSeamNode) -> None:

@@ -2,9 +2,9 @@
 
 import dspy
 
-from kms2.core.model import (
-    BlockType,
-    SourceBlockContext,
+from kms2.core.model.block_types import BlockType
+from kms2.core.model.context import SourceBlockContext
+from kms2.core.model.source_processing.exercise_splitter import (
     SplitCandidate,
     SplitDecision,
     SplitPiece,
@@ -150,6 +150,3 @@ class ExerciseSplitterModule(dspy.Module):
             context_after=context_after,
         )
         return prediction.splits
-
-
-__all__ = ['ExerciseSplitterSignature', 'ExerciseSplitterModule']

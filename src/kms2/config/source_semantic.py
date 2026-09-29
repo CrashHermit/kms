@@ -75,16 +75,17 @@ class SourceTripletHubSettings(BaseModel):
 class SourceSemanticSettings(BaseModel):
     """Language model and context-window settings for semantic extraction."""
 
-    fact_extraction: NoRetryTextInferenceSettings = Field(
+    source_fact_extraction: NoRetryTextInferenceSettings = Field(
         default_factory=NoRetryTextInferenceSettings
     )
-    triplet_decomposition: NoRetryTextInferenceSettings = Field(
+    source_triplet_decomposition: NoRetryTextInferenceSettings = Field(
         default_factory=NoRetryTextInferenceSettings
     )
     context_window: ContextWindowSettings = Field(
         default_factory=lambda: ContextWindowSettings(
             backward_budget=400,
             forward_budget=400,
+            target_budget=400,
         )
     )
     source_entity_description: TermDescriptionSettings = Field(

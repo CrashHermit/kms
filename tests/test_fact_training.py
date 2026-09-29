@@ -29,9 +29,9 @@ def test_load_examples_preserves_typed_dspy_shape(tmp_path):
     )
     examples = fact_training.load_examples(path)
     assert len(examples) == 1
-    assert isinstance(examples[0].request, models.FactExtractionInput)
+    assert isinstance(examples[0].request, models.SourceFactExtractionInput)
     assert examples[0].request.target_node.text == 'A fact.'
-    assert examples[0].facts == [models.AtomicFact(text='A fact.')]
+    assert examples[0].facts == [models.SourceAtomicFact(text='A fact.')]
     assert examples[0].inputs().toDict()['request'] == (
         examples[0].request.model_dump()
     )

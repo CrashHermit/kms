@@ -1,7 +1,7 @@
 import asyncio
 
 from kms2.config.global_semantic import GlobalProcedureHubSettings
-from kms2.core.model import (
+from kms2.core.model.global_semantic.global_procedure_hub import (
     GlobalProcedureHub,
     GlobalProcedureHubCandidate,
     GlobalProcedureHubDefinition,
@@ -9,18 +9,20 @@ from kms2.core.model import (
     GlobalProcedureHubJudgeInput,
     GlobalProcedureHubMember,
 )
-from kms2.database.global_semantic.procedure_hub_repository import (
+from kms2.database.global_semantic.global_procedure_hub_repository import (
     GlobalProcedureHubRepository,
 )
-from kms2.database.global_semantic.queries.procedure_hub import (
+from kms2.database.global_semantic.queries.global_procedure_hub import (
     DETECT_GLOBAL_PROCEDURE_HUB_COMMUNITIES,
     READ_GLOBAL_PROCEDURE_HUB_CANDIDATES,
     REPLACE_GLOBAL_PROCEDURE_HUB_ACCEPTED_EDGES,
 )
 from kms2.langgraph.global_semantic.graph import GlobalSemanticGraph
 from kms2.langgraph.global_semantic.state import GlobalSemanticState
-from kms2.node.global_semantic.procedure_hub import GlobalProcedureHubNode
-from kms2.node.global_semantic.procedure_hub_persistence import (
+from kms2.node.global_semantic.global_procedure_hub import (
+    GlobalProcedureHubNode,
+)
+from kms2.node.global_semantic.global_procedure_hub_persistence import (
     GlobalProcedureHubPersistenceNode,
 )
 
@@ -260,6 +262,26 @@ def test_global_procedure_node_uses_description_evidence_and_preserves_membershi
     assert embedded['global_procedure_hub_memberships'] == [['hub-1', 'hub-2']]
 
 
+class _TripletPhase:
+    def load_groups(self, state):
+        return {}
+
+    def dispatch_synthesis(self, state):
+        return 'global_triplet_hub_synthesis_collect'
+
+    def synthesis_worker(self, state):
+        return {}
+
+    def collect_synthesis(self, state):
+        return {}
+
+    def embed(self, state):
+        return {}
+
+    async def run(self, state):
+        return {}
+
+
 def test_global_graph_exposes_complete_procedure_phase_topology():
     node = GlobalProcedureHubNode(
         _Repository(),
@@ -269,6 +291,7 @@ def test_global_graph_exposes_complete_procedure_phase_topology():
         _Embedding(),
         GlobalProcedureHubSettings(),
     )
+    triplet_phase = _TripletPhase()
     graph = GlobalSemanticGraph(
         node,
         GlobalProcedureHubPersistenceNode(_Repository()),
@@ -276,6 +299,9 @@ def test_global_graph_exposes_complete_procedure_phase_topology():
         GlobalProcedureHubPersistenceNode(_Repository()),
         node,
         GlobalProcedureHubPersistenceNode(_Repository()),
+        triplet_phase,
+        triplet_phase,
+        triplet_phase,
         node,
         GlobalProcedureHubPersistenceNode(_Repository()),
         node,

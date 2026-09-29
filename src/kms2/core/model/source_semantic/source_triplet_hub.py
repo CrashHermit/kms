@@ -69,14 +69,3 @@ class SourceTripletHubSynthesisResult(BaseModel):
 
     ordinal: int = Field(ge=0)
     definition: SourceTripletHubDefinition
-
-
-__all__ = [
-    'SourceTripletHub',
-    'SourceTripletHubDefinition',
-    'SourceTripletHubEvidence',
-    'SourceTripletHubGroup',
-    'SourceTripletHubRole',
-    'SourceTripletHubSynthesisInput',
-    'SourceTripletHubSynthesisResult',
-]

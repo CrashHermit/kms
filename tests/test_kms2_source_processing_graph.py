@@ -1,7 +1,9 @@
 import asyncio
 
 from kms2.config.inference import ContextWindowSettings
-from kms2.core.model import Source, SourceBlock, SourcePage
+from kms2.core.model.block import SourceBlock
+from kms2.core.model.page import SourcePage
+from kms2.core.model.source import Source
 from kms2.core.model.source_processing.content_correction import (
     ContentCorrectionResult,
 )
@@ -10,14 +12,15 @@ from kms2.core.model.source_processing.ocr import (
     OCRImageArtifact,
     OCRPageArtifact,
 )
-from kms2.langgraph.source_processing import OCRNode, SourceProcessingState
 from kms2.langgraph.source_processing.graph import SourceProcessingGraph
+from kms2.langgraph.source_processing.state import SourceProcessingState
 from kms2.node.source_processing.content_correction import ContentCorrectionNode
 from kms2.node.source_processing.embedding import EmbeddingNode
 from kms2.node.source_processing.exercise_splitter import ExerciseSplitterNode
 from kms2.node.source_processing.formatting import FormattingNode
 from kms2.node.source_processing.image_description import ImageDescriptionNode
 from kms2.node.source_processing.image_seam import ImageSeamNode
+from kms2.node.source_processing.ocr import OCRNode
 from kms2.node.source_processing.text_seam import TextSeamNode
 from kms2.ocr.provider import OCRProvider
 

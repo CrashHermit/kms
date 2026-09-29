@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model import SourceBlock
+from kms2.core.model.block import SourceBlock
 
 
 class TextSeamSignature(dspy.Signature):
@@ -109,6 +109,3 @@ class TextSeamJudgeModule(dspy.Module):
             )
         )
         return prediction.is_split
-
-
-__all__ = ['TextSeamSignature', 'TextSeamJudgeModule']

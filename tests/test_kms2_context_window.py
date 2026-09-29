@@ -1,10 +1,10 @@
-from kms2.core.model import (
-    BlockType,
-    SourceBlock,
+from kms2.core.model.block import SourceBlock
+from kms2.core.model.block_types import BlockType
+from kms2.core.model.context import (
     SourceBlockContext,
     SourceContextWindow,
-    VisualAsset,
 )
+from kms2.core.model.visual_asset import VisualAsset
 from kms2.core.windowing import (
     estimate_text_tokens,
     estimate_tokens,

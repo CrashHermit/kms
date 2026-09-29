@@ -1,10 +1,11 @@
 """LangGraph registration for source entity hub discovery."""
 
+from langgraph.graph import StateGraph
+
 from kms2.node.source_semantic.source_entity_hub import SourceEntityHubNode
 from kms2.node.source_semantic.source_entity_hub_persistence import (
     SourceEntityHubPersistenceNode,
 )
-from langgraph.graph import StateGraph
 
 
 def add_source_entity_hub_phase(

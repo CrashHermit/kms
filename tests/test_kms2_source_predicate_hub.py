@@ -1,14 +1,12 @@
 import asyncio
 
 from kms2.config.source_semantic import SourcePredicateHubSettings
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_predicate_hub import (
     SourcePredicateHubCandidate,
     SourcePredicateHubDefinition,
+    SourcePredicateHubJudgeDecision,
     SourcePredicateHubJudgeInput,
     SourcePredicateHubMember,
-)
-from kms2.core.model.source_semantic.source_predicate_hub import (
-    SourcePredicateHubJudgeDecision,
 )
 from kms2.database.source_semantic.queries.source_predicate import (
     DETECT_SOURCE_PREDICATE_COMMUNITIES,

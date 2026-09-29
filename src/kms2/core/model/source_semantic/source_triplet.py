@@ -2,19 +2,15 @@
 
 from pydantic import BaseModel
 
-from kms2.core.model.source_semantic.base import _SemanticOccurrence
-from kms2.core.model.source_semantic.fact_extraction import SourceFact
+from kms2.core.model.base import Vertex
 from kms2.core.model.source_semantic.source_entity import SourceEntity
 from kms2.core.model.source_semantic.source_event import SourceEvent
+from kms2.core.model.source_semantic.source_fact_extraction import SourceFact
 from kms2.core.model.source_semantic.source_predicate import SourcePredicate
 
 
-class SourceTriplet(_SemanticOccurrence):
-    """Source-scoped triplet occurrence connecting typed components."""
-
-    subject_uuid: str
-    object_uuid: str
-    predicate_uuid: str
+class SourceTriplet(Vertex):
+    """Source-scoped triplet occurrence connected by typed role edges."""
 
 
 class SourceTripletOccurrence(BaseModel):
@@ -25,6 +21,3 @@ class SourceTripletOccurrence(BaseModel):
     subject: SourceEntity | SourceEvent
     object: SourceEntity | SourceEvent
     predicate: SourcePredicate
-
-
-__all__ = ['SourceTriplet', 'SourceTripletOccurrence']

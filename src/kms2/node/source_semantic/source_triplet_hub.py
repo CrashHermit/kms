@@ -5,7 +5,7 @@ from typing import Literal, TypedDict
 from langgraph.types import Send
 
 from kms2.core.embedding import EmbeddingClient
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_triplet_hub import (
     SourceTripletHub,
     SourceTripletHubGroup,
     SourceTripletHubSynthesisInput,
@@ -145,6 +145,3 @@ class SourceTripletHubNode:
                 group.triplet_uuids for group in groups
             ],
         }
-
-
-__all__ = ['SourceTripletHubNode']

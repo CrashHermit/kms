@@ -6,7 +6,7 @@ from langgraph.types import Send
 
 from kms2.config.source_semantic import SourceEventHubSettings
 from kms2.core.embedding import EmbeddingClient
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_event_hub import (
     SourceEventHub,
     SourceEventHubCandidate,
     SourceEventHubJudgeInput,
@@ -395,6 +395,3 @@ def _event_judge_input(
         right_name=candidate.right_name,
         right_description=candidate.right_description,
     )
-
-
-__all__ = ['SourceEventHubNode']

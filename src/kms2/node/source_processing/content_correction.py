@@ -5,7 +5,8 @@ from typing import Literal, TypedDict
 import dspy
 from langgraph.types import Send
 
-from kms2.core.model import SourceBlock, SourcePage
+from kms2.core.model.block import SourceBlock
+from kms2.core.model.page import SourcePage
 from kms2.core.model.source_processing.content_correction import (
     ContentCorrectionRequest,
     ContentCorrectionResult,

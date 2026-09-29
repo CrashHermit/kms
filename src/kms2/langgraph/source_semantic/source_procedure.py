@@ -1,12 +1,13 @@
 """LangGraph registration for source procedure embeddings and persistence."""
 
+from langgraph.graph import StateGraph
+
 from kms2.node.source_semantic.source_procedure_embedding import (
     SourceProcedureEmbeddingNode,
 )
 from kms2.node.source_semantic.source_procedure_persistence import (
     SourceProcedurePersistenceNode,
 )
-from langgraph.graph import StateGraph
 
 
 def add_source_procedure_phase(

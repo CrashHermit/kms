@@ -5,6 +5,32 @@ MERGE (source:Source {uuid: $source.uuid})
 SET source.key = $source.key,
     source.metadata = $source.metadata
 WITH source
+CALL (source) {
+    MATCH (source)-[:FIRST_BLOCK]->(first:SourceBlock)
+    MATCH (first)-[:NEXT_BLOCK*0..]->(source_block:SourceBlock)
+    MATCH (source_block)<-[:HAS_SOURCE_BLOCK]-(:SourceFactTarget)
+        <-[:HAS_TARGET]-(old_fact:SourceFact)
+    OPTIONAL MATCH (old_fact)-[:HAS_TARGET|HAS_CONTEXT_BEFORE|HAS_CONTEXT_AFTER]->(
+        old_pointer
+    )
+    OPTIONAL MATCH (old_fact)-[:HAS_TRIPLET]->(old_triplet:SourceTriplet)
+    OPTIONAL MATCH (old_triplet)-[:HAS_SUBJECT|HAS_OBJECT]->(old_endpoint)
+    OPTIONAL MATCH (old_triplet)-[:HAS_PREDICATE]->(
+        old_predicate:SourcePredicate
+    )
+    WITH collect(DISTINCT old_fact) AS facts,
+         collect(DISTINCT old_pointer) AS pointers,
+         collect(DISTINCT old_triplet) AS triplets,
+         collect(DISTINCT old_endpoint) AS endpoints,
+         collect(DISTINCT old_predicate) AS predicates
+    FOREACH (node IN triplets | DETACH DELETE node)
+    FOREACH (node IN facts | DETACH DELETE node)
+    FOREACH (node IN pointers | DETACH DELETE node)
+    FOREACH (node IN endpoints | DETACH DELETE node)
+    FOREACH (node IN predicates | DETACH DELETE node)
+    RETURN count(*) AS _
+}
+WITH source
 OPTIONAL MATCH (source)-[:HAS_PAGE]->(old_page:SourcePage)
 OPTIONAL MATCH (old_page)-[:CONTAINS_BLOCK]->(old_block:SourceBlock)
 OPTIONAL MATCH (old_block)-[:MEMBER_OF]->(old_statement:SourceStatement)

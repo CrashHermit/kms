@@ -3,23 +3,26 @@
 from kms2.composition.predictors import PredictorFactory
 from kms2.config.settings import Settings
 from kms2.database.client import DatabaseClient
-from kms2.database.global_semantic.entity_hub_repository import (
+from kms2.database.global_semantic.global_entity_hub_repository import (
     GlobalEntityHubRepository,
 )
-from kms2.database.global_semantic.event_hub_repository import (
+from kms2.database.global_semantic.global_event_hub_repository import (
     GlobalEventHubRepository,
 )
-from kms2.database.global_semantic.predicate_hub_repository import (
+from kms2.database.global_semantic.global_predicate_hub_repository import (
     GlobalPredicateHubRepository,
 )
-from kms2.database.global_semantic.procedure_hub_repository import (
+from kms2.database.global_semantic.global_procedure_hub_repository import (
     GlobalProcedureHubRepository,
 )
-from kms2.database.global_semantic.statement_hub_repository import (
+from kms2.database.global_semantic.global_statement_hub_repository import (
     GlobalStatementHubRepository,
 )
+from kms2.database.global_semantic.global_triplet_repository import (
+    GlobalTripletRepository,
+)
 from kms2.langgraph.global_semantic.graph import GlobalSemanticGraph
-from kms2.local_models import LocalModelRuntime
+from kms2.local_models.runtime import LocalModelRuntime
 from kms2.module.global_semantic.global_entity_hub import (
     GlobalEntityHubModule,
     GlobalEntityHubSignature,
@@ -60,25 +63,42 @@ from kms2.module.global_semantic.global_statement_hub_judge import (
     GlobalStatementHubJudgeModule,
     GlobalStatementHubJudgeSignature,
 )
-from kms2.node.global_semantic.entity_hub import GlobalEntityHubNode
-from kms2.node.global_semantic.entity_hub_persistence import (
+from kms2.module.global_semantic.global_triplet_hub import (
+    GlobalTripletHubModule,
+    GlobalTripletHubSignature,
+)
+from kms2.node.global_semantic.global_entity_hub import GlobalEntityHubNode
+from kms2.node.global_semantic.global_entity_hub_persistence import (
     GlobalEntityHubPersistenceNode,
 )
-from kms2.node.global_semantic.event_hub import GlobalEventHubNode
-from kms2.node.global_semantic.event_hub_persistence import (
+from kms2.node.global_semantic.global_event_hub import GlobalEventHubNode
+from kms2.node.global_semantic.global_event_hub_persistence import (
     GlobalEventHubPersistenceNode,
 )
-from kms2.node.global_semantic.predicate_hub import GlobalPredicateHubNode
-from kms2.node.global_semantic.predicate_hub_persistence import (
+from kms2.node.global_semantic.global_predicate_hub import (
+    GlobalPredicateHubNode,
+)
+from kms2.node.global_semantic.global_predicate_hub_persistence import (
     GlobalPredicateHubPersistenceNode,
 )
-from kms2.node.global_semantic.procedure_hub import GlobalProcedureHubNode
-from kms2.node.global_semantic.procedure_hub_persistence import (
+from kms2.node.global_semantic.global_procedure_hub import (
+    GlobalProcedureHubNode,
+)
+from kms2.node.global_semantic.global_procedure_hub_persistence import (
     GlobalProcedureHubPersistenceNode,
 )
-from kms2.node.global_semantic.statement_hub import GlobalStatementHubNode
-from kms2.node.global_semantic.statement_hub_persistence import (
+from kms2.node.global_semantic.global_statement_hub import (
+    GlobalStatementHubNode,
+)
+from kms2.node.global_semantic.global_statement_hub_persistence import (
     GlobalStatementHubPersistenceNode,
+)
+from kms2.node.global_semantic.global_triplet_hub import GlobalTripletHubNode
+from kms2.node.global_semantic.global_triplet_hub_persistence import (
+    GlobalTripletHubPersistenceNode,
+)
+from kms2.node.global_semantic.global_triplet_projection import (
+    GlobalTripletProjectionNode,
 )
 from kms2.train.recorder import Recorder
 
@@ -166,6 +186,24 @@ def build_global_semantic_graph(
         global_semantic.global_predicate_hubs,
     )
 
+    triplet_repository = GlobalTripletRepository(database.session)
+    triplet_hub_module = GlobalTripletHubModule(
+        predictors.create(
+            GlobalTripletHubModule,
+            global_semantic.global_triplet_hubs.inference,
+            GlobalTripletHubSignature,
+        )
+    )
+    triplet_projection = GlobalTripletProjectionNode(triplet_repository)
+    triplet_hub = GlobalTripletHubNode(
+        triplet_repository,
+        triplet_hub_module,
+        local_models,
+    )
+    triplet_hub_persistence = GlobalTripletHubPersistenceNode(
+        triplet_repository
+    )
+
     statement_repository = GlobalStatementHubRepository(database.session)
     statement_hub_module = GlobalStatementHubModule(
         predictors.create(
@@ -221,11 +259,11 @@ def build_global_semantic_graph(
         GlobalEventHubPersistenceNode(event_repository),
         predicate_hub,
         GlobalPredicateHubPersistenceNode(predicate_repository),
+        triplet_projection,
+        triplet_hub,
+        triplet_hub_persistence,
         statement_hub,
         GlobalStatementHubPersistenceNode(statement_repository),
         procedure_hub,
         GlobalProcedureHubPersistenceNode(procedure_repository),
     )
-
-
-__all__ = ['build_global_semantic_graph']

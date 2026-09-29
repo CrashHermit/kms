@@ -1,7 +1,7 @@
 """LangGraph node for governing exercise statements with instructions."""
 
 from kms2.config.source_processing import InstructionGovernanceSettings
-from kms2.core.model import Instruction
+from kms2.core.model.source_processing.instruction import Instruction
 from kms2.core.windowing import project_block, select_window
 from kms2.langgraph.source_processing.state import SourceProcessingState
 from kms2.module.source_processing.instruction_governance import (

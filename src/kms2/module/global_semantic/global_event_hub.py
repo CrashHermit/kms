@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model import (
+from kms2.core.model.global_semantic.global_event_hub import (
     GlobalEventHubDefinition,
     GlobalEventHubSynthesisInput,
 )
@@ -42,6 +42,3 @@ class GlobalEventHubModule(dspy.Module):
     ) -> GlobalEventHubDefinition:
         """Synthesize an event hub asynchronously."""
         return (await self.predictor.acall(request=request)).definition
-
-
-__all__ = ['GlobalEventHubModule', 'GlobalEventHubSignature']

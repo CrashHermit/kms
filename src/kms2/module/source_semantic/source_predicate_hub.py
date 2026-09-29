@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_predicate_hub import (
     SourcePredicateHubDefinition,
     SourcePredicateHubSynthesisInput,
 )
@@ -42,6 +42,3 @@ class SourcePredicateHubModule(dspy.Module):
     ) -> SourcePredicateHubDefinition:
         """Synthesize a predicate hub asynchronously."""
         return (await self.predictor.acall(request=request)).definition
-
-
-__all__ = ['SourcePredicateHubModule', 'SourcePredicateHubSignature']

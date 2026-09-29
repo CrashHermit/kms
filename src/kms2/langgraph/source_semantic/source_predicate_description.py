@@ -1,12 +1,13 @@
 """LangGraph registration for source predicate descriptions."""
 
+from langgraph.graph import StateGraph
+
 from kms2.node.source_semantic.source_predicate_description import (
     SourcePredicateDescriptionNode,
 )
 from kms2.node.source_semantic.source_predicate_description_load import (
     SourcePredicateDescriptionLoadNode,
 )
-from langgraph.graph import StateGraph
 
 
 def add_source_predicate_description_phase(

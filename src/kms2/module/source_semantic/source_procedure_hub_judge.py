@@ -43,6 +43,3 @@ class SourceProcedureHubJudgeModule(dspy.Module):
     ) -> list[SourceProcedureHubJudgeDecision]:
         """Judge procedure pairs asynchronously."""
         return (await self.predictor.acall(requests=requests)).decisions
-
-
-__all__ = ['SourceProcedureHubJudgeModule', 'SourceProcedureHubJudgeSignature']

@@ -141,7 +141,7 @@ def test_loads_structured_fact_context_inputs(tmp_path):
         'atomic_fact_extractor',
         triplet_extractor._FactSignature,
         {
-            'request': models.FactExtractionInput(
+            'request': models.SourceFactExtractionInput(
                 context_before=[
                     models.NodeInput(
                         index=1, node_type='paragraph', text='Before'

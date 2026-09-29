@@ -7,6 +7,3 @@ class VisualAsset(Vertex):
     """One visual asset attached to source content."""
 
     path: str
-
-
-__all__ = ['VisualAsset']

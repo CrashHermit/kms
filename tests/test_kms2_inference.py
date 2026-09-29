@@ -56,7 +56,7 @@ def _stage_inference(strategy: PredictorStrategy) -> StageInferenceSettings:
     )
 
 
-def test_stage_inference_defaults_match_gemma_sampling_recommendations():
+def test_inference_defaults_match_model_recommendations():
     settings = StageInferenceSettings(model_server_profile='text')
     text_settings = TextInferenceSettings()
 
@@ -64,6 +64,10 @@ def test_stage_inference_defaults_match_gemma_sampling_recommendations():
     assert settings.top_p == 0.95
     assert settings.top_k == 64
     assert settings.max_tokens == 8192
+    assert text_settings.model_server_profile == 'qwen3.8-9b-distill-text'
+    assert text_settings.temperature == 0.6
+    assert text_settings.top_p == 0.95
+    assert text_settings.top_k == 20
     assert text_settings.max_tokens == 16384
 
 
@@ -75,7 +79,7 @@ def test_runtime_predictor_forwards_inference_options(monkeypatch):
         'kms2.local_models.runtime.dspy.Predict', _RecordingPredictor
     )
 
-    from kms2.local_models import LocalModelRuntime
+    from kms2.local_models.runtime import LocalModelRuntime
 
     runtime = LocalModelRuntime(LocalModelRuntimeSettings())
     runtime._router = _Router()
@@ -111,7 +115,7 @@ def test_runtime_predictor_supports_configured_strategies(monkeypatch):
         'kms2.local_models.runtime.dspy.ChainOfThought',
         _RecordingChainOfThought,
     )
-    from kms2.local_models import LocalModelRuntime
+    from kms2.local_models.runtime import LocalModelRuntime
 
     runtime = LocalModelRuntime(LocalModelRuntimeSettings())
     runtime._router = _Router()

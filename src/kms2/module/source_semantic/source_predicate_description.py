@@ -2,7 +2,9 @@
 
 import dspy
 
-from kms2.core.model import SourcePredicateDescriptionInput
+from kms2.core.model.source_semantic.source_predicate import (
+    SourcePredicateDescriptionInput,
+)
 
 
 class SourcePredicateDescriptionSignature(dspy.Signature):
@@ -41,9 +43,3 @@ class SourcePredicateDescriptionModule(dspy.Module):
     ) -> str:
         """Describe one predicate occurrence asynchronously."""
         return (await self.predictor.acall(request=request)).description
-
-
-__all__ = [
-    'SourcePredicateDescriptionModule',
-    'SourcePredicateDescriptionSignature',
-]

@@ -5,7 +5,11 @@ from typing import Literal, TypedDict, cast
 from langgraph.types import Send
 
 from kms2.core.embedding import EmbeddingClient
-from kms2.core.model import EmbeddingRequest, EmbeddingResult, SourcePage
+from kms2.core.model.page import SourcePage
+from kms2.core.model.source_processing.embedding import (
+    EmbeddingRequest,
+    EmbeddingResult,
+)
 from kms2.langgraph.source_processing.state import SourceProcessingState
 
 

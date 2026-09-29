@@ -146,6 +146,7 @@ def _model_server_preset_ini(
             f'parallel = {profile.parallel}',
             f'flash-attn = {profile.flash_attention}',
             f'reasoning = {profile.reasoning}',
+            f'reasoning-budget = {profile.reasoning_budget}',
             f'threads = {profile.threads}',
         ]
     )

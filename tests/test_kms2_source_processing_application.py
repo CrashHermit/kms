@@ -1,6 +1,8 @@
 import dspy
 
-from kms2 import composition
+from kms2.composition.global_semantic import build_global_semantic_graph
+from kms2.composition.source_processing import build_source_processing_graph
+from kms2.composition.source_semantic import build_source_semantic_graph
 from kms2.config.inference import (
     ContextWindowSettings,
     PredictorStrategy,
@@ -27,12 +29,14 @@ from kms2.langgraph.source_semantic.graph import SourceSemanticGraph
 from kms2.module.source_processing.content_correction import (
     ContentCorrectorModule,
 )
-from kms2.module.source_semantic.fact_extraction import FactExtractorModule
 from kms2.module.source_semantic.source_entity_hub_judge import (
     SourceEntityHubJudgeModule,
 )
 from kms2.module.source_semantic.source_event_hub_judge import (
     SourceEventHubJudgeModule,
+)
+from kms2.module.source_semantic.source_fact_extraction import (
+    SourceFactExtractorModule,
 )
 from kms2.module.source_semantic.source_predicate_hub_judge import (
     SourcePredicateHubJudgeModule,
@@ -202,9 +206,7 @@ def test_build_source_processing_graph_composes_all_source_dependencies():
     local_models.calls = []
     database = DatabaseClient(settings.database)
 
-    graph = composition.build_source_processing_graph(
-        settings, local_models, database
-    )
+    graph = build_source_processing_graph(settings, local_models, database)
 
     assert isinstance(graph, SourceProcessingGraph)
     assert isinstance(graph.ocr, OCRNode)
@@ -307,19 +309,19 @@ def test_all_composed_dspy_modules_are_recorded(tmp_path):
     database = DatabaseClient(settings.database)
     recorder = Recorder(tmp_path)
 
-    processing_graph = composition.build_source_processing_graph(
+    processing_graph = build_source_processing_graph(
         settings,
         local_models,
         database,
         recorder=recorder,
     )
-    semantic_graph = composition.build_source_semantic_graph(
+    semantic_graph = build_source_semantic_graph(
         settings,
         local_models,
         database,
         recorder=recorder,
     )
-    global_graph = composition.build_global_semantic_graph(
+    global_graph = build_global_semantic_graph(
         settings,
         local_models,
         database,
@@ -350,8 +352,8 @@ def test_all_composed_dspy_modules_are_recorded(tmp_path):
     )
     _assert_recorded_modules(
         [
-            semantic_graph.fact_extraction._extractor,
-            semantic_graph.triplet_decomposition._decomposer,
+            semantic_graph.source_fact_extraction._extractor,
+            semantic_graph.source_triplet_decomposition._decomposer,
             semantic_graph.source_entity_description._module,
             semantic_graph.source_event_description._module,
             semantic_graph.source_predicate_description._module,
@@ -395,7 +397,7 @@ def test_build_source_processing_graph_wraps_predictors_when_recording_is_enable
     database = DatabaseClient(settings.database)
     recorder = Recorder(tmp_path)
 
-    graph = composition.build_source_processing_graph(
+    graph = build_source_processing_graph(
         settings,
         local_models,
         database,
@@ -417,17 +419,17 @@ def test_build_source_semantic_graph_wraps_predictors_when_recording_is_enabled(
     database = DatabaseClient(settings.database)
     recorder = Recorder(tmp_path)
 
-    graph = composition.build_source_semantic_graph(
+    graph = build_source_semantic_graph(
         settings,
         local_models,
         database,
         recorder=recorder,
     )
 
-    predictor = graph.fact_extraction._extractor.predictor
+    predictor = graph.source_fact_extraction._extractor.predictor
     assert isinstance(predictor, RecordingModule)
     assert type(predictor.predictor) is dspy.Predict
-    assert predictor.module is FactExtractorModule
+    assert predictor.module is SourceFactExtractorModule
 
 
 def test_build_source_semantic_graph_composes_independent_hub_judges():
@@ -436,9 +438,7 @@ def test_build_source_semantic_graph_composes_independent_hub_judges():
     local_models.calls = []
     database = DatabaseClient(settings.database)
 
-    graph = composition.build_source_semantic_graph(
-        settings, local_models, database
-    )
+    graph = build_source_semantic_graph(settings, local_models, database)
 
     assert isinstance(graph, SourceSemanticGraph)
     assert isinstance(
@@ -463,11 +463,11 @@ def test_build_source_semantic_graph_composes_independent_hub_judges():
         profile
         for profile, _, signature in local_models.calls
         if signature is SourceTripletHubSignature
-    ] == ['gemma-text-32k']
+    ] == ['qwen3.8-9b-distill-text']
     assert [profile for profile, _, _ in local_models.calls[:2]] == [
-        'gemma-text-32k',
-        'gemma-text-32k',
+        'qwen3.8-9b-distill-text',
+        'qwen3.8-9b-distill-text',
     ]
     assert [profile for profile, _, _ in local_models.calls[2:12]] == [
-        'gemma-text-32k',
+        'qwen3.8-9b-distill-text',
     ] * 10

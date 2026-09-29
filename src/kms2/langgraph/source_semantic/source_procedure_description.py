@@ -1,12 +1,13 @@
 """LangGraph registration for source procedure descriptions."""
 
+from langgraph.graph import StateGraph
+
 from kms2.node.source_semantic.source_procedure_description import (
     SourceProcedureDescriptionNode,
 )
 from kms2.node.source_semantic.source_procedure_description_load import (
     SourceProcedureDescriptionLoadNode,
 )
-from langgraph.graph import StateGraph
 
 
 def add_source_procedure_description_phase(

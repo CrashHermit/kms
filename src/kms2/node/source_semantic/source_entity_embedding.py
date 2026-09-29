@@ -5,7 +5,9 @@ from typing import Literal, TypedDict
 from langgraph.types import Send
 
 from kms2.core.embedding import EmbeddingClient
-from kms2.core.model import SourceEntityDescriptionResult
+from kms2.core.model.source_semantic.source_entity import (
+    SourceEntityDescriptionResult,
+)
 from kms2.langgraph.source_semantic.state import SourceSemanticState
 
 

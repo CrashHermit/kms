@@ -62,11 +62,11 @@ def test_kms2_defaults_include_pointer_source_processing_stages(monkeypatch):
     )
     assert (
         settings.source_processing.statement_procedure.role_typer.model_server_profile
-        == ('gemma-text-32k')
+        == ('qwen3.8-9b-distill-text')
     )
     assert (
         settings.source_processing.exercise_finder.start_router.model_server_profile
-        == 'gemma-text-32k'
+        == 'qwen3.8-9b-distill-text'
     )
     assert (
         settings.source_processing.instruction_governance.context_window.forward_budget
@@ -127,7 +127,7 @@ def test_kms2_source_hub_settings_are_independent(monkeypatch):
 
     assert (
         settings.source_semantic.source_entity_hubs.inference.model_server_profile
-        == ('gemma-text-32k')
+        == ('qwen3.8-9b-distill-text')
     )
     assert settings.source_semantic.source_event_hubs.candidate_limit == 32
     assert (
@@ -194,7 +194,7 @@ def test_kms2_hub_filtering_settings_are_independent(monkeypatch):
     assert settings.source_semantic.source_entity_hubs.judge_batch_size == 16
     assert (
         settings.source_semantic.source_event_hubs.judge.model_server_profile
-        == ('gemma-text-32k')
+        == ('qwen3.8-9b-distill-text')
     )
 
 
@@ -222,21 +222,22 @@ def test_kms2_training_examples_use_nested_environment(monkeypatch, tmp_path):
 
 def test_kms2_semantic_defaults_survive_nested_environment(monkeypatch):
     monkeypatch.setenv(
-        'KMS2_SOURCE_SEMANTIC__FACT_EXTRACTION__MAX_TOKENS',
+        'KMS2_SOURCE_SEMANTIC__SOURCE_FACT_EXTRACTION__MAX_TOKENS',
         '4096',
     )
 
     settings = Settings()
 
-    assert settings.source_semantic.fact_extraction.max_tokens == 4096
-    assert settings.source_semantic.fact_extraction.model_server_profile == (
-        'gemma-text-32k'
+    assert settings.source_semantic.source_fact_extraction.max_tokens == 4096
+    assert (
+        settings.source_semantic.source_fact_extraction.model_server_profile
+        == ('qwen3.8-9b-distill-text')
     )
     assert (
-        settings.source_semantic.triplet_decomposition.model_server_profile
-        == ('gemma-text-32k')
+        settings.source_semantic.source_triplet_decomposition.model_server_profile
+        == ('qwen3.8-9b-distill-text')
     )
-    assert settings.source_semantic.fact_extraction.num_retries == 0
+    assert settings.source_semantic.source_fact_extraction.num_retries == 0
 
 
 def test_kms2_source_triplet_hub_inference_is_independent(monkeypatch):

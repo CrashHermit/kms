@@ -1,7 +1,8 @@
 """LangGraph registration for instruction discovery."""
 
-from kms2.node.source_processing.instruction_finder import InstructionFinderNode
 from langgraph.graph import StateGraph
+
+from kms2.node.source_processing.instruction_finder import InstructionFinderNode
 
 
 def add_instruction_finder_phase(

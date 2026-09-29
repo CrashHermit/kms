@@ -1,7 +1,8 @@
 """LangGraph registration for the KMS2 persistence phase."""
 
-from kms2.node.source_processing.persistence import SourcePersistenceNode
 from langgraph.graph import END, StateGraph
+
+from kms2.node.source_processing.persistence import SourcePersistenceNode
 
 
 def add_persistence_phase(

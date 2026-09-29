@@ -16,6 +16,3 @@ class SourceBlock(Vertex):
     crop_path: str | None = None
     crop_bbox: tuple[int, int, int, int] | None = None
     assets: list[VisualAsset] = Field(default_factory=list)
-
-
-__all__ = ['SourceBlock']

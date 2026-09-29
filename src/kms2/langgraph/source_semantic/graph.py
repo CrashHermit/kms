@@ -1,6 +1,8 @@
 """Complete semantic LangGraph assembly for KMS2."""
 
-from kms2.langgraph.source_semantic.facts import add_fact_phase
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.state import CompiledStateGraph
+
 from kms2.langgraph.source_semantic.source_entity import add_source_entity_phase
 from kms2.langgraph.source_semantic.source_entity_description import (
     add_source_entity_description_phase,
@@ -15,6 +17,7 @@ from kms2.langgraph.source_semantic.source_event_description import (
 from kms2.langgraph.source_semantic.source_event_hub import (
     add_source_event_hub_phase,
 )
+from kms2.langgraph.source_semantic.source_facts import add_source_fact_phase
 from kms2.langgraph.source_semantic.source_predicate import (
     add_source_predicate_phase,
 )
@@ -45,9 +48,10 @@ from kms2.langgraph.source_semantic.source_statement_hub import (
 from kms2.langgraph.source_semantic.source_triplet_hub import (
     add_source_triplet_hub_phase,
 )
+from kms2.langgraph.source_semantic.source_triplets import (
+    add_source_triplet_phase,
+)
 from kms2.langgraph.source_semantic.state import SourceSemanticState
-from kms2.langgraph.source_semantic.triplets import add_triplet_phase
-from kms2.node.source_semantic.fact_extraction import FactExtractionNode
 from kms2.node.source_semantic.source_entity_description import (
     SourceEntityDescriptionNode,
 )
@@ -79,6 +83,12 @@ from kms2.node.source_semantic.source_event_hub_persistence import (
 )
 from kms2.node.source_semantic.source_event_persistence import (
     SourceEventPersistenceNode,
+)
+from kms2.node.source_semantic.source_fact_extraction import (
+    SourceFactExtractionNode,
+)
+from kms2.node.source_semantic.source_fact_persistence import (
+    SourceFactPersistenceNode,
 )
 from kms2.node.source_semantic.source_predicate_description import (
     SourcePredicateDescriptionNode,
@@ -134,17 +144,22 @@ from kms2.node.source_semantic.source_statement_hub_persistence import (
 from kms2.node.source_semantic.source_statement_persistence import (
     SourceStatementPersistenceNode,
 )
+from kms2.node.source_semantic.source_triplet_decomposition import (
+    SourceTripletDecompositionNode,
+)
+from kms2.node.source_semantic.source_triplet_fact_load import (
+    SourceTripletFactLoadNode,
+)
 from kms2.node.source_semantic.source_triplet_hub import SourceTripletHubNode
 from kms2.node.source_semantic.source_triplet_hub_persistence import (
     SourceTripletHubPersistenceNode,
 )
-from kms2.node.source_semantic.triplet_decomposition import (
-    TripletDecompositionNode,
+from kms2.node.source_semantic.source_triplet_load import (
+    SourceFactSourceLoadNode,
 )
-from kms2.node.source_semantic.triplet_load import TripletSourceLoadNode
-from kms2.node.source_semantic.triplet_persistence import TripletPersistenceNode
-from langgraph.graph import END, START, StateGraph
-from langgraph.graph.state import CompiledStateGraph
+from kms2.node.source_semantic.source_triplet_persistence import (
+    SourceTripletPersistenceNode,
+)
 
 
 class SourceSemanticGraph:
@@ -152,10 +167,12 @@ class SourceSemanticGraph:
 
     def __init__(
         self,
-        triplet_source_load: TripletSourceLoadNode,
-        fact_extraction: FactExtractionNode,
-        triplet_decomposition: TripletDecompositionNode,
-        triplet_persistence: TripletPersistenceNode,
+        source_fact_source_load: SourceFactSourceLoadNode,
+        source_fact_extraction: SourceFactExtractionNode,
+        source_fact_persistence: SourceFactPersistenceNode,
+        source_triplet_fact_load: SourceTripletFactLoadNode,
+        source_triplet_decomposition: SourceTripletDecompositionNode,
+        source_triplet_persistence: SourceTripletPersistenceNode,
         source_entity_description_load: SourceEntityDescriptionLoadNode,
         source_entity_description: SourceEntityDescriptionNode,
         source_entity_embedding: SourceEntityEmbeddingNode,
@@ -190,10 +207,12 @@ class SourceSemanticGraph:
         source_triplet_hub_persistence: SourceTripletHubPersistenceNode,
     ) -> None:
         self.graph = StateGraph(SourceSemanticState)
-        self.triplet_source_load = triplet_source_load
-        self.fact_extraction = fact_extraction
-        self.triplet_decomposition = triplet_decomposition
-        self.triplet_persistence = triplet_persistence
+        self.source_fact_source_load = source_fact_source_load
+        self.source_fact_extraction = source_fact_extraction
+        self.source_fact_persistence = source_fact_persistence
+        self.source_triplet_fact_load = source_triplet_fact_load
+        self.source_triplet_decomposition = source_triplet_decomposition
+        self.source_triplet_persistence = source_triplet_persistence
         self.source_entity_description_load = source_entity_description_load
         self.source_entity_description = source_entity_description
         self.source_entity_embedding = source_entity_embedding
@@ -237,13 +256,26 @@ class SourceSemanticGraph:
 
     def build_graph(self) -> CompiledStateGraph:
         """Compile the complete semantic graph."""
-        self.graph.add_node('triplet_source_load', self.triplet_source_load.run)
-        self.graph.add_edge(START, 'triplet_source_load')
-        add_fact_phase(self.graph, self.fact_extraction)
-        add_triplet_phase(self.graph, self.triplet_decomposition)
-        self.graph.add_node('triplet_persistence', self.triplet_persistence.run)
-        self.graph.add_edge('triplet_collect', 'triplet_persistence')
-
+        self.graph.add_node(
+            'source_fact_load', self.source_fact_source_load.run
+        )
+        self.graph.add_edge(START, 'source_fact_load')
+        add_source_fact_phase(
+            self.graph,
+            self.source_fact_extraction,
+            self.source_fact_persistence,
+        )
+        add_source_triplet_phase(
+            self.graph,
+            self.source_triplet_fact_load,
+            self.source_triplet_decomposition,
+        )
+        self.graph.add_node(
+            'source_triplet_persistence', self.source_triplet_persistence.run
+        )
+        self.graph.add_edge(
+            'source_triplet_collect', 'source_triplet_persistence'
+        )
         add_source_entity_description_phase(
             self.graph,
             self.source_entity_description_load,

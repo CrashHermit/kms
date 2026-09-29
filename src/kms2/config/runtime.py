@@ -16,6 +16,7 @@ class ModelServerProfileSettings(BaseModel):
     parallel: int = 1
     flash_attention: str = 'on'
     reasoning: str = 'off'
+    reasoning_budget: int = -1
     threads: int = 0
 
 
@@ -57,6 +58,7 @@ class RouterServerSettings(LlamaServerSettings):
                 context_size=32768,
                 cache_type_v='q4_0',
                 reasoning='on',
+                reasoning_budget=2048,
             ),
         }
     )

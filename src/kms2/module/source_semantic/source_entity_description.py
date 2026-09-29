@@ -2,7 +2,9 @@
 
 import dspy
 
-from kms2.core.model import SourceEntityDescriptionInput
+from kms2.core.model.source_semantic.source_entity import (
+    SourceEntityDescriptionInput,
+)
 
 
 class SourceEntityDescriptionSignature(dspy.Signature):
@@ -39,6 +41,3 @@ class SourceEntityDescriptionModule(dspy.Module):
     async def aforward(self, *, request: SourceEntityDescriptionInput) -> str:
         """Describe one entity occurrence asynchronously."""
         return (await self.predictor.acall(request=request)).description
-
-
-__all__ = ['SourceEntityDescriptionModule', 'SourceEntityDescriptionSignature']

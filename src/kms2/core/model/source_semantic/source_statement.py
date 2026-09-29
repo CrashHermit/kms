@@ -38,12 +38,3 @@ class SourceStatementDescriptionResult(SourceStatementDescriptionTarget):
 
     description: str = Field(min_length=1)
     embedding: list[float] | None = None
-
-
-__all__ = [
-    'SourceStatement',
-    'SourceStatementDescriptionInput',
-    'SourceStatementDescriptionRequest',
-    'SourceStatementDescriptionResult',
-    'SourceStatementDescriptionTarget',
-]

@@ -1,11 +1,12 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
 from kms2 import application
 from kms2.config.services import TrainingSettings
 from kms2.config.settings import Settings
-from kms2.core.model import Source
+from kms2.core.model.source import Source
 
 
 class _Runtime:
@@ -105,6 +106,147 @@ class _ComposedGraph:
         return self.graph
 
 
+class _UserService:
+    def __init__(self, session_factory):
+        self.session_factory = session_factory
+
+    async def attach_new_source(self, user_uuid, source_uuid):
+        return None
+
+    async def list_sources(self, user_uuid):
+        return [Source(uuid='result-source', key='book.pdf')]
+
+    async def list_users(self):
+        return []
+
+    async def create_user(self, name):
+        return SimpleNamespace(name=name)
+
+    async def list_unowned_sources(self):
+        return []
+
+    async def adopt_source(self, user_uuid, source_uuid):
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _use_fake_user_service(monkeypatch):
+    monkeypatch.setattr(application, 'UserService', _UserService)
+
+
+def test_create_user_ensures_structural_schema_and_closes_database(
+    monkeypatch,
+):
+    settings = Settings()
+    database = _Database(settings.database)
+    schema_calls = []
+    service_calls = []
+    user = SimpleNamespace(name='Alex')
+
+    async def ensure_structural_schema(session_factory):
+        schema_calls.append(session_factory)
+
+    class _UserServiceSpy:
+        def __init__(self, session_factory):
+            service_calls.append(('init', session_factory))
+
+        async def create_user(self, name):
+            service_calls.append(('create', name))
+            return user
+
+    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
+    monkeypatch.setattr(
+        application.schema,
+        'ensure_structural_schema',
+        ensure_structural_schema,
+    )
+    monkeypatch.setattr(application, 'UserService', _UserServiceSpy)
+
+    assert asyncio.run(application.create_user(settings, 'Alex')) is user
+    assert schema_calls == [database.session]
+    assert service_calls == [('init', database.session), ('create', 'Alex')]
+    assert database.closed is True
+
+
+def test_source_semantic_rejects_source_outside_user_before_runtime(
+    monkeypatch,
+):
+    settings = Settings()
+    database = _Database(settings.database)
+    runtime_calls = []
+
+    class _NoSources:
+        def __init__(self, session_factory):
+            pass
+
+        async def list_sources(self, user_uuid):
+            assert user_uuid == 'user-1'
+            return []
+
+    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
+    monkeypatch.setattr(application, 'UserService', _NoSources)
+    monkeypatch.setattr(
+        application,
+        'LocalModelRuntime',
+        lambda _: runtime_calls.append(True),
+    )
+
+    with pytest.raises(ValueError, match='not owned by user'):
+        asyncio.run(
+            application.run_source_semantic_stage(
+                settings,
+                'user-1',
+                'source-foreign',
+            )
+        )
+
+    assert database.closed is True
+    assert runtime_calls == []
+
+
+def test_ingest_does_not_report_success_when_ownership_attach_fails(
+    monkeypatch,
+):
+    settings = Settings()
+    database = _Database(settings.database)
+    graph = _SourceProcessingGraph()
+    events = []
+
+    async def ensure_schema(session_factory, *, embedding_dimension):
+        return None
+
+    class _FailingOwnership:
+        def __init__(self, session_factory):
+            pass
+
+        async def attach_new_source(self, user_uuid, source_uuid):
+            events.append(('attach', user_uuid, source_uuid))
+            raise RuntimeError('ownership failed')
+
+    monkeypatch.setattr(application.schema, 'ensure_schema', ensure_schema)
+    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
+    monkeypatch.setattr(application, 'LocalModelRuntime', _Runtime)
+    monkeypatch.setattr(application, 'UserService', _FailingOwnership)
+    monkeypatch.setattr(
+        application,
+        'build_source_processing_graph',
+        lambda *args, **kwargs: _ComposedGraph(graph),
+    )
+
+    with pytest.raises(RuntimeError, match='ownership failed'):
+        asyncio.run(
+            application.ingest_source(
+                settings,
+                'user-1',
+                'fixtures/book.pdf',
+            )
+        )
+
+    assert graph.initial_state is not None
+    assert events == [('attach', 'user-1', 'result-source')]
+    assert database.closed is True
+
+
 def test_ingest_source_reports_all_final_state_counts(monkeypatch):
     settings = Settings()
     runtime = _Runtime(settings.local_models)
@@ -138,7 +280,12 @@ def test_ingest_source_reports_all_final_state_counts(monkeypatch):
     monkeypatch.setattr(application, 'build_source_processing_graph', compose)
 
     result = asyncio.run(
-        application.ingest_source(settings, 'fixtures/book.pdf', [0, 2])
+        application.ingest_source(
+            settings,
+            'user-1',
+            'fixtures/book.pdf',
+            [0, 2],
+        )
     )
 
     assert runtime.entered is True
@@ -183,7 +330,9 @@ def test_ingest_source_closes_database_when_graph_fails(monkeypatch):
     )
 
     with pytest.raises(RuntimeError, match='graph failed'):
-        asyncio.run(application.ingest_source(settings, 'fixtures/book.pdf'))
+        asyncio.run(
+            application.ingest_source(settings, 'user-1', 'fixtures/book.pdf')
+        )
 
     assert database.closed is True
 
@@ -206,7 +355,9 @@ def test_ingest_source_passes_one_opt_in_recorder(monkeypatch, tmp_path):
 
     monkeypatch.setattr(application, 'build_source_processing_graph', compose)
 
-    asyncio.run(application.ingest_source(settings, 'fixtures/book.pdf'))
+    asyncio.run(
+        application.ingest_source(settings, 'user-1', 'fixtures/book.pdf')
+    )
 
     assert len(recorder_calls) == 1
     assert isinstance(recorder_calls[0], application.Recorder)
@@ -215,7 +366,7 @@ def test_ingest_source_passes_one_opt_in_recorder(monkeypatch, tmp_path):
     assert recorder_calls[0]._run_directory.name.endswith('Z')
 
 
-def test_list_sources_closes_database_and_returns_sources(monkeypatch):
+def test_list_sources_closes_database_and_returns_user_sources(monkeypatch):
     settings = Settings()
     database = _Database(settings.database)
     sources = [
@@ -224,19 +375,18 @@ def test_list_sources_closes_database_and_returns_sources(monkeypatch):
     ]
     repository_calls = []
 
-    class _SourceRepository:
+    class _SourceService:
         def __init__(self, session_factory):
             repository_calls.append(session_factory)
 
-        async def list_sources(self):
+        async def list_sources(self, user_uuid):
+            assert user_uuid == 'user-1'
             return sources
 
     monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
-    monkeypatch.setattr(
-        application, 'SourceCatalogRepository', _SourceRepository
-    )
+    monkeypatch.setattr(application, 'UserService', _SourceService)
 
-    result = asyncio.run(application.list_sources(settings))
+    result = asyncio.run(application.list_sources(settings, 'user-1'))
 
     assert result == sources
     assert len(repository_calls) == 1
@@ -272,7 +422,11 @@ def test_run_source_semantic_stage_uses_one_complete_semantic_graph(
     monkeypatch.setattr(application, 'build_source_semantic_graph', compose)
 
     result = asyncio.run(
-        application.run_source_semantic_stage(settings, 'result-source')
+        application.run_source_semantic_stage(
+            settings,
+            'user-1',
+            'result-source',
+        )
     )
 
     assert result.triplet_count == 2
@@ -332,6 +486,7 @@ def test_combined_pipeline_reuses_resources_and_recorder(monkeypatch, tmp_path):
     result = asyncio.run(
         application.ingest_and_run_source_semantic_stage(
             settings,
+            'user-1',
             'fixtures/book.pdf',
         )
     )
@@ -367,7 +522,9 @@ def test_schema_failure_closes_database_before_starting_runtime(monkeypatch):
     )
 
     with pytest.raises(RuntimeError, match='schema failed'):
-        asyncio.run(application.ingest_source(settings, 'fixtures/book.pdf'))
+        asyncio.run(
+            application.ingest_source(settings, 'user-1', 'fixtures/book.pdf')
+        )
 
     assert database.closed is True
     assert runtime.entered is False
@@ -409,7 +566,7 @@ def test_ingest_source_cancellation_closes_runtime_before_database(monkeypatch):
 
     async def exercise():
         task = asyncio.create_task(
-            application.ingest_source(settings, 'fixtures/book.pdf')
+            application.ingest_source(settings, 'user-1', 'fixtures/book.pdf')
         )
         await started.wait()
         task.cancel()
@@ -432,8 +589,10 @@ def test_run_global_semantic_stage_reports_global_hub_count(monkeypatch):
                 'global_entity_hub_count': 1,
                 'global_event_hub_count': 2,
                 'global_predicate_hub_count': 4,
+                'global_triplet_count': 6,
+                'global_triplet_hub_count': 7,
                 'global_statement_hub_count': 3,
-                'global_procedure_hub_count': 5,
+                'global_procedure_hub_count': 1,
             }
 
     monkeypatch.setattr(application, 'LocalModelRuntime', lambda _: runtime)
@@ -449,6 +608,8 @@ def test_run_global_semantic_stage_reports_global_hub_count(monkeypatch):
     assert result.global_entity_hub_count == 1
     assert result.global_event_hub_count == 2
     assert result.global_predicate_hub_count == 4
+    assert result.global_triplet_count == 6
+    assert result.global_triplet_hub_count == 7
     assert result.global_statement_hub_count == 3
-    assert result.global_procedure_hub_count == 5
+    assert result.global_procedure_hub_count == 1
     assert database.closed is True

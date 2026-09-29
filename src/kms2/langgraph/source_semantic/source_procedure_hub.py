@@ -1,12 +1,13 @@
 """LangGraph registration for source procedure hub discovery."""
 
+from langgraph.graph import StateGraph
+
 from kms2.node.source_semantic.source_procedure_hub import (
     SourceProcedureHubNode,
 )
 from kms2.node.source_semantic.source_procedure_hub_persistence import (
     SourceProcedureHubPersistenceNode,
 )
-from langgraph.graph import StateGraph
 
 
 def add_source_procedure_hub_phase(

@@ -1,12 +1,13 @@
 """LangGraph registration for source statement embeddings and persistence."""
 
+from langgraph.graph import StateGraph
+
 from kms2.node.source_semantic.source_statement_embedding import (
     SourceStatementEmbeddingNode,
 )
 from kms2.node.source_semantic.source_statement_persistence import (
     SourceStatementPersistenceNode,
 )
-from langgraph.graph import StateGraph
 
 
 def add_source_statement_phase(

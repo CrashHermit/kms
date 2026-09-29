@@ -54,7 +54,7 @@ def test_node_context_rejects_extra_fields() -> None:
 
 
 def test_fact_extraction_input_subclasses_node_context_input() -> None:
-    context = models.FactExtractionInput(
+    context = models.SourceFactExtractionInput(
         context_before=[_node(1, 'paragraph', 'Before')],
         target_node=_node(1, 'paragraph', 'Target'),
         context_after=[_node(1, 'paragraph', 'After')],

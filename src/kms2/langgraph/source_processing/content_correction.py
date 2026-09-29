@@ -1,7 +1,8 @@
 """LangGraph registration for the content-correction phase."""
 
-from kms2.node.source_processing.content_correction import ContentCorrectionNode
 from langgraph.graph import StateGraph
+
+from kms2.node.source_processing.content_correction import ContentCorrectionNode
 
 
 def add_content_correction_phase(

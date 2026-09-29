@@ -1,7 +1,8 @@
 """LangGraph registration for the source exercise splitter phase."""
 
-from kms2.node.source_processing.exercise_splitter import ExerciseSplitterNode
 from langgraph.graph import StateGraph
+
+from kms2.node.source_processing.exercise_splitter import ExerciseSplitterNode
 
 
 def add_exercise_splitter_phase(

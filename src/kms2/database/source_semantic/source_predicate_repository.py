@@ -2,13 +2,15 @@
 
 from collections.abc import Callable
 
-from kms2.core.model import (
+from kms2.core.model.similarity import SourcePredicateSimilarityMatch
+from kms2.core.model.source_semantic.source_predicate import (
     SourcePredicate,
     SourcePredicateDescriptionResult,
+)
+from kms2.core.model.source_semantic.source_predicate_hub import (
     SourcePredicateHub,
     SourcePredicateHubCandidate,
     SourcePredicateHubMember,
-    SourcePredicateSimilarityMatch,
 )
 from kms2.database.source_semantic.queries.source_predicate import (
     DETECT_SOURCE_PREDICATE_COMMUNITIES,

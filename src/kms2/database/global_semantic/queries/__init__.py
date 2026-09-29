@@ -1,1 +1,0 @@
-"""Global semantic Cypher queries."""

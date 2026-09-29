@@ -1,10 +1,11 @@
 """LangGraph registration for source triplet hub synthesis."""
 
+from langgraph.graph import StateGraph
+
 from kms2.node.source_semantic.source_triplet_hub import SourceTripletHubNode
 from kms2.node.source_semantic.source_triplet_hub_persistence import (
     SourceTripletHubPersistenceNode,
 )
-from langgraph.graph import StateGraph
 
 
 def add_source_triplet_hub_phase(

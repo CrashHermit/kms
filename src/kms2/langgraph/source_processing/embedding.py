@@ -1,7 +1,8 @@
 """LangGraph registration for the source embedding phase."""
 
-from kms2.node.source_processing.embedding import EmbeddingNode
 from langgraph.graph import StateGraph
+
+from kms2.node.source_processing.embedding import EmbeddingNode
 
 
 def add_embedding_phase(graph: StateGraph, node: EmbeddingNode) -> None:

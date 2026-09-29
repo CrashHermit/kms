@@ -1,7 +1,8 @@
 """LangGraph registration for pedagogical discovery."""
 
-from kms2.node.source_processing.pedagogical_finder import PedagogicalFinderNode
 from langgraph.graph import StateGraph
+
+from kms2.node.source_processing.pedagogical_finder import PedagogicalFinderNode
 
 
 def add_pedagogical_finder_phase(

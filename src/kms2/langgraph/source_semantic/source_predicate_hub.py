@@ -1,12 +1,13 @@
 """LangGraph registration for source predicate hub discovery."""
 
+from langgraph.graph import StateGraph
+
 from kms2.node.source_semantic.source_predicate_hub import (
     SourcePredicateHubNode,
 )
 from kms2.node.source_semantic.source_predicate_hub_persistence import (
     SourcePredicateHubPersistenceNode,
 )
-from langgraph.graph import StateGraph
 
 
 def add_source_predicate_hub_phase(

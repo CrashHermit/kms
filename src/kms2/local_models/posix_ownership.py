@@ -80,6 +80,3 @@ def _posix_bootstrap_module() -> str:
     if sys.platform == 'linux':
         return 'kms2.local_models.linux_child'
     return 'kms2.local_models.posix_child'
-
-
-__all__ = ['PosixOwnedProcess', 'PosixProcessOwner']

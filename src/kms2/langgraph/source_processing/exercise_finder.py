@@ -1,7 +1,8 @@
 """LangGraph registration for exercise component discovery."""
 
-from kms2.node.source_processing.exercise_finder import ExerciseFinderNode
 from langgraph.graph import StateGraph
+
+from kms2.node.source_processing.exercise_finder import ExerciseFinderNode
 
 
 def add_exercise_finder_phase(

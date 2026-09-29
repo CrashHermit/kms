@@ -6,7 +6,7 @@ from langgraph.types import Send
 
 from kms2.config.source_semantic import SourcePredicateHubSettings
 from kms2.core.embedding import EmbeddingClient
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_predicate_hub import (
     SourcePredicateHub,
     SourcePredicateHubCandidate,
     SourcePredicateHubJudgeInput,
@@ -424,6 +424,3 @@ def _predicate_judge_input(
         right_object=candidate.right_object,
         right_description=candidate.right_description,
     )
-
-
-__all__ = ['SourcePredicateHubNode']

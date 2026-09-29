@@ -1,7 +1,8 @@
 """LangGraph registration for source image descriptions."""
 
-from kms2.node.source_processing.image_description import ImageDescriptionNode
 from langgraph.graph import StateGraph
+
+from kms2.node.source_processing.image_description import ImageDescriptionNode
 
 
 def add_image_description_phase(

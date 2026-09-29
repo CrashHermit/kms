@@ -6,7 +6,7 @@ from langgraph.types import Send
 
 from kms2.config.source_semantic import SourceStatementHubSettings
 from kms2.core.embedding import EmbeddingClient
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_statement_hub import (
     SourceStatementHub,
     SourceStatementHubCandidate,
     SourceStatementHubJudgeInput,
@@ -381,6 +381,3 @@ def _statement_judge_input(
         left_description=candidate.left_description,
         right_description=candidate.right_description,
     )
-
-
-__all__ = ['SourceStatementHubNode']

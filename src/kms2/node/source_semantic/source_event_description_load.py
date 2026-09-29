@@ -1,7 +1,7 @@
 """Load and project source-local event description requests."""
 
 from kms2.config.inference import ContextWindowSettings
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_event import (
     SourceEventDescriptionInput,
     SourceEventDescriptionRequest,
     SourceEventDescriptionTarget,

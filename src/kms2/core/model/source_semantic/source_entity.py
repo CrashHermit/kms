@@ -37,12 +37,3 @@ class SourceEntityDescriptionResult(SourceEntityDescriptionTarget):
 
     description: str = Field(min_length=1)
     embedding: list[float] | None = None
-
-
-__all__ = [
-    'SourceEntity',
-    'SourceEntityDescriptionInput',
-    'SourceEntityDescriptionRequest',
-    'SourceEntityDescriptionResult',
-    'SourceEntityDescriptionTarget',
-]

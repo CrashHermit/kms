@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_procedure_hub import (
     SourceProcedureHubDefinition,
     SourceProcedureHubSynthesisInput,
 )
@@ -43,6 +43,3 @@ class SourceProcedureHubModule(dspy.Module):
     ) -> SourceProcedureHubDefinition:
         """Synthesize a procedure hub asynchronously."""
         return (await self.predictor.acall(request=request)).definition
-
-
-__all__ = ['SourceProcedureHubModule', 'SourceProcedureHubSignature']

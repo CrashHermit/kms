@@ -4,7 +4,7 @@ from typing import Literal, TypedDict
 
 from langgraph.types import Send
 
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_statement import (
     SourceStatementDescriptionRequest,
     SourceStatementDescriptionResult,
 )

@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model.global_semantic.predicate_hub import (
+from kms2.core.model.global_semantic.global_predicate_hub import (
     GlobalPredicateHubJudgeDecision,
     GlobalPredicateHubJudgeInput,
 )
@@ -44,6 +44,3 @@ class GlobalPredicateHubJudgeModule(dspy.Module):
         """Judge predicate pairs asynchronously."""
         prediction = await self.predictor.acall(requests=requests)
         return prediction.decisions
-
-
-__all__ = ['GlobalPredicateHubJudgeModule', 'GlobalPredicateHubJudgeSignature']

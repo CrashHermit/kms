@@ -5,56 +5,81 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
-from kms2.core.model import (
-    ExtractedFact,
-    FactExtractionResult,
-    SourceBlock,
+from kms2.core.model.block import SourceBlock
+from kms2.core.model.source_semantic.source_entity import (
     SourceEntityDescriptionRequest,
     SourceEntityDescriptionResult,
+)
+from kms2.core.model.source_semantic.source_entity_hub import (
     SourceEntityHub,
     SourceEntityHubCandidate,
     SourceEntityHubJudgeResult,
     SourceEntityHubMember,
     SourceEntityHubRerankResult,
     SourceEntityHubSynthesisResult,
+)
+from kms2.core.model.source_semantic.source_event import (
     SourceEventDescriptionRequest,
     SourceEventDescriptionResult,
+)
+from kms2.core.model.source_semantic.source_event_hub import (
     SourceEventHub,
     SourceEventHubCandidate,
     SourceEventHubJudgeResult,
     SourceEventHubMember,
     SourceEventHubRerankResult,
     SourceEventHubSynthesisResult,
+)
+from kms2.core.model.source_semantic.source_fact_extraction import (
     SourceFact,
+    SourceFactExtractionResult,
+)
+from kms2.core.model.source_semantic.source_predicate import (
     SourcePredicateDescriptionRequest,
     SourcePredicateDescriptionResult,
+)
+from kms2.core.model.source_semantic.source_predicate_hub import (
     SourcePredicateHub,
     SourcePredicateHubCandidate,
     SourcePredicateHubJudgeResult,
     SourcePredicateHubMember,
     SourcePredicateHubRerankResult,
     SourcePredicateHubSynthesisResult,
+)
+from kms2.core.model.source_semantic.source_procedure import (
     SourceProcedureDescriptionRequest,
     SourceProcedureDescriptionResult,
+)
+from kms2.core.model.source_semantic.source_procedure_hub import (
     SourceProcedureHub,
     SourceProcedureHubCandidate,
     SourceProcedureHubJudgeResult,
     SourceProcedureHubMember,
     SourceProcedureHubRerankResult,
     SourceProcedureHubSynthesisResult,
+)
+from kms2.core.model.source_semantic.source_statement import (
     SourceStatementDescriptionRequest,
     SourceStatementDescriptionResult,
+)
+from kms2.core.model.source_semantic.source_statement_hub import (
     SourceStatementHub,
     SourceStatementHubCandidate,
     SourceStatementHubJudgeResult,
     SourceStatementHubMember,
     SourceStatementHubRerankResult,
     SourceStatementHubSynthesisResult,
+)
+from kms2.core.model.source_semantic.source_triplet import (
+    SourceTripletOccurrence,
+)
+from kms2.core.model.source_semantic.source_triplet_decomposition import (
+    SourceTripletDecompositionResult,
+)
+from kms2.core.model.source_semantic.source_triplet_hub import (
     SourceTripletHub,
     SourceTripletHubGroup,
     SourceTripletHubSynthesisResult,
-    SourceTripletOccurrence,
-    TripletDecompositionResult,
 )
 
 
@@ -72,12 +97,11 @@ class SourceSemanticState(BaseModel):
     blocks: Annotated[list[SourceBlock], _keep_loaded_blocks] = Field(
         default_factory=list
     )
-    fact_results: Annotated[list[FactExtractionResult], operator.add] = Field(
-        default_factory=list
+    fact_results: Annotated[list[SourceFactExtractionResult], operator.add] = (
+        Field(default_factory=list)
     )
-    extracted_facts: list[ExtractedFact] = Field(default_factory=list)
     triplet_results: Annotated[
-        list[TripletDecompositionResult], operator.add
+        list[SourceTripletDecompositionResult], operator.add
     ] = Field(default_factory=list)
     source_facts: list[SourceFact] = Field(default_factory=list)
 

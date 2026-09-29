@@ -3,7 +3,7 @@ import asyncio
 from langgraph.graph import END, START, StateGraph
 
 from kms2.config.global_semantic import GlobalEventHubSettings
-from kms2.core.model import (
+from kms2.core.model.global_semantic.global_event_hub import (
     GlobalEventHub,
     GlobalEventHubCandidate,
     GlobalEventHubDefinition,
@@ -11,18 +11,20 @@ from kms2.core.model import (
     GlobalEventHubJudgeInput,
     GlobalEventHubMember,
 )
-from kms2.database.global_semantic.event_hub_repository import (
+from kms2.database.global_semantic.global_event_hub_repository import (
     GlobalEventHubRepository,
 )
-from kms2.database.global_semantic.queries.event_hub import (
+from kms2.database.global_semantic.queries.global_event_hub import (
     DETECT_GLOBAL_EVENT_HUB_COMMUNITIES,
     READ_GLOBAL_EVENT_HUB_CANDIDATES,
     REPLACE_GLOBAL_EVENT_HUB_ACCEPTED_EDGES,
 )
-from kms2.langgraph.global_semantic.event_hub import add_global_event_hub_phase
+from kms2.langgraph.global_semantic.global_event_hub import (
+    add_global_event_hub_phase,
+)
 from kms2.langgraph.global_semantic.state import GlobalSemanticState
-from kms2.node.global_semantic.event_hub import GlobalEventHubNode
-from kms2.node.global_semantic.event_hub_persistence import (
+from kms2.node.global_semantic.global_event_hub import GlobalEventHubNode
+from kms2.node.global_semantic.global_event_hub_persistence import (
     GlobalEventHubPersistenceNode,
 )
 

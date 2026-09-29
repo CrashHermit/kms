@@ -2,15 +2,15 @@ import asyncio
 
 import dspy
 
-from kms2.core.model import (
-    BlockType,
+from kms2.core.model.block import SourceBlock
+from kms2.core.model.block_types import BlockType
+from kms2.core.model.page import SourcePage
+from kms2.core.model.source import Source
+from kms2.core.model.source_processing.image_seam import (
     ImageSeamRequest,
     ImageSeamResult,
-    Source,
-    SourceBlock,
-    SourcePage,
-    VisualAsset,
 )
+from kms2.core.model.visual_asset import VisualAsset
 from kms2.langgraph.source_processing.state import SourceProcessingState
 from kms2.module.source_processing import image_seam
 from kms2.node.source_processing.image_seam import ImageSeamNode

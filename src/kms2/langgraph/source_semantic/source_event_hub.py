@@ -1,10 +1,11 @@
 """LangGraph registration for source event hub discovery."""
 
+from langgraph.graph import StateGraph
+
 from kms2.node.source_semantic.source_event_hub import SourceEventHubNode
 from kms2.node.source_semantic.source_event_hub_persistence import (
     SourceEventHubPersistenceNode,
 )
-from langgraph.graph import StateGraph
 
 
 def add_source_event_hub_phase(

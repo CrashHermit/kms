@@ -2,7 +2,8 @@
 
 import dspy
 
-from kms2.core.model import BlockType, SourceBlockContext
+from kms2.core.model.block_types import BlockType
+from kms2.core.model.context import SourceBlockContext
 
 
 def _block(

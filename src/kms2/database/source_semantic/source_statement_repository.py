@@ -2,9 +2,11 @@
 
 from collections.abc import Callable
 
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_statement import (
     SourceStatement,
     SourceStatementDescriptionResult,
+)
+from kms2.core.model.source_semantic.source_statement_hub import (
     SourceStatementHub,
     SourceStatementHubCandidate,
     SourceStatementHubMember,

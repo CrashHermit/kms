@@ -11,6 +11,3 @@ class SourcePage(BaseModel):
     index: int
     markdown: str = ''
     blocks: list[SourceBlock] = Field(default_factory=list)
-
-
-__all__ = ['SourcePage']

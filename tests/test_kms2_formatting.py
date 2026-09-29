@@ -2,7 +2,9 @@ import asyncio
 
 import dspy
 
-from kms2.core.model import Source, SourceBlock, SourcePage
+from kms2.core.model.block import SourceBlock
+from kms2.core.model.page import SourcePage
+from kms2.core.model.source import Source
 from kms2.core.model.source_processing.formatting import (
     FormattingRequest,
     FormattingResult,

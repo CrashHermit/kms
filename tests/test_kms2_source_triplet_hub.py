@@ -1,6 +1,6 @@
 import asyncio
 
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_triplet_hub import (
     SourceTripletHub,
     SourceTripletHubDefinition,
     SourceTripletHubEvidence,
@@ -174,7 +174,7 @@ def test_source_triplet_group_query_is_source_scoped_and_complete():
     assert session.calls == [
         (READ_SOURCE_TRIPLET_HUB_GROUPS, {'source_uuid': 'source-1'})
     ]
-    assert READ_SOURCE_TRIPLET_HUB_GROUPS.count('$source_uuid') == 8
+    assert READ_SOURCE_TRIPLET_HUB_GROUPS.count('$source_uuid') == 7
     assert 'HAS_SUBJECT' in READ_SOURCE_TRIPLET_HUB_GROUPS
     assert 'subject:SourceEntity OR subject:SourceEvent' in (
         READ_SOURCE_TRIPLET_HUB_GROUPS

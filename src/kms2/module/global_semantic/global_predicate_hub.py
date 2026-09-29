@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model import (
+from kms2.core.model.global_semantic.global_predicate_hub import (
     GlobalPredicateHubDefinition,
     GlobalPredicateHubSynthesisInput,
 )
@@ -42,6 +42,3 @@ class GlobalPredicateHubModule(dspy.Module):
     ) -> GlobalPredicateHubDefinition:
         """Synthesize a predicate hub asynchronously."""
         return (await self.predictor.acall(request=request)).definition
-
-
-__all__ = ['GlobalPredicateHubModule', 'GlobalPredicateHubSignature']

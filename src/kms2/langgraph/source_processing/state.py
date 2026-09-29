@@ -5,7 +5,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
-from kms2.core.model import Source, SourcePage
+from kms2.core.model.page import SourcePage
+from kms2.core.model.source import Source
 from kms2.core.model.source_processing.content_correction import (
     ContentCorrectionResult,
 )

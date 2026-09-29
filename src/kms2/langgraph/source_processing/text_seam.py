@@ -1,7 +1,8 @@
 """LangGraph registration for the source text seam phase."""
 
-from kms2.node.source_processing.text_seam import TextSeamNode
 from langgraph.graph import StateGraph
+
+from kms2.node.source_processing.text_seam import TextSeamNode
 
 
 def add_text_seam_phase(graph: StateGraph, node: TextSeamNode) -> None:

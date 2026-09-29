@@ -13,7 +13,7 @@ def _fact_module() -> triplet_extractor._FactExtractor:
 
 def test_fact_decode_returns_text_without_model_provenance() -> None:
     prediction = SimpleNamespace(
-        facts=[models.AtomicFact(text='A is related to B')]
+        facts=[models.SourceAtomicFact(text='A is related to B')]
     )
 
     assert _fact_module().decode(prediction, current_nodes=[]) == [
@@ -73,7 +73,7 @@ def test_triplet_decode_retains_verbose_predicates():
 
 
 def test_fact_encode_passes_canonical_request():
-    request = models.FactExtractionInput(
+    request = models.SourceFactExtractionInput(
         context_before=[
             models.NodeInput(index=1, node_type='paragraph', text='Before')
         ],

@@ -91,18 +91,3 @@ class SourceProcedureHubSynthesisResult(BaseModel):
     ordinal: int = Field(ge=0)
     definition: SourceProcedureHubDefinition
     membership_uuids: list[str] = Field(min_length=1)
-
-
-__all__ = [
-    'SourceProcedureHub',
-    'SourceProcedureHubCandidate',
-    'SourceProcedureHubDefinition',
-    'SourceProcedureHubJudgeDecision',
-    'SourceProcedureHubJudgeInput',
-    'SourceProcedureHubJudgeResult',
-    'SourceProcedureHubMember',
-    'SourceProcedureHubRerankResult',
-    'SourceProcedureHubSynthesisInput',
-    'SourceProcedureHubSynthesisMember',
-    'SourceProcedureHubSynthesisResult',
-]

@@ -1,1 +1,1 @@
-"""Typed runtime configuration for KMS2."""
+"""KMS2 configuration models."""

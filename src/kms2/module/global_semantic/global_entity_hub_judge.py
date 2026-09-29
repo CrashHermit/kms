@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model.global_semantic.entity_hub import (
+from kms2.core.model.global_semantic.global_entity_hub import (
     GlobalEntityHubJudgeDecision,
     GlobalEntityHubJudgeInput,
 )
@@ -44,6 +44,3 @@ class GlobalEntityHubJudgeModule(dspy.Module):
         """Judge entity pairs asynchronously."""
         prediction = await self.predictor.acall(requests=requests)
         return prediction.decisions
-
-
-__all__ = ['GlobalEntityHubJudgeModule', 'GlobalEntityHubJudgeSignature']

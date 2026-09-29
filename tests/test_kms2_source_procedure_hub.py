@@ -1,7 +1,7 @@
 import asyncio
 
 from kms2.config.source_semantic import SourceProcedureHubSettings
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_procedure_hub import (
     SourceProcedureHubCandidate,
     SourceProcedureHubDefinition,
     SourceProcedureHubSynthesisResult,

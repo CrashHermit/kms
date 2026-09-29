@@ -1,9 +1,10 @@
 """LangGraph registration for instruction governance."""
 
+from langgraph.graph import StateGraph
+
 from kms2.node.source_processing.instruction_governance import (
     InstructionGovernanceNode,
 )
-from langgraph.graph import StateGraph
 
 
 def add_instruction_governance_phase(

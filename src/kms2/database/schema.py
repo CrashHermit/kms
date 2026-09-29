@@ -17,11 +17,11 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     FOR (instruction:Instruction) REQUIRE instruction.uuid IS UNIQUE
     """,
     """
-    CREATE CONSTRAINT statement_uuid IF NOT EXISTS
+    CREATE CONSTRAINT source_statement_uuid IF NOT EXISTS
     FOR (statement:SourceStatement) REQUIRE statement.uuid IS UNIQUE
     """,
     """
-    CREATE CONSTRAINT procedure_uuid IF NOT EXISTS
+    CREATE CONSTRAINT source_procedure_uuid IF NOT EXISTS
     FOR (procedure:SourceProcedure) REQUIRE procedure.uuid IS UNIQUE
     """,
     """
@@ -29,12 +29,20 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     FOR (asset:VisualAsset) REQUIRE asset.uuid IS UNIQUE
     """,
     """
-    CREATE CONSTRAINT triplet_uuid IF NOT EXISTS
+    CREATE CONSTRAINT source_triplet_uuid IF NOT EXISTS
     FOR (triplet:SourceTriplet) REQUIRE triplet.uuid IS UNIQUE
     """,
     """
     CREATE CONSTRAINT source_fact_uuid IF NOT EXISTS
     FOR (fact:SourceFact) REQUIRE fact.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT source_fact_target_uuid IF NOT EXISTS
+    FOR (target:SourceFactTarget) REQUIRE target.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT source_fact_context_uuid IF NOT EXISTS
+    FOR (context:SourceFactContext) REQUIRE context.uuid IS UNIQUE
     """,
     """
     CREATE CONSTRAINT source_entity_uuid IF NOT EXISTS
@@ -81,6 +89,14 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     FOR (hub:GlobalPredicateHub) REQUIRE hub.uuid IS UNIQUE
     """,
     """
+    CREATE CONSTRAINT global_triplet_uuid IF NOT EXISTS
+    FOR (triplet:GlobalTriplet) REQUIRE triplet.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT global_triplet_hub_uuid IF NOT EXISTS
+    FOR (hub:GlobalTripletHub) REQUIRE hub.uuid IS UNIQUE
+    """,
+    """
     CREATE CONSTRAINT source_statement_hub_uuid IF NOT EXISTS
     FOR (hub:SourceStatementHub) REQUIRE hub.uuid IS UNIQUE
     """,
@@ -93,16 +109,40 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     FOR (hub:SourceTripletHub) REQUIRE hub.uuid IS UNIQUE
     """,
     """
-    CREATE INDEX triplet_source_uuid IF NOT EXISTS
-    FOR (triplet:SourceTriplet) ON (triplet.source_uuid)
-    """,
-    """
-    CREATE INDEX source_fact_source_uuid IF NOT EXISTS
-    FOR (fact:SourceFact) ON (fact.source_uuid)
-    """,
-    """
     CREATE INDEX source_triplet_hub_source_uuid IF NOT EXISTS
     FOR (hub:SourceTripletHub) ON (hub.source_uuid)
+    """,
+    """
+    CREATE CONSTRAINT source_entity_learning_fact_uuid IF NOT EXISTS
+    FOR (fact:SourceEntityLearningFact) REQUIRE fact.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT source_event_learning_fact_uuid IF NOT EXISTS
+    FOR (fact:SourceEventLearningFact) REQUIRE fact.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT source_predicate_learning_fact_uuid IF NOT EXISTS
+    FOR (fact:SourcePredicateLearningFact) REQUIRE fact.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT source_triplet_learning_fact_uuid IF NOT EXISTS
+    FOR (fact:SourceTripletLearningFact) REQUIRE fact.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT source_flashcard_uuid IF NOT EXISTS
+    FOR (card:SourceFlashcard) REQUIRE card.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT user_uuid IF NOT EXISTS
+    FOR (user:User) REQUIRE user.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT deck_uuid IF NOT EXISTS
+    FOR (deck:Deck) REQUIRE deck.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT deck_settings_uuid IF NOT EXISTS
+    FOR (settings:DeckSettings) REQUIRE settings.uuid IS UNIQUE
     """,
 )
 
@@ -132,6 +172,7 @@ def vector_index_statements(embedding_dimension: int) -> tuple[str, ...]:
             ('global_statement_hub_embedding', 'GlobalStatementHub'),
             ('global_procedure_hub_embedding', 'GlobalProcedureHub'),
             ('global_predicate_hub_embedding', 'GlobalPredicateHub'),
+            ('global_triplet_hub_embedding', 'GlobalTripletHub'),
             ('source_predicate_hub_embedding', 'SourcePredicateHub'),
             ('source_statement_hub_embedding', 'SourceStatementHub'),
             ('source_procedure_hub_embedding', 'SourceProcedureHub'),
@@ -158,8 +199,20 @@ VECTOR_INDEX_NAMES = (
     'global_procedure_hub_embedding',
     'source_predicate_hub_embedding',
     'source_triplet_hub_embedding',
+    'global_triplet_hub_embedding',
 )
 AWAIT_INDEX = 'CALL db.awaitIndex($index_name, $timeout_seconds)'
+
+
+async def ensure_structural_schema(
+    session_factory: Callable[[], AbstractAsyncContextManager],
+) -> None:
+    """Create KMS2 structural constraints without vector indexes."""
+    async with session_factory() as session:
+        for statement in SCHEMA_STATEMENTS:
+            result = await session.run(statement)
+            if result is not None:
+                await result.consume()
 
 
 async def ensure_schema(
@@ -168,11 +221,8 @@ async def ensure_schema(
     embedding_dimension: int,
 ) -> None:
     """Create KMS2 structural and vector schema in order."""
+    await ensure_structural_schema(session_factory)
     async with session_factory() as session:
-        for statement in SCHEMA_STATEMENTS:
-            result = await session.run(statement)
-            if result is not None:
-                await result.consume()
         for statement in vector_index_statements(embedding_dimension):
             result = await session.run(statement)
             if result is not None:

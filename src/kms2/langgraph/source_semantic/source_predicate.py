@@ -1,12 +1,13 @@
 """LangGraph registration for source predicate embedding and persistence."""
 
+from langgraph.graph import StateGraph
+
 from kms2.node.source_semantic.source_predicate_embedding import (
     SourcePredicateEmbeddingNode,
 )
 from kms2.node.source_semantic.source_predicate_persistence import (
     SourcePredicatePersistenceNode,
 )
-from langgraph.graph import StateGraph
 
 
 def add_source_predicate_phase(

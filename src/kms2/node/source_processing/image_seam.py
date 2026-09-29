@@ -4,7 +4,9 @@ from typing import Literal, TypedDict
 
 from langgraph.types import Send
 
-from kms2.core.model import BlockType, SourceBlock, SourcePage
+from kms2.core.model.block import SourceBlock
+from kms2.core.model.block_types import BlockType
+from kms2.core.model.page import SourcePage
 from kms2.core.model.source_processing.image_seam import (
     ImageSeamRequest,
     ImageSeamResult,

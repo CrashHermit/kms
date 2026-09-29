@@ -44,6 +44,3 @@ class SourceEventHubJudgeModule(dspy.Module):
         """Judge event pairs asynchronously."""
         prediction = await self.predictor.acall(requests=requests)
         return prediction.decisions
-
-
-__all__ = ['SourceEventHubJudgeModule', 'SourceEventHubJudgeSignature']

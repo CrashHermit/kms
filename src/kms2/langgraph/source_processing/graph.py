@@ -1,5 +1,8 @@
 """Source-processing LangGraph assembly for KMS2."""
 
+from langgraph.graph import StateGraph
+from langgraph.graph.state import CompiledStateGraph
+
 from kms2.langgraph.source_processing.content_correction import (
     add_content_correction_phase,
 )
@@ -49,8 +52,6 @@ from kms2.node.source_processing.statement_procedure import (
     StatementProcedureNode,
 )
 from kms2.node.source_processing.text_seam import TextSeamNode
-from langgraph.graph import StateGraph
-from langgraph.graph.state import CompiledStateGraph
 
 
 class SourceProcessingGraph:

@@ -2,7 +2,8 @@
 
 import dspy
 
-from kms2.core.model import BlockType, SourceBlockContext
+from kms2.core.model.block_types import BlockType
+from kms2.core.model.context import SourceBlockContext
 
 
 def _context(content: str) -> SourceBlockContext:
@@ -129,6 +130,3 @@ class ExerciseStripRouterModule(dspy.Module):
             context_after=context_after,
         )
         return prediction.contains_multiple_exercises
-
-
-__all__ = ['ExerciseStripRouterSignature', 'ExerciseStripRouterModule']

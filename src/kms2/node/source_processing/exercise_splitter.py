@@ -5,9 +5,9 @@ from typing import Literal, TypedDict
 from langgraph.types import Send
 
 from kms2.config.inference import ContextWindowSettings
-from kms2.core.model import (
-    SourceBlock,
-    SourcePage,
+from kms2.core.model.block import SourceBlock
+from kms2.core.model.page import SourcePage
+from kms2.core.model.source_processing.exercise_splitter import (
     SplitCandidate,
     SplitRequest,
     SplitResult,

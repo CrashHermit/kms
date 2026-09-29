@@ -5,7 +5,7 @@ from kms2.config.settings import Settings
 from kms2.database.client import DatabaseClient
 from kms2.database.source.source_graph_repository import SourceGraphRepository
 from kms2.langgraph.source_processing.graph import SourceProcessingGraph
-from kms2.local_models import LocalModelRuntime
+from kms2.local_models.runtime import LocalModelRuntime
 from kms2.module.source_processing.content_correction import (
     ContentCorrectorModule,
     ContentCorrectorSignature,

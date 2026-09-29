@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model.global_semantic.procedure_hub import (
+from kms2.core.model.global_semantic.global_procedure_hub import (
     GlobalProcedureHubJudgeDecision,
     GlobalProcedureHubJudgeInput,
 )
@@ -45,6 +45,3 @@ class GlobalProcedureHubJudgeModule(dspy.Module):
         """Judge procedure pairs asynchronously."""
         prediction = await self.predictor.acall(requests=requests)
         return prediction.decisions
-
-
-__all__ = ['GlobalProcedureHubJudgeModule', 'GlobalProcedureHubJudgeSignature']

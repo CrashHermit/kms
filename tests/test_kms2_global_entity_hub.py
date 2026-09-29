@@ -1,7 +1,7 @@
 import asyncio
 
 from kms2.config.global_semantic import GlobalEntityHubSettings
-from kms2.core.model import (
+from kms2.core.model.global_semantic.global_entity_hub import (
     GlobalEntityHub,
     GlobalEntityHubCandidate,
     GlobalEntityHubDefinition,
@@ -9,10 +9,10 @@ from kms2.core.model import (
     GlobalEntityHubJudgeInput,
     GlobalEntityHubMember,
 )
-from kms2.database.global_semantic.entity_hub_repository import (
+from kms2.database.global_semantic.global_entity_hub_repository import (
     GlobalEntityHubRepository,
 )
-from kms2.database.global_semantic.queries.entity_hub import (
+from kms2.database.global_semantic.queries.global_entity_hub import (
     DETECT_GLOBAL_ENTITY_HUB_COMMUNITIES,
     DROP_GLOBAL_ENTITY_HUB_GRAPH,
     READ_GLOBAL_ENTITY_HUB_CANDIDATES,
@@ -20,8 +20,8 @@ from kms2.database.global_semantic.queries.entity_hub import (
 )
 from kms2.langgraph.global_semantic.graph import GlobalSemanticGraph
 from kms2.langgraph.global_semantic.state import GlobalSemanticState
-from kms2.node.global_semantic.entity_hub import GlobalEntityHubNode
-from kms2.node.global_semantic.entity_hub_persistence import (
+from kms2.node.global_semantic.global_entity_hub import GlobalEntityHubNode
+from kms2.node.global_semantic.global_entity_hub_persistence import (
     GlobalEntityHubPersistenceNode,
 )
 
@@ -263,6 +263,12 @@ class _PhaseNode:
     def load_candidates(self, state):
         return {}
 
+    def load_groups(self, state):
+        return {}
+
+    def run(self, state):
+        return {}
+
     def dispatch_rerank(self, state):
         return 'global_entity_hub_rerank_collect'
 
@@ -320,6 +326,9 @@ def test_global_graph_exposes_complete_entity_phase_topology():
         persistence,
         phase_node,
         persistence,
+        persistence,
+        phase_node,
+        persistence,
         phase_node,
         persistence,
         phase_node,
@@ -338,9 +347,14 @@ def test_global_graph_exposes_complete_entity_phase_topology():
         'global_entity_hub_embedding',
         'global_entity_hub_persistence',
         'global_event_hub_load',
-        'global_event_hub_persistence',
         'global_predicate_hub_load',
         'global_predicate_hub_persistence',
+        'global_triplet_projection',
+        'global_triplet_hub_load',
+        'global_triplet_hub_synthesis_worker',
+        'global_triplet_hub_synthesis_collect',
+        'global_triplet_hub_embedding',
+        'global_triplet_hub_persistence',
         'global_statement_hub_load',
         'global_statement_hub_persistence',
         'global_procedure_hub_load',

@@ -71,6 +71,14 @@ class GlobalEventHubSettings(BaseModel):
     minimum_community_size: int = 2
 
 
+class GlobalTripletHubSettings(BaseModel):
+    """Global triplet hub synthesis settings."""
+
+    inference: NoRetryTextInferenceSettings = Field(
+        default_factory=NoRetryTextInferenceSettings
+    )
+
+
 class GlobalStatementHubSettings(BaseModel):
     """Statement global-hub similarity, filtering, community, and synthesis settings."""
 
@@ -125,19 +133,12 @@ class GlobalSemanticSettings(BaseModel):
     global_predicate_hubs: GlobalPredicateHubSettings = Field(
         default_factory=GlobalPredicateHubSettings
     )
+    global_triplet_hubs: GlobalTripletHubSettings = Field(
+        default_factory=GlobalTripletHubSettings
+    )
     global_statement_hubs: GlobalStatementHubSettings = Field(
         default_factory=GlobalStatementHubSettings
     )
     global_procedure_hubs: GlobalProcedureHubSettings = Field(
         default_factory=GlobalProcedureHubSettings
     )
-
-
-__all__ = [
-    'GlobalEntityHubSettings',
-    'GlobalEventHubSettings',
-    'GlobalPredicateHubSettings',
-    'GlobalProcedureHubSettings',
-    'GlobalSemanticSettings',
-    'GlobalStatementHubSettings',
-]

@@ -5,37 +5,50 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
-from kms2.core.model import (
+from kms2.core.model.global_semantic.global_entity_hub import (
     GlobalEntityHub,
     GlobalEntityHubCandidate,
     GlobalEntityHubJudgeResult,
     GlobalEntityHubMember,
     GlobalEntityHubRerankResult,
     GlobalEntityHubSynthesisResult,
+)
+from kms2.core.model.global_semantic.global_event_hub import (
     GlobalEventHub,
     GlobalEventHubCandidate,
     GlobalEventHubJudgeResult,
     GlobalEventHubMember,
     GlobalEventHubRerankResult,
     GlobalEventHubSynthesisResult,
+)
+from kms2.core.model.global_semantic.global_predicate_hub import (
     GlobalPredicateHub,
     GlobalPredicateHubCandidate,
     GlobalPredicateHubJudgeResult,
     GlobalPredicateHubMember,
     GlobalPredicateHubRerankResult,
     GlobalPredicateHubSynthesisResult,
+)
+from kms2.core.model.global_semantic.global_procedure_hub import (
     GlobalProcedureHub,
     GlobalProcedureHubCandidate,
     GlobalProcedureHubJudgeResult,
     GlobalProcedureHubMember,
     GlobalProcedureHubRerankResult,
     GlobalProcedureHubSynthesisResult,
+)
+from kms2.core.model.global_semantic.global_statement_hub import (
     GlobalStatementHub,
     GlobalStatementHubCandidate,
     GlobalStatementHubJudgeResult,
     GlobalStatementHubMember,
     GlobalStatementHubRerankResult,
     GlobalStatementHubSynthesisResult,
+)
+from kms2.core.model.global_semantic.global_triplet_hub import (
+    GlobalTripletHub,
+    GlobalTripletHubGroup,
+    GlobalTripletHubSynthesisResult,
 )
 
 
@@ -134,10 +147,26 @@ class GlobalSemanticState(BaseModel):
     global_predicate_hubs: list[GlobalPredicateHub] = Field(
         default_factory=list
     )
+
     global_predicate_hub_memberships: list[list[str]] = Field(
         default_factory=list
     )
     global_predicate_hub_count: int = 0
+    global_triplet_count: int = 0
+    global_triplet_hub_groups: list[GlobalTripletHubGroup] = Field(
+        default_factory=list
+    )
+    global_triplet_hub_synthesis_results: Annotated[
+        list[GlobalTripletHubSynthesisResult], operator.add
+    ] = Field(default_factory=list)
+    global_triplet_hub_synthesis_results_ordered: list[
+        GlobalTripletHubSynthesisResult
+    ] = Field(default_factory=list)
+    global_triplet_hubs: list[GlobalTripletHub] = Field(default_factory=list)
+    global_triplet_hub_memberships: list[list[str]] = Field(
+        default_factory=list
+    )
+    global_triplet_hub_count: int = 0
 
     global_statement_hub_candidates: list[GlobalStatementHubCandidate] = Field(
         default_factory=list
@@ -208,6 +237,3 @@ class GlobalSemanticState(BaseModel):
         default_factory=list
     )
     global_procedure_hub_count: int = 0
-
-
-__all__ = ['GlobalSemanticState']

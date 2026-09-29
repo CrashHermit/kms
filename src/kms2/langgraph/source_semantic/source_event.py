@@ -1,12 +1,13 @@
 """LangGraph registration for source event embedding and persistence."""
 
+from langgraph.graph import StateGraph
+
 from kms2.node.source_semantic.source_event_embedding import (
     SourceEventEmbeddingNode,
 )
 from kms2.node.source_semantic.source_event_persistence import (
     SourceEventPersistenceNode,
 )
-from langgraph.graph import StateGraph
 
 
 def add_source_event_phase(

@@ -22,6 +22,3 @@ class RerankerClient(Protocol):
     ) -> list[RerankResult]:
         """Return relevance-ranked document indexes and scores."""
         ...
-
-
-__all__ = ['RerankResult', 'RerankerClient']

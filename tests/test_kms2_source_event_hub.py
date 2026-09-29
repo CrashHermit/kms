@@ -1,14 +1,12 @@
 import asyncio
 
 from kms2.config.source_semantic import SourceEventHubSettings
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_event_hub import (
     SourceEventHubCandidate,
     SourceEventHubDefinition,
+    SourceEventHubJudgeDecision,
     SourceEventHubJudgeInput,
     SourceEventHubMember,
-)
-from kms2.core.model.source_semantic.source_event_hub import (
-    SourceEventHubJudgeDecision,
 )
 from kms2.database.source_semantic.queries.source_event import (
     DETECT_SOURCE_EVENT_COMMUNITIES,

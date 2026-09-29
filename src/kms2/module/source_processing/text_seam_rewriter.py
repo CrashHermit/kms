@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model import SourceBlock
+from kms2.core.model.block import SourceBlock
 
 
 class TextSeamRewriteSignature(dspy.Signature):
@@ -155,6 +155,3 @@ class TextSeamRewriterModule(dspy.Module):
             )
         )
         return prediction.merged
-
-
-__all__ = ['TextSeamRewriteSignature', 'TextSeamRewriterModule']

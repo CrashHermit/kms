@@ -2,7 +2,9 @@
 
 from dataclasses import dataclass
 
-from kms2.core.model import SourceBlock, SourcePage, VisualAsset
+from kms2.core.model.block import SourceBlock
+from kms2.core.model.page import SourcePage
+from kms2.core.model.visual_asset import VisualAsset
 from kms2.langgraph.source_processing.state import SourceProcessingState
 from kms2.ocr.provider import OCRProvider
 

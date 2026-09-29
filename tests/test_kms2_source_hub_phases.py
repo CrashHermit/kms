@@ -3,7 +3,7 @@ import asyncio
 from langgraph.graph import START, StateGraph
 
 from kms2.config.source_semantic import SourceEntityHubSettings
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_entity_hub import (
     SourceEntityHubCandidate,
     SourceEntityHubDefinition,
     SourceEntityHubRerankResult,

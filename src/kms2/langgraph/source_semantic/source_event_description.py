@@ -1,12 +1,13 @@
 """LangGraph registration for source event descriptions."""
 
+from langgraph.graph import StateGraph
+
 from kms2.node.source_semantic.source_event_description import (
     SourceEventDescriptionNode,
 )
 from kms2.node.source_semantic.source_event_description_load import (
     SourceEventDescriptionLoadNode,
 )
-from langgraph.graph import StateGraph
 
 
 def add_source_event_description_phase(

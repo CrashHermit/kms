@@ -1,7 +1,10 @@
 """LangGraph node for constructing statement and procedure pointers."""
 
-from kms2.core.model import ProcedureDraft, StatementDraft
-from kms2.core.model.source_processing.pedagogical import PedagogicalMember
+from kms2.core.model.source_processing.pedagogical import (
+    PedagogicalMember,
+    ProcedureDraft,
+    StatementDraft,
+)
 from kms2.core.windowing import project_block
 from kms2.langgraph.source_processing.state import SourceProcessingState
 from kms2.module.source_processing.statement_procedure import (

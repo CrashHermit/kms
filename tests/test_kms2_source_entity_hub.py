@@ -1,14 +1,12 @@
 import asyncio
 
 from kms2.config.source_semantic import SourceEntityHubSettings
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_entity_hub import (
     SourceEntityHubCandidate,
     SourceEntityHubDefinition,
+    SourceEntityHubJudgeDecision,
     SourceEntityHubJudgeInput,
     SourceEntityHubMember,
-)
-from kms2.core.model.source_semantic.source_entity_hub import (
-    SourceEntityHubJudgeDecision,
 )
 from kms2.database.source_semantic.queries.source_entity import (
     DETECT_SOURCE_ENTITY_COMMUNITIES,

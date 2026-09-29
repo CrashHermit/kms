@@ -3,7 +3,7 @@ import asyncio
 from langgraph.graph import END, START, StateGraph
 
 from kms2.config.global_semantic import GlobalStatementHubSettings
-from kms2.core.model import (
+from kms2.core.model.global_semantic.global_statement_hub import (
     GlobalStatementHub,
     GlobalStatementHubCandidate,
     GlobalStatementHubDefinition,
@@ -12,20 +12,22 @@ from kms2.core.model import (
     GlobalStatementHubMember,
     GlobalStatementHubSynthesisInput,
 )
-from kms2.database.global_semantic.queries.statement_hub import (
+from kms2.database.global_semantic.global_statement_hub_repository import (
+    GlobalStatementHubRepository,
+)
+from kms2.database.global_semantic.queries.global_statement_hub import (
     DETECT_GLOBAL_STATEMENT_HUB_COMMUNITIES,
     READ_GLOBAL_STATEMENT_HUB_CANDIDATES,
     REPLACE_GLOBAL_STATEMENT_HUB_ACCEPTED_EDGES,
 )
-from kms2.database.global_semantic.statement_hub_repository import (
-    GlobalStatementHubRepository,
-)
-from kms2.langgraph.global_semantic.state import GlobalSemanticState
-from kms2.langgraph.global_semantic.statement_hub import (
+from kms2.langgraph.global_semantic.global_statement_hub import (
     add_global_statement_hub_phase,
 )
-from kms2.node.global_semantic.statement_hub import GlobalStatementHubNode
-from kms2.node.global_semantic.statement_hub_persistence import (
+from kms2.langgraph.global_semantic.state import GlobalSemanticState
+from kms2.node.global_semantic.global_statement_hub import (
+    GlobalStatementHubNode,
+)
+from kms2.node.global_semantic.global_statement_hub_persistence import (
     GlobalStatementHubPersistenceNode,
 )
 

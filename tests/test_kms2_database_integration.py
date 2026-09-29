@@ -4,48 +4,76 @@ import os
 import pytest
 
 from kms2.config.settings import Settings
-from kms2.core.model import (
-    GlobalEntityHub,
-    GlobalEventHub,
+from kms2.core.model.block import SourceBlock
+from kms2.core.model.global_semantic.global_entity_hub import GlobalEntityHub
+from kms2.core.model.global_semantic.global_event_hub import GlobalEventHub
+from kms2.core.model.global_semantic.global_predicate_hub import (
     GlobalPredicateHub,
+)
+from kms2.core.model.global_semantic.global_procedure_hub import (
     GlobalProcedureHub,
+)
+from kms2.core.model.global_semantic.global_statement_hub import (
     GlobalStatementHub,
-    Instruction,
+)
+from kms2.core.model.global_semantic.global_triplet_hub import GlobalTripletHub
+from kms2.core.model.page import SourcePage
+from kms2.core.model.source import Source
+from kms2.core.model.source_processing.instruction import Instruction
+from kms2.core.model.source_processing.pedagogical import (
     ProcedureDraft,
-    Source,
-    SourceBlock,
+    StatementDraft,
+)
+from kms2.core.model.source_semantic.source_entity import (
     SourceEntity,
     SourceEntityDescriptionResult,
+)
+from kms2.core.model.source_semantic.source_entity_hub import (
     SourceEntityHubCandidate,
+)
+from kms2.core.model.source_semantic.source_event import (
     SourceEvent,
     SourceEventDescriptionResult,
+)
+from kms2.core.model.source_semantic.source_event_hub import (
     SourceEventHubCandidate,
+)
+from kms2.core.model.source_semantic.source_fact_extraction import (
     SourceFact,
-    SourcePage,
+    SourceFactContext,
+    SourceFactTarget,
+)
+from kms2.core.model.source_semantic.source_predicate import (
     SourcePredicate,
     SourcePredicateDescriptionResult,
+)
+from kms2.core.model.source_semantic.source_predicate_hub import (
     SourcePredicateHubCandidate,
+)
+from kms2.core.model.source_semantic.source_triplet import (
     SourceTriplet,
     SourceTripletOccurrence,
-    StatementDraft,
-    VisualAsset,
 )
+from kms2.core.model.visual_asset import VisualAsset
 from kms2.database import schema
 from kms2.database.client import DatabaseClient
-from kms2.database.global_semantic.entity_hub_repository import (
+from kms2.database.global_semantic.global_entity_hub_repository import (
     GlobalEntityHubRepository,
 )
-from kms2.database.global_semantic.event_hub_repository import (
+from kms2.database.global_semantic.global_event_hub_repository import (
     GlobalEventHubRepository,
 )
-from kms2.database.global_semantic.predicate_hub_repository import (
+from kms2.database.global_semantic.global_predicate_hub_repository import (
     GlobalPredicateHubRepository,
 )
-from kms2.database.global_semantic.procedure_hub_repository import (
+from kms2.database.global_semantic.global_procedure_hub_repository import (
     GlobalProcedureHubRepository,
 )
-from kms2.database.global_semantic.statement_hub_repository import (
+from kms2.database.global_semantic.global_statement_hub_repository import (
     GlobalStatementHubRepository,
+)
+from kms2.database.global_semantic.global_triplet_repository import (
+    GlobalTripletRepository,
 )
 from kms2.database.source.source_block_repository import SourceBlockRepository
 from kms2.database.source.source_graph_repository import SourceGraphRepository
@@ -54,6 +82,9 @@ from kms2.database.source_semantic.source_entity_repository import (
 )
 from kms2.database.source_semantic.source_event_repository import (
     SourceEventRepository,
+)
+from kms2.database.source_semantic.source_fact_repository import (
+    SourceFactRepository,
 )
 from kms2.database.source_semantic.source_predicate_repository import (
     SourcePredicateRepository,
@@ -106,6 +137,7 @@ def test_kms2_neo4j_materializes_and_replaces_source():
                 VisualAsset(uuid=old_asset_uuids[1], path='second.png'),
             ],
         )
+        source_fact_repository = SourceFactRepository(database.session)
         second_block = SourceBlock(
             uuid=old_block_uuids[1],
             block_type='aside_text',
@@ -289,20 +321,19 @@ def test_kms2_neo4j_materializes_and_replaces_source():
                 }
             source_fact = SourceFact(
                 uuid='kms2-integration-fact',
-                source_uuid=source_uuid,
-                source_block_uuid=old_block_uuids[0],
+                target=SourceFactTarget(
+                    uuid='kms2-integration-target',
+                    source_blocks=[first_block],
+                ),
+                context_before=SourceFactContext(
+                    uuid='kms2-integration-before'
+                ),
+                context_after=SourceFactContext(uuid='kms2-integration-after'),
                 text='integration event relates to integration entity',
             )
             triplet_occurrence = SourceTripletOccurrence(
                 fact=source_fact,
-                triplet=SourceTriplet(
-                    uuid='kms2-integration-triplet',
-                    source_uuid=source_uuid,
-                    source_block_uuid=old_block_uuids[0],
-                    subject_uuid='kms2-integration-event',
-                    object_uuid='kms2-integration-entity',
-                    predicate_uuid='kms2-integration-predicate',
-                ),
+                triplet=SourceTriplet(uuid='kms2-integration-triplet'),
                 subject=SourceEvent(
                     uuid='kms2-integration-event',
                     source_uuid=source_uuid,
@@ -322,25 +353,35 @@ def test_kms2_neo4j_materializes_and_replaces_source():
                     predicate='relates to',
                 ),
             )
-            await source_triplet_repository.replace_source_facts_and_triplets(
+            await source_fact_repository.replace_source_facts(
                 source_uuid,
                 [source_fact],
+            )
+            await source_triplet_repository.replace_source_triplets(
+                source_uuid,
                 [triplet_occurrence],
             )
 
             async with database.session() as session:
                 result = await session.run(
                     """
-                    MATCH (block:SourceBlock {uuid: $block_uuid})
-                          -[:HAS_FACT]->
+                    MATCH (source:Source {uuid: $source_uuid})
+                          -[:FIRST_BLOCK]->
+                          (first:SourceBlock)
+                    MATCH (first)-[:NEXT_BLOCK*0..]->
+                          (target_block:SourceBlock {uuid: $block_uuid})
+                    MATCH (target_block)<-[:HAS_SOURCE_BLOCK]-(
+                          target:SourceFactTarget)
+                          <-[:HAS_TARGET]-
                           (fact:SourceFact {uuid: $source_fact_uuid})
-                          -[:HAS_TRIPLET]->
+                    MATCH (fact)-[:HAS_TRIPLET]->
                           (triplet:SourceTriplet {uuid: $triplet_uuid})
                     MATCH (triplet)-[:HAS_SUBJECT]->(subject:SourceEvent)
                     MATCH (triplet)-[:HAS_OBJECT]->(object:SourceEntity)
                     MATCH (triplet)-[:HAS_PREDICATE]->(predicate:SourcePredicate)
                     RETURN fact.text AS fact_text, count(*) AS relationships
                     """,
+                    source_uuid=source_uuid,
                     block_uuid=old_block_uuids[0],
                     source_fact_uuid=source_fact.uuid,
                     triplet_uuid='kms2-integration-triplet',
@@ -352,7 +393,8 @@ def test_kms2_neo4j_materializes_and_replaces_source():
                 result = await session.run(
                     """
                     MATCH (source:Source {uuid: $source_uuid})
-                          -[:HAS_TRIPLET]->
+                          -[:HAS_FACT]->
+                          (:SourceFact)-[:HAS_TRIPLET]->
                           (triplet:SourceTriplet)
                     RETURN count(triplet) AS direct_source_triplets
                     """,
@@ -361,9 +403,8 @@ def test_kms2_neo4j_materializes_and_replaces_source():
                 direct_source_triplets = await result.single()
                 assert direct_source_triplets['direct_source_triplets'] == 0
 
-            await source_triplet_repository.replace_source_facts_and_triplets(
+            await source_triplet_repository.replace_source_triplets(
                 source_uuid,
-                [],
                 [],
             )
 
@@ -496,6 +537,7 @@ def test_kms2_neo4j_clean_schema_materializes_vectors():
         source_block_repository = SourceBlockRepository(database.session)
         source_graph_repository = SourceGraphRepository(database.session)
         source_triplet_repository = SourceTripletRepository(database.session)
+        source_fact_repository = SourceFactRepository(database.session)
         source_entity_repository = SourceEntityRepository(database.session)
         source_event_repository = SourceEventRepository(database.session)
         source_predicate_repository = SourcePredicateRepository(
@@ -544,22 +586,42 @@ def test_kms2_neo4j_clean_schema_materializes_vectors():
                 [],
             )
 
+            fact_one = SourceFact(
+                uuid='kms2-vector-fact-1',
+                target=SourceFactTarget(
+                    uuid='kms2-vector-target-1',
+                    source_blocks=[
+                        SourceBlock(
+                            uuid=block_uuids[0],
+                            block_type='paragraph',
+                            content='query block',
+                        )
+                    ],
+                ),
+                context_before=SourceFactContext(uuid='kms2-vector-before-1'),
+                context_after=SourceFactContext(uuid='kms2-vector-after-1'),
+                text='Alpha supports Appears.',
+            )
+            fact_two = SourceFact(
+                uuid='kms2-vector-fact-2',
+                target=SourceFactTarget(
+                    uuid='kms2-vector-target-2',
+                    source_blocks=[
+                        SourceBlock(
+                            uuid=block_uuids[1],
+                            block_type='paragraph',
+                            content='candidate block',
+                        )
+                    ],
+                ),
+                context_before=SourceFactContext(uuid='kms2-vector-before-2'),
+                context_after=SourceFactContext(uuid='kms2-vector-after-2'),
+                text='Beta causes Changes.',
+            )
             triplet_occurrences = [
                 SourceTripletOccurrence(
-                    fact=SourceFact(
-                        uuid='kms2-vector-fact-1',
-                        source_uuid=source_uuid,
-                        source_block_uuid=block_uuids[0],
-                        text='Alpha supports Appears.',
-                    ),
-                    triplet=SourceTriplet(
-                        uuid='kms2-vector-triplet-1',
-                        source_uuid=source_uuid,
-                        source_block_uuid=block_uuids[0],
-                        subject_uuid='kms2-vector-entity-1',
-                        object_uuid='kms2-vector-event-1',
-                        predicate_uuid='kms2-vector-predicate-1',
-                    ),
+                    fact=fact_one,
+                    triplet=SourceTriplet(uuid='kms2-vector-triplet-1'),
                     subject=SourceEntity(
                         uuid='kms2-vector-entity-1',
                         source_uuid=source_uuid,
@@ -580,19 +642,8 @@ def test_kms2_neo4j_clean_schema_materializes_vectors():
                     ),
                 ),
                 SourceTripletOccurrence(
-                    fact=SourceFact(
-                        uuid='kms2-vector-fact-2',
-                        source_uuid=source_uuid,
-                        source_block_uuid=block_uuids[1],
-                        text='Beta causes Changes.',
-                    ),
-                    triplet=SourceTriplet(
-                        source_uuid=source_uuid,
-                        source_block_uuid=block_uuids[1],
-                        subject_uuid='kms2-vector-entity-2',
-                        object_uuid='kms2-vector-event-2',
-                        predicate_uuid='kms2-vector-predicate-2',
-                    ),
+                    fact=fact_two,
+                    triplet=SourceTriplet(uuid='kms2-vector-triplet-2'),
                     subject=SourceEntity(
                         uuid='kms2-vector-entity-2',
                         source_uuid=source_uuid,
@@ -613,9 +664,12 @@ def test_kms2_neo4j_clean_schema_materializes_vectors():
                     ),
                 ),
             ]
-            await source_triplet_repository.replace_source_facts_and_triplets(
+            await source_fact_repository.replace_source_facts(
                 source_uuid,
-                [occurrence.fact for occurrence in triplet_occurrences],
+                [fact_one, fact_two],
+            )
+            await source_triplet_repository.replace_source_triplets(
+                source_uuid,
                 triplet_occurrences,
             )
             await source_entity_repository.update_source_entity_description(
@@ -1498,6 +1552,196 @@ def test_kms2_neo4j_global_procedure_hub_contracts():
                        OR node:GlobalProcedureHub
                     DETACH DELETE node
                     """
+                )
+                await result.consume()
+            await database.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.skipif(
+    os.getenv('KMS2_NEO4J_IT') != '1'
+    or not all(os.getenv(name) for name in _REQUIRED_ENVIRONMENT),
+    reason='KMS2 Neo4j integration environment is not enabled',
+)
+def test_kms2_neo4j_global_triplet_projection_contracts():
+    async def exercise() -> None:
+        settings = Settings()
+        database = DatabaseClient(settings.database)
+        repository = GlobalTripletRepository(database.session)
+        dimension = settings.local_models.embedding.model.dimension
+        prefix = 'kms2-global-triplet-'
+        source_hub_rows = [
+            {
+                'uuid': f'{prefix}source-{ordinal}',
+                'canonical_name': 'supports relation',
+                'description': 'A support relation.',
+                'subject_uuid': f'{prefix}source-subject',
+                'predicate_uuid': f'{prefix}source-predicate',
+                'object_uuid': f'{prefix}source-object',
+            }
+            for ordinal in (1, 2)
+        ]
+        try:
+            await schema.ensure_schema(
+                database.session,
+                embedding_dimension=dimension,
+            )
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    CREATE (:SourceEntityHub {
+                        uuid: $source_subject,
+                        source_uuid: $source_uuid,
+                        canonical_name: 'Alice',
+                        description: 'A person.',
+                        embedding: $embedding
+                    })
+                    CREATE (:SourcePredicateHub {
+                        uuid: $source_predicate,
+                        source_uuid: $source_uuid,
+                        predicate: 'supports',
+                        aliases: ['supports'],
+                        description: 'A support relation.',
+                        embedding: $embedding
+                    })
+                    CREATE (:SourceEntityHub {
+                        uuid: $source_object,
+                        source_uuid: $source_uuid,
+                        canonical_name: 'Acme',
+                        description: 'An organization.',
+                        embedding: $embedding
+                    })
+                    CREATE (:GlobalEntityHub {
+                        uuid: $global_subject,
+                        canonical_name: 'Alice',
+                        description: 'A person.',
+                        embedding: $embedding
+                    })
+                    CREATE (:GlobalPredicateHub {
+                        uuid: $global_predicate,
+                        predicate: 'supports',
+                        aliases: ['supports'],
+                        description: 'A support relation.',
+                        embedding: $embedding
+                    })
+                    CREATE (:GlobalEntityHub {
+                        uuid: $global_object,
+                        canonical_name: 'Acme',
+                        description: 'An organization.',
+                        embedding: $embedding
+                    })
+                    """,
+                    source_subject=source_hub_rows[0]['subject_uuid'],
+                    source_predicate=source_hub_rows[0]['predicate_uuid'],
+                    source_object=source_hub_rows[0]['object_uuid'],
+                    source_uuid=f'{prefix}source',
+                    global_subject=f'{prefix}global-subject',
+                    global_predicate=f'{prefix}global-predicate',
+                    global_object=f'{prefix}global-object',
+                    embedding=_embedding(1.0, 0.0, dimension),
+                )
+                await result.consume()
+                result = await session.run(
+                    """
+                    MATCH (subject:SourceEntityHub {uuid: $source_subject})
+                    MATCH (predicate:SourcePredicateHub {uuid: $source_predicate})
+                    MATCH (object:SourceEntityHub {uuid: $source_object})
+                    MATCH (global_subject:GlobalEntityHub {uuid: $global_subject})
+                    MATCH (global_predicate:GlobalPredicateHub {
+                        uuid: $global_predicate
+                    })
+                    MATCH (global_object:GlobalEntityHub {uuid: $global_object})
+                    CREATE (subject)-[:IN_GLOBAL_HUB]->(global_subject)
+                    CREATE (predicate)-[:IN_GLOBAL_HUB]->(global_predicate)
+                    CREATE (object)-[:IN_GLOBAL_HUB]->(global_object)
+                    WITH subject, predicate, object
+                    UNWIND $source_hubs AS row
+                    CREATE (source_hub:SourceTripletHub {
+                        uuid: row.uuid,
+                        source_uuid: $source_uuid,
+                        canonical_name: row.canonical_name,
+                        description: row.description,
+                        embedding: $embedding,
+                        subject_hub_uuid: row.subject_uuid,
+                        predicate_hub_uuid: row.predicate_uuid,
+                        object_hub_uuid: row.object_uuid
+                    })
+                    CREATE (source_hub)-[:HAS_SUBJECT_HUB]->(subject)
+                    CREATE (source_hub)-[:HAS_PREDICATE_HUB]->(predicate)
+                    CREATE (source_hub)-[:HAS_OBJECT_HUB]->(object)
+                    """,
+                    source_subject=source_hub_rows[0]['subject_uuid'],
+                    source_predicate=source_hub_rows[0]['predicate_uuid'],
+                    source_object=source_hub_rows[0]['object_uuid'],
+                    global_subject=f'{prefix}global-subject',
+                    global_predicate=f'{prefix}global-predicate',
+                    global_object=f'{prefix}global-object',
+                    source_uuid=f'{prefix}source',
+                    source_hubs=source_hub_rows,
+                    embedding=_embedding(1.0, 0.0, dimension),
+                )
+                await result.consume()
+
+            assert await repository.replace_global_triplets() == 2
+            groups = await repository.read_global_triplet_hub_groups()
+            assert len(groups) == 1
+            group = groups[0]
+            assert len(group.global_triplet_uuids) == 2
+            global_hub = GlobalTripletHub(
+                canonical_name='supports relation',
+                description='A support relation.',
+                embedding=_embedding(1.0, 0.0, dimension),
+                subject_hub_uuid=f'{prefix}global-subject',
+                predicate_hub_uuid=f'{prefix}global-predicate',
+                object_hub_uuid=f'{prefix}global-object',
+            )
+            await repository.replace_global_triplet_hubs(
+                [global_hub], [group.global_triplet_uuids]
+            )
+
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (source:SourceTripletHub)
+                          -[:IN_GLOBAL_TRIPLET]->
+                          (triplet:GlobalTriplet)
+                          -[:HAS_SUBJECT_HUB]->
+                          (subject:GlobalEntityHub)
+                    MATCH (triplet)-[:HAS_PREDICATE_HUB]->
+                          (predicate:GlobalPredicateHub)
+                    MATCH (triplet)-[:HAS_OBJECT_HUB]->
+                          (object:GlobalEntityHub)
+                    MATCH (triplet)-[:IN_GLOBAL_HUB]->
+                          (hub:GlobalTripletHub)
+                    WHERE source.uuid STARTS WITH $prefix
+                    RETURN count(DISTINCT triplet) AS triplets,
+                           count(DISTINCT hub) AS hubs,
+                           count(DISTINCT subject) AS subjects,
+                           count(DISTINCT predicate) AS predicates,
+                           count(DISTINCT object) AS objects
+                    """,
+                    prefix=prefix,
+                )
+                snapshot = await result.single()
+            assert snapshot == {
+                'triplets': 2,
+                'hubs': 1,
+                'subjects': 1,
+                'predicates': 1,
+                'objects': 1,
+            }
+        finally:
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (node)
+                    WHERE node.uuid STARTS WITH $prefix
+                       OR node:GlobalTriplet
+                       OR node:GlobalTripletHub
+                    DETACH DELETE node
+                    """,
+                    prefix=prefix,
                 )
                 await result.consume()
             await database.close()

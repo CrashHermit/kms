@@ -1,26 +1,32 @@
 import asyncio
 
 from kms2.config.inference import ContextWindowSettings
-from kms2.core.model import (
-    AtomicFact,
-    ExtractedFact,
-    FactExtractionRequest,
-    SourceBlock,
+from kms2.core.model.block import SourceBlock
+from kms2.core.model.source_semantic.source_entity import (
     SourceEntity,
     SourceEntityDescriptionInput,
     SourceEntityDescriptionRequest,
     SourceEntityDescriptionResult,
     SourceEntityDescriptionTarget,
-    SourceEvent,
+)
+from kms2.core.model.source_semantic.source_event import SourceEvent
+from kms2.core.model.source_semantic.source_fact_extraction import (
+    SourceAtomicFact,
     SourceFact,
-    SourcePredicate,
+    SourceFactContext,
+    SourceFactExtractionRequest,
+    SourceFactTarget,
+)
+from kms2.core.model.source_semantic.source_predicate import SourcePredicate
+from kms2.core.model.source_semantic.source_triplet import (
     SourceTriplet,
     SourceTripletOccurrence,
-    TripletDecompositionCandidate,
-    TripletDecompositionResult,
-    TripletEndpointKind,
 )
-from kms2.core.windowing import select_window
+from kms2.core.model.source_semantic.source_triplet_decomposition import (
+    SourceTripletDecompositionCandidate,
+    SourceTripletDecompositionResult,
+    SourceTripletEndpointKind,
+)
 from kms2.database.source.queries.source_blocks import READ_SOURCE_BLOCKS
 from kms2.database.source.source_block_repository import SourceBlockRepository
 from kms2.database.source_semantic.queries.source_entity import (
@@ -31,18 +37,23 @@ from kms2.database.source_semantic.queries.source_entity import (
 from kms2.database.source_semantic.queries.source_event import (
     FIND_SIMILAR_SOURCE_EVENTS,
 )
+from kms2.database.source_semantic.queries.source_fact import (
+    REPLACE_SOURCE_FACTS,
+)
 from kms2.database.source_semantic.queries.source_predicate import (
     FIND_SIMILAR_SOURCE_PREDICATES,
 )
 from kms2.database.source_semantic.queries.source_triplet import (
-    CLEAR_SOURCE_FACTS_AND_TRIPLETS,
-    REPLACE_SOURCE_FACTS_AND_TRIPLETS,
+    REPLACE_SOURCE_TRIPLETS,
 )
 from kms2.database.source_semantic.source_entity_repository import (
     SourceEntityRepository,
 )
 from kms2.database.source_semantic.source_event_repository import (
     SourceEventRepository,
+)
+from kms2.database.source_semantic.source_fact_repository import (
+    SourceFactRepository,
 )
 from kms2.database.source_semantic.source_predicate_repository import (
     SourcePredicateRepository,
@@ -52,7 +63,6 @@ from kms2.database.source_semantic.source_triplet_repository import (
 )
 from kms2.langgraph.source_semantic.graph import SourceSemanticGraph
 from kms2.langgraph.source_semantic.state import SourceSemanticState
-from kms2.node.source_semantic.fact_extraction import FactExtractionNode
 from kms2.node.source_semantic.source_entity_description import (
     SourceEntityDescriptionNode,
 )
@@ -76,6 +86,12 @@ from kms2.node.source_semantic.source_event_embedding import (
 )
 from kms2.node.source_semantic.source_event_persistence import (
     SourceEventPersistenceNode,
+)
+from kms2.node.source_semantic.source_fact_extraction import (
+    SourceFactExtractionNode,
+)
+from kms2.node.source_semantic.source_fact_persistence import (
+    SourceFactPersistenceNode,
 )
 from kms2.node.source_semantic.source_predicate_description import (
     SourcePredicateDescriptionNode,
@@ -113,11 +129,18 @@ from kms2.node.source_semantic.source_statement_embedding import (
 from kms2.node.source_semantic.source_statement_persistence import (
     SourceStatementPersistenceNode,
 )
-from kms2.node.source_semantic.triplet_decomposition import (
-    TripletDecompositionNode,
+from kms2.node.source_semantic.source_triplet_decomposition import (
+    SourceTripletDecompositionNode,
 )
-from kms2.node.source_semantic.triplet_load import TripletSourceLoadNode
-from kms2.node.source_semantic.triplet_persistence import TripletPersistenceNode
+from kms2.node.source_semantic.source_triplet_fact_load import (
+    SourceTripletFactLoadNode,
+)
+from kms2.node.source_semantic.source_triplet_load import (
+    SourceFactSourceLoadNode,
+)
+from kms2.node.source_semantic.source_triplet_persistence import (
+    SourceTripletPersistenceNode,
+)
 
 
 def _block(
@@ -128,20 +151,22 @@ def _block(
     return SourceBlock(uuid=uuid, block_type=block_type, content=content)
 
 
-def test_fact_request_projects_uuid_free_context_window():
+def test_fact_request_projects_uuid_free_pointer_context():
     blocks = [
         _block('before', 'before text'),
         _block('target', 'target text'),
         _block('after', 'after text'),
     ]
-    request = FactExtractionRequest(
+    request = SourceFactExtractionRequest(
         source_uuid='source-1',
-        target_block=blocks[1],
-        window=select_window(
-            blocks,
-            [1],
-            backward_budget=400,
-            forward_budget=400,
+        target=SourceFactTarget(uuid='target-1', source_blocks=[blocks[1]]),
+        context_before=SourceFactContext(
+            uuid='before-1',
+            source_blocks=[blocks[0]],
+        ),
+        context_after=SourceFactContext(
+            uuid='after-1',
+            source_blocks=[blocks[2]],
         ),
     )
 
@@ -149,48 +174,43 @@ def test_fact_request_projects_uuid_free_context_window():
 
     assert model_input.model_dump() == {
         'context_before': [
-            {
-                'block_type': 'paragraph',
-                'content': 'before text',
-            }
+            {'block_type': 'paragraph', 'content': 'before text'}
         ],
-        'target_block': {
-            'block_type': 'paragraph',
-            'content': 'target text',
-        },
-        'context_after': [
-            {
-                'block_type': 'paragraph',
-                'content': 'after text',
-            }
+        'target_blocks': [
+            {'block_type': 'paragraph', 'content': 'target text'}
         ],
+        'context_after': [{'block_type': 'paragraph', 'content': 'after text'}],
     }
     assert 'uuid' not in model_input.model_dump_json()
 
 
 class _FactExtractor:
     async def aforward(self, *, request):
-        assert request.target_block.content == 'target text'
-        return [AtomicFact(text='Alice works for Acme')]
+        assert request.target_blocks[0].content == 'target text'
+        return [SourceAtomicFact(text='Alice works for Acme')]
 
 
 class _TripletDecomposer:
     async def aforward(self, *, request):
         return [
-            TripletDecompositionCandidate(
+            SourceTripletDecompositionCandidate(
                 subject='Alice',
                 predicate='works for',
                 object='Acme',
-                subject_kind=TripletEndpointKind.ENTITY,
-                object_kind=TripletEndpointKind.ENTITY,
+                subject_kind=SourceTripletEndpointKind.ENTITY,
+                object_kind=SourceTripletEndpointKind.ENTITY,
             )
         ]
 
 
-def test_fact_node_collects_results_in_source_order():
-    node = FactExtractionNode(
+def test_fact_node_collects_pointer_facts_in_source_order():
+    node = SourceFactExtractionNode(
         _FactExtractor(),
-        ContextWindowSettings(backward_budget=400, forward_budget=400),
+        ContextWindowSettings(
+            backward_budget=400,
+            forward_budget=400,
+            target_budget=400,
+        ),
     )
     state = SourceSemanticState(
         source_uuid='source-1',
@@ -198,19 +218,24 @@ def test_fact_node_collects_results_in_source_order():
     )
 
     sends = node.dispatch(state)
-    assert len(sends) == 2
     result = asyncio.run(node.worker(sends[1].arg))
     state.fact_results = result['fact_results']
     collected = node.collect(state)
-    assert [
-        fact.source_block_uuid for fact in collected['extracted_facts']
-    ] == ['second']
+
+    fact = collected['source_facts'][0]
+    assert fact.text == 'Alice works for Acme'
+    assert [block.uuid for block in fact.target.source_blocks] == ['second']
+    assert fact.context_before.source_blocks[0].uuid == 'first'
 
 
 def test_fact_dispatch_covers_every_persisted_block_in_order():
-    node = FactExtractionNode(
+    node = SourceFactExtractionNode(
         _FactExtractor(),
-        ContextWindowSettings(backward_budget=400, forward_budget=400),
+        ContextWindowSettings(
+            backward_budget=400,
+            forward_budget=400,
+            target_budget=400,
+        ),
     )
     state = SourceSemanticState(
         source_uuid='source-1',
@@ -226,37 +251,44 @@ def test_fact_dispatch_covers_every_persisted_block_in_order():
     sends = node.dispatch(state)
 
     assert [
-        send.arg['fact_extraction_request'].target_block.uuid for send in sends
+        send.arg['fact_extraction_request'].target.source_blocks[0].uuid
+        for send in sends
     ] == ['paragraph', 'header', 'image', 'table', 'empty']
 
 
-def test_triplet_collection_creates_fresh_vertex_ids_and_preserves_provenance():
-    node = TripletDecompositionNode(_TripletDecomposer())
-    fact = ExtractedFact(
-        source_uuid='source-1',
-        source_block_uuid='block-1',
+def _fact(uuid: str, block: SourceBlock) -> SourceFact:
+    return SourceFact(
+        uuid=uuid,
         text='Alice works for Acme',
+        target=SourceFactTarget(source_blocks=[block]),
+        context_before=SourceFactContext(source_blocks=[]),
+        context_after=SourceFactContext(source_blocks=[]),
     )
+
+
+def test_triplet_collection_reuses_each_persisted_fact():
+    node = SourceTripletDecompositionNode(_TripletDecomposer())
+    fact = _fact('fact-1', _block('block-1', 'source text'))
     state = SourceSemanticState(
         source_uuid='source-1',
-        extracted_facts=[fact],
+        source_facts=[fact],
         triplet_results=[
-            TripletDecompositionResult(
+            SourceTripletDecompositionResult(
                 fact=fact,
                 triplets=[
-                    TripletDecompositionCandidate(
+                    SourceTripletDecompositionCandidate(
                         subject='Alice',
                         predicate='works for',
                         object='Acme',
-                        subject_kind=TripletEndpointKind.ENTITY,
-                        object_kind=TripletEndpointKind.ENTITY,
+                        subject_kind=SourceTripletEndpointKind.ENTITY,
+                        object_kind=SourceTripletEndpointKind.ENTITY,
                     ),
-                    TripletDecompositionCandidate(
+                    SourceTripletDecompositionCandidate(
                         subject='Alice',
                         predicate='works for',
                         object='Acme',
-                        subject_kind=TripletEndpointKind.ENTITY,
-                        object_kind=TripletEndpointKind.ENTITY,
+                        subject_kind=SourceTripletEndpointKind.ENTITY,
+                        object_kind=SourceTripletEndpointKind.ENTITY,
                     ),
                 ],
             )
@@ -264,7 +296,6 @@ def test_triplet_collection_creates_fresh_vertex_ids_and_preserves_provenance():
     )
 
     collected = node.collect(state)
-    source_facts = collected['source_facts']
     triplet_occurrences = collected['triplet_occurrences']
 
     assert len(triplet_occurrences) == 2
@@ -272,23 +303,9 @@ def test_triplet_collection_creates_fresh_vertex_ids_and_preserves_provenance():
         triplet_occurrences[0].triplet.uuid
         != triplet_occurrences[1].triplet.uuid
     )
-    assert (
-        triplet_occurrences[0].subject.uuid
-        != triplet_occurrences[1].subject.uuid
-    )
+    assert all(occurrence.fact is fact for occurrence in triplet_occurrences)
     assert all(
-        occurrence.triplet.source_block_uuid == 'block-1'
-        for occurrence in triplet_occurrences
-    )
-    assert all(
-        isinstance(occurrence.subject, SourceEntity)
-        for occurrence in triplet_occurrences
-    )
-    assert len(source_facts) == 1
-    assert source_facts[0].source_block_uuid == 'block-1'
-    assert source_facts[0].text == 'Alice works for Acme'
-    assert all(
-        occurrence.fact.uuid == source_facts[0].uuid
+        occurrence.subject.source_block_uuid == 'block-1'
         for occurrence in triplet_occurrences
     )
 
@@ -334,24 +351,46 @@ def test_source_repository_loads_ordered_blocks():
     assert blocks[0].content == 'text'
 
 
-def test_semantic_repository_replace_uses_exact_query_parameters():
+def test_fact_repository_serializes_only_node_identity_and_evidence_edges():
+    session = _Session()
+    repository = SourceFactRepository(lambda: _SessionContext(session))
+    block = _block('block-1', 'source text')
+    source_fact = _fact('fact-1', block)
+
+    asyncio.run(repository.replace_source_facts('source-1', [source_fact]))
+
+    query, parameters = session.calls[-1]
+    assert query is REPLACE_SOURCE_FACTS
+    assert parameters['source_uuid'] == 'source-1'
+    assert parameters['facts'] == [
+        {
+            'uuid': 'fact-1',
+            'text': 'Alice works for Acme',
+            'target_uuid': source_fact.target.uuid,
+            'context_before_uuid': source_fact.context_before.uuid,
+            'context_after_uuid': source_fact.context_after.uuid,
+            'target_block_uuids': ['block-1'],
+            'context_before_block_uuids': [],
+            'context_after_block_uuids': [],
+        }
+    ]
+    assert 'source_uuid: row' not in query
+    assert 'source_block_uuid: row' not in query
+    assert 'CREATE (source)-[:HAS_FACT]->(fact)' not in query
+    assert 'SourceFactTarget' in query
+    assert 'SourceFactContext' in query
+    assert 'CREATE (fact)-[:HAS_TARGET]->(target)' in query
+    assert 'CREATE (target)-[:HAS_SOURCE_BLOCK]->(block)' in query
+
+
+def test_triplet_repository_serializes_role_ids_only_as_match_parameters():
     session = _Session()
     repository = SourceTripletRepository(lambda: _SessionContext(session))
-    source_fact = SourceFact(
-        uuid='fact-1',
-        source_uuid='source-1',
-        source_block_uuid='block-1',
-        text='Alice works for Acme.',
-    )
-    triplet_occurrence = SourceTripletOccurrence(
+    block = _block('block-1', 'source text')
+    source_fact = _fact('fact-1', block)
+    occurrence = SourceTripletOccurrence(
         fact=source_fact,
-        triplet=SourceTriplet(
-            source_uuid='source-1',
-            source_block_uuid='block-1',
-            subject_uuid='subject-1',
-            object_uuid='object-1',
-            predicate_uuid='predicate-1',
-        ),
+        triplet=SourceTriplet(uuid='triplet-1'),
         subject=SourceEntity(
             uuid='subject-1',
             source_uuid='source-1',
@@ -372,46 +411,21 @@ def test_semantic_repository_replace_uses_exact_query_parameters():
         ),
     )
 
-    asyncio.run(
-        repository.replace_source_facts_and_triplets(
-            'source-1',
-            [source_fact],
-            [triplet_occurrence],
-        )
-    )
-    assert session.calls[-1][0] is REPLACE_SOURCE_FACTS_AND_TRIPLETS
-    assert session.calls[-1][1]['source_uuid'] == 'source-1'
-    assert session.calls[-1][1]['source_facts'] == [
-        {
-            'uuid': 'fact-1',
-            'source_uuid': 'source-1',
-            'source_block_uuid': 'block-1',
-            'text': 'Alice works for Acme.',
-        }
-    ]
-    assert (
-        session.calls[-1][1]['triplets'][0]['uuid']
-        == triplet_occurrence.triplet.uuid
-    )
-    assert session.calls[-1][1]['fact_triplet_pairs'] == [
-        {
-            'source_fact_uuid': 'fact-1',
-            'triplet_uuid': triplet_occurrence.triplet.uuid,
-        }
-    ]
-    query = session.calls[-1][0]
-    assert 'CREATE (block)-[:HAS_FACT]->(fact)' in query
-    assert 'CREATE (fact)-[:HAS_TRIPLET]->(triplet)' in query
-    assert 'CREATE (block)-[:HAS_TRIPLET]->(triplet)' not in query
-    assert 'CREATE (source)-[:HAS_TRIPLET]->(triplet)' not in query
-    assert 'CREATE (triplet)-[:HAS_SUBJECT]->(subject)' in query
-    assert 'CREATE (triplet)-[:HAS_OBJECT]->(object)' in query
-    assert 'CREATE (triplet)-[:HAS_PREDICATE]->(source_predicate)' in query
+    asyncio.run(repository.replace_source_triplets('source-1', [occurrence]))
 
-    asyncio.run(
-        repository.replace_source_facts_and_triplets('source-1', [], [])
-    )
-    assert session.calls[-1][0] is CLEAR_SOURCE_FACTS_AND_TRIPLETS
+    query, parameters = session.calls[-1]
+    assert query is REPLACE_SOURCE_TRIPLETS
+    assert parameters['triplets'] == [
+        {
+            'uuid': 'triplet-1',
+            'subject_uuid': 'subject-1',
+            'object_uuid': 'object-1',
+            'predicate_uuid': 'predicate-1',
+        }
+    ]
+    assert 'CREATE (triplet:SourceTriplet {uuid: row.uuid})' in query
+    assert 'source_uuid: row.source_uuid' in query
+    assert 'CREATE (fact)-[:HAS_TRIPLET]->(triplet)' in query
 
 
 class _Runtime:
@@ -443,6 +457,8 @@ class _TypedSemanticRepository:
         self.entities = entities
         self.events = events or []
         self.predicates = predicates or []
+        self.source_facts = []
+        self.triplet_occurrences = []
         self.updated = {}
 
     async def load_source_entities(self, source_uuid):
@@ -463,17 +479,14 @@ class _TypedSemanticRepository:
     async def update_source_predicate_description(self, source_uuid, results):
         self.updated['predicate'] = (source_uuid, results)
 
-    async def replace_source_facts_and_triplets(
-        self,
-        source_uuid,
-        source_facts,
-        triplet_occurrences,
-    ):
-        self.source_facts_and_triplet_occurrences = (
-            source_uuid,
-            source_facts,
-            triplet_occurrences,
-        )
+    async def replace_source_facts(self, source_uuid, source_facts):
+        self.source_facts = source_facts
+
+    async def load_source_facts(self, source_uuid):
+        return self.source_facts
+
+    async def replace_source_triplets(self, source_uuid, triplet_occurrences):
+        self.triplet_occurrences = triplet_occurrences
 
     async def load_source_statements(self, source_uuid):
         return []
@@ -842,14 +855,23 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
     context_window = ContextWindowSettings(
         backward_budget=400,
         forward_budget=400,
+        target_budget=400,
     )
 
     events = []
     graph = SourceSemanticGraph(
-        triplet_source_load=TripletSourceLoadNode(source_repository),
-        fact_extraction=FactExtractionNode(_FactExtractor(), context_window),
-        triplet_decomposition=TripletDecompositionNode(_TripletDecomposer()),
-        triplet_persistence=TripletPersistenceNode(semantic_repository),
+        source_fact_source_load=SourceFactSourceLoadNode(source_repository),
+        source_fact_extraction=SourceFactExtractionNode(
+            _FactExtractor(), context_window
+        ),
+        source_fact_persistence=SourceFactPersistenceNode(semantic_repository),
+        source_triplet_fact_load=SourceTripletFactLoadNode(semantic_repository),
+        source_triplet_decomposition=SourceTripletDecompositionNode(
+            _TripletDecomposer()
+        ),
+        source_triplet_persistence=SourceTripletPersistenceNode(
+            semantic_repository
+        ),
         source_entity_description_load=_RecordingNode(
             SourceEntityDescriptionLoadNode(
                 source_repository,
@@ -996,7 +1018,7 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
         ),
     ).build_graph()
     assert {
-        'triplet_persistence',
+        'source_triplet_persistence',
         'source_entity_description_load',
         'source_event_description_load',
         'source_predicate_description_load',

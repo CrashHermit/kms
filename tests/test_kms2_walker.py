@@ -1,4 +1,5 @@
-from kms2.core.model import BlockType, SourceBlock
+from kms2.core.model.block import SourceBlock
+from kms2.core.model.block_types import BlockType
 from kms2.core.windowing import window_from
 
 

@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_event_hub import (
     SourceEventHubDefinition,
     SourceEventHubSynthesisInput,
 )
@@ -42,6 +42,3 @@ class SourceEventHubModule(dspy.Module):
     ) -> SourceEventHubDefinition:
         """Synthesize an event hub asynchronously."""
         return (await self.predictor.acall(request=request)).definition
-
-
-__all__ = ['SourceEventHubModule', 'SourceEventHubSignature']

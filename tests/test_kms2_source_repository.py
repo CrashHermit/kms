@@ -1,22 +1,29 @@
 import asyncio
 
-from kms2.core.model import (
-    Instruction,
+import pytest
+
+from kms2.core.model.block import SourceBlock
+from kms2.core.model.page import SourcePage
+from kms2.core.model.source import Source
+from kms2.core.model.source_processing.instruction import Instruction
+from kms2.core.model.source_processing.pedagogical import (
     ProcedureDraft,
-    Source,
-    SourceBlock,
-    SourcePage,
     StatementDraft,
-    VisualAsset,
 )
+from kms2.core.model.visual_asset import VisualAsset
 from kms2.database.source.queries.source_blocks import (
     FIND_SIMILAR_SOURCE_BLOCKS,
 )
-from kms2.database.source.queries.source_catalog import READ_SOURCES
+from kms2.database.source.queries.source_catalog import (
+    ADOPT_SOURCE,
+    READ_SOURCES,
+    READ_UNOWNED_SOURCES,
+)
 from kms2.database.source.queries.source_graph import REPLACE_SOURCE
 from kms2.database.source.source_block_repository import SourceBlockRepository
 from kms2.database.source.source_catalog_repository import (
     SourceCatalogRepository,
+    SourceOwnershipConflict,
 )
 from kms2.database.source.source_graph_repository import SourceGraphRepository
 
@@ -127,7 +134,7 @@ def test_replace_source_projects_pointer_rows_and_governance_once():
     assert 'MEMBER_OF]->(procedure' in query
 
 
-def test_list_sources_returns_stable_source_summaries():
+def test_list_sources_returns_stable_user_source_summaries():
     session = _RecordingSession(
         _RecordingResult(
             [
@@ -138,14 +145,49 @@ def test_list_sources_returns_stable_source_summaries():
     )
 
     sources = asyncio.run(
-        SourceCatalogRepository(lambda: _SessionContext(session)).list_sources()
+        SourceCatalogRepository(lambda: _SessionContext(session)).list_sources(
+            'user-1'
+        )
     )
 
     assert sources == [
         Source(uuid='source-2', key='second.pdf'),
         Source(uuid='source-1', key='first.pdf'),
     ]
-    assert session.calls == [(READ_SOURCES, {})]
+    assert session.calls == [(READ_SOURCES, {'user_uuid': 'user-1'})]
+
+
+def test_list_unowned_sources_excludes_owned_source_catalog():
+    session = _RecordingSession(
+        _RecordingResult([{'uuid': 'legacy-1', 'key': 'legacy.pdf'}])
+    )
+
+    sources = asyncio.run(
+        SourceCatalogRepository(
+            lambda: _SessionContext(session)
+        ).list_unowned_sources()
+    )
+
+    assert sources == [Source(uuid='legacy-1', key='legacy.pdf')]
+    assert session.calls == [(READ_UNOWNED_SOURCES, {})]
+
+
+def test_adopt_source_locks_source_and_rejects_claimed_source():
+    session = _RecordingSession()
+    repository = SourceCatalogRepository(lambda: _SessionContext(session))
+
+    with pytest.raises(SourceOwnershipConflict):
+        asyncio.run(repository.adopt_source('user-1', 'source-1'))
+
+    assert session.calls == [
+        (
+            ADOPT_SOURCE,
+            {'user_uuid': 'user-1', 'source_uuid': 'source-1'},
+        )
+    ]
+    assert 'SET source._ownership_lock = randomUUID()' in ADOPT_SOURCE
+    assert 'REMOVE source._ownership_lock' in ADOPT_SOURCE
+    assert 'WHERE NOT EXISTS' in ADOPT_SOURCE
 
 
 def test_find_similar_blocks_uses_neo4j_vector_index_and_omits_embedding():

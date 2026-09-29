@@ -37,12 +37,3 @@ class SourceProcedureDescriptionResult(SourceProcedureDescriptionTarget):
 
     description: str = Field(min_length=1)
     embedding: list[float] | None = None
-
-
-__all__ = [
-    'SourceProcedure',
-    'SourceProcedureDescriptionInput',
-    'SourceProcedureDescriptionRequest',
-    'SourceProcedureDescriptionResult',
-    'SourceProcedureDescriptionTarget',
-]

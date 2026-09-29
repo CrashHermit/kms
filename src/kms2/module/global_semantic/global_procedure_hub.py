@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model import (
+from kms2.core.model.global_semantic.global_procedure_hub import (
     GlobalProcedureHubDefinition,
     GlobalProcedureHubSynthesisInput,
 )
@@ -43,6 +43,3 @@ class GlobalProcedureHubModule(dspy.Module):
     ) -> GlobalProcedureHubDefinition:
         """Synthesize a procedure hub asynchronously."""
         return (await self.predictor.acall(request=request)).definition
-
-
-__all__ = ['GlobalProcedureHubModule', 'GlobalProcedureHubSignature']

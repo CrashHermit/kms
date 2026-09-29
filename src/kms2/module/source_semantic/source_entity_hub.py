@@ -2,7 +2,7 @@
 
 import dspy
 
-from kms2.core.model import (
+from kms2.core.model.source_semantic.source_entity_hub import (
     SourceEntityHubDefinition,
     SourceEntityHubSynthesisInput,
 )
@@ -42,6 +42,3 @@ class SourceEntityHubModule(dspy.Module):
     ) -> SourceEntityHubDefinition:
         """Synthesize an entity hub asynchronously."""
         return (await self.predictor.acall(request=request)).definition
-
-
-__all__ = ['SourceEntityHubModule', 'SourceEntityHubSignature']

@@ -10,6 +10,9 @@ from kms2.database.source_semantic.source_entity_repository import (
 from kms2.database.source_semantic.source_event_repository import (
     SourceEventRepository,
 )
+from kms2.database.source_semantic.source_fact_repository import (
+    SourceFactRepository,
+)
 from kms2.database.source_semantic.source_predicate_repository import (
     SourcePredicateRepository,
 )
@@ -23,11 +26,7 @@ from kms2.database.source_semantic.source_triplet_repository import (
     SourceTripletRepository,
 )
 from kms2.langgraph.source_semantic.graph import SourceSemanticGraph
-from kms2.local_models import LocalModelRuntime
-from kms2.module.source_semantic.fact_extraction import (
-    FactExtractionSignature,
-    FactExtractorModule,
-)
+from kms2.local_models.runtime import LocalModelRuntime
 from kms2.module.source_semantic.source_entity_description import (
     SourceEntityDescriptionModule,
     SourceEntityDescriptionSignature,
@@ -51,6 +50,10 @@ from kms2.module.source_semantic.source_event_hub import (
 from kms2.module.source_semantic.source_event_hub_judge import (
     SourceEventHubJudgeModule,
     SourceEventHubJudgeSignature,
+)
+from kms2.module.source_semantic.source_fact_extraction import (
+    SourceFactExtractionSignature,
+    SourceFactExtractorModule,
 )
 from kms2.module.source_semantic.source_predicate_description import (
     SourcePredicateDescriptionModule,
@@ -88,15 +91,14 @@ from kms2.module.source_semantic.source_statement_hub_judge import (
     SourceStatementHubJudgeModule,
     SourceStatementHubJudgeSignature,
 )
+from kms2.module.source_semantic.source_triplet_decomposition import (
+    SourceTripletDecomposerModule,
+    SourceTripletDecompositionSignature,
+)
 from kms2.module.source_semantic.source_triplet_hub import (
     SourceTripletHubModule,
     SourceTripletHubSignature,
 )
-from kms2.module.source_semantic.triplet_decomposition import (
-    TripletDecomposerModule,
-    TripletDecompositionSignature,
-)
-from kms2.node.source_semantic.fact_extraction import FactExtractionNode
 from kms2.node.source_semantic.source_entity_description import (
     SourceEntityDescriptionNode,
 )
@@ -128,6 +130,12 @@ from kms2.node.source_semantic.source_event_hub_persistence import (
 )
 from kms2.node.source_semantic.source_event_persistence import (
     SourceEventPersistenceNode,
+)
+from kms2.node.source_semantic.source_fact_extraction import (
+    SourceFactExtractionNode,
+)
+from kms2.node.source_semantic.source_fact_persistence import (
+    SourceFactPersistenceNode,
 )
 from kms2.node.source_semantic.source_predicate_description import (
     SourcePredicateDescriptionNode,
@@ -183,15 +191,22 @@ from kms2.node.source_semantic.source_statement_hub_persistence import (
 from kms2.node.source_semantic.source_statement_persistence import (
     SourceStatementPersistenceNode,
 )
+from kms2.node.source_semantic.source_triplet_decomposition import (
+    SourceTripletDecompositionNode,
+)
+from kms2.node.source_semantic.source_triplet_fact_load import (
+    SourceTripletFactLoadNode,
+)
 from kms2.node.source_semantic.source_triplet_hub import SourceTripletHubNode
 from kms2.node.source_semantic.source_triplet_hub_persistence import (
     SourceTripletHubPersistenceNode,
 )
-from kms2.node.source_semantic.triplet_decomposition import (
-    TripletDecompositionNode,
+from kms2.node.source_semantic.source_triplet_load import (
+    SourceFactSourceLoadNode,
 )
-from kms2.node.source_semantic.triplet_load import TripletSourceLoadNode
-from kms2.node.source_semantic.triplet_persistence import TripletPersistenceNode
+from kms2.node.source_semantic.source_triplet_persistence import (
+    SourceTripletPersistenceNode,
+)
 from kms2.train.recorder import Recorder
 
 
@@ -207,23 +222,24 @@ def build_source_semantic_graph(
     predictors = PredictorFactory(local_models, recorder)
     source_block_repository = SourceBlockRepository(database.session)
     source_entity_repository = SourceEntityRepository(database.session)
+    source_fact_repository = SourceFactRepository(database.session)
     source_event_repository = SourceEventRepository(database.session)
     source_predicate_repository = SourcePredicateRepository(database.session)
     source_procedure_repository = SourceProcedureRepository(database.session)
     source_statement_repository = SourceStatementRepository(database.session)
     source_triplet_repository = SourceTripletRepository(database.session)
-    fact_extractor = FactExtractorModule(
+    fact_extractor = SourceFactExtractorModule(
         predictors.create(
-            FactExtractorModule,
-            semantic.fact_extraction,
-            FactExtractionSignature,
+            SourceFactExtractorModule,
+            semantic.source_fact_extraction,
+            SourceFactExtractionSignature,
         )
     )
-    triplet_decomposer = TripletDecomposerModule(
+    triplet_decomposer = SourceTripletDecomposerModule(
         predictors.create(
-            TripletDecomposerModule,
-            semantic.triplet_decomposition,
-            TripletDecompositionSignature,
+            SourceTripletDecomposerModule,
+            semantic.source_triplet_decomposition,
+            SourceTripletDecompositionSignature,
         )
     )
     source_entity_hub_module = SourceEntityHubModule(
@@ -305,13 +321,25 @@ def build_source_semantic_graph(
     )
 
     return SourceSemanticGraph(
-        triplet_source_load=TripletSourceLoadNode(source_block_repository),
-        fact_extraction=FactExtractionNode(
+        source_fact_source_load=SourceFactSourceLoadNode(
+            source_block_repository
+        ),
+        source_fact_extraction=SourceFactExtractionNode(
             fact_extractor,
             semantic.context_window,
         ),
-        triplet_decomposition=TripletDecompositionNode(triplet_decomposer),
-        triplet_persistence=TripletPersistenceNode(source_triplet_repository),
+        source_fact_persistence=SourceFactPersistenceNode(
+            source_fact_repository
+        ),
+        source_triplet_fact_load=SourceTripletFactLoadNode(
+            source_fact_repository
+        ),
+        source_triplet_decomposition=SourceTripletDecompositionNode(
+            triplet_decomposer
+        ),
+        source_triplet_persistence=SourceTripletPersistenceNode(
+            source_triplet_repository
+        ),
         source_entity_description_load=SourceEntityDescriptionLoadNode(
             source_block_repository,
             source_entity_repository,
