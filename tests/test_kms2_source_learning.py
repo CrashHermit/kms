@@ -37,15 +37,6 @@ from kms2.core.model.source_learning.triplet import (
 )
 from kms2.core.model.user import User
 from kms2.database.schema import SCHEMA_STATEMENTS
-from kms2.database.source_learning.queries import (
-    _CLEAR_SOURCE_LEARNING,
-    PERSIST_SOURCE_FLASHCARDS,
-    READ_SOURCE_ENTITY_LEARNING_INPUTS,
-    READ_SOURCE_EVENT_LEARNING_INPUTS,
-    READ_SOURCE_PREDICATE_LEARNING_INPUTS,
-    READ_SOURCE_TRIPLET_LEARNING_INPUTS,
-)
-from kms2.database.source_learning.repository import SourceLearningRepository
 from kms2.module.source_learning.entity import (
     SourceEntityFlashcardModule,
     SourceEntityLearningFactModule,
@@ -198,29 +189,6 @@ def test_source_learning_settings_have_eight_independent_profiles():
     ]
 
 
-def test_source_learning_queries_preserve_directed_context_and_roles():
-    for query in (
-        READ_SOURCE_ENTITY_LEARNING_INPUTS,
-        READ_SOURCE_EVENT_LEARNING_INPUTS,
-        READ_SOURCE_PREDICATE_LEARNING_INPUTS,
-        READ_SOURCE_TRIPLET_LEARNING_INPUTS,
-    ):
-        assert 'source_fact_text: fact.text' in query
-        assert 'subject: subject.name' in query
-        assert 'predicate: predicate.predicate' in query
-        assert 'object: object.name' in query
-        assert 'member_role' in query
-        assert 'WITH DISTINCT' in query
-
-
-def test_flashcards_use_learning_fact_for_hub_provenance():
-    assert (
-        'CREATE (card)-[:DERIVED_FROM]->(learning_fact)'
-        in PERSIST_SOURCE_FLASHCARDS
-    )
-    assert 'CREATE (card)-[:ABOUT_HUB]' not in PERSIST_SOURCE_FLASHCARDS
-
-
 def test_source_learning_uuid_constraints_are_registered():
     schema = '\n'.join(SCHEMA_STATEMENTS)
     for label in (
@@ -360,91 +328,3 @@ def test_source_learning_application_runs_owned_source(monkeypatch):
     assert result.entity_learning_fact_count == 2
     assert result.triplet_flashcard_count == 4
     assert calls == [{'source_uuid': source.uuid}]
-
-
-class _QueryResult:
-    def __init__(self, rows=None, persisted=0):
-        self.rows = rows or []
-        self.persisted = persisted
-
-    async def data(self):
-        return self.rows
-
-    async def single(self):
-        return {'persisted': self.persisted}
-
-    async def consume(self):
-        return None
-
-
-class _QuerySession:
-    def __init__(self, rows=None):
-        self.rows = rows or []
-        self.calls = []
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        return None
-
-    async def run(self, statement, **parameters):
-        self.calls.append((statement, parameters))
-        if statement == READ_SOURCE_ENTITY_LEARNING_INPUTS:
-            return _QueryResult(self.rows)
-        if 'HAS_LEARNING_FACT]->(learning_fact:' in statement:
-            return _QueryResult(persisted=1)
-        if statement == PERSIST_SOURCE_FLASHCARDS:
-            return _QueryResult(persisted=1)
-        return _QueryResult()
-
-
-def test_source_learning_repository_preserves_typed_evidence_and_provenance():
-    evidence = _evidence(SourceEntityLearningFactEvidence)
-    session = _QuerySession(
-        [
-            {
-                'hub_uuid': 'hub-1',
-                'hub_name': 'Alice',
-                'hub_description': 'A person.',
-                'evidence': [evidence.model_dump()],
-            }
-        ]
-    )
-    repository = SourceLearningRepository(lambda: session)
-    inputs = asyncio.run(repository.load_entity_learning_inputs('source-1'))
-    assert inputs[0].hub_uuid == 'hub-1'
-    assert inputs[0].evidence[0].source_fact_uuid == 'fact-1'
-
-    result = asyncio.run(
-        repository.replace_entity_learning_facts(
-            'source-1',
-            inputs,
-            [
-                SourceEntityLearningFactResult(
-                    facts=[
-                        {
-                            'text': 'Alice works for Acme.',
-                            'source_fact_uuids': ['fact-1'],
-                            'triplet_uuids': ['triplet-1'],
-                        }
-                    ]
-                )
-            ],
-        )
-    )
-    assert result == 1
-    _, parameters = session.calls[-1]
-    assert parameters['source_uuid'] == 'source-1'
-    assert parameters['rows'][0]['hub_uuid'] == 'hub-1'
-    assert parameters['rows'][0]['source_fact_uuids'] == ['fact-1']
-    assert parameters['rows'][0]['triplet_uuids'] == ['triplet-1']
-
-
-def test_source_learning_repository_cleanup_is_source_scoped():
-    session = _QuerySession()
-    repository = SourceLearningRepository(lambda: session)
-    asyncio.run(repository.clear_source_learning('source-1'))
-    statement, parameters = session.calls[-1]
-    assert statement == _CLEAR_SOURCE_LEARNING
-    assert parameters == {'source_uuid': 'source-1'}

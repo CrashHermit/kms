@@ -32,15 +32,31 @@ from kms2.core.model.source_learning.triplet import (
     SourceTripletLearningFactInput,
     SourceTripletLearningFactResult,
 )
-from kms2.database.source_learning.queries import (
-    _CLEAR_SOURCE_LEARNING,
-    _READ_LEARNING_FACTS,
-    PERSIST_SOURCE_FLASHCARDS,
+from kms2.database.source_learning.queries.source_entity import (
+    CREATE_SOURCE_ENTITY_LEARNING_FACTS,
+    READ_SOURCE_ENTITY_FLASHCARD_INPUTS,
     READ_SOURCE_ENTITY_LEARNING_INPUTS,
+)
+from kms2.database.source_learning.queries.source_event import (
+    CREATE_SOURCE_EVENT_LEARNING_FACTS,
+    READ_SOURCE_EVENT_FLASHCARD_INPUTS,
     READ_SOURCE_EVENT_LEARNING_INPUTS,
+)
+from kms2.database.source_learning.queries.source_flashcard import (
+    CREATE_SOURCE_FLASHCARDS,
+)
+from kms2.database.source_learning.queries.source_learning import (
+    CLEAR_SOURCE_LEARNING,
+)
+from kms2.database.source_learning.queries.source_predicate import (
+    CREATE_SOURCE_PREDICATE_LEARNING_FACTS,
+    READ_SOURCE_PREDICATE_FLASHCARD_INPUTS,
     READ_SOURCE_PREDICATE_LEARNING_INPUTS,
+)
+from kms2.database.source_learning.queries.source_triplet import (
+    CREATE_SOURCE_TRIPLET_LEARNING_FACTS,
+    READ_SOURCE_TRIPLET_FLASHCARD_INPUTS,
     READ_SOURCE_TRIPLET_LEARNING_INPUTS,
-    REPLACE_SOURCE_LEARNING_FACTS,
 )
 
 
@@ -51,10 +67,10 @@ class SourceLearningRepository:
         self._session_factory = session_factory
 
     async def clear_source_learning(self, source_uuid: str) -> None:
-        """Delete generated learning records for one source only."""
+        """Delete one source's facts, cards, shared reviews, and history."""
         async with self._session_factory() as session:
             result = await session.run(
-                _CLEAR_SOURCE_LEARNING, source_uuid=source_uuid
+                CLEAR_SOURCE_LEARNING, source_uuid=source_uuid
             )
             await result.consume()
 
@@ -98,63 +114,63 @@ class SourceLearningRepository:
             source_uuid,
         )
 
-    async def replace_entity_learning_facts(
+    async def persist_entity_learning_facts(
         self,
         source_uuid: str,
         inputs: list[SourceEntityLearningFactInput],
         results: list[SourceEntityLearningFactResult],
     ) -> int:
-        """Persist entity learning facts and their selected provenance."""
-        return await self._replace_learning_facts(
+        """Persist one learning-fact node per row with selected evidence."""
+        return await self._persist_learning_facts(
             source_uuid,
             inputs,
             results,
-            REPLACE_SOURCE_LEARNING_FACTS['entity'],
+            CREATE_SOURCE_ENTITY_LEARNING_FACTS,
             SourceEntityLearningFact,
         )
 
-    async def replace_event_learning_facts(
+    async def persist_event_learning_facts(
         self,
         source_uuid: str,
         inputs: list[SourceEventLearningFactInput],
         results: list[SourceEventLearningFactResult],
     ) -> int:
-        """Persist event learning facts and their selected provenance."""
-        return await self._replace_learning_facts(
+        """Persist one learning-fact node per row with selected evidence."""
+        return await self._persist_learning_facts(
             source_uuid,
             inputs,
             results,
-            REPLACE_SOURCE_LEARNING_FACTS['event'],
+            CREATE_SOURCE_EVENT_LEARNING_FACTS,
             SourceEventLearningFact,
         )
 
-    async def replace_predicate_learning_facts(
+    async def persist_predicate_learning_facts(
         self,
         source_uuid: str,
         inputs: list[SourcePredicateLearningFactInput],
         results: list[SourcePredicateLearningFactResult],
     ) -> int:
-        """Persist predicate learning facts and their selected provenance."""
-        return await self._replace_learning_facts(
+        """Persist one learning-fact node per row with selected evidence."""
+        return await self._persist_learning_facts(
             source_uuid,
             inputs,
             results,
-            REPLACE_SOURCE_LEARNING_FACTS['predicate'],
+            CREATE_SOURCE_PREDICATE_LEARNING_FACTS,
             SourcePredicateLearningFact,
         )
 
-    async def replace_triplet_learning_facts(
+    async def persist_triplet_learning_facts(
         self,
         source_uuid: str,
         inputs: list[SourceTripletLearningFactInput],
         results: list[SourceTripletLearningFactResult],
     ) -> int:
-        """Persist triplet learning facts and their selected provenance."""
-        return await self._replace_learning_facts(
+        """Persist one learning-fact node per row with selected evidence."""
+        return await self._persist_learning_facts(
             source_uuid,
             inputs,
             results,
-            REPLACE_SOURCE_LEARNING_FACTS['triplet'],
+            CREATE_SOURCE_TRIPLET_LEARNING_FACTS,
             SourceTripletLearningFact,
         )
 
@@ -164,7 +180,7 @@ class SourceLearningRepository:
         """Load persisted entity learning facts for card creation."""
         return await self._load_card_inputs(
             source_uuid,
-            _READ_LEARNING_FACTS['entity'],
+            READ_SOURCE_ENTITY_FLASHCARD_INPUTS,
             SourceEntityFlashcardInput,
             SourceEntityLearningFact,
         )
@@ -175,7 +191,7 @@ class SourceLearningRepository:
         """Load persisted event learning facts for card creation."""
         return await self._load_card_inputs(
             source_uuid,
-            _READ_LEARNING_FACTS['event'],
+            READ_SOURCE_EVENT_FLASHCARD_INPUTS,
             SourceEventFlashcardInput,
             SourceEventLearningFact,
         )
@@ -186,7 +202,7 @@ class SourceLearningRepository:
         """Load persisted predicate learning facts for card creation."""
         return await self._load_card_inputs(
             source_uuid,
-            _READ_LEARNING_FACTS['predicate'],
+            READ_SOURCE_PREDICATE_FLASHCARD_INPUTS,
             SourcePredicateFlashcardInput,
             SourcePredicateLearningFact,
         )
@@ -197,7 +213,7 @@ class SourceLearningRepository:
         """Load persisted triplet learning facts for card creation."""
         return await self._load_card_inputs(
             source_uuid,
-            _READ_LEARNING_FACTS['triplet'],
+            READ_SOURCE_TRIPLET_FLASHCARD_INPUTS,
             SourceTripletFlashcardInput,
             SourceTripletLearningFact,
         )
@@ -249,7 +265,7 @@ class SourceLearningRepository:
             rows = await result.data()
         return [model.model_validate(row) for row in rows]
 
-    async def _replace_learning_facts(
+    async def _persist_learning_facts(
         self,
         source_uuid: str,
         inputs: list,
@@ -280,7 +296,7 @@ class SourceLearningRepository:
                 source_uuid=source_uuid,
                 rows=rows,
             )
-            record = await response.single()
+            record = await response.single(strict=True)
         return int(record['persisted'])
 
     async def _load_card_inputs(
@@ -330,9 +346,9 @@ class SourceLearningRepository:
             return 0
         async with self._session_factory() as session:
             response = await session.run(
-                PERSIST_SOURCE_FLASHCARDS,
+                CREATE_SOURCE_FLASHCARDS,
                 source_uuid=source_uuid,
                 rows=rows,
             )
-            record = await response.single()
+            record = await response.single(strict=True)
         return int(record['persisted'])

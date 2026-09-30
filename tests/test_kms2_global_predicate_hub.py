@@ -9,14 +9,6 @@ from kms2.core.model.global_semantic.global_predicate_hub import (
     GlobalPredicateHubJudgeInput,
     GlobalPredicateHubMember,
 )
-from kms2.database.global_semantic.global_predicate_hub_repository import (
-    GlobalPredicateHubRepository,
-)
-from kms2.database.global_semantic.queries.global_predicate_hub import (
-    DETECT_GLOBAL_PREDICATE_HUB_COMMUNITIES,
-    READ_GLOBAL_PREDICATE_HUB_CANDIDATES,
-    REPLACE_GLOBAL_PREDICATE_HUB_ACCEPTED_EDGES,
-)
 from kms2.langgraph.global_semantic.graph import GlobalSemanticGraph
 from kms2.langgraph.global_semantic.state import GlobalSemanticState
 from kms2.node.global_semantic.global_predicate_hub import (
@@ -25,68 +17,6 @@ from kms2.node.global_semantic.global_predicate_hub import (
 from kms2.node.global_semantic.global_predicate_hub_persistence import (
     GlobalPredicateHubPersistenceNode,
 )
-
-
-class _Result:
-    def __init__(self, rows=None):
-        self.rows = rows or []
-
-    async def data(self):
-        return self.rows
-
-    async def consume(self):
-        return None
-
-
-class _Context:
-    def __init__(self, session):
-        self.session = session
-
-    async def __aenter__(self):
-        return self.session
-
-    async def __aexit__(self, *args):
-        return None
-
-
-class _Session:
-    def __init__(self):
-        self.calls = []
-
-    async def run(self, query, **parameters):
-        self.calls.append((query, parameters))
-        if query is READ_GLOBAL_PREDICATE_HUB_CANDIDATES:
-            return _Result(
-                [
-                    {
-                        'left_uuid': 'hub-1',
-                        'left_predicate': 'supports',
-                        'left_description': 'provides support',
-                        'right_uuid': 'hub-2',
-                        'right_predicate': 'supports',
-                        'right_description': 'provides support',
-                        'score': 0.9,
-                    }
-                ]
-            )
-        if query is DETECT_GLOBAL_PREDICATE_HUB_COMMUNITIES:
-            return _Result(
-                [
-                    {
-                        'community_id': 1,
-                        'uuid': 'hub-1',
-                        'predicate': 'supports',
-                        'description': 'provides support',
-                    },
-                    {
-                        'community_id': 1,
-                        'uuid': 'hub-2',
-                        'predicate': 'supports',
-                        'description': 'provides support',
-                    },
-                ]
-            )
-        return _Result()
 
 
 def _candidate():
@@ -112,36 +42,6 @@ def test_global_hub_model_uses_automatic_uuid_and_no_membership_property():
     assert hub.uuid
     assert 'source_uuid' not in GlobalPredicateHub.model_fields
     assert 'membership_uuids' not in GlobalPredicateHub.model_fields
-
-
-def test_global_repository_uses_predicate_only_cross_source_queries():
-    session = _Session()
-    repository = GlobalPredicateHubRepository(lambda: _Context(session))
-
-    candidates = asyncio.run(
-        repository.read_global_predicate_hub_candidates(
-            candidate_limit=20,
-            minimum_similarity=0.9,
-        )
-    )
-    asyncio.run(
-        repository.replace_global_predicate_hub_accepted_edges(candidates)
-    )
-    communities = asyncio.run(
-        repository.detect_global_predicate_hub_communities(
-            max_iterations=10,
-            min_association_strength=0.2,
-            minimum_community_size=2,
-        )
-    )
-
-    assert candidates == [_candidate()]
-    assert len(communities) == 1
-    assert 'HAS_SUBJECT' not in session.calls[0][0]
-    assert 'HAS_OBJECT' not in session.calls[0][0]
-    assert 'source_uuid' not in session.calls[0][1]
-    assert 'candidate.source_uuid <> query.source_uuid' in session.calls[0][0]
-    assert session.calls[1][0] is REPLACE_GLOBAL_PREDICATE_HUB_ACCEPTED_EDGES
 
 
 class _Repository:

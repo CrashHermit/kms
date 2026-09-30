@@ -8,12 +8,6 @@ from kms2.core.model.source_semantic.source_entity_hub import (
     SourceEntityHubJudgeInput,
     SourceEntityHubMember,
 )
-from kms2.database.source_semantic.queries.source_entity import (
-    DETECT_SOURCE_ENTITY_COMMUNITIES,
-    DROP_SOURCE_ENTITY_HUB_GRAPH,
-    READ_SOURCE_ENTITY_HUB_CANDIDATES,
-    REPLACE_SOURCE_ENTITY_ACCEPTED_EDGES,
-)
 from kms2.database.source_semantic.source_entity_repository import (
     SourceEntityRepository,
 )
@@ -44,43 +38,13 @@ class _Context:
 
 
 class _Session:
-    def __init__(self):
+    def __init__(self, results):
         self.calls = []
+        self._results = iter(results)
 
     async def run(self, query, **parameters):
         self.calls.append((query, parameters))
-        if query is READ_SOURCE_ENTITY_HUB_CANDIDATES:
-            return _Result(
-                [
-                    {
-                        'left_uuid': 'entity-1',
-                        'left_name': 'Alice',
-                        'left_description': 'the person',
-                        'right_uuid': 'entity-2',
-                        'right_name': 'A. Smith',
-                        'right_description': 'the same person',
-                        'score': 0.91,
-                    }
-                ]
-            )
-        if query is DETECT_SOURCE_ENTITY_COMMUNITIES:
-            return _Result(
-                [
-                    {
-                        'community_id': 1,
-                        'uuid': 'entity-1',
-                        'name': 'Alice',
-                        'description': 'the person',
-                    },
-                    {
-                        'community_id': 1,
-                        'uuid': 'entity-2',
-                        'name': 'A. Smith',
-                        'description': 'the same person',
-                    },
-                ]
-            )
-        return _Result()
+        return next(self._results)
 
 
 def _candidate(left_uuid='entity-1', right_uuid='entity-2'):
@@ -95,8 +59,25 @@ def _candidate(left_uuid='entity-1', right_uuid='entity-2'):
     )
 
 
-def test_entity_repository_reads_candidates_and_replaces_only_accepted_edges():
-    session = _Session()
+def test_entity_repository_converts_candidates_and_serializes_edges():
+    session = _Session(
+        [
+            _Result(
+                [
+                    {
+                        'left_uuid': 'entity-1',
+                        'left_name': 'Alice',
+                        'left_description': 'the person',
+                        'right_uuid': 'entity-2',
+                        'right_name': 'A. Smith',
+                        'right_description': 'the same person',
+                        'score': 0.91,
+                    }
+                ]
+            ),
+            _Result(),
+        ]
+    )
     repository = SourceEntityRepository(lambda: _Context(session))
 
     candidates = asyncio.run(
@@ -108,20 +89,43 @@ def test_entity_repository_reads_candidates_and_replaces_only_accepted_edges():
         repository.replace_source_entity_accepted_edges('source-1', candidates)
     )
 
-    assert candidates[0].left_uuid == 'entity-1'
-    assert session.calls[0][0] is READ_SOURCE_ENTITY_HUB_CANDIDATES
-    assert session.calls[0][1] == {
-        'source_uuid': 'source-1',
-        'candidate_limit': 17,
-        'minimum_similarity': 0.82,
-    }
-    assert session.calls[1][0] is REPLACE_SOURCE_ENTITY_ACCEPTED_EDGES
-    assert session.calls[1][1]['pairs'][0]['score'] == 0.91
-    assert 'relevance_score' not in session.calls[1][1]['pairs'][0]
+    assert candidates == [_candidate()]
+    assert session.calls[1][1]['pairs'] == [
+        {
+            'left_uuid': 'entity-1',
+            'left_name': 'Alice',
+            'left_description': 'the person',
+            'right_uuid': 'entity-2',
+            'right_name': 'A. Smith',
+            'right_description': 'the same person',
+            'score': 0.91,
+        }
+    ]
 
 
-def test_entity_community_detection_is_weighted_and_temporary():
-    session = _Session()
+def test_entity_repository_maps_community_members():
+    session = _Session(
+        [
+            _Result(),
+            _Result(
+                [
+                    {
+                        'community_id': 1,
+                        'uuid': 'entity-1',
+                        'name': 'Alice',
+                        'description': 'the person',
+                    },
+                    {
+                        'community_id': 1,
+                        'uuid': 'entity-2',
+                        'name': 'A. Smith',
+                        'description': 'the same person',
+                    },
+                ]
+            ),
+            _Result(),
+        ]
+    )
     repository = SourceEntityRepository(lambda: _Context(session))
 
     communities = asyncio.run(
@@ -133,13 +137,15 @@ def test_entity_community_detection_is_weighted_and_temporary():
         )
     )
 
-    assert [[member.uuid for member in group] for group in communities] == [
-        ['entity-1', 'entity-2']
+    assert [
+        [(member.uuid, member.name, member.description) for member in group]
+        for group in communities
+    ] == [
+        [
+            ('entity-1', 'Alice', 'the person'),
+            ('entity-2', 'A. Smith', 'the same person'),
+        ]
     ]
-    assert session.calls[0][0] is DROP_SOURCE_ENTITY_HUB_GRAPH
-    assert session.calls[1][0] is DETECT_SOURCE_ENTITY_COMMUNITIES
-    assert "properties: 'score'" in session.calls[1][0]
-    assert session.calls[2][0] is DROP_SOURCE_ENTITY_HUB_GRAPH
 
 
 class _Repository:

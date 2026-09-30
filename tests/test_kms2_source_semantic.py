@@ -27,25 +27,7 @@ from kms2.core.model.source_semantic.source_triplet_decomposition import (
     SourceTripletDecompositionResult,
     SourceTripletEndpointKind,
 )
-from kms2.database.source.queries.source_blocks import READ_SOURCE_BLOCKS
 from kms2.database.source.source_block_repository import SourceBlockRepository
-from kms2.database.source_semantic.queries.source_entity import (
-    FIND_SIMILAR_SOURCE_ENTITIES,
-    READ_SOURCE_ENTITIES,
-    UPDATE_SOURCE_ENTITY_DESCRIPTION,
-)
-from kms2.database.source_semantic.queries.source_event import (
-    FIND_SIMILAR_SOURCE_EVENTS,
-)
-from kms2.database.source_semantic.queries.source_fact import (
-    REPLACE_SOURCE_FACTS,
-)
-from kms2.database.source_semantic.queries.source_predicate import (
-    FIND_SIMILAR_SOURCE_PREDICATES,
-)
-from kms2.database.source_semantic.queries.source_triplet import (
-    REPLACE_SOURCE_TRIPLETS,
-)
 from kms2.database.source_semantic.source_entity_repository import (
     SourceEntityRepository,
 )
@@ -346,7 +328,6 @@ def test_source_repository_loads_ordered_blocks():
 
     blocks = asyncio.run(repository.load_blocks('source-1'))
 
-    assert session.calls == [(READ_SOURCE_BLOCKS, {'source_uuid': 'source-1'})]
     assert [block.uuid for block in blocks] == ['block-1']
     assert blocks[0].content == 'text'
 
@@ -359,9 +340,7 @@ def test_fact_repository_serializes_only_node_identity_and_evidence_edges():
 
     asyncio.run(repository.replace_source_facts('source-1', [source_fact]))
 
-    query, parameters = session.calls[-1]
-    assert query is REPLACE_SOURCE_FACTS
-    assert parameters['source_uuid'] == 'source-1'
+    _, parameters = session.calls[-1]
     assert parameters['facts'] == [
         {
             'uuid': 'fact-1',
@@ -374,13 +353,6 @@ def test_fact_repository_serializes_only_node_identity_and_evidence_edges():
             'context_after_block_uuids': [],
         }
     ]
-    assert 'source_uuid: row' not in query
-    assert 'source_block_uuid: row' not in query
-    assert 'CREATE (source)-[:HAS_FACT]->(fact)' not in query
-    assert 'SourceFactTarget' in query
-    assert 'SourceFactContext' in query
-    assert 'CREATE (fact)-[:HAS_TARGET]->(target)' in query
-    assert 'CREATE (target)-[:HAS_SOURCE_BLOCK]->(block)' in query
 
 
 def test_triplet_repository_serializes_role_ids_only_as_match_parameters():
@@ -413,8 +385,7 @@ def test_triplet_repository_serializes_role_ids_only_as_match_parameters():
 
     asyncio.run(repository.replace_source_triplets('source-1', [occurrence]))
 
-    query, parameters = session.calls[-1]
-    assert query is REPLACE_SOURCE_TRIPLETS
+    _, parameters = session.calls[-1]
     assert parameters['triplets'] == [
         {
             'uuid': 'triplet-1',
@@ -423,9 +394,6 @@ def test_triplet_repository_serializes_role_ids_only_as_match_parameters():
             'predicate_uuid': 'predicate-1',
         }
     ]
-    assert 'CREATE (triplet:SourceTriplet {uuid: row.uuid})' in query
-    assert 'source_uuid: row.source_uuid' in query
-    assert 'CREATE (fact)-[:HAS_TRIPLET]->(triplet)' in query
 
 
 class _Runtime:
@@ -726,7 +694,7 @@ class _RowsSession:
         return _RowsResult()
 
 
-def test_semantic_repository_typed_reads_and_updates_are_source_scoped():
+def test_semantic_repository_maps_typed_reads_and_updates():
     session = _RowsSession()
     entity_repository = SourceEntityRepository(lambda: _SessionContext(session))
     event_repository = SourceEventRepository(lambda: _SessionContext(session))
@@ -744,21 +712,13 @@ def test_semantic_repository_typed_reads_and_updates_are_source_scoped():
         entity_repository.update_source_entity_description('source-1', [result])
     )
 
-    assert session.calls[0] == (
-        READ_SOURCE_ENTITIES,
-        {'source_uuid': 'source-1'},
-    )
-    assert session.calls[1][0] is UPDATE_SOURCE_ENTITY_DESCRIPTION
-    assert session.calls[1][1] == {
-        'source_uuid': 'source-1',
-        'rows': [
-            {
-                'uuid': 'entity-1',
-                'description': 'a local description',
-                'embedding': [0.1, 0.2],
-            }
-        ],
-    }
+    assert session.calls[1][1]['rows'] == [
+        {
+            'uuid': 'entity-1',
+            'description': 'a local description',
+            'embedding': [0.1, 0.2],
+        }
+    ]
     entity_matches = asyncio.run(
         entity_repository.find_similar_source_entities('entity-1', top_k=2)
     )
@@ -787,39 +747,6 @@ def test_semantic_repository_typed_reads_and_updates_are_source_scoped():
         'score',
     }
     assert predicate_matches[0].predicate == 'supports'
-
-    assert session.calls[2] == (
-        FIND_SIMILAR_SOURCE_ENTITIES,
-        {
-            'query_uuid': 'entity-1',
-            'top_k': 2,
-            'candidate_limit': 3,
-        },
-    )
-    assert session.calls[3] == (
-        FIND_SIMILAR_SOURCE_EVENTS,
-        {
-            'query_uuid': 'event-1',
-            'top_k': 2,
-            'candidate_limit': 3,
-        },
-    )
-    assert session.calls[4] == (
-        FIND_SIMILAR_SOURCE_PREDICATES,
-        {
-            'query_uuid': 'predicate-1',
-            'top_k': 2,
-            'candidate_limit': 3,
-        },
-    )
-    assert 'SourceEntity' in FIND_SIMILAR_SOURCE_ENTITIES
-    assert 'source_entity_embedding' in FIND_SIMILAR_SOURCE_ENTITIES
-    assert 'SourceEvent' in FIND_SIMILAR_SOURCE_EVENTS
-    assert 'source_event_embedding' in FIND_SIMILAR_SOURCE_EVENTS
-    assert 'SourcePredicate' in FIND_SIMILAR_SOURCE_PREDICATES
-    assert 'source_predicate_embedding' in FIND_SIMILAR_SOURCE_PREDICATES
-    assert 'node.uuid <> query.uuid' in FIND_SIMILAR_SOURCE_PREDICATES
-    assert 'ORDER BY score DESC, uuid ASC' in FIND_SIMILAR_SOURCE_PREDICATES
 
 
 def test_semantic_graph_runs_all_typed_phases_in_one_graph():

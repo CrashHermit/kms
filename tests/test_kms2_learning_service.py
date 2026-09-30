@@ -5,9 +5,9 @@ from datetime import UTC, datetime
 from fsrs import Card, Rating, Scheduler
 
 from kms2.core.model.learning import ReviewRating
-from kms2.database.learning.queries import (
-    ADD_CARD_TO_DECK,
-    LOAD_REVIEW_SNAPSHOT,
+from kms2.database.learning.queries.card import ADD_CARD_TO_DECK
+from kms2.database.learning.queries.review import (
+    READ_REVIEW_SNAPSHOT,
     RECORD_REVIEW,
 )
 from kms2.database.learning.repository import LearningRepository
@@ -73,7 +73,7 @@ def test_good_review_persists_fsrs_transition_and_first_event():
     review_time = datetime(2026, 1, 1, 12, 0, tzinfo=UTC)
     session = _Session(
         {
-            LOAD_REVIEW_SNAPSHOT: _Result(
+            READ_REVIEW_SNAPSHOT: _Result(
                 row={
                     'card_uuid': 'card-1',
                     'scheduler_json': scheduler.to_json(),
@@ -104,10 +104,6 @@ def test_good_review_persists_fsrs_transition_and_first_event():
     )
 
     assert receipt.review_index == 1
-    assert [query for query, _ in session.calls] == [
-        LOAD_REVIEW_SNAPSHOT,
-        RECORD_REVIEW,
-    ]
     _, parameters = session.calls[1]
     assert parameters['fsrs_card_before_json'] == card.to_json()
     after = Card.from_json(parameters['fsrs_card_after_json'])

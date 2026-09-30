@@ -3,7 +3,7 @@
 from collections.abc import Callable
 
 from kms2.core.model.user import Deck, User, UserSchedulerSettings
-from kms2.database.user.queries import CREATE_USER, READ_USERS
+from kms2.database.user.queries.user import CREATE_USER, READ_USERS
 
 
 class UserRepository:

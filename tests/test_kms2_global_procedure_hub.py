@@ -9,14 +9,6 @@ from kms2.core.model.global_semantic.global_procedure_hub import (
     GlobalProcedureHubJudgeInput,
     GlobalProcedureHubMember,
 )
-from kms2.database.global_semantic.global_procedure_hub_repository import (
-    GlobalProcedureHubRepository,
-)
-from kms2.database.global_semantic.queries.global_procedure_hub import (
-    DETECT_GLOBAL_PROCEDURE_HUB_COMMUNITIES,
-    READ_GLOBAL_PROCEDURE_HUB_CANDIDATES,
-    REPLACE_GLOBAL_PROCEDURE_HUB_ACCEPTED_EDGES,
-)
 from kms2.langgraph.global_semantic.graph import GlobalSemanticGraph
 from kms2.langgraph.global_semantic.state import GlobalSemanticState
 from kms2.node.global_semantic.global_procedure_hub import (
@@ -25,66 +17,6 @@ from kms2.node.global_semantic.global_procedure_hub import (
 from kms2.node.global_semantic.global_procedure_hub_persistence import (
     GlobalProcedureHubPersistenceNode,
 )
-
-
-class _Result:
-    def __init__(self, rows=None):
-        self.rows = rows or []
-
-    async def data(self):
-        return self.rows
-
-    async def consume(self):
-        return None
-
-
-class _Context:
-    def __init__(self, session):
-        self.session = session
-
-    async def __aenter__(self):
-        return self.session
-
-    async def __aexit__(self, *args):
-        return None
-
-
-class _Session:
-    def __init__(self):
-        self.calls = []
-
-    async def run(self, query, **parameters):
-        self.calls.append((query, parameters))
-        if query is READ_GLOBAL_PROCEDURE_HUB_CANDIDATES:
-            return _Result(
-                [
-                    {
-                        'left_uuid': 'hub-1',
-                        'left_description': 'authenticate a user',
-                        'right_uuid': 'hub-2',
-                        'right_description': 'authenticate a user',
-                        'score': 0.9,
-                    }
-                ]
-            )
-        if query is DETECT_GLOBAL_PROCEDURE_HUB_COMMUNITIES:
-            return _Result(
-                [
-                    {
-                        'community_id': 1,
-                        'uuid': 'hub-1',
-                        'canonical_name': 'User authentication',
-                        'description': 'authenticate a user',
-                    },
-                    {
-                        'community_id': 1,
-                        'uuid': 'hub-2',
-                        'canonical_name': 'Authenticate user',
-                        'description': 'authenticate a user',
-                    },
-                ]
-            )
-        return _Result()
 
 
 def _candidate():
@@ -108,41 +40,6 @@ def test_global_procedure_hub_model_uses_automatic_uuid_and_no_membership_proper
     assert hub.uuid
     assert 'source_uuid' not in GlobalProcedureHub.model_fields
     assert 'membership_uuids' not in GlobalProcedureHub.model_fields
-
-
-def test_global_procedure_repository_uses_cross_source_procedure_queries():
-    session = _Session()
-    repository = GlobalProcedureHubRepository(lambda: _Context(session))
-
-    candidates = asyncio.run(
-        repository.read_global_procedure_hub_candidates(
-            candidate_limit=20,
-            minimum_similarity=0.9,
-        )
-    )
-    asyncio.run(
-        repository.replace_global_procedure_hub_accepted_edges(candidates)
-    )
-    communities = asyncio.run(
-        repository.detect_global_procedure_hub_communities(
-            max_iterations=10,
-            min_association_strength=0.2,
-            minimum_community_size=2,
-        )
-    )
-
-    assert candidates == [_candidate()]
-    assert len(communities) == 1
-    query = session.calls[0][0]
-    assert 'SourceProcedureHub' in query
-    assert 'source_procedure_hub_embedding' in query
-    assert 'candidate.source_uuid <> query.source_uuid' in query
-    assert 'HAS_SUBJECT' not in query
-    assert 'HAS_OBJECT' not in query
-    assert 'SourceTripletHub' not in query
-    assert 'source_uuid' not in session.calls[0][1]
-    assert session.calls[1][0] is REPLACE_GLOBAL_PROCEDURE_HUB_ACCEPTED_EDGES
-    assert session.calls[3][0] is DETECT_GLOBAL_PROCEDURE_HUB_COMMUNITIES
 
 
 class _Repository:

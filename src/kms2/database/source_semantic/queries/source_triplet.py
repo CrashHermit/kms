@@ -2,6 +2,24 @@
 
 REPLACE_SOURCE_TRIPLETS = """
 MATCH (source:Source {uuid: $source_uuid})
+CALL (source) {
+    OPTIONAL MATCH (source)-[:HAS_FLASHCARD]->(card:SourceFlashcard)
+    OPTIONAL MATCH (card)-[:HAS_CARD_REVIEW]->(review:UserCardReview)
+    OPTIONAL MATCH (review)-[:HAS_REVIEW_EVENT]->(event:ReviewEvent)
+    WITH source,
+         collect(DISTINCT card) AS cards,
+         collect(DISTINCT review) AS reviews,
+         collect(DISTINCT event) AS events
+    FOREACH (event IN events | DETACH DELETE event)
+    FOREACH (review IN reviews | DETACH DELETE review)
+    FOREACH (card IN cards | DETACH DELETE card)
+    WITH source
+    OPTIONAL MATCH (source)-[:HAS_LEARNING_FACT]->(learning_fact)
+    WITH collect(learning_fact) AS learning_facts
+    FOREACH (learning_fact IN learning_facts | DETACH DELETE learning_fact)
+    RETURN count(*) AS learning_artifacts_deleted
+}
+WITH source
 CALL {
     WITH source
     MATCH (source)-[:FIRST_BLOCK]->(first:SourceBlock)
@@ -102,7 +120,9 @@ WHERE (object:SourceEntity OR object:SourceEvent)
 MATCH (object)-[:IN_SOURCE_HUB]->(object_hub)
 WHERE (object_hub:SourceEntityHub OR object_hub:SourceEventHub)
   AND object_hub.source_uuid = $source_uuid
-WITH subject_hub, predicate_hub, object_hub,
+WITH subject_hub,
+     predicate_hub,
+     object_hub,
      collect(DISTINCT triplet.uuid) AS triplet_uuids,
      collect(DISTINCT {
          triplet_uuid: triplet.uuid,
@@ -131,6 +151,25 @@ ORDER BY subject_hub_uuid, predicate_hub_uuid, object_hub_uuid
 """
 
 REPLACE_SOURCE_TRIPLET_HUBS = """
+MATCH (source:Source {uuid: $source_uuid})
+CALL (source) {
+    OPTIONAL MATCH (source)-[:HAS_FLASHCARD]->(card:SourceFlashcard)
+    OPTIONAL MATCH (card)-[:HAS_CARD_REVIEW]->(review:UserCardReview)
+    OPTIONAL MATCH (review)-[:HAS_REVIEW_EVENT]->(event:ReviewEvent)
+    WITH source,
+         collect(DISTINCT card) AS cards,
+         collect(DISTINCT review) AS reviews,
+         collect(DISTINCT event) AS events
+    FOREACH (event IN events | DETACH DELETE event)
+    FOREACH (review IN reviews | DETACH DELETE review)
+    FOREACH (card IN cards | DETACH DELETE card)
+    WITH source
+    OPTIONAL MATCH (source)-[:HAS_LEARNING_FACT]->(learning_fact)
+    WITH collect(learning_fact) AS learning_facts
+    FOREACH (learning_fact IN learning_facts | DETACH DELETE learning_fact)
+    RETURN count(*) AS learning_artifacts_deleted
+}
+WITH source
 CALL {
     MATCH (old_hub:SourceTripletHub {source_uuid: $source_uuid})
     DETACH DELETE old_hub
@@ -147,21 +186,27 @@ CREATE (hub:SourceTripletHub {
     predicate_hub_uuid: hub_data.predicate_hub_uuid,
     object_hub_uuid: hub_data.object_hub_uuid
 })
-WITH hub, hub_data
-MATCH (subject_hub {uuid: hub_data.subject_hub_uuid,
-                    source_uuid: $source_uuid})
+WITH hub,
+     hub_data
+MATCH (subject_hub {
+    uuid: hub_data.subject_hub_uuid,
+    source_uuid: $source_uuid
+})
 WHERE subject_hub:SourceEntityHub OR subject_hub:SourceEventHub
 MATCH (predicate_hub:SourcePredicateHub {
     uuid: hub_data.predicate_hub_uuid,
     source_uuid: $source_uuid
 })
-MATCH (object_hub {uuid: hub_data.object_hub_uuid,
-                   source_uuid: $source_uuid})
+MATCH (object_hub {
+    uuid: hub_data.object_hub_uuid,
+    source_uuid: $source_uuid
+})
 WHERE object_hub:SourceEntityHub OR object_hub:SourceEventHub
 CREATE (hub)-[:HAS_SUBJECT_HUB]->(subject_hub)
 CREATE (hub)-[:HAS_PREDICATE_HUB]->(predicate_hub)
 CREATE (hub)-[:HAS_OBJECT_HUB]->(object_hub)
-WITH hub, hub_data
+WITH hub,
+     hub_data
 UNWIND hub_data.triplet_uuids AS triplet_uuid
 MATCH (triplet:SourceTriplet {uuid: triplet_uuid})
 CREATE (triplet)-[:IN_SOURCE_HUB]->(hub)

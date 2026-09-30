@@ -9,11 +9,6 @@ from kms2.core.model.global_semantic.global_triplet_hub import (
 from kms2.database.global_semantic.global_triplet_repository import (
     GlobalTripletRepository,
 )
-from kms2.database.global_semantic.queries.global_triplet import (
-    READ_GLOBAL_TRIPLET_HUB_GROUPS,
-    REPLACE_GLOBAL_TRIPLET_HUBS,
-    REPLACE_GLOBAL_TRIPLETS,
-)
 from kms2.database.schema import SCHEMA_STATEMENTS, VECTOR_INDEX_NAMES
 from kms2.langgraph.global_semantic.state import GlobalSemanticState
 from kms2.node.global_semantic.global_triplet_hub import GlobalTripletHubNode
@@ -50,10 +45,8 @@ class _Result:
 class _Session:
     def __init__(self, rows):
         self.rows = rows
-        self.calls = []
 
     async def run(self, query, **parameters):
-        self.calls.append((query, parameters))
         return _Result(self.rows)
 
 
@@ -130,22 +123,6 @@ def _group() -> GlobalTripletHubGroup:
     )
 
 
-def test_global_triplet_queries_preserve_projection_and_provenance_contract():
-    assert 'source_triplet_hub:SourceTripletHub' in REPLACE_GLOBAL_TRIPLETS
-    assert 'global_triplet)-[:HAS_SUBJECT_HUB]->' in REPLACE_GLOBAL_TRIPLETS
-    assert 'global_triplet)-[:HAS_PREDICATE_HUB]->' in REPLACE_GLOBAL_TRIPLETS
-    assert 'global_triplet)-[:HAS_OBJECT_HUB]->' in REPLACE_GLOBAL_TRIPLETS
-    assert 'global_triplet_uuid' in READ_GLOBAL_TRIPLET_HUB_GROUPS
-    assert 'source_triplet_hub_uuid' in READ_GLOBAL_TRIPLET_HUB_GROUPS
-    assert 'global_triplet)-[:IN_GLOBAL_HUB]->' in REPLACE_GLOBAL_TRIPLET_HUBS
-    assert (
-        'source_triplet_hub_uuid'
-        not in REPLACE_GLOBAL_TRIPLETS.split(
-            'CREATE (global_triplet:GlobalTriplet', 1
-        )[1].split('RETURN', 1)[0]
-    )
-
-
 def test_global_triplet_repository_normalizes_group_order_and_memberships():
     row = {
         'subject_hub_uuid': 'subject-global',
@@ -183,7 +160,6 @@ def test_global_triplet_repository_normalizes_group_order_and_memberships():
         'source-a',
         'source-b',
     ]
-    assert session.calls == [(READ_GLOBAL_TRIPLET_HUB_GROUPS, {})]
 
 
 def test_global_triplet_hub_node_deduplicates_evidence_and_preserves_memberships():

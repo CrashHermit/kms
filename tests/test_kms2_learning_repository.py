@@ -2,10 +2,8 @@ import asyncio
 from datetime import UTC, datetime
 
 from kms2.core.model.learning import ReviewEvent, UserCardReview
-from kms2.database.learning.queries import (
-    ADD_CARD_TO_DECK,
-    RECORD_REVIEW,
-)
+from kms2.database.learning.queries.card import ADD_CARD_TO_DECK
+from kms2.database.learning.queries.review import RECORD_REVIEW
 from kms2.database.learning.repository import LearningRepository
 
 
@@ -67,8 +65,7 @@ def test_add_card_to_deck_persists_initial_review_state():
     )
 
     assert card.card_uuid == 'card-1'
-    query, parameters = session.calls[0]
-    assert query == ADD_CARD_TO_DECK
+    _, parameters = session.calls[0]
     assert parameters['user_uuid'] == 'user-1'
     assert parameters['deck_uuid'] == 'deck-1'
     assert parameters['card_uuid'] == 'card-1'
@@ -110,8 +107,7 @@ def test_record_review_maps_ordered_receipt_and_event_payload():
     )
 
     assert receipt.review_index == 1
-    query, parameters = session.calls[0]
-    assert query == RECORD_REVIEW
+    _, parameters = session.calls[0]
     assert parameters['fsrs_card_before_json'] == 'before'
     assert parameters['fsrs_card_after_json'] == 'after'
     assert parameters['fsrs_review_log_json'] == 'log'

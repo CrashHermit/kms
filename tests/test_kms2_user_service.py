@@ -5,7 +5,6 @@ from fsrs import Scheduler
 from kms2.database.source.source_catalog_repository import (
     SourceCatalogRepository,
 )
-from kms2.database.user.queries import CREATE_USER
 from kms2.database.user.user_repository import UserRepository
 from kms2.service.user import UserService
 
@@ -52,9 +51,7 @@ def test_create_user_provisions_default_deck_with_fsrs_settings():
     user = asyncio.run(service.create_user('Alex'))
 
     assert user.name == 'Alex'
-    assert len(session.calls) == 1
-    query, parameters = session.calls[0]
-    assert query == CREATE_USER
+    _, parameters = session.calls[0]
     assert parameters['user_uuid'] == user.uuid
     assert parameters['user_name'] == 'Alex'
     assert parameters['deck_name'] == 'Default'

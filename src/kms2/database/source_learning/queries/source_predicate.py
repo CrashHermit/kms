@@ -1,0 +1,96 @@
+"""Source-scoped predicate learning queries.
+
+Readers retain each selected source-fact/triplet tuple once. Writers persist
+one learning-fact node per supplied row and link only its selected source
+facts and triplets.
+"""
+
+READ_SOURCE_PREDICATE_LEARNING_INPUTS = """
+MATCH (source:Source {uuid: $source_uuid})-[:FIRST_BLOCK]->(first:SourceBlock)
+MATCH source_path = (first)-[:NEXT_BLOCK*0..]->(source_block:SourceBlock)
+MATCH (source_block)<-[:HAS_SOURCE_BLOCK]-(:SourceFactTarget)
+    <-[:HAS_TARGET]-(fact:SourceFact)-[:HAS_TRIPLET]->(triplet:SourceTriplet)
+MATCH (triplet)-[:HAS_SUBJECT]->(subject)
+WHERE (subject:SourceEntity OR subject:SourceEvent)
+  AND subject.source_uuid = $source_uuid
+MATCH (triplet)-[:HAS_PREDICATE]->(predicate:SourcePredicate {source_uuid: $source_uuid})
+MATCH (triplet)-[:HAS_OBJECT]->(object)
+WHERE (object:SourceEntity OR object:SourceEvent)
+  AND object.source_uuid = $source_uuid
+
+MATCH (predicate)-[:IN_SOURCE_HUB]->(hub:SourcePredicateHub {
+    source_uuid: $source_uuid
+})
+WITH hub, fact, triplet, subject, predicate, object,
+     min(length(source_path)) AS source_position
+ORDER BY source_position, hub.uuid, fact.uuid, triplet.uuid
+WITH hub, collect({
+    source_fact_uuid: fact.uuid,
+    source_fact_text: fact.text,
+    triplet_uuid: triplet.uuid,
+    subject: subject.name,
+    predicate: predicate.predicate,
+    object: object.name,
+    member_role: 'predicate'
+}) AS evidence
+RETURN hub.uuid AS hub_uuid,
+       hub.predicate AS hub_name,
+       hub.description AS hub_description,
+       evidence
+ORDER BY hub_uuid
+"""
+
+CREATE_SOURCE_PREDICATE_LEARNING_FACTS = """
+UNWIND $rows AS row
+MATCH (source:Source {uuid: $source_uuid})
+CREATE (source)-[:HAS_LEARNING_FACT]->(learning_fact:SourcePredicateLearningFact {
+    uuid: row.uuid, text: row.text
+})
+WITH learning_fact, row
+MATCH (hub:SourcePredicateHub {uuid: row.hub_uuid, source_uuid: $source_uuid})
+CREATE (learning_fact)-[:ABOUT_HUB]->(hub)
+WITH learning_fact, row
+CALL (learning_fact, row) {
+    UNWIND row.source_fact_uuids AS source_fact_uuid
+    MATCH (source_fact:SourceFact {uuid: source_fact_uuid})
+    CREATE (learning_fact)-[:SUPPORTED_BY]->(source_fact)
+    RETURN count(source_fact) AS source_facts_persisted
+}
+CALL (learning_fact, row) {
+    UNWIND row.triplet_uuids AS triplet_uuid
+    MATCH (triplet:SourceTriplet {uuid: triplet_uuid})
+    CREATE (learning_fact)-[:SUPPORTED_BY_TRIPLET]->(triplet)
+    RETURN count(triplet) AS triplets_persisted
+}
+RETURN count(DISTINCT learning_fact) AS persisted
+"""
+
+READ_SOURCE_PREDICATE_FLASHCARD_INPUTS = """
+MATCH (source:Source {uuid: $source_uuid})-[:HAS_LEARNING_FACT]->
+      (learning_fact:SourcePredicateLearningFact)
+MATCH (learning_fact)-[:ABOUT_HUB]->(hub:SourcePredicateHub)
+MATCH (learning_fact)-[:SUPPORTED_BY]->(source_fact:SourceFact)
+MATCH (learning_fact)-[:SUPPORTED_BY_TRIPLET]->(triplet:SourceTriplet)
+MATCH (source_fact)-[:HAS_TRIPLET]->(triplet)
+MATCH (triplet)-[:HAS_SUBJECT]->(subject)
+MATCH (triplet)-[:HAS_PREDICATE]->(predicate:SourcePredicate)
+MATCH (predicate)-[:IN_SOURCE_HUB]->(hub)
+MATCH (triplet)-[:HAS_OBJECT]->(object)
+WITH DISTINCT learning_fact, hub, source_fact, triplet,
+     subject, predicate, object, 'predicate' AS member_role
+ORDER BY source_fact.uuid, triplet.uuid, member_role
+WITH learning_fact, hub, collect({
+    source_fact_uuid: source_fact.uuid,
+    source_fact_text: source_fact.text,
+    triplet_uuid: triplet.uuid,
+    subject: subject.name,
+    predicate: predicate.predicate,
+    object: object.name,
+    member_role: member_role
+}) AS evidence
+RETURN learning_fact.uuid AS learning_fact_uuid,
+       learning_fact.text AS learning_fact_text,
+       hub.uuid AS hub_uuid, hub.predicate AS hub_name,
+       hub.description AS hub_description, evidence
+ORDER BY learning_fact_uuid
+"""

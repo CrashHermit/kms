@@ -93,7 +93,7 @@ class SourceEventLearningFactNode:
     async def persist(self, state: SourceLearningState) -> dict[str, int]:
         """Persist event learning facts and selected evidence."""
         return {
-            'event_learning_fact_count': await self._repository.replace_event_learning_facts(
+            'event_learning_fact_count': await self._repository.persist_event_learning_facts(
                 state.source_uuid,
                 state.event_learning_fact_inputs,
                 state.event_learning_fact_results_ordered,

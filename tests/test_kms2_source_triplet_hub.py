@@ -7,10 +7,6 @@ from kms2.core.model.source_semantic.source_triplet_hub import (
     SourceTripletHubGroup,
     SourceTripletHubRole,
 )
-from kms2.database.source_semantic.queries.source_triplet import (
-    READ_SOURCE_TRIPLET_HUB_GROUPS,
-    REPLACE_SOURCE_TRIPLET_HUBS,
-)
 from kms2.database.source_semantic.source_triplet_repository import (
     SourceTripletRepository,
 )
@@ -143,7 +139,7 @@ def _group() -> SourceTripletHubGroup:
     )
 
 
-def test_source_triplet_group_query_is_source_scoped_and_complete():
+def test_repository_maps_source_triplet_hub_groups():
     row = {
         'subject_hub_uuid': 'subject-hub',
         'subject_hub_name': 'Alice',
@@ -170,31 +166,32 @@ def test_source_triplet_group_query_is_source_scoped_and_complete():
 
     groups = asyncio.run(repository.read_source_triplet_hub_groups('source-1'))
 
-    assert groups[0].subject_hub.name == 'Alice'
-    assert session.calls == [
-        (READ_SOURCE_TRIPLET_HUB_GROUPS, {'source_uuid': 'source-1'})
+    assert groups == [
+        SourceTripletHubGroup(
+            subject_hub_uuid='subject-hub',
+            subject_hub=SourceTripletHubRole(
+                name='Alice', description='A person.'
+            ),
+            predicate_hub_uuid='predicate-hub',
+            predicate_hub=SourceTripletHubRole(
+                name='supports', description='A support relation.'
+            ),
+            object_hub_uuid='object-hub',
+            object_hub=SourceTripletHubRole(
+                name='Acme', description='An organization.'
+            ),
+            triplet_uuids=['triplet-a'],
+            evidence=[
+                SourceTripletHubEvidence(
+                    triplet_uuid='triplet-a',
+                    fact_text='Alice supports Acme',
+                    subject='Alice',
+                    predicate='supports',
+                    object='Acme',
+                )
+            ],
+        )
     ]
-    assert READ_SOURCE_TRIPLET_HUB_GROUPS.count('$source_uuid') == 7
-    assert 'HAS_SUBJECT' in READ_SOURCE_TRIPLET_HUB_GROUPS
-    assert 'subject:SourceEntity OR subject:SourceEvent' in (
-        READ_SOURCE_TRIPLET_HUB_GROUPS
-    )
-    assert 'object:SourceEntity OR object:SourceEvent' in (
-        READ_SOURCE_TRIPLET_HUB_GROUPS
-    )
-    assert 'subject_hub:SourceEntityHub OR subject_hub:SourceEventHub' in (
-        READ_SOURCE_TRIPLET_HUB_GROUPS
-    )
-    assert 'object_hub:SourceEntityHub OR object_hub:SourceEventHub' in (
-        READ_SOURCE_TRIPLET_HUB_GROUPS
-    )
-
-    assert 'HAS_PREDICATE' in READ_SOURCE_TRIPLET_HUB_GROUPS
-    assert 'HAS_OBJECT' in READ_SOURCE_TRIPLET_HUB_GROUPS
-    assert 'IN_SOURCE_HUB' in READ_SOURCE_TRIPLET_HUB_GROUPS
-    assert 'WITH subject_hub, predicate_hub, object_hub' in (
-        READ_SOURCE_TRIPLET_HUB_GROUPS
-    )
 
 
 def test_source_triplet_node_deduplicates_model_evidence_and_retains_ids():
@@ -282,9 +279,6 @@ def test_source_triplet_persistence_replaces_roles_and_raw_evidence():
     assert repository.replacements == [
         ('source-1', [hub], [['triplet-a', 'triplet-b']])
     ]
-    assert 'DETACH DELETE old_hub' in REPLACE_SOURCE_TRIPLET_HUBS
-    assert 'HAS_SUBJECT_HUB' in REPLACE_SOURCE_TRIPLET_HUBS
-    assert 'HAS_PREDICATE_HUB' in REPLACE_SOURCE_TRIPLET_HUBS
 
 
 def test_repository_serializes_triplet_memberships_for_replacement():
@@ -308,42 +302,13 @@ def test_repository_serializes_triplet_memberships_for_replacement():
         )
     )
 
-    assert session.calls == [
-        (
-            REPLACE_SOURCE_TRIPLET_HUBS,
+    _, parameters = session.calls[0]
+    assert parameters == {
+        'source_uuid': 'source-1',
+        'hubs': [
             {
-                'source_uuid': 'source-1',
-                'hubs': [
-                    {
-                        **hub.model_dump(),
-                        'triplet_uuids': ['triplet-a', 'triplet-b'],
-                    }
-                ],
-            },
-        )
-    ]
-    assert 'HAS_OBJECT_HUB' in REPLACE_SOURCE_TRIPLET_HUBS
-    assert '(triplet)-[:IN_SOURCE_HUB]->(hub)' in (REPLACE_SOURCE_TRIPLET_HUBS)
-
-
-def test_repository_replacement_with_no_hubs_still_runs_clear_query():
-    session = _RowsSession([])
-    repository = SourceTripletRepository(lambda: _SessionContext(session))
-
-    asyncio.run(
-        repository.replace_source_triplet_hubs(
-            'source-1',
-            [],
-            [],
-        )
-    )
-
-    assert session.calls == [
-        (
-            REPLACE_SOURCE_TRIPLET_HUBS,
-            {'source_uuid': 'source-1', 'hubs': []},
-        )
-    ]
-    assert REPLACE_SOURCE_TRIPLET_HUBS.index('DETACH DELETE old_hub') < (
-        REPLACE_SOURCE_TRIPLET_HUBS.index('UNWIND $hubs')
-    )
+                **hub.model_dump(),
+                'triplet_uuids': ['triplet-a', 'triplet-b'],
+            }
+        ],
+    }

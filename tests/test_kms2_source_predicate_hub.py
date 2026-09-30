@@ -8,11 +8,6 @@ from kms2.core.model.source_semantic.source_predicate_hub import (
     SourcePredicateHubJudgeInput,
     SourcePredicateHubMember,
 )
-from kms2.database.source_semantic.queries.source_predicate import (
-    DETECT_SOURCE_PREDICATE_COMMUNITIES,
-    READ_SOURCE_PREDICATE_HUB_CANDIDATES,
-    REPLACE_SOURCE_PREDICATE_ACCEPTED_EDGES,
-)
 from kms2.database.source_semantic.source_predicate_repository import (
     SourcePredicateRepository,
 )
@@ -45,47 +40,13 @@ class _Context:
 
 
 class _Session:
-    def __init__(self):
+    def __init__(self, results):
         self.calls = []
+        self._results = iter(results)
 
     async def run(self, query, **parameters):
         self.calls.append((query, parameters))
-        if query is READ_SOURCE_PREDICATE_HUB_CANDIDATES:
-            return _Result(
-                [
-                    {
-                        'left_uuid': 'predicate-1',
-                        'left_predicate': 'supports',
-                        'left_description': 'provides support',
-                        'left_subject': 'Alice',
-                        'left_object': 'Acme',
-                        'right_uuid': 'predicate-2',
-                        'right_predicate': 'supports',
-                        'right_description': 'provides support',
-                        'right_subject': 'Bob',
-                        'right_object': 'Acme',
-                        'score': 0.9,
-                    }
-                ]
-            )
-        if query is DETECT_SOURCE_PREDICATE_COMMUNITIES:
-            return _Result(
-                [
-                    {
-                        'community_id': 1,
-                        'uuid': 'predicate-1',
-                        'predicate': 'supports',
-                        'description': 'provides support',
-                    },
-                    {
-                        'community_id': 1,
-                        'uuid': 'predicate-2',
-                        'predicate': 'supports',
-                        'description': 'provides support',
-                    },
-                ]
-            )
-        return _Result()
+        return next(self._results)
 
 
 def _candidate():
@@ -104,8 +65,29 @@ def _candidate():
     )
 
 
-def test_predicate_repository_includes_directed_endpoint_context():
-    session = _Session()
+def test_predicate_repository_converts_endpoint_context_and_serializes_edges():
+    session = _Session(
+        [
+            _Result(
+                [
+                    {
+                        'left_uuid': 'predicate-1',
+                        'left_predicate': 'supports',
+                        'left_description': 'provides support',
+                        'left_subject': 'Alice',
+                        'left_object': 'Acme',
+                        'right_uuid': 'predicate-2',
+                        'right_predicate': 'supports',
+                        'right_description': 'provides support',
+                        'right_subject': 'Bob',
+                        'right_object': 'Acme',
+                        'score': 0.9,
+                    }
+                ]
+            ),
+            _Result(),
+        ]
+    )
     repository = SourcePredicateRepository(lambda: _Context(session))
 
     candidates = asyncio.run(
@@ -119,12 +101,22 @@ def test_predicate_repository_includes_directed_endpoint_context():
         )
     )
 
-    assert candidates[0].left_subject == 'Alice'
-    assert candidates[0].right_object == 'Acme'
-    assert 'HAS_SUBJECT' in session.calls[0][0]
-    assert 'HAS_OBJECT' in session.calls[0][0]
-    assert session.calls[1][0] is REPLACE_SOURCE_PREDICATE_ACCEPTED_EDGES
-    assert 'relevance_score' not in session.calls[1][1]['pairs'][0]
+    assert candidates == [_candidate()]
+    assert session.calls[1][1]['pairs'] == [
+        {
+            'left_uuid': 'predicate-1',
+            'left_predicate': 'supports',
+            'left_description': 'provides support',
+            'left_subject': 'Alice',
+            'left_object': 'Acme',
+            'right_uuid': 'predicate-2',
+            'right_predicate': 'supports',
+            'right_description': 'provides support',
+            'right_subject': 'Bob',
+            'right_object': 'Acme',
+            'score': 0.9,
+        }
+    ]
 
 
 class _Repository:

@@ -1,4 +1,4 @@
-"""Cypher statements for user, deck, and scheduler settings persistence."""
+"""Cypher statements for users and their initial persistence."""
 
 CREATE_USER = """
 CREATE (user:User {uuid: $user_uuid, name: $user_name})

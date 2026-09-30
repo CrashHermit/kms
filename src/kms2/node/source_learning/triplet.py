@@ -95,7 +95,7 @@ class SourceTripletLearningFactNode:
     async def persist(self, state: SourceLearningState) -> dict[str, int]:
         """Persist triplet learning facts and selected evidence."""
         return {
-            'triplet_learning_fact_count': await self._repository.replace_triplet_learning_facts(
+            'triplet_learning_fact_count': await self._repository.persist_triplet_learning_facts(
                 state.source_uuid,
                 state.triplet_learning_fact_inputs,
                 state.triplet_learning_fact_results_ordered,

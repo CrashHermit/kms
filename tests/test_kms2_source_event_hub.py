@@ -8,11 +8,6 @@ from kms2.core.model.source_semantic.source_event_hub import (
     SourceEventHubJudgeInput,
     SourceEventHubMember,
 )
-from kms2.database.source_semantic.queries.source_event import (
-    DETECT_SOURCE_EVENT_COMMUNITIES,
-    READ_SOURCE_EVENT_HUB_CANDIDATES,
-    REPLACE_SOURCE_EVENT_ACCEPTED_EDGES,
-)
 from kms2.database.source_semantic.source_event_repository import (
     SourceEventRepository,
 )
@@ -43,43 +38,13 @@ class _Context:
 
 
 class _Session:
-    def __init__(self):
+    def __init__(self, results):
         self.calls = []
+        self._results = iter(results)
 
     async def run(self, query, **parameters):
         self.calls.append((query, parameters))
-        if query is READ_SOURCE_EVENT_HUB_CANDIDATES:
-            return _Result(
-                [
-                    {
-                        'left_uuid': 'event-1',
-                        'left_name': 'integration',
-                        'left_description': 'the integration process',
-                        'right_uuid': 'event-2',
-                        'right_name': 'system integration',
-                        'right_description': 'the same process',
-                        'score': 0.88,
-                    }
-                ]
-            )
-        if query is DETECT_SOURCE_EVENT_COMMUNITIES:
-            return _Result(
-                [
-                    {
-                        'community_id': 1,
-                        'uuid': 'event-1',
-                        'name': 'integration',
-                        'description': 'the integration process',
-                    },
-                    {
-                        'community_id': 1,
-                        'uuid': 'event-2',
-                        'name': 'system integration',
-                        'description': 'the same process',
-                    },
-                ]
-            )
-        return _Result()
+        return next(self._results)
 
 
 def _candidate():
@@ -94,8 +59,25 @@ def _candidate():
     )
 
 
-def test_event_repository_uses_typed_candidate_and_edge_queries():
-    session = _Session()
+def test_event_repository_converts_candidates_and_serializes_edges():
+    session = _Session(
+        [
+            _Result(
+                [
+                    {
+                        'left_uuid': 'event-1',
+                        'left_name': 'integration',
+                        'left_description': 'the integration process',
+                        'right_uuid': 'event-2',
+                        'right_name': 'system integration',
+                        'right_description': 'the same process',
+                        'score': 0.88,
+                    }
+                ]
+            ),
+            _Result(),
+        ]
+    )
     repository = SourceEventRepository(lambda: _Context(session))
 
     candidates = asyncio.run(
@@ -107,11 +89,18 @@ def test_event_repository_uses_typed_candidate_and_edge_queries():
         repository.replace_source_event_accepted_edges('source-1', candidates)
     )
 
-    assert session.calls[0][0] is READ_SOURCE_EVENT_HUB_CANDIDATES
-    assert 'source_event_embedding' in session.calls[0][0]
-    assert 'candidate.source_uuid = $source_uuid' in session.calls[0][0]
-    assert session.calls[1][0] is REPLACE_SOURCE_EVENT_ACCEPTED_EDGES
-    assert 'similarity.score = pair.score' in session.calls[1][0]
+    assert candidates == [_candidate()]
+    assert session.calls[1][1]['pairs'] == [
+        {
+            'left_uuid': 'event-1',
+            'left_name': 'integration',
+            'left_description': 'the integration process',
+            'right_uuid': 'event-2',
+            'right_name': 'system integration',
+            'right_description': 'the same process',
+            'score': 0.88,
+        }
+    ]
 
 
 class _Repository:

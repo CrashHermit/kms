@@ -15,7 +15,9 @@ WHERE candidate.uuid <> query.uuid
 WITH CASE WHEN query.uuid < candidate.uuid THEN query ELSE candidate END AS left,
      CASE WHEN query.uuid < candidate.uuid THEN candidate ELSE query END AS right,
      score
-WITH left, right, max(score) AS score
+WITH left,
+     right,
+     max(score) AS score
 RETURN left.uuid AS left_uuid,
        left.predicate AS left_predicate,
        left.description AS left_description,
@@ -40,14 +42,24 @@ RETURN count(*) AS materialized
 """
 
 DROP_GLOBAL_PREDICATE_HUB_GRAPH = """
-CALL gds.graph.drop($graph_name, false) YIELD graphName RETURN graphName
+CALL gds.graph.drop(
+    $graph_name,
+    false
+)
+YIELD graphName
+RETURN graphName
 """
 
 DETECT_GLOBAL_PREDICATE_HUB_COMMUNITIES = """
 CALL gds.graph.project(
     $graph_name,
     'SourcePredicateHub',
-    {SIMILAR_TO: {orientation: 'UNDIRECTED', properties: 'score'}}
+    {
+        SIMILAR_TO: {
+            orientation: 'UNDIRECTED',
+            properties: 'score'
+        }
+    }
 )
 YIELD graphName
 CALL gds.sllpa.stream(
@@ -59,7 +71,8 @@ CALL gds.sllpa.stream(
     }
 )
 YIELD nodeId, values
-WITH gds.util.asNode(nodeId) AS node, values.communityIds AS communityIds
+WITH gds.util.asNode(nodeId) AS node,
+     values.communityIds AS communityIds
 UNWIND communityIds AS community_id
 RETURN community_id,
        node.uuid AS uuid,
@@ -82,7 +95,8 @@ CREATE (hub:GlobalPredicateHub {
     description: hub_data.description,
     embedding: hub_data.embedding
 })
-WITH hub, hub_data
+WITH hub,
+     hub_data
 UNWIND hub_data.member_uuids AS member_uuid
 MATCH (member:SourcePredicateHub {uuid: member_uuid})
 CREATE (member)-[:IN_GLOBAL_HUB]->(hub)

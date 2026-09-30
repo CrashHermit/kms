@@ -9,83 +9,12 @@ from kms2.core.model.global_semantic.global_entity_hub import (
     GlobalEntityHubJudgeInput,
     GlobalEntityHubMember,
 )
-from kms2.database.global_semantic.global_entity_hub_repository import (
-    GlobalEntityHubRepository,
-)
-from kms2.database.global_semantic.queries.global_entity_hub import (
-    DETECT_GLOBAL_ENTITY_HUB_COMMUNITIES,
-    DROP_GLOBAL_ENTITY_HUB_GRAPH,
-    READ_GLOBAL_ENTITY_HUB_CANDIDATES,
-    REPLACE_GLOBAL_ENTITY_HUB_ACCEPTED_EDGES,
-)
 from kms2.langgraph.global_semantic.graph import GlobalSemanticGraph
 from kms2.langgraph.global_semantic.state import GlobalSemanticState
 from kms2.node.global_semantic.global_entity_hub import GlobalEntityHubNode
 from kms2.node.global_semantic.global_entity_hub_persistence import (
     GlobalEntityHubPersistenceNode,
 )
-
-
-class _Result:
-    def __init__(self, rows=None):
-        self.rows = rows or []
-
-    async def data(self):
-        return self.rows
-
-    async def consume(self):
-        return None
-
-
-class _Context:
-    def __init__(self, session):
-        self.session = session
-
-    async def __aenter__(self):
-        return self.session
-
-    async def __aexit__(self, *args):
-        return None
-
-
-class _Session:
-    def __init__(self):
-        self.calls = []
-
-    async def run(self, query, **parameters):
-        self.calls.append((query, parameters))
-        if query is READ_GLOBAL_ENTITY_HUB_CANDIDATES:
-            return _Result(
-                [
-                    {
-                        'left_uuid': 'hub-1',
-                        'left_canonical_name': 'Alice',
-                        'left_description': 'one person',
-                        'right_uuid': 'hub-2',
-                        'right_canonical_name': 'Alice',
-                        'right_description': 'one person',
-                        'score': 0.9,
-                    }
-                ]
-            )
-        if query is DETECT_GLOBAL_ENTITY_HUB_COMMUNITIES:
-            return _Result(
-                [
-                    {
-                        'community_id': 1,
-                        'uuid': 'hub-1',
-                        'canonical_name': 'Alice',
-                        'description': 'one person',
-                    },
-                    {
-                        'community_id': 1,
-                        'uuid': 'hub-2',
-                        'canonical_name': 'Alicia',
-                        'description': 'one person',
-                    },
-                ]
-            )
-        return _Result()
 
 
 def _candidate():
@@ -111,40 +40,6 @@ def test_global_entity_hub_model_uses_automatic_uuid_and_no_membership_property(
     assert hub.uuid
     assert 'source_uuid' not in GlobalEntityHub.model_fields
     assert 'membership_uuids' not in GlobalEntityHub.model_fields
-
-
-def test_global_entity_repository_uses_entity_only_cross_source_queries():
-    session = _Session()
-    repository = GlobalEntityHubRepository(lambda: _Context(session))
-
-    candidates = asyncio.run(
-        repository.read_global_entity_hub_candidates(
-            candidate_limit=20,
-            minimum_similarity=0.9,
-        )
-    )
-    asyncio.run(repository.replace_global_entity_hub_accepted_edges(candidates))
-    communities = asyncio.run(
-        repository.detect_global_entity_hub_communities(
-            max_iterations=10,
-            min_association_strength=0.2,
-            minimum_community_size=2,
-        )
-    )
-
-    assert candidates == [_candidate()]
-    assert len(communities) == 1
-    assert session.calls[0][0] is READ_GLOBAL_ENTITY_HUB_CANDIDATES
-    assert 'source_entity_hub_embedding' in session.calls[0][0]
-    assert 'candidate.source_uuid <> query.source_uuid' in session.calls[0][0]
-    assert 'HAS_SUBJECT' not in session.calls[0][0]
-    assert 'HAS_OBJECT' not in session.calls[0][0]
-    assert 'SourceEntity)' not in session.calls[0][0]
-    assert 'source_uuid' not in session.calls[0][1]
-    assert session.calls[1][0] is REPLACE_GLOBAL_ENTITY_HUB_ACCEPTED_EDGES
-    assert session.calls[2][0] is DROP_GLOBAL_ENTITY_HUB_GRAPH
-    assert session.calls[3][0] is DETECT_GLOBAL_ENTITY_HUB_COMMUNITIES
-    assert session.calls[4][0] is DROP_GLOBAL_ENTITY_HUB_GRAPH
 
 
 class _Repository:

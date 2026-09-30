@@ -6,6 +6,24 @@ SET source.key = $source.key,
     source.metadata = $source.metadata
 WITH source
 CALL (source) {
+    OPTIONAL MATCH (source)-[:HAS_FLASHCARD]->(card:SourceFlashcard)
+    OPTIONAL MATCH (card)-[:HAS_CARD_REVIEW]->(review:UserCardReview)
+    OPTIONAL MATCH (review)-[:HAS_REVIEW_EVENT]->(event:ReviewEvent)
+    WITH source,
+         collect(DISTINCT card) AS cards,
+         collect(DISTINCT review) AS reviews,
+         collect(DISTINCT event) AS events
+    FOREACH (event IN events | DETACH DELETE event)
+    FOREACH (review IN reviews | DETACH DELETE review)
+    FOREACH (card IN cards | DETACH DELETE card)
+    WITH source
+    OPTIONAL MATCH (source)-[:HAS_LEARNING_FACT]->(learning_fact)
+    WITH collect(learning_fact) AS learning_facts
+    FOREACH (learning_fact IN learning_facts | DETACH DELETE learning_fact)
+    RETURN count(*) AS learning_artifacts_deleted
+}
+WITH source
+CALL (source) {
     MATCH (source)-[:FIRST_BLOCK]->(first:SourceBlock)
     MATCH (first)-[:NEXT_BLOCK*0..]->(source_block:SourceBlock)
     MATCH (source_block)<-[:HAS_SOURCE_BLOCK]-(:SourceFactTarget)
@@ -53,7 +71,10 @@ FOREACH (instruction IN old_instructions | DETACH DELETE instruction)
 WITH source
 CALL (source) {
     UNWIND $pages AS row
-    CREATE (page:SourcePage {index: row.index, markdown: row.markdown})
+    CREATE (page:SourcePage {
+        index: row.index,
+        markdown: row.markdown
+    })
     CREATE (source)-[:HAS_PAGE]->(page)
     RETURN count(*) AS _
 }
@@ -73,7 +94,10 @@ CALL (source) {
 WITH source
 CALL (source) {
     UNWIND $assets AS row
-    CREATE (asset:VisualAsset {uuid: row.uuid, path: row.path})
+    CREATE (asset:VisualAsset {
+        uuid: row.uuid,
+        path: row.path
+    })
     RETURN count(*) AS _
 }
 WITH source

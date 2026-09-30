@@ -21,17 +21,18 @@ from kms2.core.model.learning import (
     UserCardReview,
 )
 from kms2.core.model.user import Deck
-from kms2.database.learning.queries import (
+from kms2.database.learning.queries.card import (
     ADD_CARD_TO_DECK,
-    CREATE_DECK,
-    LIST_ASSIGNABLE_CARDS,
-    LIST_DECK_CARDS,
-    LIST_DECKS,
-    LIST_DUE_DECK_CARDS,
-    LIST_REVIEW_EVENTS,
-    LOAD_REVIEW_SNAPSHOT,
-    RECORD_REVIEW,
+    READ_ASSIGNABLE_CARDS,
+    READ_DECK_CARDS,
+    READ_DUE_DECK_CARDS,
     REMOVE_CARD_FROM_DECK,
+)
+from kms2.database.learning.queries.deck import CREATE_DECK, READ_DECKS
+from kms2.database.learning.queries.review import (
+    READ_REVIEW_EVENTS,
+    READ_REVIEW_SNAPSHOT,
+    RECORD_REVIEW,
 )
 
 
@@ -43,7 +44,7 @@ class LearningRepository:
 
     async def list_decks(self, user_uuid: str) -> list[Deck]:
         """List one user's decks in stable display order."""
-        rows = await self._data(LIST_DECKS, user_uuid=user_uuid)
+        rows = await self._data(READ_DECKS, user_uuid=user_uuid)
         return [Deck(uuid=row['uuid'], name=row['name']) for row in rows]
 
     async def create_deck(self, user_uuid: str, deck: Deck) -> Deck:
@@ -58,7 +59,7 @@ class LearningRepository:
 
     async def list_assignable_cards(self, user_uuid: str) -> list[DeckCard]:
         """List cards reachable from sources owned by one user."""
-        rows = await self._data(LIST_ASSIGNABLE_CARDS, user_uuid=user_uuid)
+        rows = await self._data(READ_ASSIGNABLE_CARDS, user_uuid=user_uuid)
         return [DeckCard.model_validate(row) for row in rows]
 
     async def add_card_to_deck(
@@ -102,7 +103,7 @@ class LearningRepository:
     ) -> list[DeckCard]:
         """List cards in one user's deck."""
         rows = await self._data(
-            LIST_DECK_CARDS,
+            READ_DECK_CARDS,
             user_uuid=user_uuid,
             deck_uuid=deck_uuid,
         )
@@ -116,7 +117,7 @@ class LearningRepository:
     ) -> list[DueDeckCard]:
         """List due cards in one user's deck in due order."""
         rows = await self._data(
-            LIST_DUE_DECK_CARDS,
+            READ_DUE_DECK_CARDS,
             user_uuid=user_uuid,
             deck_uuid=deck_uuid,
             now=now,
@@ -134,7 +135,7 @@ class LearningRepository:
     ) -> ReviewSnapshot:
         """Load the user-wide scheduler and card state for one deck card."""
         row = await self._single(
-            LOAD_REVIEW_SNAPSHOT,
+            READ_REVIEW_SNAPSHOT,
             user_uuid=user_uuid,
             deck_uuid=deck_uuid,
             card_uuid=card_uuid,
@@ -174,7 +175,7 @@ class LearningRepository:
     ) -> list[ReviewEvent]:
         """List one user's immutable card review events in order."""
         rows = await self._data(
-            LIST_REVIEW_EVENTS,
+            READ_REVIEW_EVENTS,
             user_uuid=user_uuid,
             card_uuid=card_uuid,
         )

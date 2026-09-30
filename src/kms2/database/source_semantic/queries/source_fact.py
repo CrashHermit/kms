@@ -2,19 +2,22 @@
 
 REPLACE_SOURCE_FACTS = """
 MATCH (source:Source {uuid: $source_uuid})
-CALL {
+CALL (source) {
+    OPTIONAL MATCH (source)-[:HAS_FLASHCARD]->(card:SourceFlashcard)
+    OPTIONAL MATCH (card)-[:HAS_CARD_REVIEW]->(review:UserCardReview)
+    OPTIONAL MATCH (review)-[:HAS_REVIEW_EVENT]->(event:ReviewEvent)
+    WITH source,
+         collect(DISTINCT card) AS cards,
+         collect(DISTINCT review) AS reviews,
+         collect(DISTINCT event) AS events
+    FOREACH (event IN events | DETACH DELETE event)
+    FOREACH (review IN reviews | DETACH DELETE review)
+    FOREACH (card IN cards | DETACH DELETE card)
     WITH source
-    MATCH (learning_node)
-    WHERE learning_node.source_uuid = source.uuid
-      AND (
-          learning_node:SourceFlashcard
-          OR learning_node:SourceEntityLearningFact
-          OR learning_node:SourceEventLearningFact
-          OR learning_node:SourcePredicateLearningFact
-          OR learning_node:SourceTripletLearningFact
-      )
-    DETACH DELETE learning_node
-    RETURN count(learning_node) AS old_learning_nodes_deleted
+    OPTIONAL MATCH (source)-[:HAS_LEARNING_FACT]->(learning_fact)
+    WITH collect(learning_fact) AS learning_facts
+    FOREACH (learning_fact IN learning_facts | DETACH DELETE learning_fact)
+    RETURN count(*) AS learning_artifacts_deleted
 }
 WITH source
 CALL {
@@ -45,14 +48,22 @@ CALL {
 }
 WITH source
 UNWIND $facts AS row
-CREATE (fact:SourceFact {uuid: row.uuid, text: row.text})
+CREATE (fact:SourceFact {
+    uuid: row.uuid,
+    text: row.text
+})
 CREATE (target:SourceFactTarget {uuid: row.target_uuid})
 CREATE (before:SourceFactContext {uuid: row.context_before_uuid})
 CREATE (after:SourceFactContext {uuid: row.context_after_uuid})
 CREATE (fact)-[:HAS_TARGET]->(target)
 CREATE (fact)-[:HAS_CONTEXT_BEFORE]->(before)
 CREATE (fact)-[:HAS_CONTEXT_AFTER]->(after)
-WITH source, fact, target, before, after, row
+WITH source,
+     fact,
+     target,
+     before,
+     after,
+     row
 CALL (target, row) {
     UNWIND row.target_block_uuids AS block_uuid
     MATCH (block:SourceBlock {uuid: block_uuid})
@@ -79,7 +90,9 @@ MATCH (source:Source {uuid: $source_uuid})-[:FIRST_BLOCK]->(first:SourceBlock)
 MATCH source_path = (first)-[:NEXT_BLOCK*0..]->(source_block:SourceBlock)
 MATCH (source_block)<-[:HAS_SOURCE_BLOCK]-(target:SourceFactTarget)
       <-[:HAS_TARGET]-(fact:SourceFact)
-WITH DISTINCT source, fact, target
+WITH DISTINCT source,
+     fact,
+     target
 CALL (source, target) {
     MATCH (source)-[:FIRST_BLOCK]->(first:SourceBlock)
     MATCH path = (first)-[:NEXT_BLOCK*0..]->(block:SourceBlock)
@@ -91,10 +104,12 @@ CALL (source, target) {
         block_type: block.block_type,
         content: block.content
     }) AS target_blocks,
-    min(length(path)) AS target_position
+           min(length(path)) AS target_position
 }
-RETURN fact.uuid AS uuid, fact.text AS text,
-       target.uuid AS target_uuid, target_blocks
+RETURN fact.uuid AS uuid,
+       fact.text AS text,
+       target.uuid AS target_uuid,
+       target_blocks
 ORDER BY target_position, uuid
 """
 
@@ -103,11 +118,15 @@ MATCH (source:Source {uuid: $source_uuid})-[:FIRST_BLOCK]->(first:SourceBlock)
 MATCH source_path = (first)-[:NEXT_BLOCK*0..]->(source_block:SourceBlock)
 MATCH (source_block)<-[:HAS_SOURCE_BLOCK]-(target:SourceFactTarget)
       <-[:HAS_TARGET]-(fact:SourceFact)
-WITH DISTINCT source, fact
+WITH DISTINCT source,
+     fact
 MATCH (fact)-[context_edge:HAS_CONTEXT_BEFORE|HAS_CONTEXT_AFTER]->(
     context:SourceFactContext
 )
-WITH source, fact, type(context_edge) AS context_kind, context
+WITH source,
+     fact,
+     type(context_edge) AS context_kind,
+     context
 CALL (source, context) {
     MATCH (source)-[:FIRST_BLOCK]->(first:SourceBlock)
     MATCH path = (first)-[:NEXT_BLOCK*0..]->(block:SourceBlock)

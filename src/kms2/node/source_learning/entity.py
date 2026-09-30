@@ -91,7 +91,7 @@ class SourceEntityLearningFactNode:
 
     async def persist(self, state: SourceLearningState) -> dict[str, int]:
         """Persist entity learning facts and selected evidence."""
-        count = await self._repository.replace_entity_learning_facts(
+        count = await self._repository.persist_entity_learning_facts(
             state.source_uuid,
             state.entity_learning_fact_inputs,
             state.entity_learning_fact_results_ordered,

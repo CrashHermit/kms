@@ -95,7 +95,7 @@ class SourcePredicateLearningFactNode:
     async def persist(self, state: SourceLearningState) -> dict[str, int]:
         """Persist predicate learning facts and selected evidence."""
         return {
-            'predicate_learning_fact_count': await self._repository.replace_predicate_learning_facts(
+            'predicate_learning_fact_count': await self._repository.persist_predicate_learning_facts(
                 state.source_uuid,
                 state.predicate_learning_fact_inputs,
                 state.predicate_learning_fact_results_ordered,

@@ -46,7 +46,9 @@ WHERE object_hub:GlobalEntityHub OR object_hub:GlobalEventHub
 MATCH (source_triplet_hub:SourceTripletHub)-[:IN_GLOBAL_TRIPLET]->(
     global_triplet
 )
-WITH subject_hub, predicate_hub, object_hub,
+WITH subject_hub,
+     predicate_hub,
+     object_hub,
      collect(DISTINCT global_triplet.uuid) AS global_triplet_uuids,
      collect(DISTINCT {
          global_triplet_uuid: global_triplet.uuid,
@@ -89,7 +91,8 @@ CREATE (hub:GlobalTripletHub {
     predicate_hub_uuid: hub_data.predicate_hub_uuid,
     object_hub_uuid: hub_data.object_hub_uuid
 })
-WITH hub, hub_data
+WITH hub,
+     hub_data
 MATCH (subject_hub {uuid: hub_data.subject_hub_uuid})
 WHERE subject_hub:GlobalEntityHub OR subject_hub:GlobalEventHub
 MATCH (predicate_hub:GlobalPredicateHub {
@@ -100,7 +103,8 @@ WHERE object_hub:GlobalEntityHub OR object_hub:GlobalEventHub
 CREATE (hub)-[:HAS_SUBJECT_HUB]->(subject_hub)
 CREATE (hub)-[:HAS_PREDICATE_HUB]->(predicate_hub)
 CREATE (hub)-[:HAS_OBJECT_HUB]->(object_hub)
-WITH hub, hub_data
+WITH hub,
+     hub_data
 UNWIND hub_data.global_triplet_uuids AS global_triplet_uuid
 MATCH (global_triplet:GlobalTriplet {uuid: global_triplet_uuid})
 CREATE (global_triplet)-[:IN_GLOBAL_HUB]->(hub)

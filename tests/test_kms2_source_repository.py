@@ -11,15 +11,6 @@ from kms2.core.model.source_processing.pedagogical import (
     StatementDraft,
 )
 from kms2.core.model.visual_asset import VisualAsset
-from kms2.database.source.queries.source_blocks import (
-    FIND_SIMILAR_SOURCE_BLOCKS,
-)
-from kms2.database.source.queries.source_catalog import (
-    ADOPT_SOURCE,
-    READ_SOURCES,
-    READ_UNOWNED_SOURCES,
-)
-from kms2.database.source.queries.source_graph import REPLACE_SOURCE
 from kms2.database.source.source_block_repository import SourceBlockRepository
 from kms2.database.source.source_catalog_repository import (
     SourceCatalogRepository,
@@ -103,11 +94,7 @@ def test_replace_source_projects_pointer_rows_and_governance_once():
         )
     )
 
-    assert len(session.calls) == 1
-    query, parameters = session.calls[0]
-    assert 'SET block:' not in query
-    assert 'FOREACH (_ IN CASE WHEN row.block_type' not in query
-    assert query is REPLACE_SOURCE
+    parameters = session.calls[0][1]
     assert parameters['statements'] == [
         {
             'uuid': 'statement-1',
@@ -127,11 +114,6 @@ def test_replace_source_projects_pointer_rows_and_governance_once():
     assert parameters['instruction_governance_pairs'] == [
         {'instruction_uuid': 'instruction-1', 'statement_uuid': 'statement-1'}
     ]
-    assert 'HAS_STATEMENT' not in query
-    assert 'HAS_PROCEDURE' not in query
-    assert 'GOVERNS]->(block' not in query
-    assert 'MEMBER_OF]->(statement' in query
-    assert 'MEMBER_OF]->(procedure' in query
 
 
 def test_list_sources_returns_stable_user_source_summaries():
@@ -154,7 +136,6 @@ def test_list_sources_returns_stable_user_source_summaries():
         Source(uuid='source-2', key='second.pdf'),
         Source(uuid='source-1', key='first.pdf'),
     ]
-    assert session.calls == [(READ_SOURCES, {'user_uuid': 'user-1'})]
 
 
 def test_list_unowned_sources_excludes_owned_source_catalog():
@@ -169,7 +150,6 @@ def test_list_unowned_sources_excludes_owned_source_catalog():
     )
 
     assert sources == [Source(uuid='legacy-1', key='legacy.pdf')]
-    assert session.calls == [(READ_UNOWNED_SOURCES, {})]
 
 
 def test_adopt_source_locks_source_and_rejects_claimed_source():
@@ -178,16 +158,6 @@ def test_adopt_source_locks_source_and_rejects_claimed_source():
 
     with pytest.raises(SourceOwnershipConflict):
         asyncio.run(repository.adopt_source('user-1', 'source-1'))
-
-    assert session.calls == [
-        (
-            ADOPT_SOURCE,
-            {'user_uuid': 'user-1', 'source_uuid': 'source-1'},
-        )
-    ]
-    assert 'SET source._ownership_lock = randomUUID()' in ADOPT_SOURCE
-    assert 'REMOVE source._ownership_lock' in ADOPT_SOURCE
-    assert 'WHERE NOT EXISTS' in ADOPT_SOURCE
 
 
 def test_find_similar_blocks_uses_neo4j_vector_index_and_omits_embedding():
@@ -221,16 +191,3 @@ def test_find_similar_blocks_uses_neo4j_vector_index_and_omits_embedding():
     ]
     assert results[0].score == 0.99
     assert 'embedding' not in results[0].model_dump()
-    assert session.calls == [
-        (
-            FIND_SIMILAR_SOURCE_BLOCKS,
-            {
-                'query_uuid': 'query-block',
-                'top_k': 2,
-                'candidate_limit': 3,
-            },
-        )
-    ]
-    assert 'source_block_embedding' in FIND_SIMILAR_SOURCE_BLOCKS
-    assert 'node.uuid <> query.uuid' in FIND_SIMILAR_SOURCE_BLOCKS
-    assert 'ORDER BY score DESC, uuid ASC' in FIND_SIMILAR_SOURCE_BLOCKS

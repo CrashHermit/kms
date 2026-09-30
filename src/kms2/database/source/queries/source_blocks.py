@@ -3,7 +3,9 @@
 READ_SOURCE_BLOCKS = """
 MATCH (source:Source {uuid: $source_uuid})-[:FIRST_BLOCK]->(first:SourceBlock)
 MATCH path = (first)-[:NEXT_BLOCK*0..]->(block:SourceBlock)
-RETURN block.uuid AS uuid, block.block_type AS block_type, block.content AS content
+RETURN block.uuid AS uuid,
+       block.block_type AS block_type,
+       block.content AS content
 ORDER BY length(path)
 """
 
