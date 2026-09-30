@@ -2,8 +2,12 @@ import asyncio
 
 from fsrs import Scheduler
 
+from kms2.database.source.source_catalog_repository import (
+    SourceCatalogRepository,
+)
 from kms2.database.user.queries import CREATE_USER
-from kms2.user_service import UserService
+from kms2.database.user.user_repository import UserRepository
+from kms2.service.user import UserService
 
 
 class _Result:
@@ -36,7 +40,14 @@ class _SessionContext:
 
 def test_create_user_provisions_default_deck_with_fsrs_settings():
     session = _Session()
-    service = UserService(lambda: _SessionContext(session))
+
+    def session_factory():
+        return _SessionContext(session)
+
+    service = UserService(
+        UserRepository(session_factory),
+        SourceCatalogRepository(session_factory),
+    )
 
     user = asyncio.run(service.create_user('Alex'))
 

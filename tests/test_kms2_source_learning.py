@@ -163,7 +163,6 @@ def test_all_typed_modules_forward_sync_and_async():
         ].annotation
         learning_fact = learning_fact_model(
             uuid='learning-fact-1',
-            source_uuid='source-1',
             text=facts.facts[0].text,
         )
         card_request = card_input_model(
@@ -302,6 +301,11 @@ def test_tui_exposes_owned_source_learning_action(monkeypatch):
 
     assert [choice for choice in selections[0]['choices']] == [
         tui.NEW_SOURCE_OPTION,
+        tui.CREATE_DECK_OPTION,
+        tui.ADD_CARD_OPTION,
+        tui.REMOVE_CARD_OPTION,
+        tui.REVIEW_CARDS_OPTION,
+        tui.REVIEW_HISTORY_OPTION,
         tui.EXISTING_SOURCE_OPTION,
         tui.SOURCE_LEARNING_OPTION,
         tui.GLOBAL_SEMANTIC_OPTION,
@@ -388,7 +392,7 @@ class _QuerySession:
         self.calls.append((statement, parameters))
         if statement == READ_SOURCE_ENTITY_LEARNING_INPUTS:
             return _QueryResult(self.rows)
-        if 'CREATE (learning_fact:' in statement:
+        if 'HAS_LEARNING_FACT]->(learning_fact:' in statement:
             return _QueryResult(persisted=1)
         if statement == PERSIST_SOURCE_FLASHCARDS:
             return _QueryResult(persisted=1)

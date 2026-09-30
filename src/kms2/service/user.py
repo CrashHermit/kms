@@ -1,11 +1,9 @@
 """Application service for user and source ownership operations."""
 
-from collections.abc import Callable
-
 from fsrs import Scheduler
 
 from kms2.core.model.source import Source
-from kms2.core.model.user import Deck, DeckSettings, User
+from kms2.core.model.user import Deck, User, UserSchedulerSettings
 from kms2.database.source.source_catalog_repository import (
     SourceCatalogRepository,
 )
@@ -15,15 +13,19 @@ from kms2.database.user.user_repository import UserRepository
 class UserService:
     """Coordinate user provisioning and source ownership repositories."""
 
-    def __init__(self, session_factory: Callable) -> None:
-        self._users = UserRepository(session_factory)
-        self._sources = SourceCatalogRepository(session_factory)
+    def __init__(
+        self,
+        users: UserRepository,
+        sources: SourceCatalogRepository,
+    ) -> None:
+        self._users = users
+        self._sources = sources
 
     async def create_user(self, name: str) -> User:
         """Create a user with a default deck and FSRS scheduler settings."""
         user = User(name=name)
         deck = Deck(name='Default')
-        settings = DeckSettings(scheduler_json=Scheduler().to_json())
+        settings = UserSchedulerSettings(scheduler_json=Scheduler().to_json())
         await self._users.create_user(user, deck, settings)
         return user
 

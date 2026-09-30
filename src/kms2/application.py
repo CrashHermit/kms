@@ -3,20 +3,28 @@
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from kms2.composition.global_semantic import build_global_semantic_graph
+from kms2.composition.services import build_learning_service, build_user_service
 from kms2.composition.source_learning import build_source_learning_graph
 from kms2.composition.source_processing import build_source_processing_graph
 from kms2.composition.source_semantic import build_source_semantic_graph
 from kms2.config.settings import Settings
+from kms2.core.model.learning import (
+    DeckCard,
+    DueDeckCard,
+    ReviewEvent,
+    ReviewRating,
+    ReviewReceipt,
+)
 from kms2.core.model.source import Source
-from kms2.core.model.user import User
+from kms2.core.model.user import Deck, User
 from kms2.database import schema
 from kms2.database.client import DatabaseClient
 from kms2.local_models.runtime import LocalModelRuntime
 from kms2.train.recorder import Recorder
-from kms2.user_service import UserService
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +132,19 @@ async def _application_resources(
         await database.close()
 
 
+@asynccontextmanager
+async def _database_resources(
+    settings: Settings,
+) -> AsyncIterator[DatabaseClient]:
+    """Own database resources for commands that do not need local models."""
+    database = DatabaseClient(settings.database)
+    try:
+        await schema.ensure_structural_schema(database.session)
+        yield database
+    finally:
+        await database.close()
+
+
 def _source_processing_stage_result(
     final_state: dict[str, object],
 ) -> SourceProcessingStageResult:
@@ -214,7 +235,7 @@ async def list_users(settings: Settings) -> list[User]:
     """Return users for terminal onboarding and selection."""
     database = DatabaseClient(settings.database)
     try:
-        return await UserService(database.session).list_users()
+        return await build_user_service(database).list_users()
     finally:
         await database.close()
 
@@ -224,7 +245,7 @@ async def create_user(settings: Settings, name: str) -> User:
     database = DatabaseClient(settings.database)
     try:
         await schema.ensure_structural_schema(database.session)
-        return await UserService(database.session).create_user(name)
+        return await build_user_service(database).create_user(name)
     finally:
         await database.close()
 
@@ -233,7 +254,7 @@ async def list_unowned_sources(settings: Settings) -> list[Source]:
     """Return legacy sources available for explicit adoption."""
     database = DatabaseClient(settings.database)
     try:
-        return await UserService(database.session).list_unowned_sources()
+        return await build_user_service(database).list_unowned_sources()
     finally:
         await database.close()
 
@@ -246,7 +267,7 @@ async def adopt_source(
     """Explicitly associate an unowned source with a user."""
     database = DatabaseClient(settings.database)
     try:
-        await UserService(database.session).adopt_source(
+        await build_user_service(database).adopt_source(
             user_uuid,
             source_uuid,
         )
@@ -258,7 +279,7 @@ async def list_sources(settings: Settings, user_uuid: str) -> list[Source]:
     """Return persisted sources owned by one user."""
     database = DatabaseClient(settings.database)
     try:
-        return await UserService(database.session).list_sources(user_uuid)
+        return await build_user_service(database).list_sources(user_uuid)
     finally:
         await database.close()
 
@@ -347,7 +368,7 @@ async def ingest_source(
             pdf_path,
             pages,
         )
-        await UserService(resources.database.session).attach_new_source(
+        await build_user_service(resources.database).attach_new_source(
             user_uuid,
             result.source.uuid,
         )
@@ -414,7 +435,7 @@ async def ingest_and_run_source_semantic_stage(
             pdf_path,
             pages,
         )
-        await UserService(resources.database.session).attach_new_source(
+        await build_user_service(resources.database).attach_new_source(
             user_uuid,
             source_processing_stage.source.uuid,
         )
@@ -428,3 +449,125 @@ async def ingest_and_run_source_semantic_stage(
         source_processing_stage=source_processing_stage,
         source_semantic_stage=source_semantic_stage,
     )
+
+
+async def list_decks(settings: Settings, user_uuid: str) -> list[Deck]:
+    """List decks owned by one user without starting local models."""
+    async with _database_resources(settings) as database:
+        return await build_learning_service(database).list_decks(user_uuid)
+
+
+async def create_deck(
+    settings: Settings,
+    user_uuid: str,
+    name: str,
+) -> Deck:
+    """Create one deck for a user."""
+    async with _database_resources(settings) as database:
+        return await build_learning_service(database).create_deck(
+            user_uuid,
+            name,
+        )
+
+
+async def list_assignable_cards(
+    settings: Settings,
+    user_uuid: str,
+) -> list[DeckCard]:
+    """List source cards the user may add to decks."""
+    async with _database_resources(settings) as database:
+        return await build_learning_service(database).list_assignable_cards(
+            user_uuid
+        )
+
+
+async def add_card_to_deck(
+    settings: Settings,
+    user_uuid: str,
+    deck_uuid: str,
+    card_uuid: str,
+) -> DeckCard:
+    """Add one source card to a user's deck."""
+    async with _database_resources(settings) as database:
+        return await build_learning_service(database).add_card_to_deck(
+            user_uuid,
+            deck_uuid,
+            card_uuid,
+        )
+
+
+async def remove_card_from_deck(
+    settings: Settings,
+    user_uuid: str,
+    deck_uuid: str,
+    card_uuid: str,
+) -> None:
+    """Remove one card from one deck."""
+    async with _database_resources(settings) as database:
+        await build_learning_service(database).remove_card_from_deck(
+            user_uuid,
+            deck_uuid,
+            card_uuid,
+        )
+
+
+async def list_deck_cards(
+    settings: Settings,
+    user_uuid: str,
+    deck_uuid: str,
+) -> list[DeckCard]:
+    """List cards currently in one deck."""
+    async with _database_resources(settings) as database:
+        return await build_learning_service(database).list_deck_cards(
+            user_uuid,
+            deck_uuid,
+        )
+
+
+async def list_due_deck_cards(
+    settings: Settings,
+    user_uuid: str,
+    deck_uuid: str,
+    now: datetime,
+) -> list[DueDeckCard]:
+    """List due cards in one deck at the supplied UTC time."""
+    async with _database_resources(settings) as database:
+        return await build_learning_service(database).list_due_deck_cards(
+            user_uuid,
+            deck_uuid,
+            now,
+        )
+
+
+async def review_card(
+    settings: Settings,
+    user_uuid: str,
+    deck_uuid: str,
+    card_uuid: str,
+    rating: ReviewRating,
+    review_datetime: datetime,
+    review_duration: int | None = None,
+) -> ReviewReceipt:
+    """Submit one card rating through the learning service."""
+    async with _database_resources(settings) as database:
+        return await build_learning_service(database).review_card(
+            user_uuid,
+            deck_uuid,
+            card_uuid,
+            rating,
+            review_datetime,
+            review_duration,
+        )
+
+
+async def list_review_events(
+    settings: Settings,
+    user_uuid: str,
+    card_uuid: str,
+) -> list[ReviewEvent]:
+    """List immutable review history for one user/card association."""
+    async with _database_resources(settings) as database:
+        return await build_learning_service(database).list_review_events(
+            user_uuid,
+            card_uuid,
+        )

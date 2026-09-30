@@ -125,24 +125,30 @@ ORDER BY hub_uuid
 )
 
 _CLEAR_SOURCE_LEARNING = """
-MATCH (node)
-WHERE node.source_uuid = $source_uuid
-  AND (
-      node:SourceFlashcard
-      OR node:SourceEntityLearningFact
-      OR node:SourceEventLearningFact
-      OR node:SourcePredicateLearningFact
-      OR node:SourceTripletLearningFact
-  )
-DETACH DELETE node
-RETURN count(node) AS deleted
+MATCH (source:Source {uuid: $source_uuid})
+OPTIONAL MATCH (source)-[:HAS_FLASHCARD]->(card:SourceFlashcard)
+OPTIONAL MATCH (card)-[:HAS_CARD_REVIEW]->(review:UserCardReview)
+OPTIONAL MATCH (review)-[:HAS_REVIEW_EVENT]->(event:ReviewEvent)
+WITH source,
+     collect(DISTINCT card) AS cards,
+     collect(DISTINCT review) AS reviews,
+     collect(DISTINCT event) AS events
+FOREACH (event IN events | DETACH DELETE event)
+FOREACH (review IN reviews | DETACH DELETE review)
+FOREACH (card IN cards | DETACH DELETE card)
+WITH source
+OPTIONAL MATCH (source)-[:HAS_LEARNING_FACT]->(learning_fact)
+WITH collect(learning_fact) AS learning_facts
+FOREACH (learning_fact IN learning_facts | DETACH DELETE learning_fact)
+RETURN size(learning_facts) AS deleted
 """
 
 REPLACE_SOURCE_LEARNING_FACTS = {
     'entity': """
 UNWIND $rows AS row
-CREATE (learning_fact:SourceEntityLearningFact {
-    uuid: row.uuid, source_uuid: $source_uuid, text: row.text
+MATCH (source:Source {uuid: $source_uuid})
+CREATE (source)-[:HAS_LEARNING_FACT]->(learning_fact:SourceEntityLearningFact {
+    uuid: row.uuid, text: row.text
 })
 WITH learning_fact, row
 MATCH (hub:SourceEntityHub {uuid: row.hub_uuid, source_uuid: $source_uuid})
@@ -159,8 +165,9 @@ RETURN count(DISTINCT learning_fact) AS persisted
 """,
     'event': """
 UNWIND $rows AS row
-CREATE (learning_fact:SourceEventLearningFact {
-    uuid: row.uuid, source_uuid: $source_uuid, text: row.text
+MATCH (source:Source {uuid: $source_uuid})
+CREATE (source)-[:HAS_LEARNING_FACT]->(learning_fact:SourceEventLearningFact {
+    uuid: row.uuid, text: row.text
 })
 WITH learning_fact, row
 MATCH (hub:SourceEventHub {uuid: row.hub_uuid, source_uuid: $source_uuid})
@@ -177,8 +184,9 @@ RETURN count(DISTINCT learning_fact) AS persisted
 """,
     'predicate': """
 UNWIND $rows AS row
-CREATE (learning_fact:SourcePredicateLearningFact {
-    uuid: row.uuid, source_uuid: $source_uuid, text: row.text
+MATCH (source:Source {uuid: $source_uuid})
+CREATE (source)-[:HAS_LEARNING_FACT]->(learning_fact:SourcePredicateLearningFact {
+    uuid: row.uuid, text: row.text
 })
 WITH learning_fact, row
 MATCH (hub:SourcePredicateHub {uuid: row.hub_uuid, source_uuid: $source_uuid})
@@ -195,8 +203,9 @@ RETURN count(DISTINCT learning_fact) AS persisted
 """,
     'triplet': """
 UNWIND $rows AS row
-CREATE (learning_fact:SourceTripletLearningFact {
-    uuid: row.uuid, source_uuid: $source_uuid, text: row.text
+MATCH (source:Source {uuid: $source_uuid})
+CREATE (source)-[:HAS_LEARNING_FACT]->(learning_fact:SourceTripletLearningFact {
+    uuid: row.uuid, text: row.text
 })
 WITH learning_fact, row
 MATCH (hub:SourceTripletHub {uuid: row.hub_uuid, source_uuid: $source_uuid})
@@ -215,12 +224,12 @@ RETURN count(DISTINCT learning_fact) AS persisted
 
 PERSIST_SOURCE_FLASHCARDS = """
 UNWIND $rows AS row
-CREATE (card:SourceFlashcard {
-    uuid: row.uuid, source_uuid: $source_uuid,
-    question: row.question, answer: row.answer
+MATCH (source:Source {uuid: $source_uuid})
+CREATE (source)-[:HAS_FLASHCARD]->(card:SourceFlashcard {
+    uuid: row.uuid, question: row.question, answer: row.answer
 })
-WITH card, row
-MATCH (learning_fact {uuid: row.learning_fact_uuid, source_uuid: $source_uuid})
+WITH source, card, row
+MATCH (source)-[:HAS_LEARNING_FACT]->(learning_fact {uuid: row.learning_fact_uuid})
 WHERE learning_fact:SourceEntityLearningFact
    OR learning_fact:SourceEventLearningFact
    OR learning_fact:SourcePredicateLearningFact
@@ -231,7 +240,8 @@ RETURN count(card) AS persisted
 
 _READ_LEARNING_FACTS = {
     'entity': """
-MATCH (learning_fact:SourceEntityLearningFact {source_uuid: $source_uuid})
+MATCH (source:Source {uuid: $source_uuid})-[:HAS_LEARNING_FACT]->
+      (learning_fact:SourceEntityLearningFact)
 MATCH (learning_fact)-[:ABOUT_HUB]->(hub:SourceEntityHub)
 MATCH (learning_fact)-[:SUPPORTED_BY]->(source_fact:SourceFact)
 MATCH (source_fact)-[:HAS_TRIPLET]->(triplet:SourceTriplet)
@@ -256,7 +266,8 @@ RETURN learning_fact.uuid AS learning_fact_uuid,
 ORDER BY learning_fact_uuid
 """,
     'event': """
-MATCH (learning_fact:SourceEventLearningFact {source_uuid: $source_uuid})
+MATCH (source:Source {uuid: $source_uuid})-[:HAS_LEARNING_FACT]->
+      (learning_fact:SourceEventLearningFact)
 MATCH (learning_fact)-[:ABOUT_HUB]->(hub:SourceEventHub)
 MATCH (learning_fact)-[:SUPPORTED_BY]->(source_fact:SourceFact)
 MATCH (source_fact)-[:HAS_TRIPLET]->(triplet:SourceTriplet)
@@ -281,7 +292,8 @@ RETURN learning_fact.uuid AS learning_fact_uuid,
 ORDER BY learning_fact_uuid
 """,
     'predicate': """
-MATCH (learning_fact:SourcePredicateLearningFact {source_uuid: $source_uuid})
+MATCH (source:Source {uuid: $source_uuid})-[:HAS_LEARNING_FACT]->
+      (learning_fact:SourcePredicateLearningFact)
 MATCH (learning_fact)-[:ABOUT_HUB]->(hub:SourcePredicateHub)
 MATCH (learning_fact)-[:SUPPORTED_BY]->(source_fact:SourceFact)
 MATCH (source_fact)-[:HAS_TRIPLET]->(triplet:SourceTriplet)
@@ -304,7 +316,8 @@ RETURN learning_fact.uuid AS learning_fact_uuid,
 ORDER BY learning_fact_uuid
 """,
     'triplet': """
-MATCH (learning_fact:SourceTripletLearningFact {source_uuid: $source_uuid})
+MATCH (source:Source {uuid: $source_uuid})-[:HAS_LEARNING_FACT]->
+      (learning_fact:SourceTripletLearningFact)
 MATCH (learning_fact)-[:ABOUT_HUB]->(hub:SourceTripletHub)
 MATCH (learning_fact)-[:SUPPORTED_BY]->(source_fact:SourceFact)
 MATCH (source_fact)-[:HAS_TRIPLET]->(triplet:SourceTriplet)

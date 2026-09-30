@@ -5,25 +5,36 @@ import logging
 import signal
 import sys
 from collections.abc import Awaitable
+from datetime import UTC, datetime
 from pathlib import Path
 
 from InquirerPy import inquirer
 from InquirerPy.base.control import Choice
 
 from kms2.application import (
+    add_card_to_deck,
     adopt_source,
+    create_deck,
     create_user,
     ingest_source,
+    list_assignable_cards,
+    list_deck_cards,
+    list_decks,
+    list_due_deck_cards,
+    list_review_events,
     list_sources,
     list_unowned_sources,
     list_users,
+    remove_card_from_deck,
+    review_card,
     run_global_semantic_stage,
     run_source_learning_stage,
     run_source_semantic_stage,
 )
 from kms2.config.settings import Settings
+from kms2.core.model.learning import DeckCard, ReviewRating
 from kms2.core.model.source import Source
-from kms2.core.model.user import User
+from kms2.core.model.user import Deck, User
 
 PDF_DIRECTORY = Path('pdfs')
 NEW_SOURCE_OPTION = 'Run Source Processing for a new PDF'
@@ -31,8 +42,12 @@ EXISTING_SOURCE_OPTION = 'Run Source Semantic for an existing source'
 SOURCE_LEARNING_OPTION = 'Run Source Learning for an existing source'
 ADOPT_SOURCE_OPTION = 'Adopt existing source'
 GLOBAL_SEMANTIC_OPTION = 'Run Global Semantic'
+CREATE_DECK_OPTION = 'Create deck'
+ADD_CARD_OPTION = 'Add source card to deck'
+REMOVE_CARD_OPTION = 'Remove card from deck'
+REVIEW_CARDS_OPTION = 'Review due cards'
+REVIEW_HISTORY_OPTION = 'Display card review history'
 CREATE_USER_OPTION = 'Create user'
-
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +75,14 @@ def _run_tui() -> None:
     user = _select_user(settings)
     sources = _run_async(list_sources(settings, user.uuid))
     unowned_sources = _run_async(list_unowned_sources(settings))
-    choices = [NEW_SOURCE_OPTION]
+    choices = [
+        NEW_SOURCE_OPTION,
+        CREATE_DECK_OPTION,
+        ADD_CARD_OPTION,
+        REMOVE_CARD_OPTION,
+        REVIEW_CARDS_OPTION,
+        REVIEW_HISTORY_OPTION,
+    ]
     if sources:
         choices.extend([EXISTING_SOURCE_OPTION, SOURCE_LEARNING_OPTION])
     if unowned_sources:
@@ -78,6 +100,16 @@ def _run_tui() -> None:
         _adopt_existing_source(settings, user, unowned_sources)
     elif action == GLOBAL_SEMANTIC_OPTION:
         _run_global_semantic(settings)
+    elif action == CREATE_DECK_OPTION:
+        _create_user_deck(settings, user)
+    elif action == ADD_CARD_OPTION:
+        _add_card_to_user_deck(settings, user)
+    elif action == REMOVE_CARD_OPTION:
+        _remove_card_from_user_deck(settings, user)
+    elif action == REVIEW_CARDS_OPTION:
+        _review_due_cards(settings, user)
+    elif action == REVIEW_HISTORY_OPTION:
+        _display_review_history(settings, user)
     else:
         _run_new_source(settings, user)
 
@@ -131,6 +163,113 @@ def _run_async[T](awaitable: Awaitable[T]) -> T:
                 loop.remove_signal_handler(signum)
 
     return asyncio.run(runner())
+
+
+def _select_deck(settings: Settings, user: User, message: str) -> Deck:
+    """Prompt for one deck owned by the selected user."""
+    decks = _run_async(list_decks(settings, user.uuid))
+    return inquirer.select(
+        message=message,
+        choices=[
+            Choice(value=deck, name=f'{deck.name} ({deck.uuid})')
+            for deck in decks
+        ],
+    ).execute()
+
+
+def _select_card(
+    cards: list[DeckCard],
+    message: str,
+) -> DeckCard:
+    """Prompt for one card from a previously selected collection."""
+    return inquirer.select(
+        message=message,
+        choices=[
+            Choice(value=card, name=f'{card.question} ({card.card_uuid})')
+            for card in cards
+        ],
+    ).execute()
+
+
+def _create_user_deck(settings: Settings, user: User) -> None:
+    """Prompt for and create one deck."""
+    name = inquirer.text(message='Name for the new deck:').execute()
+    deck = _run_async(create_deck(settings, user.uuid, name))
+    logger.info('Created deck %s (%s).', deck.name, deck.uuid)
+
+
+def _add_card_to_user_deck(settings: Settings, user: User) -> None:
+    """Select an owned source card and add it to one deck."""
+    deck = _select_deck(settings, user, 'Select the destination deck:')
+    card = _select_card(
+        _run_async(list_assignable_cards(settings, user.uuid)),
+        'Select the source card:',
+    )
+    _run_async(add_card_to_deck(settings, user.uuid, deck.uuid, card.card_uuid))
+    logger.info('Added card %s to deck %s.', card.card_uuid, deck.name)
+
+
+def _remove_card_from_user_deck(settings: Settings, user: User) -> None:
+    """Select and remove one card membership from one deck."""
+    deck = _select_deck(settings, user, 'Select the deck:')
+    card = _select_card(
+        _run_async(list_deck_cards(settings, user.uuid, deck.uuid)),
+        'Select the card to remove:',
+    )
+    _run_async(
+        remove_card_from_deck(settings, user.uuid, deck.uuid, card.card_uuid)
+    )
+    logger.info('Removed card %s from deck %s.', card.card_uuid, deck.name)
+
+
+def _review_due_cards(settings: Settings, user: User) -> None:
+    """Review every card due in a selected deck."""
+    deck = _select_deck(settings, user, 'Select the deck to review:')
+    due_cards = _run_async(
+        list_due_deck_cards(
+            settings,
+            user.uuid,
+            deck.uuid,
+            datetime.now(UTC),
+        )
+    )
+    for card in due_cards:
+        logger.info('Question: %s\\nAnswer: %s', card.question, card.answer)
+        rating = inquirer.select(
+            message='Rating:',
+            choices=[
+                Choice(value=choice, name=choice.value.title())
+                for choice in ReviewRating
+            ],
+        ).execute()
+        _run_async(
+            review_card(
+                settings,
+                user.uuid,
+                deck.uuid,
+                card.card_uuid,
+                rating,
+                datetime.now(UTC),
+            )
+        )
+    if not due_cards:
+        logger.info('No cards are due in %s.', deck.name)
+
+
+def _display_review_history(settings: Settings, user: User) -> None:
+    """Display ordered review history for one card in one deck."""
+    deck = _select_deck(settings, user, 'Select the deck:')
+    card = _select_card(
+        _run_async(list_deck_cards(settings, user.uuid, deck.uuid)),
+        'Select the card:',
+    )
+    events = _run_async(list_review_events(settings, user.uuid, card.card_uuid))
+    for event in events:
+        logger.info(
+            'Review %d: %s',
+            event.review_index,
+            event.fsrs_review_log_json,
+        )
 
 
 def _log_source_semantic_completion(source: Source, semantic) -> None:

@@ -1,8 +1,8 @@
-"""Persistence access for users and their initial decks."""
+"""Persistence access for users and their initial deck."""
 
 from collections.abc import Callable
 
-from kms2.core.model.user import Deck, DeckSettings, User
+from kms2.core.model.user import Deck, User, UserSchedulerSettings
 from kms2.database.user.queries import CREATE_USER, READ_USERS
 
 
@@ -16,7 +16,7 @@ class UserRepository:
         self,
         user: User,
         deck: Deck,
-        settings: DeckSettings,
+        settings: UserSchedulerSettings,
     ) -> None:
         """Persist the user, default deck, and settings atomically."""
         async with self._session_factory() as session:

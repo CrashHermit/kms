@@ -5,6 +5,7 @@ import uuid
 import pytest
 from fsrs import Scheduler
 
+from kms2.composition.services import build_user_service
 from kms2.config.settings import Settings
 from kms2.core.model.source import Source
 from kms2.database import schema
@@ -13,7 +14,6 @@ from kms2.database.source.source_catalog_repository import (
     SourceOwnershipConflict,
 )
 from kms2.database.source.source_graph_repository import SourceGraphRepository
-from kms2.user_service import UserService
 
 _REQUIRED_ENVIRONMENT = (
     'KMS2_DATABASE__URI',
@@ -34,7 +34,7 @@ def test_user_decks_and_exclusive_source_ownership():
         suffix = uuid.uuid4().hex
         source_uuid = f'kms2-user-it-source-{suffix}'
         other_source_uuid = f'kms2-user-it-source-other-{suffix}'
-        service = UserService(database.session)
+        service = build_user_service(database)
         user_a = None
         user_b = None
         try:
@@ -49,7 +49,9 @@ def test_user_decks_and_exclusive_source_ownership():
                 result = await session.run(
                     """
                     MATCH (user:User {uuid: $user_uuid})-[:HAS_DECK]->
-                          (deck:Deck)-[:HAS_SETTINGS]->(settings:DeckSettings)
+                          (deck:Deck)
+                    MATCH (user)-[:HAS_SCHEDULER_SETTINGS]->
+                          (settings:UserSchedulerSettings)
                     RETURN deck.name AS deck_name,
                            settings.scheduler_json AS scheduler_json
                     """,
@@ -121,9 +123,8 @@ def test_user_decks_and_exclusive_source_ownership():
                     MATCH (user:User)
                     WHERE user.uuid IN $user_uuids
                     OPTIONAL MATCH (user)-[:HAS_DECK]->(deck:Deck)
-                    OPTIONAL MATCH (deck)-[:HAS_SETTINGS]->(
-                        settings:DeckSettings
-                    )
+                    OPTIONAL MATCH (user)-[:HAS_SCHEDULER_SETTINGS]->
+                        (settings:UserSchedulerSettings)
                     WITH collect(user) + collect(deck) + collect(settings)
                          AS nodes
                     UNWIND nodes AS node

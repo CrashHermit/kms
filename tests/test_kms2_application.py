@@ -7,6 +7,7 @@ from kms2 import application
 from kms2.config.services import TrainingSettings
 from kms2.config.settings import Settings
 from kms2.core.model.source import Source
+from kms2.core.model.user import Deck
 
 
 class _Runtime:
@@ -107,8 +108,8 @@ class _ComposedGraph:
 
 
 class _UserService:
-    def __init__(self, session_factory):
-        self.session_factory = session_factory
+    def __init__(self, database):
+        self.database = database
 
     async def attach_new_source(self, user_uuid, source_uuid):
         return None
@@ -131,7 +132,7 @@ class _UserService:
 
 @pytest.fixture(autouse=True)
 def _use_fake_user_service(monkeypatch):
-    monkeypatch.setattr(application, 'UserService', _UserService)
+    monkeypatch.setattr(application, 'build_user_service', _UserService)
 
 
 def test_create_user_ensures_structural_schema_and_closes_database(
@@ -147,8 +148,8 @@ def test_create_user_ensures_structural_schema_and_closes_database(
         schema_calls.append(session_factory)
 
     class _UserServiceSpy:
-        def __init__(self, session_factory):
-            service_calls.append(('init', session_factory))
+        def __init__(self, database):
+            service_calls.append(('init', database))
 
         async def create_user(self, name):
             service_calls.append(('create', name))
@@ -160,11 +161,11 @@ def test_create_user_ensures_structural_schema_and_closes_database(
         'ensure_structural_schema',
         ensure_structural_schema,
     )
-    monkeypatch.setattr(application, 'UserService', _UserServiceSpy)
+    monkeypatch.setattr(application, 'build_user_service', _UserServiceSpy)
 
     assert asyncio.run(application.create_user(settings, 'Alex')) is user
     assert schema_calls == [database.session]
-    assert service_calls == [('init', database.session), ('create', 'Alex')]
+    assert service_calls == [('init', database), ('create', 'Alex')]
     assert database.closed is True
 
 
@@ -176,7 +177,7 @@ def test_source_semantic_rejects_source_outside_user_before_runtime(
     runtime_calls = []
 
     class _NoSources:
-        def __init__(self, session_factory):
+        def __init__(self, database):
             pass
 
         async def list_sources(self, user_uuid):
@@ -184,7 +185,7 @@ def test_source_semantic_rejects_source_outside_user_before_runtime(
             return []
 
     monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
-    monkeypatch.setattr(application, 'UserService', _NoSources)
+    monkeypatch.setattr(application, 'build_user_service', _NoSources)
     monkeypatch.setattr(
         application,
         'LocalModelRuntime',
@@ -216,7 +217,7 @@ def test_ingest_does_not_report_success_when_ownership_attach_fails(
         return None
 
     class _FailingOwnership:
-        def __init__(self, session_factory):
+        def __init__(self, database):
             pass
 
         async def attach_new_source(self, user_uuid, source_uuid):
@@ -226,7 +227,7 @@ def test_ingest_does_not_report_success_when_ownership_attach_fails(
     monkeypatch.setattr(application.schema, 'ensure_schema', ensure_schema)
     monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
     monkeypatch.setattr(application, 'LocalModelRuntime', _Runtime)
-    monkeypatch.setattr(application, 'UserService', _FailingOwnership)
+    monkeypatch.setattr(application, 'build_user_service', _FailingOwnership)
     monkeypatch.setattr(
         application,
         'build_source_processing_graph',
@@ -376,15 +377,15 @@ def test_list_sources_closes_database_and_returns_user_sources(monkeypatch):
     repository_calls = []
 
     class _SourceService:
-        def __init__(self, session_factory):
-            repository_calls.append(session_factory)
+        def __init__(self, database):
+            repository_calls.append(database)
 
         async def list_sources(self, user_uuid):
             assert user_uuid == 'user-1'
             return sources
 
     monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
-    monkeypatch.setattr(application, 'UserService', _SourceService)
+    monkeypatch.setattr(application, 'build_user_service', _SourceService)
 
     result = asyncio.run(application.list_sources(settings, 'user-1'))
 
@@ -612,4 +613,36 @@ def test_run_global_semantic_stage_reports_global_hub_count(monkeypatch):
     assert result.global_triplet_hub_count == 7
     assert result.global_statement_hub_count == 3
     assert result.global_procedure_hub_count == 1
+
+
+def test_list_decks_uses_database_without_local_runtime(monkeypatch):
+    settings = Settings()
+    database = _Database(settings.database)
+    schema_calls = []
+    service_calls = []
+
+    async def ensure_structural_schema(session_factory):
+        schema_calls.append(session_factory)
+
+    class _LearningService:
+        def __init__(self, database):
+            service_calls.append(database)
+
+        async def list_decks(self, user_uuid):
+            assert user_uuid == 'user-1'
+            return [Deck(uuid='deck-1', name='Default')]
+
+    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
+    monkeypatch.setattr(
+        application.schema,
+        'ensure_structural_schema',
+        ensure_structural_schema,
+    )
+    monkeypatch.setattr(application, 'build_learning_service', _LearningService)
+
+    decks = asyncio.run(application.list_decks(settings, 'user-1'))
+
+    assert decks == [Deck(uuid='deck-1', name='Default')]
+    assert schema_calls == [database.session]
+    assert service_calls == [database]
     assert database.closed is True

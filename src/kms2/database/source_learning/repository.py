@@ -261,7 +261,6 @@ class SourceLearningRepository:
         for learning_input, result in zip(inputs, results, strict=True):
             for fact in result.facts:
                 learning_fact = learning_fact_model(
-                    source_uuid=source_uuid,
                     text=fact.text,
                 )
                 rows.append(
@@ -298,7 +297,6 @@ class SourceLearningRepository:
             model(
                 learning_fact=learning_fact_model(
                     uuid=row['learning_fact_uuid'],
-                    source_uuid=source_uuid,
                     text=row['learning_fact_text'],
                 ),
                 learning_fact_text=row['learning_fact_text'],
@@ -319,7 +317,6 @@ class SourceLearningRepository:
         rows = [
             {
                 'uuid': SourceFlashcard(
-                    source_uuid=source_uuid,
                     question=result.question,
                     answer=result.answer,
                 ).uuid,

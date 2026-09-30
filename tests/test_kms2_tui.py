@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import signal
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -8,8 +9,9 @@ import pytest
 from kms2 import tui
 from kms2.application import SourceSemanticStageResult
 from kms2.config.settings import Settings
+from kms2.core.model.learning import DueDeckCard, ReviewRating
 from kms2.core.model.source import Source
-from kms2.core.model.user import User
+from kms2.core.model.user import Deck, User
 
 
 class _Prompt:
@@ -105,6 +107,11 @@ def test_tui_creates_first_user_before_new_source(monkeypatch):
     assert ingested == [('user-1', 'book.pdf', None)]
     assert actions[0]['choices'] == [
         tui.NEW_SOURCE_OPTION,
+        tui.CREATE_DECK_OPTION,
+        tui.ADD_CARD_OPTION,
+        tui.REMOVE_CARD_OPTION,
+        tui.REVIEW_CARDS_OPTION,
+        tui.REVIEW_HISTORY_OPTION,
         tui.GLOBAL_SEMANTIC_OPTION,
     ]
 
@@ -220,6 +227,11 @@ def test_existing_source_semantics_receive_selected_user(monkeypatch):
 
     assert choices[0]['choices'] == [
         tui.NEW_SOURCE_OPTION,
+        tui.CREATE_DECK_OPTION,
+        tui.ADD_CARD_OPTION,
+        tui.REMOVE_CARD_OPTION,
+        tui.REVIEW_CARDS_OPTION,
+        tui.REVIEW_HISTORY_OPTION,
         tui.EXISTING_SOURCE_OPTION,
         tui.SOURCE_LEARNING_OPTION,
         tui.GLOBAL_SEMANTIC_OPTION,
@@ -259,6 +271,11 @@ def test_tui_offers_explicit_adoption_only_for_unowned_sources(monkeypatch):
 
     assert actions[0]['choices'] == [
         tui.NEW_SOURCE_OPTION,
+        tui.CREATE_DECK_OPTION,
+        tui.ADD_CARD_OPTION,
+        tui.REMOVE_CARD_OPTION,
+        tui.REVIEW_CARDS_OPTION,
+        tui.REVIEW_HISTORY_OPTION,
         tui.ADOPT_SOURCE_OPTION,
         tui.GLOBAL_SEMANTIC_OPTION,
     ]
@@ -335,3 +352,63 @@ def test_run_async_cancels_pipeline_on_sigint():
 
     with pytest.raises(asyncio.CancelledError):
         tui._run_async(pipeline())
+
+
+def test_review_due_cards_sends_selected_rating_and_utc_time(monkeypatch):
+    settings = Settings()
+    user = User(uuid='user-1', name='Alex')
+    deck = Deck(uuid='deck-1', name='Default')
+    card = DueDeckCard(
+        card_uuid='card-1',
+        question='Question',
+        answer='Answer',
+        due_at=datetime.now(UTC),
+    )
+    review_calls = []
+
+    async def due_cards(settings, user_uuid, deck_uuid, now):
+        assert user_uuid == user.uuid
+        assert deck_uuid == deck.uuid
+        assert now.tzinfo is not None
+        return [card]
+
+    async def record_review(
+        settings,
+        user_uuid,
+        deck_uuid,
+        card_uuid,
+        rating,
+        review_datetime,
+        review_duration=None,
+    ):
+        review_calls.append(
+            (
+                user_uuid,
+                deck_uuid,
+                card_uuid,
+                rating,
+                review_datetime,
+                review_duration,
+            )
+        )
+
+    monkeypatch.setattr(tui, '_select_deck', lambda *args: deck)
+    monkeypatch.setattr(tui, 'list_due_deck_cards', due_cards)
+    monkeypatch.setattr(tui, 'review_card', record_review)
+    monkeypatch.setattr(
+        tui,
+        'inquirer',
+        SimpleNamespace(
+            select=lambda **kwargs: _Prompt(ReviewRating.GOOD),
+        ),
+    )
+
+    tui._review_due_cards(settings, user)
+
+    assert review_calls[0][0:4] == (
+        user.uuid,
+        deck.uuid,
+        card.card_uuid,
+        ReviewRating.GOOD,
+    )
+    assert review_calls[0][4].utcoffset().total_seconds() == 0

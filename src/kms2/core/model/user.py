@@ -15,7 +15,7 @@ class Deck(Vertex):
     name: str
 
 
-class DeckSettings(Vertex):
-    """Serialized scheduler configuration for a deck."""
+class UserSchedulerSettings(Vertex):
+    """Serialized scheduler configuration for a user."""
 
     scheduler_json: str

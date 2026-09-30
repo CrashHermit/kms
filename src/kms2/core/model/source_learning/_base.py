@@ -64,5 +64,4 @@ class _FlashcardInput(BaseModel):
 class _LearningFactVertex(Vertex):
     """Shared durable fields for typed source learning facts."""
 
-    source_uuid: str = Field(min_length=1)
     text: str = Field(min_length=1)

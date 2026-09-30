@@ -141,8 +141,20 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     FOR (deck:Deck) REQUIRE deck.uuid IS UNIQUE
     """,
     """
-    CREATE CONSTRAINT deck_settings_uuid IF NOT EXISTS
-    FOR (settings:DeckSettings) REQUIRE settings.uuid IS UNIQUE
+    CREATE CONSTRAINT user_scheduler_settings_uuid IF NOT EXISTS
+    FOR (settings:UserSchedulerSettings) REQUIRE settings.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT user_card_review_uuid IF NOT EXISTS
+    FOR (review:UserCardReview) REQUIRE review.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT review_event_uuid IF NOT EXISTS
+    FOR (event:ReviewEvent) REQUIRE event.uuid IS UNIQUE
+    """,
+    """
+    CREATE INDEX user_card_review_due_at IF NOT EXISTS
+    FOR (review:UserCardReview) ON (review.due_at)
     """,
 )
 
