@@ -1,6 +1,8 @@
 """Persistence access for source procedure graphs."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+
+from neo4j import AsyncSession
 
 from kms2.core.model.source_semantic.source_procedure import (
     SourceProcedure,
@@ -25,7 +27,7 @@ from kms2.database.source_semantic.queries.source_procedure import (
 class SourceProcedureRepository:
     """Access persisted source procedure semantic graph data."""
 
-    def __init__(self, session_factory: Callable) -> None:
+    def __init__(self, session_factory: Callable[[], AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def load_source_procedures(
@@ -140,8 +142,8 @@ class SourceProcedureRepository:
         query: str,
         drop_query: str,
         graph_name: str,
-        model,
-    ) -> list[list[object]]:
+        model: type[SourceProcedureHubMember],
+    ) -> list[list[SourceProcedureHubMember]]:
         async with self._session_factory() as session:
             await (
                 await session.run(drop_query, graph_name=graph_name)
@@ -171,7 +173,11 @@ class SourceProcedureRepository:
         ]
 
     async def _replace_hubs(
-        self, query: str, source_uuid: str, hubs, memberships
+        self,
+        query: str,
+        source_uuid: str,
+        hubs: Sequence[SourceProcedureHub],
+        memberships: Sequence[list[str]],
     ) -> None:
         rows = [
             {**hub.model_dump(), 'member_uuids': member_uuids}

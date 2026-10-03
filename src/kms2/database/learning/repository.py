@@ -9,7 +9,7 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from neo4j import Record
+from neo4j import AsyncSession, Record
 from neo4j.time import DateTime
 
 from kms2.core.model.learning import (
@@ -25,11 +25,11 @@ from kms2.database.learning.queries.card import (
     ADD_CARD_TO_DECK,
     READ_ASSIGNABLE_CARDS,
     READ_DECK_CARDS,
-    READ_DUE_DECK_CARDS,
     REMOVE_CARD_FROM_DECK,
 )
 from kms2.database.learning.queries.deck import CREATE_DECK, READ_DECKS
 from kms2.database.learning.queries.review import (
+    READ_DUE_DECK_CARDS,
     READ_REVIEW_EVENTS,
     READ_REVIEW_SNAPSHOT,
     RECORD_REVIEW,
@@ -39,7 +39,7 @@ from kms2.database.learning.queries.review import (
 class LearningRepository:
     """Persist user-scoped deck membership and review transitions."""
 
-    def __init__(self, session_factory: Callable[..., Any]) -> None:
+    def __init__(self, session_factory: Callable[[], AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def list_decks(self, user_uuid: str) -> list[Deck]:

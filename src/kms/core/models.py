@@ -122,7 +122,7 @@ class HubMentionInput(BaseModel):
     description: str | None = None
 
     @classmethod
-    def from_record(cls, record: Mapping[str, Any]) -> 'HubMentionInput':
+    def from_record(cls, record: Mapping[str, Any]) -> HubMentionInput:
         name = record['name']
         aliases = [
             alias for alias in (record.get('aliases') or []) if alias != name
@@ -188,7 +188,7 @@ class SearchQuery(BaseModel):
     parts: list[TextNodeInput]
 
     @model_validator(mode='after')
-    def validate_parts(self) -> 'SearchQuery':
+    def validate_parts(self) -> SearchQuery:
         if not self.parts:
             raise ValueError('search query must contain at least one part')
         expected = list(range(len(self.parts)))
@@ -321,7 +321,7 @@ class Knowledge:
 
     assertions: tuple[KnowledgeAssertion, ...] = ()
 
-    def union(self, other: 'Knowledge') -> 'Knowledge':
+    def union(self, other: Knowledge) -> Knowledge:
         """Combines assertions by UUID and merges their evidence."""
         by_uuid = {assertion.uuid: assertion for assertion in self.assertions}
         for assertion in other.assertions:
@@ -480,7 +480,7 @@ class FSRSState:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> 'FSRSState':
+    def from_dict(cls, data: dict[str, Any]) -> FSRSState:
         return cls(
             stability=data.get('stability', 0.0),
             difficulty=data.get('difficulty', 0.0),

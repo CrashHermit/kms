@@ -5,8 +5,14 @@ from typing import Literal, TypedDict
 from langgraph.types import Send
 
 from kms2.core.model.source_learning.entity import (
-    SourceEntityFlashcardInput,
-    SourceEntityLearningFactInput,
+    SourceEntityFlashcardRequest,
+    SourceEntityLearningFact,
+    SourceEntityLearningFactOccurrence,
+    SourceEntityLearningFactRequest,
+)
+from kms2.core.model.source_learning.flashcard import (
+    SourceFlashcard,
+    SourceFlashcardOccurrence,
 )
 from kms2.database.source_learning.repository import SourceLearningRepository
 from kms2.langgraph.source_learning.state import (
@@ -21,21 +27,21 @@ from kms2.module.source_learning.entity import (
 
 
 class EntityLearningFactWorkerState(TypedDict):
-    """Input sent to one entity learning-fact worker."""
+    """Backend request sent to one entity learning-fact worker."""
 
     ordinal: int
-    request: SourceEntityLearningFactInput
+    request: SourceEntityLearningFactRequest
 
 
 class EntityFlashcardWorkerState(TypedDict):
-    """Input sent to one entity card worker."""
+    """Backend request sent to one entity card worker."""
 
     ordinal: int
-    request: SourceEntityFlashcardInput
+    request: SourceEntityFlashcardRequest
 
 
 class SourceEntityLearningFactNode:
-    """Load, infer, order, and persist entity learning facts."""
+    """Infer entity learning facts and attach their originating provenance."""
 
     def __init__(
         self,
@@ -46,9 +52,9 @@ class SourceEntityLearningFactNode:
         self._module = module
 
     async def load(self, state: SourceLearningState) -> dict:
-        """Load entity hub evidence."""
+        """Load distinct entity hub/source-fact requests."""
         return {
-            'entity_learning_fact_inputs': await self._repository.load_entity_learning_inputs(
+            'entity_learning_fact_requests': await self._repository.load_entity_learning_requests(
                 state.source_uuid
             )
         }
@@ -56,51 +62,61 @@ class SourceEntityLearningFactNode:
     def dispatch(
         self, state: SourceLearningState
     ) -> list[Send] | Literal['source_entity_learning_fact_collect']:
-        """Dispatch one worker per entity hub in stable order."""
+        """Dispatch one worker per request in stable order."""
         return [
             Send(
                 'source_entity_learning_fact_worker',
                 {'ordinal': ordinal, 'request': request},
             )
-            for ordinal, request in enumerate(state.entity_learning_fact_inputs)
-        ] or ['source_entity_learning_fact_collect'][0]
+            for ordinal, request in enumerate(
+                state.entity_learning_fact_requests
+            )
+        ] or 'source_entity_learning_fact_collect'
 
     async def worker(
         self, state: EntityLearningFactWorkerState
     ) -> dict[str, list[SourceEntityLearningFactWorkerResult]]:
-        """Run one entity learning-fact inference."""
-        result = await self._module.aforward(request=state['request'])
+        """Infer from content only, retaining backend request order."""
+        facts = await self._module.aforward(
+            request=state['request'].model_input()
+        )
         return {
             'entity_learning_fact_results': [
                 SourceEntityLearningFactWorkerResult(
-                    ordinal=state['ordinal'], result=result
+                    ordinal=state['ordinal'], facts=facts
                 )
             ]
         }
 
     def collect(self, state: SourceLearningState) -> dict:
-        """Restore entity model results to hub order."""
-        ordered = sorted(
+        """Materialize candidates with their original hub and source fact."""
+        occurrences: list[SourceEntityLearningFactOccurrence] = []
+        for item in sorted(
             state.entity_learning_fact_results, key=lambda item: item.ordinal
-        )
-        return {
-            'entity_learning_fact_results_ordered': [
-                item.result for item in ordered
-            ]
-        }
+        ):
+            request = state.entity_learning_fact_requests[item.ordinal]
+            for candidate in item.facts:
+                occurrences.append(
+                    SourceEntityLearningFactOccurrence(
+                        learning_fact=SourceEntityLearningFact(
+                            text=candidate.text
+                        ),
+                        hub_uuid=request.hub_uuid,
+                        source_fact_uuid=request.source_fact_uuid,
+                    )
+                )
+        return {'entity_learning_fact_occurrences': occurrences}
 
     async def persist(self, state: SourceLearningState) -> dict[str, int]:
-        """Persist entity learning facts and selected evidence."""
+        """Persist completed entity learning-fact occurrences."""
         count = await self._repository.persist_entity_learning_facts(
-            state.source_uuid,
-            state.entity_learning_fact_inputs,
-            state.entity_learning_fact_results_ordered,
+            state.source_uuid, state.entity_learning_fact_occurrences
         )
         return {'entity_learning_fact_count': count}
 
 
 class SourceEntityFlashcardNode:
-    """Load, infer, order, and persist entity flashcards."""
+    """Infer entity cards and attach their persisted learning-fact identity."""
 
     def __init__(
         self,
@@ -111,9 +127,9 @@ class SourceEntityFlashcardNode:
         self._module = module
 
     async def load(self, state: SourceLearningState) -> dict:
-        """Load persisted entity learning facts."""
+        """Load persisted entity learning-fact requests."""
         return {
-            'entity_flashcard_inputs': await self._repository.load_entity_flashcard_inputs(
+            'entity_flashcard_requests': await self._repository.load_entity_flashcard_requests(
                 state.source_uuid
             )
         }
@@ -127,14 +143,16 @@ class SourceEntityFlashcardNode:
                 'source_entity_flashcard_worker',
                 {'ordinal': ordinal, 'request': request},
             )
-            for ordinal, request in enumerate(state.entity_flashcard_inputs)
-        ] or ['source_entity_flashcard_collect'][0]
+            for ordinal, request in enumerate(state.entity_flashcard_requests)
+        ] or 'source_entity_flashcard_collect'
 
     async def worker(
         self, state: EntityFlashcardWorkerState
     ) -> dict[str, list[SourceEntityFlashcardWorkerResult]]:
-        """Run one entity card inference."""
-        result = await self._module.aforward(request=state['request'])
+        """Infer one card from only the persisted learning-fact text."""
+        result = await self._module.aforward(
+            request=state['request'].model_input()
+        )
         return {
             'entity_flashcard_results': [
                 SourceEntityFlashcardWorkerResult(
@@ -144,21 +162,25 @@ class SourceEntityFlashcardNode:
         }
 
     def collect(self, state: SourceLearningState) -> dict:
-        """Restore entity card results to learning-fact order."""
-        ordered = sorted(
+        """Materialize cards with their original persisted learning fact."""
+        occurrences: list[SourceFlashcardOccurrence] = []
+        for item in sorted(
             state.entity_flashcard_results, key=lambda item: item.ordinal
-        )
-        return {
-            'entity_flashcard_results_ordered': [
-                item.result for item in ordered
-            ]
-        }
+        ):
+            request = state.entity_flashcard_requests[item.ordinal]
+            occurrences.append(
+                SourceFlashcardOccurrence(
+                    card=SourceFlashcard(
+                        question=item.result.question, answer=item.result.answer
+                    ),
+                    learning_fact_uuid=request.learning_fact.uuid,
+                )
+            )
+        return {'entity_flashcard_occurrences': occurrences}
 
     async def persist(self, state: SourceLearningState) -> dict[str, int]:
-        """Persist one entity card for each learning fact."""
-        count = await self._repository.persist_entity_flashcards(
-            state.source_uuid,
-            state.entity_flashcard_inputs,
-            state.entity_flashcard_results_ordered,
+        """Persist completed cards without replacing collection-owned identities."""
+        count = await self._repository.persist_flashcards(
+            state.source_uuid, state.entity_flashcard_occurrences
         )
         return {'entity_flashcard_count': count}

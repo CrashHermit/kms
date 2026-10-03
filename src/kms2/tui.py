@@ -64,7 +64,7 @@ def run() -> None:
     logging.basicConfig(level=logging.INFO, format='%(message)s')
     try:
         _run_tui()
-    except (KeyboardInterrupt, asyncio.CancelledError):
+    except KeyboardInterrupt, asyncio.CancelledError:
         logger.info('Cancelled.')
         sys.exit(0)
 
@@ -153,7 +153,7 @@ def _run_async[T](awaitable: Awaitable[T]) -> T:
         for signum in (signal.SIGINT, signal.SIGTERM):
             try:
                 loop.add_signal_handler(signum, task.cancel)
-            except (NotImplementedError, RuntimeError):
+            except NotImplementedError, RuntimeError:
                 continue
             installed.append(signum)
         try:

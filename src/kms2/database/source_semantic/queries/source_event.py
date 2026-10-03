@@ -146,7 +146,7 @@ CALL (source) {
     RETURN count(*) AS learning_artifacts_deleted
 }
 WITH source
-CALL {
+CALL () {
     MATCH (old_hub:SourceEventHub {source_uuid: $source_uuid})
     DETACH DELETE old_hub
     RETURN count(*) AS deleted

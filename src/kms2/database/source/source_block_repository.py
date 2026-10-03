@@ -2,6 +2,8 @@
 
 from collections.abc import Callable
 
+from neo4j import AsyncSession
+
 from kms2.core.model.block import SourceBlock
 from kms2.core.model.similarity import SourceBlockSimilarityMatch
 from kms2.database.source.queries.source_blocks import (
@@ -13,7 +15,7 @@ from kms2.database.source.queries.source_blocks import (
 class SourceBlockRepository:
     """Access ordered persisted source blocks and similar blocks."""
 
-    def __init__(self, session_factory: Callable) -> None:
+    def __init__(self, session_factory: Callable[[], AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def load_blocks(self, source_uuid: str) -> list[SourceBlock]:

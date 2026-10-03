@@ -1,12 +1,12 @@
 """Cypher statements for global triplets and global triplet hubs."""
 
 REPLACE_GLOBAL_TRIPLETS = """
-CALL {
+CALL () {
     MATCH (old_triplet:GlobalTriplet)
     DETACH DELETE old_triplet
     RETURN count(*) AS deleted
 }
-CALL {
+CALL () {
     MATCH (source_triplet_hub:SourceTripletHub)-[:HAS_SUBJECT_HUB]->(
         source_subject_hub
     )
@@ -76,7 +76,7 @@ ORDER BY subject_hub_uuid, predicate_hub_uuid, object_hub_uuid
 """
 
 REPLACE_GLOBAL_TRIPLET_HUBS = """
-CALL {
+CALL () {
     MATCH (old_hub:GlobalTripletHub)
     DETACH DELETE old_hub
 }

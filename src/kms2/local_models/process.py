@@ -116,7 +116,7 @@ class ManagedLlamaServer:
                         response = await client.get(
                             f'{self.endpoint}{self.readiness_path}'
                         )
-                    except (httpx.ConnectError, httpx.TimeoutException):
+                    except httpx.ConnectError, httpx.TimeoutException:
                         continue
                     if response.is_success:
                         return

@@ -2,6 +2,8 @@
 
 from collections.abc import Callable
 
+from neo4j import AsyncSession
+
 from kms2.core.model.similarity import SourceEntitySimilarityMatch
 from kms2.core.model.source_semantic.source_entity import (
     SourceEntity,
@@ -27,7 +29,7 @@ from kms2.database.source_semantic.queries.source_entity import (
 class SourceEntityRepository:
     """Access persisted source entity semantic graph data."""
 
-    def __init__(self, session_factory: Callable) -> None:
+    def __init__(self, session_factory: Callable[[], AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def load_source_entities(

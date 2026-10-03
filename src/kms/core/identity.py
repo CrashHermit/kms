@@ -19,7 +19,7 @@ def _block_key(block: list[int]) -> str:
     return '#'.join(str(node_id) for node_id in block)
 
 
-def _node_provenance_key(node: 'models.SourceNode') -> str:
+def _node_provenance_key(node: models.SourceNode) -> str:
     """Build a stable provenance key for a node from its source attributes."""
     doc_idx = node.document_index if node.document_index is not None else 0
     prov_idx = node.index

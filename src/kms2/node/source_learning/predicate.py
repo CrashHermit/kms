@@ -4,9 +4,15 @@ from typing import Literal, TypedDict
 
 from langgraph.types import Send
 
+from kms2.core.model.source_learning.flashcard import (
+    SourceFlashcard,
+    SourceFlashcardOccurrence,
+)
 from kms2.core.model.source_learning.predicate import (
-    SourcePredicateFlashcardInput,
-    SourcePredicateLearningFactInput,
+    SourcePredicateFlashcardRequest,
+    SourcePredicateLearningFact,
+    SourcePredicateLearningFactOccurrence,
+    SourcePredicateLearningFactRequest,
 )
 from kms2.database.source_learning.repository import SourceLearningRepository
 from kms2.langgraph.source_learning.state import (
@@ -21,21 +27,21 @@ from kms2.module.source_learning.predicate import (
 
 
 class PredicateLearningFactWorkerState(TypedDict):
-    """Input sent to one predicate learning-fact worker."""
+    """Backend request sent to one predicate learning-fact worker."""
 
     ordinal: int
-    request: SourcePredicateLearningFactInput
+    request: SourcePredicateLearningFactRequest
 
 
 class PredicateFlashcardWorkerState(TypedDict):
-    """Input sent to one predicate card worker."""
+    """Backend request sent to one predicate card worker."""
 
     ordinal: int
-    request: SourcePredicateFlashcardInput
+    request: SourcePredicateFlashcardRequest
 
 
 class SourcePredicateLearningFactNode:
-    """Load, infer, order, and persist predicate learning facts."""
+    """Infer predicate learning facts and attach their originating provenance."""
 
     def __init__(
         self,
@@ -46,9 +52,9 @@ class SourcePredicateLearningFactNode:
         self._module = module
 
     async def load(self, state: SourceLearningState) -> dict:
-        """Load predicate hub evidence."""
+        """Load distinct predicate hub/source-fact requests."""
         return {
-            'predicate_learning_fact_inputs': await self._repository.load_predicate_learning_inputs(
+            'predicate_learning_fact_requests': await self._repository.load_predicate_learning_requests(
                 state.source_uuid
             )
         }
@@ -56,55 +62,61 @@ class SourcePredicateLearningFactNode:
     def dispatch(
         self, state: SourceLearningState
     ) -> list[Send] | Literal['source_predicate_learning_fact_collect']:
-        """Dispatch one worker per predicate hub in stable order."""
+        """Dispatch one worker per request in stable order."""
         return [
             Send(
                 'source_predicate_learning_fact_worker',
                 {'ordinal': ordinal, 'request': request},
             )
             for ordinal, request in enumerate(
-                state.predicate_learning_fact_inputs
+                state.predicate_learning_fact_requests
             )
-        ] or ['source_predicate_learning_fact_collect'][0]
+        ] or 'source_predicate_learning_fact_collect'
 
-    async def worker(self, state: PredicateLearningFactWorkerState) -> dict:
-        """Run one predicate learning-fact inference."""
+    async def worker(
+        self, state: PredicateLearningFactWorkerState
+    ) -> dict[str, list[SourcePredicateLearningFactWorkerResult]]:
+        """Infer from content only, retaining backend request order."""
+        facts = await self._module.aforward(
+            request=state['request'].model_input()
+        )
         return {
             'predicate_learning_fact_results': [
                 SourcePredicateLearningFactWorkerResult(
-                    ordinal=state['ordinal'],
-                    result=await self._module.aforward(
-                        request=state['request']
-                    ),
+                    ordinal=state['ordinal'], facts=facts
                 )
             ]
         }
 
     def collect(self, state: SourceLearningState) -> dict:
-        """Restore predicate model results to hub order."""
-        return {
-            'predicate_learning_fact_results_ordered': [
-                item.result
-                for item in sorted(
-                    state.predicate_learning_fact_results,
-                    key=lambda item: item.ordinal,
+        """Materialize candidates with their original hub and source fact."""
+        occurrences: list[SourcePredicateLearningFactOccurrence] = []
+        for item in sorted(
+            state.predicate_learning_fact_results, key=lambda item: item.ordinal
+        ):
+            request = state.predicate_learning_fact_requests[item.ordinal]
+            for candidate in item.facts:
+                occurrences.append(
+                    SourcePredicateLearningFactOccurrence(
+                        learning_fact=SourcePredicateLearningFact(
+                            text=candidate.text
+                        ),
+                        hub_uuid=request.hub_uuid,
+                        source_fact_uuid=request.source_fact_uuid,
+                    )
                 )
-            ]
-        }
+        return {'predicate_learning_fact_occurrences': occurrences}
 
     async def persist(self, state: SourceLearningState) -> dict[str, int]:
-        """Persist predicate learning facts and selected evidence."""
-        return {
-            'predicate_learning_fact_count': await self._repository.persist_predicate_learning_facts(
-                state.source_uuid,
-                state.predicate_learning_fact_inputs,
-                state.predicate_learning_fact_results_ordered,
-            )
-        }
+        """Persist completed predicate learning-fact occurrences."""
+        count = await self._repository.persist_predicate_learning_facts(
+            state.source_uuid, state.predicate_learning_fact_occurrences
+        )
+        return {'predicate_learning_fact_count': count}
 
 
 class SourcePredicateFlashcardNode:
-    """Load, infer, order, and persist predicate flashcards."""
+    """Infer predicate cards and attach their persisted learning-fact identity."""
 
     def __init__(
         self,
@@ -115,9 +127,9 @@ class SourcePredicateFlashcardNode:
         self._module = module
 
     async def load(self, state: SourceLearningState) -> dict:
-        """Load persisted predicate learning facts."""
+        """Load persisted predicate learning-fact requests."""
         return {
-            'predicate_flashcard_inputs': await self._repository.load_predicate_flashcard_inputs(
+            'predicate_flashcard_requests': await self._repository.load_predicate_flashcard_requests(
                 state.source_uuid
             )
         }
@@ -131,40 +143,46 @@ class SourcePredicateFlashcardNode:
                 'source_predicate_flashcard_worker',
                 {'ordinal': ordinal, 'request': request},
             )
-            for ordinal, request in enumerate(state.predicate_flashcard_inputs)
-        ] or ['source_predicate_flashcard_collect'][0]
+            for ordinal, request in enumerate(
+                state.predicate_flashcard_requests
+            )
+        ] or 'source_predicate_flashcard_collect'
 
-    async def worker(self, state: PredicateFlashcardWorkerState) -> dict:
-        """Run one predicate card inference."""
+    async def worker(
+        self, state: PredicateFlashcardWorkerState
+    ) -> dict[str, list[SourcePredicateFlashcardWorkerResult]]:
+        """Infer one card from only the persisted learning-fact text."""
+        result = await self._module.aforward(
+            request=state['request'].model_input()
+        )
         return {
             'predicate_flashcard_results': [
                 SourcePredicateFlashcardWorkerResult(
-                    ordinal=state['ordinal'],
-                    result=await self._module.aforward(
-                        request=state['request']
-                    ),
+                    ordinal=state['ordinal'], result=result
                 )
             ]
         }
 
     def collect(self, state: SourceLearningState) -> dict:
-        """Restore predicate card results to learning-fact order."""
-        return {
-            'predicate_flashcard_results_ordered': [
-                item.result
-                for item in sorted(
-                    state.predicate_flashcard_results,
-                    key=lambda item: item.ordinal,
+        """Materialize cards with their original persisted learning fact."""
+        occurrences: list[SourceFlashcardOccurrence] = []
+        for item in sorted(
+            state.predicate_flashcard_results, key=lambda item: item.ordinal
+        ):
+            request = state.predicate_flashcard_requests[item.ordinal]
+            occurrences.append(
+                SourceFlashcardOccurrence(
+                    card=SourceFlashcard(
+                        question=item.result.question, answer=item.result.answer
+                    ),
+                    learning_fact_uuid=request.learning_fact.uuid,
                 )
-            ]
-        }
+            )
+        return {'predicate_flashcard_occurrences': occurrences}
 
     async def persist(self, state: SourceLearningState) -> dict[str, int]:
-        """Persist one predicate card for each learning fact."""
-        return {
-            'predicate_flashcard_count': await self._repository.persist_predicate_flashcards(
-                state.source_uuid,
-                state.predicate_flashcard_inputs,
-                state.predicate_flashcard_results_ordered,
-            )
-        }
+        """Persist completed cards without replacing collection-owned identities."""
+        count = await self._repository.persist_flashcards(
+            state.source_uuid, state.predicate_flashcard_occurrences
+        )
+        return {'predicate_flashcard_count': count}

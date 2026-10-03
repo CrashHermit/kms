@@ -1,13 +1,14 @@
 """Typed source-event learning contracts."""
 
+from pydantic import BaseModel
+
 from kms2.core.model.source_learning._base import (
-    _FlashcardDraft,
     _FlashcardInput,
     _FlashcardResult,
-    _LearningFactEvidence,
+    _LearningFactCandidate,
     _LearningFactInput,
-    _LearningFactOutput,
-    _LearningFactResult,
+    _LearningFactOccurrence,
+    _LearningFactRequest,
     _LearningFactVertex,
 )
 
@@ -16,43 +17,58 @@ class SourceEventLearningFact(_LearningFactVertex):
     """Durable atomic learning fact about one source event hub."""
 
 
-class SourceEventLearningFactEvidence(_LearningFactEvidence):
-    """Event learning evidence with subject/object role provenance."""
-
-
 class SourceEventLearningFactInput(_LearningFactInput):
-    """Event hub evidence supplied to the learning-fact model."""
-
-    evidence: list[SourceEventLearningFactEvidence]
+    """Event focus and source-fact text supplied to inference."""
 
 
-class SourceEventLearningFactResult(_LearningFactResult):
-    """Atomic event learning facts returned by the model."""
+class SourceEventLearningFactRequest(_LearningFactRequest):
+    """Backend request pairing an event hub with one source fact."""
 
-    facts: list[_LearningFactOutput]
+    def model_input(self) -> SourceEventLearningFactInput:
+        """Project graph-backed request data to model-facing content."""
+        return SourceEventLearningFactInput(
+            hub_name=self.hub_name,
+            source_fact_text=self.source_fact_text,
+        )
+
+
+class SourceEventLearningFactCandidate(_LearningFactCandidate):
+    """One candidate event learning fact."""
+
+
+class SourceEventLearningFactOccurrence(_LearningFactOccurrence):
+    """Event learning fact with its originating hub and source fact."""
+
+    learning_fact: SourceEventLearningFact
 
 
 class SourceEventFlashcardInput(_FlashcardInput):
-    """One event learning fact supplied to the card model."""
+    """One event learning-fact text supplied to card inference."""
+
+
+class SourceEventFlashcardRequest(BaseModel):
+    """Persisted event learning fact requested for card generation."""
 
     learning_fact: SourceEventLearningFact
-    evidence: list[SourceEventLearningFactEvidence]
 
-
-class SourceEventFlashcardDraft(_FlashcardDraft):
-    """One event card draft."""
+    def model_input(self) -> SourceEventFlashcardInput:
+        """Project the persisted fact to its model-facing text."""
+        return SourceEventFlashcardInput(
+            learning_fact_text=self.learning_fact.text
+        )
 
 
 class SourceEventFlashcardResult(_FlashcardResult):
-    """One validated event card result."""
+    """One semantic event flashcard result."""
 
 
 __all__ = [
-    'SourceEventFlashcardDraft',
     'SourceEventFlashcardInput',
+    'SourceEventFlashcardRequest',
     'SourceEventFlashcardResult',
     'SourceEventLearningFact',
-    'SourceEventLearningFactEvidence',
+    'SourceEventLearningFactCandidate',
     'SourceEventLearningFactInput',
-    'SourceEventLearningFactResult',
+    'SourceEventLearningFactOccurrence',
+    'SourceEventLearningFactRequest',
 ]

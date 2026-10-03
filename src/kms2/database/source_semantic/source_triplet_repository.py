@@ -2,6 +2,8 @@
 
 from collections.abc import Callable
 
+from neo4j import AsyncSession
+
 from kms2.core.model.source_semantic.source_entity import SourceEntity
 from kms2.core.model.source_semantic.source_event import SourceEvent
 from kms2.core.model.source_semantic.source_triplet import (
@@ -16,17 +18,13 @@ from kms2.database.source_semantic.queries.source_triplet import (
     REPLACE_SOURCE_TRIPLET_HUBS,
     REPLACE_SOURCE_TRIPLETS,
 )
-from kms2.database.source_semantic.source_fact_repository import (
-    SourceFactRepository,
-)
 
 
 class SourceTripletRepository:
     """Access persisted source triplets and triplet hubs."""
 
-    def __init__(self, session_factory: Callable) -> None:
+    def __init__(self, session_factory: Callable[[], AsyncSession]) -> None:
         self._session_factory = session_factory
-        self._fact_repository = SourceFactRepository(session_factory)
 
     async def replace_source_triplets(
         self,
@@ -88,10 +86,6 @@ class SourceTripletRepository:
                 **parameters,
             )
             await result.consume()
-
-    async def load_source_facts(self, source_uuid: str):
-        """Load durable facts for the next source-semantic phase."""
-        return await self._fact_repository.load_source_facts(source_uuid)
 
     async def read_source_triplet_hub_groups(
         self, source_uuid: str

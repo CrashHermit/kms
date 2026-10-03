@@ -4,9 +4,14 @@ CREATE_SOURCE_FLASHCARDS = """
 UNWIND $rows AS row
 MATCH (source:Source {uuid: $source_uuid})
 CREATE (source)-[:HAS_FLASHCARD]->(card:SourceFlashcard {
-    uuid: row.uuid, question: row.question, answer: row.answer
+    uuid: row.uuid,
+    question: row.question,
+    answer: row.answer
 })
-WITH source, card, row
+
+WITH source,
+     card,
+     row
 MATCH (source)-[:HAS_LEARNING_FACT]->(learning_fact {uuid: row.learning_fact_uuid})
 WHERE learning_fact:SourceEntityLearningFact
    OR learning_fact:SourceEventLearningFact

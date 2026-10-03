@@ -97,7 +97,7 @@ class CardCreationState(TypedDict, total=False):
 class HubCardExecutorNode:
     """Dispatches one worker for every source-local component target."""
 
-    def __init__(self, executor: 'HubCardExecutor') -> None:
+    def __init__(self, executor: HubCardExecutor) -> None:
         self.executor = executor
 
     def dispatch(self, state: CardCreationState) -> list[Send] | str:

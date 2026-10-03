@@ -42,7 +42,7 @@ class Runtime:
         """Return the shared Neo4j session factory, if configured."""
         return db.session if self._neo4j_configured else None
 
-    async def __aenter__(self) -> 'Runtime':
+    async def __aenter__(self) -> Runtime:
         """Start the runtime context."""
         return self
 

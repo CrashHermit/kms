@@ -2,6 +2,8 @@
 
 from collections.abc import Callable
 
+from neo4j import AsyncSession
+
 from kms2.core.model.source import Source
 from kms2.database.source.queries.source_catalog import (
     ADOPT_SOURCE,
@@ -17,7 +19,7 @@ class SourceOwnershipConflict(Exception):
 class SourceCatalogRepository:
     """Access persisted source summaries and ownership relationships."""
 
-    def __init__(self, session_factory: Callable) -> None:
+    def __init__(self, session_factory: Callable[[], AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def list_sources(self, user_uuid: str) -> list[Source]:

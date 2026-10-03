@@ -233,7 +233,7 @@ def build_workflow(
     recorder: recording.Recorder | None = None,
     neo4j_session_factory: Callable | None = None,
     neo4j_configured: bool = False,
-) -> 'CompiledStateGraph':
+) -> CompiledStateGraph:
     """Build and compile the document-construction workflow.
 
     Args:

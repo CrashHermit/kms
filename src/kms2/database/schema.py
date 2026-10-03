@@ -1,7 +1,8 @@
 """KMS2-only Neo4j schema statements and initialization."""
 
 from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager
+
+from neo4j import AsyncSession
 
 SCHEMA_STATEMENTS: tuple[str, ...] = (
     """
@@ -217,7 +218,7 @@ AWAIT_INDEX = 'CALL db.awaitIndex($index_name, $timeout_seconds)'
 
 
 async def ensure_structural_schema(
-    session_factory: Callable[[], AbstractAsyncContextManager],
+    session_factory: Callable[[], AsyncSession],
 ) -> None:
     """Create KMS2 structural constraints without vector indexes."""
     async with session_factory() as session:
@@ -228,7 +229,7 @@ async def ensure_structural_schema(
 
 
 async def ensure_schema(
-    session_factory: Callable[[], AbstractAsyncContextManager],
+    session_factory: Callable[[], AsyncSession],
     *,
     embedding_dimension: int,
 ) -> None:

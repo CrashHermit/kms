@@ -82,7 +82,7 @@ ORDER BY community_id, uuid
 """
 
 REPLACE_GLOBAL_ENTITY_HUBS = """
-CALL {
+CALL () {
     MATCH (old_hub:GlobalEntityHub)
     DETACH DELETE old_hub
     RETURN count(*) AS deleted

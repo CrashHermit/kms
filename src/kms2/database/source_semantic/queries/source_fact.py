@@ -20,8 +20,7 @@ CALL (source) {
     RETURN count(*) AS learning_artifacts_deleted
 }
 WITH source
-CALL {
-    WITH source
+CALL (source) {
     MATCH (source)-[:FIRST_BLOCK]->(first:SourceBlock)
     MATCH (first)-[:NEXT_BLOCK*0..]->(source_block:SourceBlock)
     MATCH (source_block)<-[:HAS_SOURCE_BLOCK]-(target:SourceFactTarget)
@@ -97,7 +96,8 @@ CALL (source, target) {
     MATCH (source)-[:FIRST_BLOCK]->(first:SourceBlock)
     MATCH path = (first)-[:NEXT_BLOCK*0..]->(block:SourceBlock)
     WHERE (target)-[:HAS_SOURCE_BLOCK]->(block)
-    WITH block, path
+    WITH block,
+         path
     ORDER BY length(path)
     RETURN collect({
         uuid: block.uuid,
@@ -131,7 +131,8 @@ CALL (source, context) {
     MATCH (source)-[:FIRST_BLOCK]->(first:SourceBlock)
     MATCH path = (first)-[:NEXT_BLOCK*0..]->(block:SourceBlock)
     WHERE (context)-[:HAS_SOURCE_BLOCK]->(block)
-    WITH block, path
+    WITH block,
+         path
     ORDER BY length(path)
     RETURN collect({
         uuid: block.uuid,

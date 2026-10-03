@@ -517,7 +517,7 @@ def _get_json(url: str, timeout: float) -> dict | None:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as resp:
             return json.loads(resp.read())
-    except (OSError, ValueError):
+    except OSError, ValueError:
         return None
 
 

@@ -2,6 +2,8 @@
 
 from collections.abc import Callable
 
+from neo4j import AsyncSession
+
 from kms2.core.model.global_semantic.global_triplet_hub import (
     GlobalTripletHub,
     GlobalTripletHubGroup,
@@ -16,7 +18,7 @@ from kms2.database.global_semantic.queries.global_triplet import (
 class GlobalTripletRepository:
     """Access projected global triplets and global triplet hubs."""
 
-    def __init__(self, session_factory: Callable) -> None:
+    def __init__(self, session_factory: Callable[[], AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def replace_global_triplets(self) -> int:

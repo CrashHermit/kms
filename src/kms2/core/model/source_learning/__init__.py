@@ -1,71 +1,91 @@
-"""Contracts for source-local learning facts and flashcards."""
+"""Contracts for source-local learning facts and flashcards.
+
+Backend requests retain graph identity and project content-only model inputs.
+Each learning request pairs one typed hub with one originating source fact;
+collection nodes materialize UUID4 vertices and attach that provenance.
+Card requests project only persisted learning-fact text. Repositories persist
+completed occurrences without allocating replacement identities. Regeneration
+clears the source's generated facts, cards, and review history.
+"""
 
 from kms2.core.model.source_learning.entity import (
-    SourceEntityFlashcardDraft,
     SourceEntityFlashcardInput,
+    SourceEntityFlashcardRequest,
     SourceEntityFlashcardResult,
     SourceEntityLearningFact,
-    SourceEntityLearningFactEvidence,
+    SourceEntityLearningFactCandidate,
     SourceEntityLearningFactInput,
-    SourceEntityLearningFactResult,
+    SourceEntityLearningFactOccurrence,
+    SourceEntityLearningFactRequest,
 )
 from kms2.core.model.source_learning.event import (
-    SourceEventFlashcardDraft,
     SourceEventFlashcardInput,
+    SourceEventFlashcardRequest,
     SourceEventFlashcardResult,
     SourceEventLearningFact,
-    SourceEventLearningFactEvidence,
+    SourceEventLearningFactCandidate,
     SourceEventLearningFactInput,
-    SourceEventLearningFactResult,
+    SourceEventLearningFactOccurrence,
+    SourceEventLearningFactRequest,
 )
-from kms2.core.model.source_learning.flashcard import SourceFlashcard
+from kms2.core.model.source_learning.flashcard import (
+    SourceFlashcard,
+    SourceFlashcardOccurrence,
+)
 from kms2.core.model.source_learning.predicate import (
-    SourcePredicateFlashcardDraft,
     SourcePredicateFlashcardInput,
+    SourcePredicateFlashcardRequest,
     SourcePredicateFlashcardResult,
     SourcePredicateLearningFact,
-    SourcePredicateLearningFactEvidence,
+    SourcePredicateLearningFactCandidate,
     SourcePredicateLearningFactInput,
-    SourcePredicateLearningFactResult,
+    SourcePredicateLearningFactOccurrence,
+    SourcePredicateLearningFactRequest,
 )
 from kms2.core.model.source_learning.triplet import (
-    SourceTripletFlashcardDraft,
     SourceTripletFlashcardInput,
+    SourceTripletFlashcardRequest,
     SourceTripletFlashcardResult,
     SourceTripletLearningFact,
-    SourceTripletLearningFactEvidence,
+    SourceTripletLearningFactCandidate,
     SourceTripletLearningFactInput,
-    SourceTripletLearningFactResult,
+    SourceTripletLearningFactOccurrence,
+    SourceTripletLearningFactRequest,
 )
 
 __all__ = [
-    'SourceEntityFlashcardDraft',
     'SourceEntityFlashcardInput',
+    'SourceEntityFlashcardRequest',
     'SourceEntityFlashcardResult',
     'SourceEntityLearningFact',
-    'SourceEntityLearningFactEvidence',
+    'SourceEntityLearningFactCandidate',
     'SourceEntityLearningFactInput',
-    'SourceEntityLearningFactResult',
-    'SourceEventFlashcardDraft',
+    'SourceEntityLearningFactOccurrence',
+    'SourceEntityLearningFactRequest',
     'SourceEventFlashcardInput',
+    'SourceEventFlashcardRequest',
     'SourceEventFlashcardResult',
     'SourceEventLearningFact',
-    'SourceEventLearningFactEvidence',
+    'SourceEventLearningFactCandidate',
     'SourceEventLearningFactInput',
-    'SourceEventLearningFactResult',
+    'SourceEventLearningFactOccurrence',
+    'SourceEventLearningFactRequest',
     'SourceFlashcard',
-    'SourcePredicateFlashcardDraft',
+    'SourceFlashcardOccurrence',
     'SourcePredicateFlashcardInput',
+    'SourcePredicateFlashcardRequest',
     'SourcePredicateFlashcardResult',
     'SourcePredicateLearningFact',
-    'SourcePredicateLearningFactEvidence',
+    'SourcePredicateLearningFactCandidate',
     'SourcePredicateLearningFactInput',
-    'SourcePredicateLearningFactResult',
-    'SourceTripletFlashcardDraft',
+    'SourcePredicateLearningFactOccurrence',
+    'SourcePredicateLearningFactRequest',
     'SourceTripletFlashcardInput',
+    'SourceTripletFlashcardRequest',
     'SourceTripletFlashcardResult',
     'SourceTripletLearningFact',
-    'SourceTripletLearningFactEvidence',
+    'SourceTripletLearningFactCandidate',
     'SourceTripletLearningFactInput',
-    'SourceTripletLearningFactResult',
+    'SourceTripletLearningFactOccurrence',
+    'SourceTripletLearningFactRequest',
 ]

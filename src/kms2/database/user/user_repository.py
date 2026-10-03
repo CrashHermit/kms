@@ -2,6 +2,8 @@
 
 from collections.abc import Callable
 
+from neo4j import AsyncSession
+
 from kms2.core.model.user import Deck, User, UserSchedulerSettings
 from kms2.database.user.queries.user import CREATE_USER, READ_USERS
 
@@ -9,7 +11,7 @@ from kms2.database.user.queries.user import CREATE_USER, READ_USERS
 class UserRepository:
     """Create users with their initial deck and scheduler settings."""
 
-    def __init__(self, session_factory: Callable) -> None:
+    def __init__(self, session_factory: Callable[[], AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def create_user(

@@ -1,46 +1,46 @@
-"""Persistence access for source-learning evidence and generated artifacts."""
+"""Persistence access for source-learning requests and generated artifacts."""
 
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Callable, Sequence
+
+from neo4j import AsyncSession
+from pydantic import BaseModel
 
 from kms2.core.model.source_learning.entity import (
-    SourceEntityFlashcardInput,
-    SourceEntityFlashcardResult,
+    SourceEntityFlashcardRequest,
     SourceEntityLearningFact,
-    SourceEntityLearningFactInput,
-    SourceEntityLearningFactResult,
+    SourceEntityLearningFactOccurrence,
+    SourceEntityLearningFactRequest,
 )
 from kms2.core.model.source_learning.event import (
-    SourceEventFlashcardInput,
-    SourceEventFlashcardResult,
+    SourceEventFlashcardRequest,
     SourceEventLearningFact,
-    SourceEventLearningFactInput,
-    SourceEventLearningFactResult,
+    SourceEventLearningFactOccurrence,
+    SourceEventLearningFactRequest,
 )
-from kms2.core.model.source_learning.flashcard import SourceFlashcard
+from kms2.core.model.source_learning.flashcard import (
+    SourceFlashcardOccurrence,
+)
 from kms2.core.model.source_learning.predicate import (
-    SourcePredicateFlashcardInput,
-    SourcePredicateFlashcardResult,
+    SourcePredicateFlashcardRequest,
     SourcePredicateLearningFact,
-    SourcePredicateLearningFactInput,
-    SourcePredicateLearningFactResult,
+    SourcePredicateLearningFactOccurrence,
+    SourcePredicateLearningFactRequest,
 )
 from kms2.core.model.source_learning.triplet import (
-    SourceTripletFlashcardInput,
-    SourceTripletFlashcardResult,
+    SourceTripletFlashcardRequest,
     SourceTripletLearningFact,
-    SourceTripletLearningFactInput,
-    SourceTripletLearningFactResult,
+    SourceTripletLearningFactOccurrence,
+    SourceTripletLearningFactRequest,
 )
 from kms2.database.source_learning.queries.source_entity import (
     CREATE_SOURCE_ENTITY_LEARNING_FACTS,
-    READ_SOURCE_ENTITY_FLASHCARD_INPUTS,
-    READ_SOURCE_ENTITY_LEARNING_INPUTS,
+    READ_SOURCE_ENTITY_FLASHCARD_REQUESTS,
+    READ_SOURCE_ENTITY_LEARNING_REQUESTS,
 )
 from kms2.database.source_learning.queries.source_event import (
     CREATE_SOURCE_EVENT_LEARNING_FACTS,
-    READ_SOURCE_EVENT_FLASHCARD_INPUTS,
-    READ_SOURCE_EVENT_LEARNING_INPUTS,
+    READ_SOURCE_EVENT_FLASHCARD_REQUESTS,
+    READ_SOURCE_EVENT_LEARNING_REQUESTS,
 )
 from kms2.database.source_learning.queries.source_flashcard import (
     CREATE_SOURCE_FLASHCARDS,
@@ -50,20 +50,33 @@ from kms2.database.source_learning.queries.source_learning import (
 )
 from kms2.database.source_learning.queries.source_predicate import (
     CREATE_SOURCE_PREDICATE_LEARNING_FACTS,
-    READ_SOURCE_PREDICATE_FLASHCARD_INPUTS,
-    READ_SOURCE_PREDICATE_LEARNING_INPUTS,
+    READ_SOURCE_PREDICATE_FLASHCARD_REQUESTS,
+    READ_SOURCE_PREDICATE_LEARNING_REQUESTS,
 )
 from kms2.database.source_learning.queries.source_triplet import (
     CREATE_SOURCE_TRIPLET_LEARNING_FACTS,
-    READ_SOURCE_TRIPLET_FLASHCARD_INPUTS,
-    READ_SOURCE_TRIPLET_LEARNING_INPUTS,
+    READ_SOURCE_TRIPLET_FLASHCARD_REQUESTS,
+    READ_SOURCE_TRIPLET_LEARNING_REQUESTS,
+)
+
+type _LearningOccurrenceModel = (
+    SourceEntityLearningFactOccurrence
+    | SourceEventLearningFactOccurrence
+    | SourcePredicateLearningFactOccurrence
+    | SourceTripletLearningFactOccurrence
+)
+type _LearningFactModel = (
+    SourceEntityLearningFact
+    | SourceEventLearningFact
+    | SourcePredicateLearningFact
+    | SourceTripletLearningFact
 )
 
 
 class SourceLearningRepository:
-    """Read source-local hub evidence and replace learning artifacts."""
+    """Read source-local requests and persist collection-created artifacts."""
 
-    def __init__(self, session_factory: Callable[..., Any]) -> None:
+    def __init__(self, session_factory: Callable[[], AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def clear_source_learning(self, source_uuid: str) -> None:
@@ -74,273 +87,131 @@ class SourceLearningRepository:
             )
             await result.consume()
 
-    async def load_entity_learning_inputs(
+    async def load_entity_learning_requests(
         self, source_uuid: str
-    ) -> list[SourceEntityLearningFactInput]:
-        """Load source-local entity hub evidence."""
-        return await self._load_inputs(
-            READ_SOURCE_ENTITY_LEARNING_INPUTS,
-            SourceEntityLearningFactInput,
+    ) -> list[SourceEntityLearningFactRequest]:
+        return await self._load_requests(
+            READ_SOURCE_ENTITY_LEARNING_REQUESTS,
+            SourceEntityLearningFactRequest,
             source_uuid,
         )
 
-    async def load_event_learning_inputs(
+    async def load_event_learning_requests(
         self, source_uuid: str
-    ) -> list[SourceEventLearningFactInput]:
-        """Load source-local event hub evidence."""
-        return await self._load_inputs(
-            READ_SOURCE_EVENT_LEARNING_INPUTS,
-            SourceEventLearningFactInput,
+    ) -> list[SourceEventLearningFactRequest]:
+        return await self._load_requests(
+            READ_SOURCE_EVENT_LEARNING_REQUESTS,
+            SourceEventLearningFactRequest,
             source_uuid,
         )
 
-    async def load_predicate_learning_inputs(
+    async def load_predicate_learning_requests(
         self, source_uuid: str
-    ) -> list[SourcePredicateLearningFactInput]:
-        """Load source-local predicate hub evidence."""
-        return await self._load_inputs(
-            READ_SOURCE_PREDICATE_LEARNING_INPUTS,
-            SourcePredicateLearningFactInput,
+    ) -> list[SourcePredicateLearningFactRequest]:
+        return await self._load_requests(
+            READ_SOURCE_PREDICATE_LEARNING_REQUESTS,
+            SourcePredicateLearningFactRequest,
             source_uuid,
         )
 
-    async def load_triplet_learning_inputs(
+    async def load_triplet_learning_requests(
         self, source_uuid: str
-    ) -> list[SourceTripletLearningFactInput]:
-        """Load source-local triplet hub evidence."""
-        return await self._load_inputs(
-            READ_SOURCE_TRIPLET_LEARNING_INPUTS,
-            SourceTripletLearningFactInput,
+    ) -> list[SourceTripletLearningFactRequest]:
+        return await self._load_requests(
+            READ_SOURCE_TRIPLET_LEARNING_REQUESTS,
+            SourceTripletLearningFactRequest,
             source_uuid,
         )
 
     async def persist_entity_learning_facts(
         self,
         source_uuid: str,
-        inputs: list[SourceEntityLearningFactInput],
-        results: list[SourceEntityLearningFactResult],
+        occurrences: Sequence[SourceEntityLearningFactOccurrence],
     ) -> int:
-        """Persist one learning-fact node per row with selected evidence."""
         return await self._persist_learning_facts(
-            source_uuid,
-            inputs,
-            results,
-            CREATE_SOURCE_ENTITY_LEARNING_FACTS,
-            SourceEntityLearningFact,
+            source_uuid, occurrences, CREATE_SOURCE_ENTITY_LEARNING_FACTS
         )
 
     async def persist_event_learning_facts(
         self,
         source_uuid: str,
-        inputs: list[SourceEventLearningFactInput],
-        results: list[SourceEventLearningFactResult],
+        occurrences: Sequence[SourceEventLearningFactOccurrence],
     ) -> int:
-        """Persist one learning-fact node per row with selected evidence."""
         return await self._persist_learning_facts(
-            source_uuid,
-            inputs,
-            results,
-            CREATE_SOURCE_EVENT_LEARNING_FACTS,
-            SourceEventLearningFact,
+            source_uuid, occurrences, CREATE_SOURCE_EVENT_LEARNING_FACTS
         )
 
     async def persist_predicate_learning_facts(
         self,
         source_uuid: str,
-        inputs: list[SourcePredicateLearningFactInput],
-        results: list[SourcePredicateLearningFactResult],
+        occurrences: Sequence[SourcePredicateLearningFactOccurrence],
     ) -> int:
-        """Persist one learning-fact node per row with selected evidence."""
         return await self._persist_learning_facts(
-            source_uuid,
-            inputs,
-            results,
-            CREATE_SOURCE_PREDICATE_LEARNING_FACTS,
-            SourcePredicateLearningFact,
+            source_uuid, occurrences, CREATE_SOURCE_PREDICATE_LEARNING_FACTS
         )
 
     async def persist_triplet_learning_facts(
         self,
         source_uuid: str,
-        inputs: list[SourceTripletLearningFactInput],
-        results: list[SourceTripletLearningFactResult],
+        occurrences: Sequence[SourceTripletLearningFactOccurrence],
     ) -> int:
-        """Persist one learning-fact node per row with selected evidence."""
         return await self._persist_learning_facts(
-            source_uuid,
-            inputs,
-            results,
-            CREATE_SOURCE_TRIPLET_LEARNING_FACTS,
-            SourceTripletLearningFact,
+            source_uuid, occurrences, CREATE_SOURCE_TRIPLET_LEARNING_FACTS
         )
 
-    async def load_entity_flashcard_inputs(
+    async def load_entity_flashcard_requests(
         self, source_uuid: str
-    ) -> list[SourceEntityFlashcardInput]:
-        """Load persisted entity learning facts for card creation."""
-        return await self._load_card_inputs(
+    ) -> list[SourceEntityFlashcardRequest]:
+        return await self._load_card_requests(
             source_uuid,
-            READ_SOURCE_ENTITY_FLASHCARD_INPUTS,
-            SourceEntityFlashcardInput,
+            READ_SOURCE_ENTITY_FLASHCARD_REQUESTS,
+            SourceEntityFlashcardRequest,
             SourceEntityLearningFact,
         )
 
-    async def load_event_flashcard_inputs(
+    async def load_event_flashcard_requests(
         self, source_uuid: str
-    ) -> list[SourceEventFlashcardInput]:
-        """Load persisted event learning facts for card creation."""
-        return await self._load_card_inputs(
+    ) -> list[SourceEventFlashcardRequest]:
+        return await self._load_card_requests(
             source_uuid,
-            READ_SOURCE_EVENT_FLASHCARD_INPUTS,
-            SourceEventFlashcardInput,
+            READ_SOURCE_EVENT_FLASHCARD_REQUESTS,
+            SourceEventFlashcardRequest,
             SourceEventLearningFact,
         )
 
-    async def load_predicate_flashcard_inputs(
+    async def load_predicate_flashcard_requests(
         self, source_uuid: str
-    ) -> list[SourcePredicateFlashcardInput]:
-        """Load persisted predicate learning facts for card creation."""
-        return await self._load_card_inputs(
+    ) -> list[SourcePredicateFlashcardRequest]:
+        return await self._load_card_requests(
             source_uuid,
-            READ_SOURCE_PREDICATE_FLASHCARD_INPUTS,
-            SourcePredicateFlashcardInput,
+            READ_SOURCE_PREDICATE_FLASHCARD_REQUESTS,
+            SourcePredicateFlashcardRequest,
             SourcePredicateLearningFact,
         )
 
-    async def load_triplet_flashcard_inputs(
+    async def load_triplet_flashcard_requests(
         self, source_uuid: str
-    ) -> list[SourceTripletFlashcardInput]:
-        """Load persisted triplet learning facts for card creation."""
-        return await self._load_card_inputs(
+    ) -> list[SourceTripletFlashcardRequest]:
+        return await self._load_card_requests(
             source_uuid,
-            READ_SOURCE_TRIPLET_FLASHCARD_INPUTS,
-            SourceTripletFlashcardInput,
+            READ_SOURCE_TRIPLET_FLASHCARD_REQUESTS,
+            SourceTripletFlashcardRequest,
             SourceTripletLearningFact,
         )
 
-    async def persist_entity_flashcards(
+    async def persist_flashcards(
         self,
         source_uuid: str,
-        inputs: list[SourceEntityFlashcardInput],
-        results: list[SourceEntityFlashcardResult],
-    ) -> int:
-        """Persist one entity card for every entity learning fact result."""
-        return await self._persist_flashcards(source_uuid, inputs, results)
-
-    async def persist_event_flashcards(
-        self,
-        source_uuid: str,
-        inputs: list[SourceEventFlashcardInput],
-        results: list[SourceEventFlashcardResult],
-    ) -> int:
-        """Persist one event card for every event learning fact result."""
-        return await self._persist_flashcards(source_uuid, inputs, results)
-
-    async def persist_predicate_flashcards(
-        self,
-        source_uuid: str,
-        inputs: list[SourcePredicateFlashcardInput],
-        results: list[SourcePredicateFlashcardResult],
-    ) -> int:
-        """Persist one predicate card for every predicate learning fact result."""
-        return await self._persist_flashcards(source_uuid, inputs, results)
-
-    async def persist_triplet_flashcards(
-        self,
-        source_uuid: str,
-        inputs: list[SourceTripletFlashcardInput],
-        results: list[SourceTripletFlashcardResult],
-    ) -> int:
-        """Persist one triplet card for every triplet learning fact result."""
-        return await self._persist_flashcards(source_uuid, inputs, results)
-
-    async def _load_inputs(
-        self,
-        query: str,
-        model: type,
-        source_uuid: str,
-    ) -> list:
-        async with self._session_factory() as session:
-            result = await session.run(query, source_uuid=source_uuid)
-            rows = await result.data()
-        return [model.model_validate(row) for row in rows]
-
-    async def _persist_learning_facts(
-        self,
-        source_uuid: str,
-        inputs: list,
-        results: list,
-        query: str,
-        learning_fact_model: type,
-    ) -> int:
-        rows: list[dict[str, object]] = []
-        for learning_input, result in zip(inputs, results, strict=True):
-            for fact in result.facts:
-                learning_fact = learning_fact_model(
-                    text=fact.text,
-                )
-                rows.append(
-                    {
-                        'uuid': learning_fact.uuid,
-                        'text': learning_fact.text,
-                        'hub_uuid': learning_input.hub_uuid,
-                        'source_fact_uuids': fact.source_fact_uuids,
-                        'triplet_uuids': fact.triplet_uuids,
-                    }
-                )
-        if not rows:
-            return 0
-        async with self._session_factory() as session:
-            response = await session.run(
-                query,
-                source_uuid=source_uuid,
-                rows=rows,
-            )
-            record = await response.single(strict=True)
-        return int(record['persisted'])
-
-    async def _load_card_inputs(
-        self,
-        source_uuid: str,
-        query: str,
-        model: type,
-        learning_fact_model: type,
-    ) -> list:
-        async with self._session_factory() as session:
-            result = await session.run(query, source_uuid=source_uuid)
-            rows = await result.data()
-        return [
-            model(
-                learning_fact=learning_fact_model(
-                    uuid=row['learning_fact_uuid'],
-                    text=row['learning_fact_text'],
-                ),
-                learning_fact_text=row['learning_fact_text'],
-                hub_uuid=row['hub_uuid'],
-                hub_name=row['hub_name'],
-                hub_description=row['hub_description'],
-                evidence=row['evidence'],
-            )
-            for row in rows
-        ]
-
-    async def _persist_flashcards(
-        self,
-        source_uuid: str,
-        inputs: list,
-        results: list,
+        occurrences: Sequence[SourceFlashcardOccurrence],
     ) -> int:
         rows = [
             {
-                'uuid': SourceFlashcard(
-                    question=result.question,
-                    answer=result.answer,
-                ).uuid,
-                'question': result.question,
-                'answer': result.answer,
-                'learning_fact_uuid': learning_input.learning_fact.uuid,
+                'uuid': occurrence.card.uuid,
+                'question': occurrence.card.question,
+                'answer': occurrence.card.answer,
+                'learning_fact_uuid': occurrence.learning_fact_uuid,
             }
-            for learning_input, result in zip(inputs, results, strict=True)
+            for occurrence in occurrences
         ]
         if not rows:
             return 0
@@ -349,6 +220,58 @@ class SourceLearningRepository:
                 CREATE_SOURCE_FLASHCARDS,
                 source_uuid=source_uuid,
                 rows=rows,
+            )
+            record = await response.single(strict=True)
+        return int(record['persisted'])
+
+    async def _load_requests[RequestModel: BaseModel](
+        self, query: str, model: type[RequestModel], source_uuid: str
+    ) -> list[RequestModel]:
+        async with self._session_factory() as session:
+            result = await session.run(query, source_uuid=source_uuid)
+            rows = await result.data()
+        return [model.model_validate(row) for row in rows]
+
+    async def _load_card_requests[CardRequestModel: BaseModel](
+        self,
+        source_uuid: str,
+        query: str,
+        model: type[CardRequestModel],
+        learning_fact_model: type[_LearningFactModel],
+    ) -> list[CardRequestModel]:
+        async with self._session_factory() as session:
+            result = await session.run(query, source_uuid=source_uuid)
+            rows = await result.data()
+        return [
+            model(
+                learning_fact=learning_fact_model(
+                    uuid=row['learning_fact_uuid'],
+                    text=row['learning_fact_text'],
+                )
+            )
+            for row in rows
+        ]
+
+    async def _persist_learning_facts(
+        self,
+        source_uuid: str,
+        occurrences: Sequence[_LearningOccurrenceModel],
+        query: str,
+    ) -> int:
+        rows = [
+            {
+                'uuid': occurrence.learning_fact.uuid,
+                'text': occurrence.learning_fact.text,
+                'hub_uuid': occurrence.hub_uuid,
+                'source_fact_uuid': occurrence.source_fact_uuid,
+            }
+            for occurrence in occurrences
+        ]
+        if not rows:
+            return 0
+        async with self._session_factory() as session:
+            response = await session.run(
+                query, source_uuid=source_uuid, rows=rows
             )
             record = await response.single(strict=True)
         return int(record['persisted'])

@@ -5,19 +5,25 @@ import dspy
 from kms2.core.model.source_learning.triplet import (
     SourceTripletFlashcardInput,
     SourceTripletFlashcardResult,
+    SourceTripletLearningFactCandidate,
     SourceTripletLearningFactInput,
-    SourceTripletLearningFactResult,
 )
 
 
 class SourceTripletLearningFactSignature(dspy.Signature):
-    """Extract independently testable facts about one triplet hub."""
+    """Extract atomic learning facts focused on one complete directed claim."""
 
     request: SourceTripletLearningFactInput = dspy.InputField(
-        description='Fixed directed triplet evidence for one triplet hub.'
+        description=(
+            'The single source_fact_text is the only evidence; hub_name identifies '
+            'the focus and adds no claims. Return zero or more short, self-contained '
+            'atomic facts preserving participants, qualifiers, negation, and notation. '
+            'Return [] when this source fact contributes no fact for the focus. '
+            'Do not add external context or support attribution.'
+        )
     )
-    result: SourceTripletLearningFactResult = dspy.OutputField(
-        description='Atomic source-faithful triplet facts with evidence UUIDs.'
+    facts: list[SourceTripletLearningFactCandidate] = dspy.OutputField(
+        description='Zero or more content-only triplet learning-fact candidates.'
     )
 
 
@@ -30,25 +36,29 @@ class SourceTripletLearningFactModule(dspy.Module):
 
     def forward(
         self, *, request: SourceTripletLearningFactInput
-    ) -> SourceTripletLearningFactResult:
+    ) -> list[SourceTripletLearningFactCandidate]:
         """Extract triplet learning facts synchronously."""
-        return self.predictor(request=request).result
+        return self.predictor(request=request).facts
 
     async def aforward(
         self, *, request: SourceTripletLearningFactInput
-    ) -> SourceTripletLearningFactResult:
+    ) -> list[SourceTripletLearningFactCandidate]:
         """Extract triplet learning facts asynchronously."""
-        return (await self.predictor.acall(request=request)).result
+        return (await self.predictor.acall(request=request)).facts
 
 
 class SourceTripletFlashcardSignature(dspy.Signature):
-    """Write one focused card from exactly one triplet learning fact."""
+    """Write one focused question and answer from one learning fact."""
 
     request: SourceTripletFlashcardInput = dspy.InputField(
-        description='One persisted triplet learning fact and its fixed evidence.'
+        description='One persisted triplet learning-fact text, without graph identity.'
     )
     result: SourceTripletFlashcardResult = dspy.OutputField(
-        description='Exactly one grounded question and answer.'
+        description=(
+            'Exactly one focused question and answer expressing the supplied fact '
+            'without introducing claims. Do not rediscover, re-extract, select support, '
+            'or add auxiliary context.'
+        )
     )
 
 

@@ -248,7 +248,7 @@ class LocalModelRuntime:
         self,
         inference: StageInferenceSettings,
         signature: type[dspy.Signature],
-    ) -> 'RuntimePredictor':
+    ) -> RuntimePredictor:
         """Build a DSPy predictor controlled by this runtime."""
         router = self._router
         if router is None:
@@ -368,7 +368,7 @@ class LocalModelRuntime:
         if errors:
             raise errors[0]
 
-    async def __aenter__(self) -> 'LocalModelRuntime':
+    async def __aenter__(self) -> LocalModelRuntime:
         await self.start()
         return self
 

@@ -5,19 +5,25 @@ import dspy
 from kms2.core.model.source_learning.predicate import (
     SourcePredicateFlashcardInput,
     SourcePredicateFlashcardResult,
+    SourcePredicateLearningFactCandidate,
     SourcePredicateLearningFactInput,
-    SourcePredicateLearningFactResult,
 )
 
 
 class SourcePredicateLearningFactSignature(dspy.Signature):
-    """Extract independently testable facts about one predicate hub."""
+    """Extract atomic learning facts focused on one directed relation."""
 
     request: SourcePredicateLearningFactInput = dspy.InputField(
-        description='Fixed directed endpoint evidence for one predicate hub.'
+        description=(
+            'The single source_fact_text is the only evidence; hub_name identifies '
+            'the focus and adds no claims. Return zero or more short, self-contained '
+            'atomic facts preserving participants, qualifiers, negation, and notation. '
+            'Return [] when this source fact contributes no fact for the focus. '
+            'Do not add external context or support attribution.'
+        )
     )
-    result: SourcePredicateLearningFactResult = dspy.OutputField(
-        description='Atomic source-faithful predicate facts with evidence UUIDs.'
+    facts: list[SourcePredicateLearningFactCandidate] = dspy.OutputField(
+        description='Zero or more content-only predicate learning-fact candidates.'
     )
 
 
@@ -30,25 +36,29 @@ class SourcePredicateLearningFactModule(dspy.Module):
 
     def forward(
         self, *, request: SourcePredicateLearningFactInput
-    ) -> SourcePredicateLearningFactResult:
+    ) -> list[SourcePredicateLearningFactCandidate]:
         """Extract predicate learning facts synchronously."""
-        return self.predictor(request=request).result
+        return self.predictor(request=request).facts
 
     async def aforward(
         self, *, request: SourcePredicateLearningFactInput
-    ) -> SourcePredicateLearningFactResult:
+    ) -> list[SourcePredicateLearningFactCandidate]:
         """Extract predicate learning facts asynchronously."""
-        return (await self.predictor.acall(request=request)).result
+        return (await self.predictor.acall(request=request)).facts
 
 
 class SourcePredicateFlashcardSignature(dspy.Signature):
-    """Write one focused card from exactly one predicate learning fact."""
+    """Write one focused question and answer from one learning fact."""
 
     request: SourcePredicateFlashcardInput = dspy.InputField(
-        description='One persisted predicate learning fact and its fixed evidence.'
+        description='One persisted predicate learning-fact text, without graph identity.'
     )
     result: SourcePredicateFlashcardResult = dspy.OutputField(
-        description='Exactly one grounded question and answer.'
+        description=(
+            'Exactly one focused question and answer expressing the supplied fact '
+            'without introducing claims. Do not rediscover, re-extract, select support, '
+            'or add auxiliary context.'
+        )
     )
 
 

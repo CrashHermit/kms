@@ -5,19 +5,25 @@ import dspy
 from kms2.core.model.source_learning.event import (
     SourceEventFlashcardInput,
     SourceEventFlashcardResult,
+    SourceEventLearningFactCandidate,
     SourceEventLearningFactInput,
-    SourceEventLearningFactResult,
 )
 
 
 class SourceEventLearningFactSignature(dspy.Signature):
-    """Extract independently testable facts about one event hub."""
+    """Extract atomic learning facts focused on one occurrence or process."""
 
     request: SourceEventLearningFactInput = dspy.InputField(
-        description='Fixed source evidence for one event hub.'
+        description=(
+            'The single source_fact_text is the only evidence; hub_name identifies '
+            'the focus and adds no claims. Return zero or more short, self-contained '
+            'atomic facts preserving participants, qualifiers, negation, and notation. '
+            'Return [] when this source fact contributes no fact for the focus. '
+            'Do not add external context or support attribution.'
+        )
     )
-    result: SourceEventLearningFactResult = dspy.OutputField(
-        description='Atomic source-faithful event facts with evidence UUIDs.'
+    facts: list[SourceEventLearningFactCandidate] = dspy.OutputField(
+        description='Zero or more content-only event learning-fact candidates.'
     )
 
 
@@ -30,25 +36,29 @@ class SourceEventLearningFactModule(dspy.Module):
 
     def forward(
         self, *, request: SourceEventLearningFactInput
-    ) -> SourceEventLearningFactResult:
+    ) -> list[SourceEventLearningFactCandidate]:
         """Extract event learning facts synchronously."""
-        return self.predictor(request=request).result
+        return self.predictor(request=request).facts
 
     async def aforward(
         self, *, request: SourceEventLearningFactInput
-    ) -> SourceEventLearningFactResult:
+    ) -> list[SourceEventLearningFactCandidate]:
         """Extract event learning facts asynchronously."""
-        return (await self.predictor.acall(request=request)).result
+        return (await self.predictor.acall(request=request)).facts
 
 
 class SourceEventFlashcardSignature(dspy.Signature):
-    """Write one focused card from exactly one event learning fact."""
+    """Write one focused question and answer from one learning fact."""
 
     request: SourceEventFlashcardInput = dspy.InputField(
-        description='One persisted event learning fact and its fixed evidence.'
+        description='One persisted event learning-fact text, without graph identity.'
     )
     result: SourceEventFlashcardResult = dspy.OutputField(
-        description='Exactly one grounded question and answer.'
+        description=(
+            'Exactly one focused question and answer expressing the supplied fact '
+            'without introducing claims. Do not rediscover, re-extract, select support, '
+            'or add auxiliary context.'
+        )
     )
 
 

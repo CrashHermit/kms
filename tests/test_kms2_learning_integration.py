@@ -1,9 +1,10 @@
 import asyncio
 import os
 import uuid
-from collections import Counter
 from datetime import UTC, datetime
+from typing import cast
 
+import dspy
 import pytest
 
 from kms2.composition.services import build_learning_service, build_user_service
@@ -12,19 +13,31 @@ from kms2.core.model.learning import ReviewRating
 from kms2.core.model.source import Source
 from kms2.core.model.source_learning.entity import (
     SourceEntityFlashcardResult,
-    SourceEntityLearningFactResult,
+    SourceEntityLearningFact,
+    SourceEntityLearningFactCandidate,
+    SourceEntityLearningFactOccurrence,
 )
 from kms2.core.model.source_learning.event import (
     SourceEventFlashcardResult,
-    SourceEventLearningFactResult,
+    SourceEventLearningFact,
+    SourceEventLearningFactCandidate,
+    SourceEventLearningFactOccurrence,
+)
+from kms2.core.model.source_learning.flashcard import (
+    SourceFlashcard,
+    SourceFlashcardOccurrence,
 )
 from kms2.core.model.source_learning.predicate import (
     SourcePredicateFlashcardResult,
-    SourcePredicateLearningFactResult,
+    SourcePredicateLearningFact,
+    SourcePredicateLearningFactCandidate,
+    SourcePredicateLearningFactOccurrence,
 )
 from kms2.core.model.source_learning.triplet import (
     SourceTripletFlashcardResult,
-    SourceTripletLearningFactResult,
+    SourceTripletLearningFact,
+    SourceTripletLearningFactCandidate,
+    SourceTripletLearningFactOccurrence,
 )
 from kms2.database import schema
 from kms2.database.client import DatabaseClient
@@ -44,6 +57,57 @@ from kms2.database.source_semantic.source_predicate_repository import (
 )
 from kms2.database.source_semantic.source_triplet_repository import (
     SourceTripletRepository,
+)
+from kms2.langgraph.source_learning.state import (
+    SourceEntityFlashcardWorkerResult,
+    SourceEntityLearningFactWorkerResult,
+    SourceEventFlashcardWorkerResult,
+    SourceEventLearningFactWorkerResult,
+    SourceLearningState,
+    SourcePredicateFlashcardWorkerResult,
+    SourcePredicateLearningFactWorkerResult,
+    SourceTripletFlashcardWorkerResult,
+    SourceTripletLearningFactWorkerResult,
+)
+from kms2.module.source_learning.entity import (
+    SourceEntityFlashcardModule,
+    SourceEntityFlashcardSignature,
+    SourceEntityLearningFactModule,
+    SourceEntityLearningFactSignature,
+)
+from kms2.module.source_learning.event import (
+    SourceEventFlashcardModule,
+    SourceEventFlashcardSignature,
+    SourceEventLearningFactModule,
+    SourceEventLearningFactSignature,
+)
+from kms2.module.source_learning.predicate import (
+    SourcePredicateFlashcardModule,
+    SourcePredicateFlashcardSignature,
+    SourcePredicateLearningFactModule,
+    SourcePredicateLearningFactSignature,
+)
+from kms2.module.source_learning.triplet import (
+    SourceTripletFlashcardModule,
+    SourceTripletFlashcardSignature,
+    SourceTripletLearningFactModule,
+    SourceTripletLearningFactSignature,
+)
+from kms2.node.source_learning.entity import (
+    SourceEntityFlashcardNode,
+    SourceEntityLearningFactNode,
+)
+from kms2.node.source_learning.event import (
+    SourceEventFlashcardNode,
+    SourceEventLearningFactNode,
+)
+from kms2.node.source_learning.predicate import (
+    SourcePredicateFlashcardNode,
+    SourcePredicateLearningFactNode,
+)
+from kms2.node.source_learning.triplet import (
+    SourceTripletFlashcardNode,
+    SourceTripletLearningFactNode,
 )
 
 _REQUIRED_ENVIRONMENT = (
@@ -294,14 +358,98 @@ _SOURCE_LEARNING_FIXTURE_SHAPES = {
     ),
 }
 
-_SOURCE_LEARNING_RESULT_MODELS = {
-    'entity': (SourceEntityLearningFactResult, SourceEntityFlashcardResult),
-    'event': (SourceEventLearningFactResult, SourceEventFlashcardResult),
-    'predicate': (
-        SourcePredicateLearningFactResult,
-        SourcePredicateFlashcardResult,
+_SOURCE_LEARNING_MODELS = {
+    'entity': (
+        SourceEntityLearningFact,
+        SourceEntityLearningFactOccurrence,
+        SourceEntityLearningFactCandidate,
+        SourceEntityFlashcardResult,
+        SourceEntityLearningFactWorkerResult,
+        SourceEntityFlashcardWorkerResult,
+        SourceEntityLearningFactNode,
+        SourceEntityFlashcardNode,
+        'entity_learning_fact_requests',
+        'entity_learning_fact_occurrences',
+        'entity_flashcard_requests',
+        'entity_flashcard_occurrences',
+        'entity_learning_fact_results',
+        'entity_flashcard_results',
     ),
-    'triplet': (SourceTripletLearningFactResult, SourceTripletFlashcardResult),
+    'event': (
+        SourceEventLearningFact,
+        SourceEventLearningFactOccurrence,
+        SourceEventLearningFactCandidate,
+        SourceEventFlashcardResult,
+        SourceEventLearningFactWorkerResult,
+        SourceEventFlashcardWorkerResult,
+        SourceEventLearningFactNode,
+        SourceEventFlashcardNode,
+        'event_learning_fact_requests',
+        'event_learning_fact_occurrences',
+        'event_flashcard_requests',
+        'event_flashcard_occurrences',
+        'event_learning_fact_results',
+        'event_flashcard_results',
+    ),
+    'predicate': (
+        SourcePredicateLearningFact,
+        SourcePredicateLearningFactOccurrence,
+        SourcePredicateLearningFactCandidate,
+        SourcePredicateFlashcardResult,
+        SourcePredicateLearningFactWorkerResult,
+        SourcePredicateFlashcardWorkerResult,
+        SourcePredicateLearningFactNode,
+        SourcePredicateFlashcardNode,
+        'predicate_learning_fact_requests',
+        'predicate_learning_fact_occurrences',
+        'predicate_flashcard_requests',
+        'predicate_flashcard_occurrences',
+        'predicate_learning_fact_results',
+        'predicate_flashcard_results',
+    ),
+    'triplet': (
+        SourceTripletLearningFact,
+        SourceTripletLearningFactOccurrence,
+        SourceTripletLearningFactCandidate,
+        SourceTripletFlashcardResult,
+        SourceTripletLearningFactWorkerResult,
+        SourceTripletFlashcardWorkerResult,
+        SourceTripletLearningFactNode,
+        SourceTripletFlashcardNode,
+        'triplet_learning_fact_requests',
+        'triplet_learning_fact_occurrences',
+        'triplet_flashcard_requests',
+        'triplet_flashcard_occurrences',
+        'triplet_learning_fact_results',
+        'triplet_flashcard_results',
+    ),
+}
+
+_SOURCE_LEARNING_MODULES = {
+    'entity': (
+        SourceEntityLearningFactModule,
+        SourceEntityLearningFactSignature,
+        SourceEntityFlashcardModule,
+        SourceEntityFlashcardSignature,
+    ),
+    'event': (
+        SourceEventLearningFactModule,
+        SourceEventLearningFactSignature,
+        SourceEventFlashcardModule,
+        SourceEventFlashcardSignature,
+    ),
+    'predicate': (
+        SourcePredicateLearningFactModule,
+        SourcePredicateLearningFactSignature,
+        SourcePredicateFlashcardModule,
+        SourcePredicateFlashcardSignature,
+    ),
+    'triplet': (
+        SourceTripletLearningFactModule,
+        SourceTripletLearningFactSignature,
+        SourceTripletFlashcardModule,
+        SourceTripletFlashcardSignature,
+    ),
 }
 
 
@@ -522,38 +670,58 @@ async def _persist_source_learning_card(
     family: str,
     ids: dict[str, object],
 ) -> None:
-    """Persist one selected learning fact and its derived flashcard."""
-    inputs = await getattr(repository, f'load_{family}_learning_inputs')(
+    """Persist one fact/card pair through the public occurrence APIs."""
+    learning_fact_model = _SOURCE_LEARNING_MODELS[family][0]
+    occurrence_model = _SOURCE_LEARNING_MODELS[family][1]
+    card_result_model = _SOURCE_LEARNING_MODELS[family][3]
+    requests = await getattr(repository, f'load_{family}_learning_requests')(
         ids['source_uuid']
     )
-    fact_result_model, card_result_model = _SOURCE_LEARNING_RESULT_MODELS[
-        family
-    ]
-    fact_result = fact_result_model(
-        facts=[
-            {
-                'text': f'Selected {family} learning fact.',
-                'source_fact_uuids': [ids['fact_1'], ids['fact_2']],
-                'triplet_uuids': [ids['triplet_1'], ids['triplet_2']],
-            }
-        ]
+    request = next(
+        request
+        for request in requests
+        if request.source_fact_uuid == ids['fact_1']
+        and request.hub_uuid == ids['hub_uuid']
+    )
+    fact = learning_fact_model(text=f'Selected {family} learning fact.')
+    occurrence = occurrence_model(
+        learning_fact=fact,
+        hub_uuid=request.hub_uuid,
+        source_fact_uuid=request.source_fact_uuid,
     )
     persisted = await getattr(repository, f'persist_{family}_learning_facts')(
-        ids['source_uuid'], inputs, [fact_result]
+        ids['source_uuid'], [occurrence]
     )
     assert persisted == 1
 
-    card_inputs = await getattr(repository, f'load_{family}_flashcard_inputs')(
-        ids['source_uuid']
+    card_requests = await getattr(
+        repository, f'load_{family}_flashcard_requests'
+    )(ids['source_uuid'])
+    card_request = next(
+        request
+        for request in card_requests
+        if request.learning_fact.uuid == fact.uuid
     )
     card_result = card_result_model(
-        question=f'What is the selected {family} evidence?',
-        answer=f'The selected {family} evidence is preserved.',
+        question=f'What is the selected {family} fact?',
+        answer=f'The selected {family} fact is preserved.',
     )
-    persisted = await getattr(repository, f'persist_{family}_flashcards')(
-        ids['source_uuid'], card_inputs, [card_result]
+    card = SourceFlashcard(
+        question=card_result.question,
+        answer=card_result.answer,
     )
-    assert persisted == 1
+    assert (
+        await repository.persist_flashcards(
+            ids['source_uuid'],
+            [
+                SourceFlashcardOccurrence(
+                    card=card,
+                    learning_fact_uuid=card_request.learning_fact.uuid,
+                )
+            ],
+        )
+        == 1
+    )
 
 
 async def _source_learning_uuid_sets(session, source_uuid: str) -> dict:
@@ -696,9 +864,7 @@ async def _present_node_uuids(session, node_uuids: list[str]) -> list[str]:
     or not all(os.getenv(name) for name in _REQUIRED_ENVIRONMENT),
     reason='KMS2 Neo4j integration environment is not enabled',
 )
-def test_source_learning_round_trip_preserves_selected_directed_evidence(
-    family: str,
-):
+def test_source_learning_round_trip_preserves_originating_fact(family: str):
     async def exercise() -> None:
         database = DatabaseClient(Settings().database)
         suffix = uuid.uuid4().hex
@@ -712,82 +878,164 @@ def test_source_learning_round_trip_preserves_selected_directed_evidence(
                     session, source_uuid, family
                 )
 
-            load_inputs = getattr(repository, f'load_{family}_learning_inputs')
-            fact_inputs = await load_inputs(source_uuid)
-            assert len(fact_inputs) == 1
-            assert fact_inputs[0].hub_name == f'Shared {family} hub'
-            assert fact_inputs[0].hub_description
-
-            pair_values = {
-                (fixture_ids['fact_1'], fixture_ids['triplet_1']): (
-                    'Subject one',
-                    'relates to',
-                    'Object one',
-                ),
-                (fixture_ids['fact_2'], fixture_ids['triplet_2']): (
-                    'Subject two',
-                    'causes',
-                    'Object two',
-                ),
-                (fixture_ids['fact_1'], fixture_ids['triplet_3']): (
-                    'Subject three',
-                    'mentions',
-                    'Object three',
-                ),
-            }
-            expected_roles = (
-                ('subject', 'object')
-                if family in ('entity', 'event')
-                else (family,)
+            (
+                learning_fact_model,
+                occurrence_model,
+                candidate_model,
+                card_result_model,
+                learning_worker_result_model,
+                card_worker_result_model,
+                learning_node_model,
+                card_node_model,
+                request_field,
+                occurrence_field,
+                card_request_field,
+                card_occurrence_field,
+                learning_results_field,
+                card_results_field,
+            ) = _SOURCE_LEARNING_MODELS[family]
+            (
+                learning_module_model,
+                learning_signature,
+                card_module_model,
+                card_signature,
+            ) = _SOURCE_LEARNING_MODULES[family]
+            learning_node = learning_node_model(
+                repository,
+                learning_module_model(dspy.Predict(learning_signature)),
             )
-            expected_initial = Counter(
-                (fact_uuid, triplet_uuid, role)
-                for fact_uuid, triplet_uuid in pair_values
-                for role in expected_roles
+            card_node = card_node_model(
+                repository, card_module_model(dspy.Predict(card_signature))
             )
-            observed_initial = Counter(
+            load_requests = getattr(
+                repository, f'load_{family}_learning_requests'
+            )
+            original_requests = await load_requests(source_uuid)
+            assert [
                 (
-                    evidence.source_fact_uuid,
-                    evidence.triplet_uuid,
-                    evidence.member_role,
+                    request.hub_uuid,
+                    request.source_fact_uuid,
+                    request.source_fact_text,
                 )
-                for evidence in fact_inputs[0].evidence
-            )
-            assert observed_initial == expected_initial
-            for evidence in fact_inputs[0].evidence:
-                assert (
-                    evidence.subject,
-                    evidence.predicate,
-                    evidence.object,
-                ) == pair_values[
-                    (evidence.source_fact_uuid, evidence.triplet_uuid)
-                ]
+                for request in original_requests
+            ] == [
+                (
+                    fixture_ids['hub_uuid'],
+                    fixture_ids['fact_1'],
+                    'Fact one appears in both source blocks.',
+                ),
+                (
+                    fixture_ids['hub_uuid'],
+                    fixture_ids['fact_2'],
+                    'Fact two appears in the second source block.',
+                ),
+            ]
 
-            fact_result_model, card_result_model = (
-                _SOURCE_LEARNING_RESULT_MODELS[family]
+            other_hub_uuid = str(uuid.uuid4())
+            _, hub_label, member_label, name_property, _ = (
+                _SOURCE_LEARNING_FIXTURE_SHAPES[family]
             )
-            fact_result = fact_result_model(
-                facts=[
-                    {
-                        'text': f'Selected {family} learning fact.',
-                        'source_fact_uuids': [
-                            fixture_ids['fact_1'],
-                            fixture_ids['fact_2'],
-                        ],
-                        'triplet_uuids': [
-                            fixture_ids['triplet_1'],
-                            fixture_ids['triplet_2'],
-                        ],
-                    }
-                ]
+            member_uuid = {
+                'entity': fixture_ids['subject_1'],
+                'event': fixture_ids['subject_1'],
+                'predicate': fixture_ids['predicate_1'],
+                'triplet': fixture_ids['triplet_1'],
+            }[family]
+            async with database.session() as session:
+                result = await session.run(
+                    f"""
+                    CREATE (hub:{hub_label} {{
+                        uuid: $hub_uuid,
+                        source_uuid: $source_uuid,
+                        {name_property}: $hub_name
+                    }})
+                    WITH hub
+                    MATCH (member:{member_label} {{uuid: $member_uuid}})
+                    CREATE (member)-[:IN_SOURCE_HUB]->(hub)
+                    """,
+                    hub_uuid=other_hub_uuid,
+                    source_uuid=source_uuid,
+                    hub_name=f'Other {family} hub',
+                    member_uuid=member_uuid,
+                )
+                await result.consume()
+            cast(list[str], fixture_ids['all_uuids']).append(other_hub_uuid)
+
+            requests = await load_requests(source_uuid)
+            expected_fact_one = sorted(
+                (
+                    (fixture_ids['hub_uuid'], fixture_ids['fact_1']),
+                    (other_hub_uuid, fixture_ids['fact_1']),
+                ),
+                key=lambda pair: pair[0],
             )
-            persist_facts = getattr(
-                repository, f'persist_{family}_learning_facts'
+            assert [
+                (request.hub_uuid, request.source_fact_uuid)
+                for request in requests
+            ] == [
+                *expected_fact_one,
+                (fixture_ids['hub_uuid'], fixture_ids['fact_2']),
+            ]
+
+            learning_outputs = {
+                (fixture_ids['hub_uuid'], fixture_ids['fact_1']): [
+                    'First fact-one candidate.',
+                    'Second fact-one candidate.',
+                ],
+                (other_hub_uuid, fixture_ids['fact_1']): [],
+                (fixture_ids['hub_uuid'], fixture_ids['fact_2']): [
+                    'Fact-two candidate.'
+                ],
+            }
+            learning_worker_results = [
+                learning_worker_result_model(
+                    ordinal=ordinal,
+                    facts=[
+                        candidate_model(text=text)
+                        for text in learning_outputs[
+                            (request.hub_uuid, request.source_fact_uuid)
+                        ]
+                    ],
+                )
+                for ordinal, request in reversed(list(enumerate(requests)))
+            ]
+            learning_state = SourceLearningState(
+                source_uuid=source_uuid,
+                **{
+                    request_field: requests,
+                    learning_results_field: learning_worker_results,
+                },
             )
-            assert (
-                await persist_facts(source_uuid, fact_inputs, [fact_result])
-                == 1
+            learning_state = learning_state.model_copy(
+                update=learning_node.collect(learning_state)
             )
+            collected_occurrences = getattr(learning_state, occurrence_field)
+            assert all(
+                isinstance(occurrence.learning_fact, learning_fact_model)
+                for occurrence in collected_occurrences
+            )
+            expected_candidates = [
+                'First fact-one candidate.',
+                'Second fact-one candidate.',
+                'Fact-two candidate.',
+            ]
+            assert [
+                occurrence.learning_fact.text
+                for occurrence in collected_occurrences
+            ] == expected_candidates
+            assert [
+                (
+                    occurrence.hub_uuid,
+                    occurrence.source_fact_uuid,
+                )
+                for occurrence in collected_occurrences
+            ] == [
+                (fixture_ids['hub_uuid'], fixture_ids['fact_1']),
+                (fixture_ids['hub_uuid'], fixture_ids['fact_1']),
+                (fixture_ids['hub_uuid'], fixture_ids['fact_2']),
+            ]
+            persisted = await learning_node.persist(learning_state)
+            assert persisted[f'{family}_learning_fact_count'] == 3
 
             learning_fact_label = _SOURCE_LEARNING_FIXTURE_SHAPES[family][4]
             async with database.session() as session:
@@ -796,76 +1044,117 @@ def test_source_learning_round_trip_preserves_selected_directed_evidence(
                     MATCH (source:Source {{uuid: $source_uuid}})
                           -[:HAS_LEARNING_FACT]->
                           (learning_fact:{learning_fact_label})
-                    CALL (learning_fact) {{
-                        OPTIONAL MATCH (learning_fact)-[:SUPPORTED_BY]->
-                                       (source_fact:SourceFact)
-                        RETURN count(source_fact) AS source_fact_count,
-                               collect(source_fact.uuid) AS source_fact_uuids
-                    }}
-                    CALL (learning_fact) {{
-                        OPTIONAL MATCH
-                            (learning_fact)-[:SUPPORTED_BY_TRIPLET]->
-                            (triplet:SourceTriplet)
-                        RETURN count(triplet) AS triplet_count,
-                               collect(triplet.uuid) AS triplet_uuids
-                    }}
+                    OPTIONAL MATCH
+                        (learning_fact)-[:SUPPORTED_BY]->(source_fact:SourceFact)
+                    WITH learning_fact, collect(source_fact.uuid) AS source_facts
+                    OPTIONAL MATCH
+                        (learning_fact)-[:ABOUT_HUB]->(hub:{hub_label})
+                    WITH learning_fact, source_facts, collect(hub.uuid) AS hubs
+                    OPTIONAL MATCH
+                        (learning_fact)-[:SUPPORTED_BY_TRIPLET]->
+                        (triplet:SourceTriplet)
                     RETURN learning_fact.uuid AS learning_fact_uuid,
-                           source_fact_count,
-                           source_fact_uuids,
-                           triplet_count,
-                           triplet_uuids
+                           learning_fact.text AS learning_fact_text,
+                           source_facts,
+                           hubs,
+                           count(triplet) AS triplet_support_count
                     """,
                     source_uuid=source_uuid,
                 )
-                persisted_fact = await result.single(strict=True)
-            assert persisted_fact['source_fact_count'] == 2
-            assert sorted(persisted_fact['source_fact_uuids']) == sorted(
+                persisted_facts = await result.data()
+                result = await session.run(
+                    """
+                    MATCH (fact:SourceFact)
+                    WHERE fact.uuid IN $fact_uuids
+                    RETURN collect(fact.uuid) AS fact_uuids
+                    """,
+                    fact_uuids=[fixture_ids['fact_1'], fixture_ids['fact_2']],
+                )
+                original_facts = await result.single(strict=True)
+                result = await session.run(
+                    """
+                    MATCH (triplet:SourceTriplet)
+                    WHERE triplet.uuid IN $triplet_uuids
+                    RETURN collect(triplet.uuid) AS triplet_uuids
+                    """,
+                    triplet_uuids=[
+                        fixture_ids['triplet_1'],
+                        fixture_ids['triplet_2'],
+                        fixture_ids['triplet_3'],
+                    ],
+                )
+                original_triplets = await result.single(strict=True)
+            assert {row['learning_fact_uuid'] for row in persisted_facts} == {
+                occurrence.learning_fact.uuid
+                for occurrence in collected_occurrences
+            }
+            expected_origins = {
+                'First fact-one candidate.': fixture_ids['fact_1'],
+                'Second fact-one candidate.': fixture_ids['fact_1'],
+                'Fact-two candidate.': fixture_ids['fact_2'],
+            }
+            for row in persisted_facts:
+                assert row['source_facts'] == [
+                    expected_origins[row['learning_fact_text']]
+                ]
+                assert row['hubs'] == [fixture_ids['hub_uuid']]
+                assert row['triplet_support_count'] == 0
+            assert sorted(original_facts['fact_uuids']) == sorted(
                 (fixture_ids['fact_1'], fixture_ids['fact_2'])
             )
-            assert persisted_fact['triplet_count'] == 2
-            assert sorted(persisted_fact['triplet_uuids']) == sorted(
-                (fixture_ids['triplet_1'], fixture_ids['triplet_2'])
-            )
-
-            load_cards = getattr(repository, f'load_{family}_flashcard_inputs')
-            card_inputs = await load_cards(source_uuid)
-            assert len(card_inputs) == 1
-            expected_selected_pairs = {
-                (fixture_ids['fact_1'], fixture_ids['triplet_1']),
-                (fixture_ids['fact_2'], fixture_ids['triplet_2']),
-            }
-            expected_card_evidence = [
-                (fact_uuid, triplet_uuid, role)
-                for fact_uuid, triplet_uuid in sorted(expected_selected_pairs)
-                for role in sorted(expected_roles)
-            ]
-            observed_card_evidence = [
+            assert sorted(original_triplets['triplet_uuids']) == sorted(
                 (
-                    evidence.source_fact_uuid,
-                    evidence.triplet_uuid,
-                    evidence.member_role,
+                    fixture_ids['triplet_1'],
+                    fixture_ids['triplet_2'],
+                    fixture_ids['triplet_3'],
                 )
-                for evidence in card_inputs[0].evidence
-            ]
-            assert observed_card_evidence == expected_card_evidence
-            for evidence in card_inputs[0].evidence:
-                pair = (evidence.source_fact_uuid, evidence.triplet_uuid)
-                assert pair in expected_selected_pairs
-                assert (
-                    evidence.subject,
-                    evidence.predicate,
-                    evidence.object,
-                ) == pair_values[pair]
+            )
 
-            card_result = card_result_model(
-                question=f'What is the selected {family} evidence?',
-                answer=f'The selected {family} evidence is preserved.',
+            load_card_requests = getattr(
+                repository, f'load_{family}_flashcard_requests'
             )
-            persist_cards = getattr(repository, f'persist_{family}_flashcards')
-            assert (
-                await persist_cards(source_uuid, card_inputs, [card_result])
-                == 1
+            card_requests = await load_card_requests(source_uuid)
+            assert len(card_requests) == 3
+            card_results_by_fact = {
+                request.learning_fact.uuid: card_result_model(
+                    question=f'Question for {request.learning_fact.text}',
+                    answer=f'Answer for {request.learning_fact.text}',
+                )
+                for request in card_requests
+            }
+            card_worker_results = [
+                card_worker_result_model(
+                    ordinal=ordinal,
+                    result=card_results_by_fact[request.learning_fact.uuid],
+                )
+                for ordinal, request in reversed(list(enumerate(card_requests)))
+            ]
+            card_state = SourceLearningState(
+                source_uuid=source_uuid,
+                **{
+                    card_request_field: card_requests,
+                    card_results_field: card_worker_results,
+                },
             )
+            card_state = card_state.model_copy(
+                update=card_node.collect(card_state)
+            )
+            collected_cards = getattr(card_state, card_occurrence_field)
+            assert [
+                occurrence.learning_fact_uuid for occurrence in collected_cards
+            ] == [request.learning_fact.uuid for request in card_requests]
+            assert [
+                (occurrence.card.question, occurrence.card.answer)
+                for occurrence in collected_cards
+            ] == [
+                (
+                    card_results_by_fact[request.learning_fact.uuid].question,
+                    card_results_by_fact[request.learning_fact.uuid].answer,
+                )
+                for request in card_requests
+            ]
+            persisted_cards = await card_node.persist(card_state)
+            assert persisted_cards[f'{family}_flashcard_count'] == 3
             async with database.session() as session:
                 result = await session.run(
                     f"""
@@ -876,32 +1165,86 @@ def test_source_learning_round_trip_preserves_selected_directed_evidence(
                     RETURN card.uuid AS card_uuid,
                            card.question AS question,
                            card.answer AS answer,
-                           learning_fact.uuid AS learning_fact_uuid
+                           learning_fact.uuid AS learning_fact_uuid,
+                           learning_fact.text AS learning_fact_text
                     """,
                     source_uuid=source_uuid,
                 )
-                card_record = await result.single(strict=True)
-            assert card_record['question'] == card_result.question
-            assert card_record['answer'] == card_result.answer
-            assert (
-                card_record['learning_fact_uuid']
-                == persisted_fact['learning_fact_uuid']
-            )
+                persisted_cards = await result.data()
+            assert {row['card_uuid'] for row in persisted_cards} == {
+                occurrence.card.uuid for occurrence in collected_cards
+            }
+            assert {
+                (
+                    row['question'],
+                    row['answer'],
+                    row['learning_fact_uuid'],
+                    row['learning_fact_text'],
+                )
+                for row in persisted_cards
+            } == {
+                (
+                    occurrence.card.question,
+                    occurrence.card.answer,
+                    occurrence.learning_fact_uuid,
+                    next(
+                        request.learning_fact.text
+                        for request in card_requests
+                        if request.learning_fact.uuid
+                        == occurrence.learning_fact_uuid
+                    ),
+                )
+                for occurrence in collected_cards
+            }
 
-            async with database.session() as session:
-                before_empty_result = await _source_learning_uuid_sets(
-                    session, source_uuid
-                )
-            empty_result = fact_result_model(facts=[])
-            assert (
-                await persist_facts(source_uuid, fact_inputs, [empty_result])
-                == 0
+            before_empty = await _source_learning_uuid_sets_for_source(
+                database, source_uuid
             )
-            async with database.session() as session:
-                after_empty_result = await _source_learning_uuid_sets(
-                    session, source_uuid
+            empty_state = SourceLearningState(
+                source_uuid=source_uuid,
+                **{
+                    request_field: requests,
+                    learning_results_field: [
+                        learning_worker_result_model(ordinal=ordinal, facts=[])
+                        for ordinal in range(len(requests))
+                    ],
+                },
+            )
+            empty_state = empty_state.model_copy(
+                update=learning_node.collect(empty_state)
+            )
+            assert getattr(empty_state, occurrence_field) == []
+            assert (await learning_node.persist(empty_state))[
+                f'{family}_learning_fact_count'
+            ] == 0
+            empty_request_state = SourceLearningState(source_uuid=source_uuid)
+            assert learning_node.dispatch(empty_request_state) == (
+                f'source_{family}_learning_fact_collect'
+            )
+            empty_request_state = empty_request_state.model_copy(
+                update=learning_node.collect(empty_request_state)
+            )
+            assert getattr(empty_request_state, occurrence_field) == []
+            assert (await learning_node.persist(empty_request_state))[
+                f'{family}_learning_fact_count'
+            ] == 0
+            empty_card_state = SourceLearningState(source_uuid=source_uuid)
+            assert card_node.dispatch(empty_card_state) == (
+                f'source_{family}_flashcard_collect'
+            )
+            empty_card_state = empty_card_state.model_copy(
+                update=card_node.collect(empty_card_state)
+            )
+            assert getattr(empty_card_state, card_occurrence_field) == []
+            assert (await card_node.persist(empty_card_state))[
+                f'{family}_flashcard_count'
+            ] == 0
+            assert (
+                await _source_learning_uuid_sets_for_source(
+                    database, source_uuid
                 )
-            assert after_empty_result == before_empty_result
+                == before_empty
+            )
         finally:
             try:
                 await repository.clear_source_learning(source_uuid)

@@ -2,6 +2,8 @@
 
 from collections.abc import Callable
 
+from neo4j import AsyncSession
+
 from kms2.core.model.global_semantic.global_statement_hub import (
     GlobalStatementHub,
     GlobalStatementHubCandidate,
@@ -19,7 +21,7 @@ from kms2.database.global_semantic.queries.global_statement_hub import (
 class GlobalStatementHubRepository:
     """Access persisted source-hub relationships and global hubs."""
 
-    def __init__(self, session_factory: Callable) -> None:
+    def __init__(self, session_factory: Callable[[], AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def read_global_statement_hub_candidates(

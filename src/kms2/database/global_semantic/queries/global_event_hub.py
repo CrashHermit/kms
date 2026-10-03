@@ -82,7 +82,7 @@ ORDER BY community_id, uuid
 """
 
 REPLACE_GLOBAL_EVENT_HUBS = """
-CALL {
+CALL () {
     MATCH (old_hub:GlobalEventHub)
     DETACH DELETE old_hub
     RETURN count(*) AS deleted

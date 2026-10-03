@@ -34,7 +34,7 @@ class SearchResult(BaseModel):
     )
 
     @classmethod
-    def from_node(cls, node: dict[str, Any], text_field: str) -> 'SearchResult':
+    def from_node(cls, node: dict[str, Any], text_field: str) -> SearchResult:
         """Build a SearchResult from a vector-search node record."""
         return cls(
             text=node.get(text_field, '') or '',

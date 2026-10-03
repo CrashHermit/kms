@@ -82,7 +82,7 @@ ORDER BY community_id, uuid
 """
 
 REPLACE_GLOBAL_PREDICATE_HUBS = """
-CALL {
+CALL () {
     MATCH (old_hub:GlobalPredicateHub)
     DETACH DELETE old_hub
     RETURN count(*) AS deleted

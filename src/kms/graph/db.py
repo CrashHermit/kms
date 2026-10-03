@@ -221,7 +221,7 @@ class HTTPSession:
         self._endpoint = endpoint
         self._bookmarks: list[str] = []
 
-    async def __aenter__(self) -> 'HTTPSession':
+    async def __aenter__(self) -> HTTPSession:
         """Returns the session itself."""
         return self
 

@@ -1,13 +1,14 @@
 """Typed source-entity learning contracts."""
 
+from pydantic import BaseModel
+
 from kms2.core.model.source_learning._base import (
-    _FlashcardDraft,
     _FlashcardInput,
     _FlashcardResult,
-    _LearningFactEvidence,
+    _LearningFactCandidate,
     _LearningFactInput,
-    _LearningFactOutput,
-    _LearningFactResult,
+    _LearningFactOccurrence,
+    _LearningFactRequest,
     _LearningFactVertex,
 )
 
@@ -16,43 +17,58 @@ class SourceEntityLearningFact(_LearningFactVertex):
     """Durable atomic learning fact about one source entity hub."""
 
 
-class SourceEntityLearningFactEvidence(_LearningFactEvidence):
-    """Entity learning evidence with subject/object role provenance."""
-
-
 class SourceEntityLearningFactInput(_LearningFactInput):
-    """Entity hub evidence supplied to the learning-fact model."""
-
-    evidence: list[SourceEntityLearningFactEvidence]
+    """Entity focus and source-fact text supplied to inference."""
 
 
-class SourceEntityLearningFactResult(_LearningFactResult):
-    """Atomic entity learning facts returned by the model."""
+class SourceEntityLearningFactRequest(_LearningFactRequest):
+    """Backend request pairing an entity hub with one source fact."""
 
-    facts: list[_LearningFactOutput]
+    def model_input(self) -> SourceEntityLearningFactInput:
+        """Project graph-backed request data to model-facing content."""
+        return SourceEntityLearningFactInput(
+            hub_name=self.hub_name,
+            source_fact_text=self.source_fact_text,
+        )
+
+
+class SourceEntityLearningFactCandidate(_LearningFactCandidate):
+    """One candidate entity learning fact."""
+
+
+class SourceEntityLearningFactOccurrence(_LearningFactOccurrence):
+    """Entity learning fact with its originating hub and source fact."""
+
+    learning_fact: SourceEntityLearningFact
 
 
 class SourceEntityFlashcardInput(_FlashcardInput):
-    """One entity learning fact supplied to the card model."""
+    """One entity learning-fact text supplied to card inference."""
+
+
+class SourceEntityFlashcardRequest(BaseModel):
+    """Persisted entity learning fact requested for card generation."""
 
     learning_fact: SourceEntityLearningFact
-    evidence: list[SourceEntityLearningFactEvidence]
 
-
-class SourceEntityFlashcardDraft(_FlashcardDraft):
-    """One entity card draft."""
+    def model_input(self) -> SourceEntityFlashcardInput:
+        """Project the persisted fact to its model-facing text."""
+        return SourceEntityFlashcardInput(
+            learning_fact_text=self.learning_fact.text
+        )
 
 
 class SourceEntityFlashcardResult(_FlashcardResult):
-    """One validated entity card result."""
+    """One semantic entity flashcard result."""
 
 
 __all__ = [
-    'SourceEntityFlashcardDraft',
     'SourceEntityFlashcardInput',
+    'SourceEntityFlashcardRequest',
     'SourceEntityFlashcardResult',
     'SourceEntityLearningFact',
-    'SourceEntityLearningFactEvidence',
+    'SourceEntityLearningFactCandidate',
     'SourceEntityLearningFactInput',
-    'SourceEntityLearningFactResult',
+    'SourceEntityLearningFactOccurrence',
+    'SourceEntityLearningFactRequest',
 ]

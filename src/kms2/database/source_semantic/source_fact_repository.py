@@ -2,6 +2,8 @@
 
 from collections.abc import Callable
 
+from neo4j import AsyncSession
+
 from kms2.core.model.block import SourceBlock
 from kms2.core.model.source_semantic.source_fact_extraction import (
     SourceFact,
@@ -18,7 +20,7 @@ from kms2.database.source_semantic.queries.source_fact import (
 class SourceFactRepository:
     """Access durable source facts and their evidence pointer nodes."""
 
-    def __init__(self, session_factory: Callable) -> None:
+    def __init__(self, session_factory: Callable[[], AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def replace_source_facts(

@@ -100,7 +100,7 @@ class OCRResponse(BaseModel):
     _raw_response: dict[str, Any] = PrivateAttr(default_factory=dict)
 
     @classmethod
-    def from_raw(cls, raw_response: dict[str, Any]) -> 'OCRResponse':
+    def from_raw(cls, raw_response: dict[str, Any]) -> OCRResponse:
         """Validates and retains one raw Mistral response."""
         response = cls.model_validate(raw_response)
         response._raw_response = raw_response

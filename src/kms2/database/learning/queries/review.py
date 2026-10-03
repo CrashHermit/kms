@@ -1,5 +1,17 @@
 """Cypher statements for review scheduling and history."""
 
+READ_DUE_DECK_CARDS = """
+MATCH (user:User {uuid: $user_uuid})-[:HAS_DECK]->(deck:Deck {uuid: $deck_uuid})
+MATCH (deck)-[:HAS_CARD]->(card:SourceFlashcard)
+MATCH (user)-[:HAS_CARD_REVIEW]->(review:UserCardReview)<-[:HAS_CARD_REVIEW]-(card)
+WHERE review.due_at <= $now
+RETURN card.uuid AS card_uuid,
+       card.question AS question,
+       card.answer AS answer,
+       review.due_at AS due_at
+ORDER BY review.due_at, card.uuid
+"""
+
 READ_REVIEW_SNAPSHOT = """
 MATCH (user:User {uuid: $user_uuid})-[:HAS_SCHEDULER_SETTINGS]->
       (settings:UserSchedulerSettings)
@@ -18,7 +30,10 @@ MATCH (user:User {uuid: $user_uuid})-[:HAS_SCHEDULER_SETTINGS]->
 MATCH (user)-[:HAS_DECK]->(deck:Deck {uuid: $deck_uuid})
 MATCH (deck)-[:HAS_CARD]->(card:SourceFlashcard {uuid: $card_uuid})
 MATCH (user)-[:HAS_CARD_REVIEW]->(review:UserCardReview)<-[:HAS_CARD_REVIEW]-(card)
-WITH settings, card, review, review.review_count + 1 AS review_index
+WITH settings,
+     card,
+     review,
+     review.review_count + 1 AS review_index
 SET review.fsrs_card_json = $fsrs_card_json,
     review.due_at = $due_at,
     review.review_count = review_index

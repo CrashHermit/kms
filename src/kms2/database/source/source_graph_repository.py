@@ -3,6 +3,8 @@
 import json
 from collections.abc import Callable
 
+from neo4j import AsyncSession
+
 from kms2.core.model.block import SourceBlock
 from kms2.core.model.page import SourcePage
 from kms2.core.model.source import Source
@@ -17,7 +19,7 @@ from kms2.database.source.queries.source_graph import REPLACE_SOURCE
 class SourceGraphRepository:
     """Replace complete persisted source structural graphs."""
 
-    def __init__(self, session_factory: Callable) -> None:
+    def __init__(self, session_factory: Callable[[], AsyncSession]) -> None:
         self._session_factory = session_factory
 
     async def replace_source(

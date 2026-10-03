@@ -225,5 +225,5 @@ def _canonical_text(value: object) -> str:
         return json.dumps(
             value, ensure_ascii=False, sort_keys=True, default=str
         )
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return str(value)

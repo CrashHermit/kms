@@ -5,8 +5,14 @@ from typing import Literal, TypedDict
 from langgraph.types import Send
 
 from kms2.core.model.source_learning.event import (
-    SourceEventFlashcardInput,
-    SourceEventLearningFactInput,
+    SourceEventFlashcardRequest,
+    SourceEventLearningFact,
+    SourceEventLearningFactOccurrence,
+    SourceEventLearningFactRequest,
+)
+from kms2.core.model.source_learning.flashcard import (
+    SourceFlashcard,
+    SourceFlashcardOccurrence,
 )
 from kms2.database.source_learning.repository import SourceLearningRepository
 from kms2.langgraph.source_learning.state import (
@@ -21,21 +27,21 @@ from kms2.module.source_learning.event import (
 
 
 class EventLearningFactWorkerState(TypedDict):
-    """Input sent to one event learning-fact worker."""
+    """Backend request sent to one event learning-fact worker."""
 
     ordinal: int
-    request: SourceEventLearningFactInput
+    request: SourceEventLearningFactRequest
 
 
 class EventFlashcardWorkerState(TypedDict):
-    """Input sent to one event card worker."""
+    """Backend request sent to one event card worker."""
 
     ordinal: int
-    request: SourceEventFlashcardInput
+    request: SourceEventFlashcardRequest
 
 
 class SourceEventLearningFactNode:
-    """Load, infer, order, and persist event learning facts."""
+    """Infer event learning facts and attach their originating provenance."""
 
     def __init__(
         self,
@@ -46,9 +52,9 @@ class SourceEventLearningFactNode:
         self._module = module
 
     async def load(self, state: SourceLearningState) -> dict:
-        """Load event hub evidence."""
+        """Load distinct event hub/source-fact requests."""
         return {
-            'event_learning_fact_inputs': await self._repository.load_event_learning_inputs(
+            'event_learning_fact_requests': await self._repository.load_event_learning_requests(
                 state.source_uuid
             )
         }
@@ -56,53 +62,61 @@ class SourceEventLearningFactNode:
     def dispatch(
         self, state: SourceLearningState
     ) -> list[Send] | Literal['source_event_learning_fact_collect']:
-        """Dispatch one worker per event hub in stable order."""
+        """Dispatch one worker per request in stable order."""
         return [
             Send(
                 'source_event_learning_fact_worker',
                 {'ordinal': ordinal, 'request': request},
             )
-            for ordinal, request in enumerate(state.event_learning_fact_inputs)
-        ] or ['source_event_learning_fact_collect'][0]
+            for ordinal, request in enumerate(
+                state.event_learning_fact_requests
+            )
+        ] or 'source_event_learning_fact_collect'
 
-    async def worker(self, state: EventLearningFactWorkerState) -> dict:
-        """Run one event learning-fact inference."""
+    async def worker(
+        self, state: EventLearningFactWorkerState
+    ) -> dict[str, list[SourceEventLearningFactWorkerResult]]:
+        """Infer from content only, retaining backend request order."""
+        facts = await self._module.aforward(
+            request=state['request'].model_input()
+        )
         return {
             'event_learning_fact_results': [
                 SourceEventLearningFactWorkerResult(
-                    ordinal=state['ordinal'],
-                    result=await self._module.aforward(
-                        request=state['request']
-                    ),
+                    ordinal=state['ordinal'], facts=facts
                 )
             ]
         }
 
     def collect(self, state: SourceLearningState) -> dict:
-        """Restore event model results to hub order."""
-        return {
-            'event_learning_fact_results_ordered': [
-                item.result
-                for item in sorted(
-                    state.event_learning_fact_results,
-                    key=lambda item: item.ordinal,
+        """Materialize candidates with their original hub and source fact."""
+        occurrences: list[SourceEventLearningFactOccurrence] = []
+        for item in sorted(
+            state.event_learning_fact_results, key=lambda item: item.ordinal
+        ):
+            request = state.event_learning_fact_requests[item.ordinal]
+            for candidate in item.facts:
+                occurrences.append(
+                    SourceEventLearningFactOccurrence(
+                        learning_fact=SourceEventLearningFact(
+                            text=candidate.text
+                        ),
+                        hub_uuid=request.hub_uuid,
+                        source_fact_uuid=request.source_fact_uuid,
+                    )
                 )
-            ]
-        }
+        return {'event_learning_fact_occurrences': occurrences}
 
     async def persist(self, state: SourceLearningState) -> dict[str, int]:
-        """Persist event learning facts and selected evidence."""
-        return {
-            'event_learning_fact_count': await self._repository.persist_event_learning_facts(
-                state.source_uuid,
-                state.event_learning_fact_inputs,
-                state.event_learning_fact_results_ordered,
-            )
-        }
+        """Persist completed event learning-fact occurrences."""
+        count = await self._repository.persist_event_learning_facts(
+            state.source_uuid, state.event_learning_fact_occurrences
+        )
+        return {'event_learning_fact_count': count}
 
 
 class SourceEventFlashcardNode:
-    """Load, infer, order, and persist event flashcards."""
+    """Infer event cards and attach their persisted learning-fact identity."""
 
     def __init__(
         self,
@@ -113,9 +127,9 @@ class SourceEventFlashcardNode:
         self._module = module
 
     async def load(self, state: SourceLearningState) -> dict:
-        """Load persisted event learning facts."""
+        """Load persisted event learning-fact requests."""
         return {
-            'event_flashcard_inputs': await self._repository.load_event_flashcard_inputs(
+            'event_flashcard_requests': await self._repository.load_event_flashcard_requests(
                 state.source_uuid
             )
         }
@@ -129,39 +143,44 @@ class SourceEventFlashcardNode:
                 'source_event_flashcard_worker',
                 {'ordinal': ordinal, 'request': request},
             )
-            for ordinal, request in enumerate(state.event_flashcard_inputs)
-        ] or ['source_event_flashcard_collect'][0]
+            for ordinal, request in enumerate(state.event_flashcard_requests)
+        ] or 'source_event_flashcard_collect'
 
-    async def worker(self, state: EventFlashcardWorkerState) -> dict:
-        """Run one event card inference."""
+    async def worker(
+        self, state: EventFlashcardWorkerState
+    ) -> dict[str, list[SourceEventFlashcardWorkerResult]]:
+        """Infer one card from only the persisted learning-fact text."""
+        result = await self._module.aforward(
+            request=state['request'].model_input()
+        )
         return {
             'event_flashcard_results': [
                 SourceEventFlashcardWorkerResult(
-                    ordinal=state['ordinal'],
-                    result=await self._module.aforward(
-                        request=state['request']
-                    ),
+                    ordinal=state['ordinal'], result=result
                 )
             ]
         }
 
     def collect(self, state: SourceLearningState) -> dict:
-        """Restore event card results to learning-fact order."""
-        return {
-            'event_flashcard_results_ordered': [
-                item.result
-                for item in sorted(
-                    state.event_flashcard_results, key=lambda item: item.ordinal
+        """Materialize cards with their original persisted learning fact."""
+        occurrences: list[SourceFlashcardOccurrence] = []
+        for item in sorted(
+            state.event_flashcard_results, key=lambda item: item.ordinal
+        ):
+            request = state.event_flashcard_requests[item.ordinal]
+            occurrences.append(
+                SourceFlashcardOccurrence(
+                    card=SourceFlashcard(
+                        question=item.result.question, answer=item.result.answer
+                    ),
+                    learning_fact_uuid=request.learning_fact.uuid,
                 )
-            ]
-        }
+            )
+        return {'event_flashcard_occurrences': occurrences}
 
     async def persist(self, state: SourceLearningState) -> dict[str, int]:
-        """Persist one event card for each learning fact."""
-        return {
-            'event_flashcard_count': await self._repository.persist_event_flashcards(
-                state.source_uuid,
-                state.event_flashcard_inputs,
-                state.event_flashcard_results_ordered,
-            )
-        }
+        """Persist completed cards without replacing collection-owned identities."""
+        count = await self._repository.persist_flashcards(
+            state.source_uuid, state.event_flashcard_occurrences
+        )
+        return {'event_flashcard_count': count}

@@ -4,9 +4,15 @@ from typing import Literal, TypedDict
 
 from langgraph.types import Send
 
+from kms2.core.model.source_learning.flashcard import (
+    SourceFlashcard,
+    SourceFlashcardOccurrence,
+)
 from kms2.core.model.source_learning.triplet import (
-    SourceTripletFlashcardInput,
-    SourceTripletLearningFactInput,
+    SourceTripletFlashcardRequest,
+    SourceTripletLearningFact,
+    SourceTripletLearningFactOccurrence,
+    SourceTripletLearningFactRequest,
 )
 from kms2.database.source_learning.repository import SourceLearningRepository
 from kms2.langgraph.source_learning.state import (
@@ -21,21 +27,21 @@ from kms2.module.source_learning.triplet import (
 
 
 class TripletLearningFactWorkerState(TypedDict):
-    """Input sent to one triplet learning-fact worker."""
+    """Backend request sent to one triplet learning-fact worker."""
 
     ordinal: int
-    request: SourceTripletLearningFactInput
+    request: SourceTripletLearningFactRequest
 
 
 class TripletFlashcardWorkerState(TypedDict):
-    """Input sent to one triplet card worker."""
+    """Backend request sent to one triplet card worker."""
 
     ordinal: int
-    request: SourceTripletFlashcardInput
+    request: SourceTripletFlashcardRequest
 
 
 class SourceTripletLearningFactNode:
-    """Load, infer, order, and persist triplet learning facts."""
+    """Infer triplet learning facts and attach their originating provenance."""
 
     def __init__(
         self,
@@ -46,9 +52,9 @@ class SourceTripletLearningFactNode:
         self._module = module
 
     async def load(self, state: SourceLearningState) -> dict:
-        """Load triplet hub evidence."""
+        """Load distinct triplet hub/source-fact requests."""
         return {
-            'triplet_learning_fact_inputs': await self._repository.load_triplet_learning_inputs(
+            'triplet_learning_fact_requests': await self._repository.load_triplet_learning_requests(
                 state.source_uuid
             )
         }
@@ -56,55 +62,61 @@ class SourceTripletLearningFactNode:
     def dispatch(
         self, state: SourceLearningState
     ) -> list[Send] | Literal['source_triplet_learning_fact_collect']:
-        """Dispatch one worker per triplet hub in stable order."""
+        """Dispatch one worker per request in stable order."""
         return [
             Send(
                 'source_triplet_learning_fact_worker',
                 {'ordinal': ordinal, 'request': request},
             )
             for ordinal, request in enumerate(
-                state.triplet_learning_fact_inputs
+                state.triplet_learning_fact_requests
             )
-        ] or ['source_triplet_learning_fact_collect'][0]
+        ] or 'source_triplet_learning_fact_collect'
 
-    async def worker(self, state: TripletLearningFactWorkerState) -> dict:
-        """Run one triplet learning-fact inference."""
+    async def worker(
+        self, state: TripletLearningFactWorkerState
+    ) -> dict[str, list[SourceTripletLearningFactWorkerResult]]:
+        """Infer from content only, retaining backend request order."""
+        facts = await self._module.aforward(
+            request=state['request'].model_input()
+        )
         return {
             'triplet_learning_fact_results': [
                 SourceTripletLearningFactWorkerResult(
-                    ordinal=state['ordinal'],
-                    result=await self._module.aforward(
-                        request=state['request']
-                    ),
+                    ordinal=state['ordinal'], facts=facts
                 )
             ]
         }
 
     def collect(self, state: SourceLearningState) -> dict:
-        """Restore triplet model results to hub order."""
-        return {
-            'triplet_learning_fact_results_ordered': [
-                item.result
-                for item in sorted(
-                    state.triplet_learning_fact_results,
-                    key=lambda item: item.ordinal,
+        """Materialize candidates with their original hub and source fact."""
+        occurrences: list[SourceTripletLearningFactOccurrence] = []
+        for item in sorted(
+            state.triplet_learning_fact_results, key=lambda item: item.ordinal
+        ):
+            request = state.triplet_learning_fact_requests[item.ordinal]
+            for candidate in item.facts:
+                occurrences.append(
+                    SourceTripletLearningFactOccurrence(
+                        learning_fact=SourceTripletLearningFact(
+                            text=candidate.text
+                        ),
+                        hub_uuid=request.hub_uuid,
+                        source_fact_uuid=request.source_fact_uuid,
+                    )
                 )
-            ]
-        }
+        return {'triplet_learning_fact_occurrences': occurrences}
 
     async def persist(self, state: SourceLearningState) -> dict[str, int]:
-        """Persist triplet learning facts and selected evidence."""
-        return {
-            'triplet_learning_fact_count': await self._repository.persist_triplet_learning_facts(
-                state.source_uuid,
-                state.triplet_learning_fact_inputs,
-                state.triplet_learning_fact_results_ordered,
-            )
-        }
+        """Persist completed triplet learning-fact occurrences."""
+        count = await self._repository.persist_triplet_learning_facts(
+            state.source_uuid, state.triplet_learning_fact_occurrences
+        )
+        return {'triplet_learning_fact_count': count}
 
 
 class SourceTripletFlashcardNode:
-    """Load, infer, order, and persist triplet flashcards."""
+    """Infer triplet cards and attach their persisted learning-fact identity."""
 
     def __init__(
         self,
@@ -115,9 +127,9 @@ class SourceTripletFlashcardNode:
         self._module = module
 
     async def load(self, state: SourceLearningState) -> dict:
-        """Load persisted triplet learning facts."""
+        """Load persisted triplet learning-fact requests."""
         return {
-            'triplet_flashcard_inputs': await self._repository.load_triplet_flashcard_inputs(
+            'triplet_flashcard_requests': await self._repository.load_triplet_flashcard_requests(
                 state.source_uuid
             )
         }
@@ -131,40 +143,44 @@ class SourceTripletFlashcardNode:
                 'source_triplet_flashcard_worker',
                 {'ordinal': ordinal, 'request': request},
             )
-            for ordinal, request in enumerate(state.triplet_flashcard_inputs)
-        ] or ['source_triplet_flashcard_collect'][0]
+            for ordinal, request in enumerate(state.triplet_flashcard_requests)
+        ] or 'source_triplet_flashcard_collect'
 
-    async def worker(self, state: TripletFlashcardWorkerState) -> dict:
-        """Run one triplet card inference."""
+    async def worker(
+        self, state: TripletFlashcardWorkerState
+    ) -> dict[str, list[SourceTripletFlashcardWorkerResult]]:
+        """Infer one card from only the persisted learning-fact text."""
+        result = await self._module.aforward(
+            request=state['request'].model_input()
+        )
         return {
             'triplet_flashcard_results': [
                 SourceTripletFlashcardWorkerResult(
-                    ordinal=state['ordinal'],
-                    result=await self._module.aforward(
-                        request=state['request']
-                    ),
+                    ordinal=state['ordinal'], result=result
                 )
             ]
         }
 
     def collect(self, state: SourceLearningState) -> dict:
-        """Restore triplet card results to learning-fact order."""
-        return {
-            'triplet_flashcard_results_ordered': [
-                item.result
-                for item in sorted(
-                    state.triplet_flashcard_results,
-                    key=lambda item: item.ordinal,
+        """Materialize cards with their original persisted learning fact."""
+        occurrences: list[SourceFlashcardOccurrence] = []
+        for item in sorted(
+            state.triplet_flashcard_results, key=lambda item: item.ordinal
+        ):
+            request = state.triplet_flashcard_requests[item.ordinal]
+            occurrences.append(
+                SourceFlashcardOccurrence(
+                    card=SourceFlashcard(
+                        question=item.result.question, answer=item.result.answer
+                    ),
+                    learning_fact_uuid=request.learning_fact.uuid,
                 )
-            ]
-        }
+            )
+        return {'triplet_flashcard_occurrences': occurrences}
 
     async def persist(self, state: SourceLearningState) -> dict[str, int]:
-        """Persist one triplet card for each learning fact."""
-        return {
-            'triplet_flashcard_count': await self._repository.persist_triplet_flashcards(
-                state.source_uuid,
-                state.triplet_flashcard_inputs,
-                state.triplet_flashcard_results_ordered,
-            )
-        }
+        """Persist completed cards without replacing collection-owned identities."""
+        count = await self._repository.persist_flashcards(
+            state.source_uuid, state.triplet_flashcard_occurrences
+        )
+        return {'triplet_flashcard_count': count}

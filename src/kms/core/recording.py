@@ -84,7 +84,7 @@ class Recorder:
             with (run_dir / 'examples.jsonl').open('a') as handle:
                 handle.write(json.dumps(record, ensure_ascii=False) + '\n')
             self._record_schema(signature, prediction_fields)
-        except (TypeError, ValueError, OSError):
+        except TypeError, ValueError, OSError:
             logger.warning(
                 'recorder: failed to record a %s example',
                 module_name,
@@ -116,7 +116,7 @@ class Recorder:
                 record['details'] = details
             with progress_path.open('a') as handle:
                 handle.write(json.dumps(record, ensure_ascii=False) + '\n')
-        except (TypeError, ValueError, OSError):
+        except TypeError, ValueError, OSError:
             logger.warning(
                 'recorder: failed to record progress for %s',
                 stage,

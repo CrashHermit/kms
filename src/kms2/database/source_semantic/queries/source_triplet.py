@@ -20,8 +20,7 @@ CALL (source) {
     RETURN count(*) AS learning_artifacts_deleted
 }
 WITH source
-CALL {
-    WITH source
+CALL (source) {
     MATCH (source)-[:FIRST_BLOCK]->(first:SourceBlock)
     MATCH (first)-[:NEXT_BLOCK*0..]->(source_block:SourceBlock)
     MATCH (source_block)<-[:HAS_SOURCE_BLOCK]-(:SourceFactTarget)
@@ -41,12 +40,12 @@ CALL {
     RETURN count(*) AS old_triplets_deleted
 }
 WITH source
-CALL {
+CALL () {
     UNWIND $triplets AS row
     CREATE (triplet:SourceTriplet {uuid: row.uuid})
     RETURN count(*) AS triplets_persisted
 }
-CALL {
+CALL () {
     UNWIND $source_entities AS row
     CREATE (source_entity:SourceEntity {
         uuid: row.uuid,
@@ -56,7 +55,7 @@ CALL {
     })
     RETURN count(*) AS source_entities_persisted
 }
-CALL {
+CALL () {
     UNWIND $source_events AS row
     CREATE (source_event:SourceEvent {
         uuid: row.uuid,
@@ -66,7 +65,7 @@ CALL {
     })
     RETURN count(*) AS source_events_persisted
 }
-CALL {
+CALL () {
     UNWIND $source_predicates AS row
     CREATE (source_predicate:SourcePredicate {
         uuid: row.uuid,
@@ -76,14 +75,14 @@ CALL {
     })
     RETURN count(*) AS source_predicates_persisted
 }
-CALL {
+CALL () {
     UNWIND $fact_triplet_pairs AS row
     MATCH (fact:SourceFact {uuid: row.source_fact_uuid})
     MATCH (triplet:SourceTriplet {uuid: row.triplet_uuid})
     CREATE (fact)-[:HAS_TRIPLET]->(triplet)
     RETURN count(*) AS fact_triplet_pairs_persisted
 }
-CALL {
+CALL () {
     UNWIND $triplets AS row
     MATCH (triplet:SourceTriplet {uuid: row.uuid})
     MATCH (subject {uuid: row.subject_uuid})
@@ -170,7 +169,7 @@ CALL (source) {
     RETURN count(*) AS learning_artifacts_deleted
 }
 WITH source
-CALL {
+CALL () {
     MATCH (old_hub:SourceTripletHub {source_uuid: $source_uuid})
     DETACH DELETE old_hub
 }

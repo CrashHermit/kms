@@ -1,13 +1,14 @@
 """Typed source-triplet learning contracts."""
 
+from pydantic import BaseModel
+
 from kms2.core.model.source_learning._base import (
-    _FlashcardDraft,
     _FlashcardInput,
     _FlashcardResult,
-    _LearningFactEvidence,
+    _LearningFactCandidate,
     _LearningFactInput,
-    _LearningFactOutput,
-    _LearningFactResult,
+    _LearningFactOccurrence,
+    _LearningFactRequest,
     _LearningFactVertex,
 )
 
@@ -16,43 +17,58 @@ class SourceTripletLearningFact(_LearningFactVertex):
     """Durable atomic learning fact about one source triplet hub."""
 
 
-class SourceTripletLearningFactEvidence(_LearningFactEvidence):
-    """Triplet learning evidence preserving the complete directed claim."""
-
-
 class SourceTripletLearningFactInput(_LearningFactInput):
-    """Triplet hub evidence supplied to the learning-fact model."""
-
-    evidence: list[SourceTripletLearningFactEvidence]
+    """Triplet focus and source-fact text supplied to inference."""
 
 
-class SourceTripletLearningFactResult(_LearningFactResult):
-    """Atomic triplet learning facts returned by the model."""
+class SourceTripletLearningFactRequest(_LearningFactRequest):
+    """Backend request pairing a triplet hub with one source fact."""
 
-    facts: list[_LearningFactOutput]
+    def model_input(self) -> SourceTripletLearningFactInput:
+        """Project graph-backed request data to model-facing content."""
+        return SourceTripletLearningFactInput(
+            hub_name=self.hub_name,
+            source_fact_text=self.source_fact_text,
+        )
+
+
+class SourceTripletLearningFactCandidate(_LearningFactCandidate):
+    """One candidate triplet learning fact."""
+
+
+class SourceTripletLearningFactOccurrence(_LearningFactOccurrence):
+    """Triplet learning fact with its originating hub and source fact."""
+
+    learning_fact: SourceTripletLearningFact
 
 
 class SourceTripletFlashcardInput(_FlashcardInput):
-    """One triplet learning fact supplied to the card model."""
+    """One triplet learning-fact text supplied to card inference."""
+
+
+class SourceTripletFlashcardRequest(BaseModel):
+    """Persisted triplet learning fact requested for card generation."""
 
     learning_fact: SourceTripletLearningFact
-    evidence: list[SourceTripletLearningFactEvidence]
 
-
-class SourceTripletFlashcardDraft(_FlashcardDraft):
-    """One triplet card draft."""
+    def model_input(self) -> SourceTripletFlashcardInput:
+        """Project the persisted fact to its model-facing text."""
+        return SourceTripletFlashcardInput(
+            learning_fact_text=self.learning_fact.text
+        )
 
 
 class SourceTripletFlashcardResult(_FlashcardResult):
-    """One validated triplet card result."""
+    """One semantic triplet flashcard result."""
 
 
 __all__ = [
-    'SourceTripletFlashcardDraft',
     'SourceTripletFlashcardInput',
+    'SourceTripletFlashcardRequest',
     'SourceTripletFlashcardResult',
     'SourceTripletLearningFact',
-    'SourceTripletLearningFactEvidence',
+    'SourceTripletLearningFactCandidate',
     'SourceTripletLearningFactInput',
-    'SourceTripletLearningFactResult',
+    'SourceTripletLearningFactOccurrence',
+    'SourceTripletLearningFactRequest',
 ]

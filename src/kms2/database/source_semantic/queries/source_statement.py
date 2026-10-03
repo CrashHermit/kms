@@ -108,7 +108,7 @@ ORDER BY community_id, uuid
 """
 
 REPLACE_SOURCE_STATEMENT_HUBS = """
-CALL {
+CALL () {
     MATCH (old_hub:SourceStatementHub {source_uuid: $source_uuid})
     DETACH DELETE old_hub
     RETURN count(*) AS deleted

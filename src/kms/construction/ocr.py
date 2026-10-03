@@ -147,7 +147,7 @@ class OCRResponse(BaseModel):
         return value
 
     @classmethod
-    def from_raw(cls, raw_response: dict[str, Any]) -> 'OCRResponse':
+    def from_raw(cls, raw_response: dict[str, Any]) -> OCRResponse:
         """Validates and retains one raw Mistral response."""
         response = cls.model_validate(raw_response)
         response._raw_response = raw_response
@@ -249,7 +249,7 @@ class OCRRequestOptions(BaseModel):
     bbox_annotation_format: dict[str, Any] | None = None
 
     @classmethod
-    def with_references(cls) -> 'OCRRequestOptions':
+    def with_references(cls) -> OCRRequestOptions:
         """Returns options enabling document reference extraction."""
         return cls(
             document_annotation_format=REFERENCE_ANNOTATION_FORMAT,
@@ -257,7 +257,7 @@ class OCRRequestOptions(BaseModel):
         )
 
     @classmethod
-    def with_image_metadata(cls) -> 'OCRRequestOptions':
+    def with_image_metadata(cls) -> OCRRequestOptions:
         """Returns options enabling image classification metadata."""
         return cls(bbox_annotation_format=BBOX_ANNOTATION_FORMAT)
 
@@ -486,7 +486,7 @@ def _write_image(data: str, path: Path) -> None:
         data = data.split(',', 1)[-1]
     try:
         path.write_bytes(base64.b64decode(data))
-    except (ValueError, OSError):
+    except ValueError, OSError:
         pass
 
 
