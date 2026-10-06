@@ -1,5 +1,11 @@
 import asyncio
 
+from kms2_token_helpers import (
+    JUDGE_BUDGET,
+    RERANKER_COUNTER,
+    direct_synthesis,
+)
+
 from kms2.config.source_semantic import SourcePredicateHubSettings
 from kms2.core.model.source_semantic.source_predicate_hub import (
     SourcePredicateHubCandidate,
@@ -147,7 +153,11 @@ class _Repository:
 
 
 class _Synthesis:
-    async def aforward(self, *, request):
+    def __init__(self):
+        self.requests = []
+
+    async def acall(self, *, request):
+        self.requests.append(request)
         return SourcePredicateHubDefinition(
             predicate='supports', description='provides support'
         )
@@ -168,7 +178,7 @@ class _Judge:
     def __init__(self):
         self.requests = []
 
-    async def aforward(self, *, requests: list[SourcePredicateHubJudgeInput]):
+    async def acall(self, *, requests: list[SourcePredicateHubJudgeInput]):
         self.requests.append(requests)
         return [
             SourcePredicateHubJudgeDecision(
@@ -181,7 +191,7 @@ class _Judge:
 async def _run_predicate(node, state):
     state = state.model_copy(update=await node.load_candidates(state))
     rerank_results = []
-    sends = node.dispatch_rerank(state)
+    sends = await node.dispatch_rerank(state)
     if isinstance(sends, list):
         for send in sends:
             rerank_results.extend(
@@ -194,7 +204,7 @@ async def _run_predicate(node, state):
     )
     state = state.model_copy(update=node.collect_rerank(state))
     judge_results = []
-    sends = node.dispatch_judge(state)
+    sends = await node.dispatch_judge(state)
     if isinstance(sends, list):
         for send in sends:
             judge_results.extend(
@@ -226,18 +236,35 @@ async def _run_predicate(node, state):
 def test_predicate_node_judge_receives_both_directed_contexts():
     repository = _Repository()
     judge = _Judge()
+    synthesis = _Synthesis()
     node = SourcePredicateHubNode(
         repository,
-        _Synthesis(),
+        synthesis,
         judge,
         _Reranker(),
         _Embedding(),
         SourcePredicateHubSettings(),
+        reranker_token_counter=RERANKER_COUNTER,
+        judge_budget=JUDGE_BUDGET,
+        **direct_synthesis(),
     )
 
-    asyncio.run(
+    result = asyncio.run(
         _run_predicate(node, SourceSemanticState(source_uuid='source-1'))
     )
+
+    synthesis_request = synthesis.requests[0]
+    assert synthesis_request.members[0].model_dump() == {
+        'predicate': 'supports',
+        'description': 'provides support',
+    }
+    assert result['source_predicate_hubs'][0].aliases == [
+        'supports',
+        'supports',
+    ]
+    assert result['source_predicate_hub_memberships'] == [
+        ['predicate-1', 'predicate-2']
+    ]
 
     request = judge.requests[0][0]
     assert request.left_subject == 'Alice'
@@ -258,13 +285,15 @@ def test_predicate_node_limits_judge_batches():
         _Reranker(),
         _Embedding(),
         SourcePredicateHubSettings(judge_batch_size=2),
+        reranker_token_counter=RERANKER_COUNTER,
+        judge_budget=JUDGE_BUDGET,
+        **direct_synthesis(),
     )
-
     state = SourceSemanticState(
         source_uuid='source-1',
         source_predicate_hub_borderline_pairs=[_candidate() for _ in range(3)],
     )
-    sends = node.dispatch_judge(state)
+    sends = asyncio.run(node.dispatch_judge(state))
     for send in sends:
         asyncio.run(node.judge_worker(send.arg))
 

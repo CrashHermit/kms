@@ -1,5 +1,7 @@
 import asyncio
 
+from kms2_token_helpers import direct_synthesis
+
 from kms2.core.model.source_semantic.source_triplet_hub import (
     SourceTripletHub,
     SourceTripletHubDefinition,
@@ -65,7 +67,7 @@ class _Module:
     def __init__(self):
         self.requests = []
 
-    async def aforward(self, *, request):
+    async def acall(self, *, request):
         self.requests.append(request)
         return SourceTripletHubDefinition(
             canonical_name='supports relation',
@@ -202,6 +204,7 @@ def test_source_triplet_node_deduplicates_model_evidence_and_retains_ids():
         repository,
         module,
         embedding_client,
+        **direct_synthesis(include_reranker=False),
     )
 
     result = asyncio.run(
@@ -238,6 +241,7 @@ def test_source_triplet_node_skips_synthesis_and_embedding_for_empty_groups():
         repository,
         module,
         embedding_client,
+        **direct_synthesis(include_reranker=False),
     )
 
     result = asyncio.run(

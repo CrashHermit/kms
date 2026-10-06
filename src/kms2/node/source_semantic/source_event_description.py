@@ -45,9 +45,7 @@ class SourceEventDescriptionNode:
     ) -> dict[str, list[SourceEventDescriptionResult]]:
         """Generate one description for one event occurrence."""
         request = state['source_event_description_request']
-        description = await self._module.aforward(
-            request=request.model_input,
-        )
+        description = await self._module.acall(request=request.model_input)
         return {
             'source_event_description_results': [
                 SourceEventDescriptionResult(

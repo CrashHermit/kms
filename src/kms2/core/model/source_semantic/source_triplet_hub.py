@@ -45,6 +45,30 @@ class SourceTripletHubSynthesisInput(BaseModel):
     triplets: list[str] = Field(min_length=1)
 
 
+class SourceTripletHubSummary(BaseModel):
+    """Temporary source triplet evidence summary."""
+
+    text: str = Field(min_length=1)
+
+
+class SourceTripletHubSummaryInput(BaseModel):
+    """Evidence supplied for one triplet summary."""
+
+    evidence: list[str] = Field(min_length=1)
+
+
+class SourceTripletHubSummaryMergeInput(BaseModel):
+    """Ordered triplet summaries supplied for consolidation."""
+
+    summaries: list[SourceTripletHubSummary] = Field(min_length=2)
+
+
+class SourceTripletHubSummarySynthesisInput(BaseModel):
+    """Ordered temporary triplet summaries supplied for final synthesis."""
+
+    summaries: list[SourceTripletHubSummary] = Field(min_length=1)
+
+
 class SourceTripletHubDefinition(BaseModel):
     """Canonical definition synthesized for one triplet group."""
 

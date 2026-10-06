@@ -1,5 +1,11 @@
 import asyncio
 
+from kms2_token_helpers import (
+    JUDGE_BUDGET,
+    RERANKER_COUNTER,
+    direct_synthesis,
+)
+
 from kms2.config.source_semantic import SourceEntityHubSettings
 from kms2.core.model.source_semantic.source_entity_hub import (
     SourceEntityHubCandidate,
@@ -175,7 +181,7 @@ class _Repository:
 
 
 class _Synthesis:
-    async def aforward(self, *, request):
+    async def acall(self, *, request):
         assert request.members[0].description == 'the person'
         return SourceEntityHubDefinition(
             canonical_name='Alice', description='one person'
@@ -204,7 +210,7 @@ class _Judge:
     def __init__(self):
         self.requests = []
 
-    async def aforward(self, *, requests: list[SourceEntityHubJudgeInput]):
+    async def acall(self, *, requests: list[SourceEntityHubJudgeInput]):
         self.requests.append(requests)
         return [
             SourceEntityHubJudgeDecision(index=index, belongs_in_same_hub=True)
@@ -215,7 +221,7 @@ class _Judge:
 async def _run_entity(node, state):
     state = state.model_copy(update=await node.load_candidates(state))
     rerank_results = []
-    for send in node.dispatch_rerank(state):
+    for send in await node.dispatch_rerank(state):
         result = await node.rerank_worker(send.arg)
         rerank_results.extend(result['source_entity_hub_rerank_results'])
     state = state.model_copy(
@@ -223,7 +229,7 @@ async def _run_entity(node, state):
     )
     state = state.model_copy(update=node.collect_rerank(state))
     judge_results = []
-    for send in node.dispatch_judge(state):
+    for send in await node.dispatch_judge(state):
         result = await node.judge_worker(send.arg)
         judge_results.extend(result['source_entity_hub_judge_results'])
     state = state.model_copy(
@@ -256,6 +262,9 @@ def test_entity_node_routes_scores_and_stages_without_durable_hub_write():
         reranker,
         _Embedding(),
         SourceEntityHubSettings(),
+        reranker_token_counter=RERANKER_COUNTER,
+        judge_budget=JUDGE_BUDGET,
+        **direct_synthesis(),
     )
 
     result = asyncio.run(
@@ -280,6 +289,9 @@ def test_entity_node_limits_judge_batches():
         _Reranker(),
         _Embedding(),
         SourceEntityHubSettings(judge_batch_size=2),
+        reranker_token_counter=RERANKER_COUNTER,
+        judge_budget=JUDGE_BUDGET,
+        **direct_synthesis(),
     )
 
     state = SourceSemanticState(
@@ -288,7 +300,7 @@ def test_entity_node_limits_judge_batches():
             _candidate(right_uuid=f'entity-{index}') for index in range(3)
         ],
     )
-    sends = node.dispatch_judge(state)
+    sends = asyncio.run(node.dispatch_judge(state))
     for send in sends:
         asyncio.run(node.judge_worker(send.arg))
 

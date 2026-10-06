@@ -133,6 +133,14 @@ def _block(
     return SourceBlock(uuid=uuid, block_type=block_type, content=content)
 
 
+class _TokenCounter:
+    def count_texts(self, texts):
+        return [int(bool(text)) for text in texts]
+
+
+_TOKEN_COUNTERS = (_TokenCounter(),)
+
+
 def test_fact_request_projects_uuid_free_pointer_context():
     blocks = [
         _block('before', 'before text'),
@@ -193,13 +201,14 @@ def test_fact_node_collects_pointer_facts_in_source_order():
             forward_budget=400,
             target_budget=400,
         ),
+        token_counters=_TOKEN_COUNTERS,
     )
     state = SourceSemanticState(
         source_uuid='source-1',
         blocks=[_block('first', 'first text'), _block('second', 'target text')],
     )
 
-    sends = node.dispatch(state)
+    sends = asyncio.run(node.dispatch(state))
     result = asyncio.run(node.worker(sends[1].arg))
     state.fact_results = result['fact_results']
     collected = node.collect(state)
@@ -218,6 +227,7 @@ def test_fact_dispatch_covers_every_persisted_block_in_order():
             forward_budget=400,
             target_budget=400,
         ),
+        token_counters=_TOKEN_COUNTERS,
     )
     state = SourceSemanticState(
         source_uuid='source-1',
@@ -230,7 +240,7 @@ def test_fact_dispatch_covers_every_persisted_block_in_order():
         ],
     )
 
-    sends = node.dispatch(state)
+    sends = asyncio.run(node.dispatch(state))
 
     assert [
         send.arg['fact_extraction_request'].target.source_blocks[0].uuid
@@ -470,7 +480,7 @@ class _TypedSemanticRepository:
 
 
 class _EntityDescriber:
-    async def aforward(self, *, request):
+    async def acall(self, *, request):
         return f'description of {request.term}'
 
 
@@ -604,6 +614,7 @@ def test_entity_load_orders_occurrences_and_projects_authoritative_context():
         _TypedSourceRepository(blocks),
         _TypedSemanticRepository(occurrences),
         ContextWindowSettings(backward_budget=400, forward_budget=400),
+        token_counters=_TOKEN_COUNTERS,
     )
 
     state = asyncio.run(node.run(SourceSemanticState(source_uuid='source-1')))
@@ -789,7 +800,7 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
     graph = SourceSemanticGraph(
         source_fact_source_load=SourceFactSourceLoadNode(source_repository),
         source_fact_extraction=SourceFactExtractionNode(
-            _FactExtractor(), context_window
+            _FactExtractor(), context_window, token_counters=_TOKEN_COUNTERS
         ),
         source_fact_persistence=SourceFactPersistenceNode(semantic_repository),
         source_triplet_fact_load=SourceTripletFactLoadNode(semantic_repository),
@@ -804,6 +815,7 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
                 source_repository,
                 semantic_repository,
                 context_window,
+                token_counters=_TOKEN_COUNTERS,
             ),
             'entity_description_load',
             events,
@@ -822,6 +834,7 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
                 source_repository,
                 semantic_repository,
                 context_window,
+                token_counters=_TOKEN_COUNTERS,
             ),
             'event_description_load',
             events,
@@ -838,6 +851,7 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
                 source_repository,
                 semantic_repository,
                 context_window,
+                token_counters=_TOKEN_COUNTERS,
             ),
             'predicate_description_load',
             events,
@@ -858,6 +872,7 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
                 source_repository,
                 semantic_repository,
                 context_window,
+                token_counters=_TOKEN_COUNTERS,
             ),
             'statement_description_load',
             events,
@@ -878,6 +893,7 @@ def test_semantic_graph_runs_all_typed_phases_in_one_graph():
                 source_repository,
                 semantic_repository,
                 context_window,
+                token_counters=_TOKEN_COUNTERS,
             ),
             'procedure_description_load',
             events,

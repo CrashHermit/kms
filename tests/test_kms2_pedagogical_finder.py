@@ -31,6 +31,11 @@ class BoundaryRouter:
         return candidate_block.content in self.boundaries
 
 
+class _Counter:
+    def count_texts(self, texts: list[str]) -> list[int]:
+        return [1 for _ in texts]
+
+
 def _state() -> SourceProcessingState:
     blocks = [
         SourceBlock(
@@ -69,6 +74,8 @@ def test_pedagogical_finder_excludes_claimed_members_and_reconsiders_boundary():
             start_router,
             boundary_router,
             PedagogicalFinderSettings(),
+            start_token_counters=(_Counter(),),
+            boundary_token_counters=(_Counter(),),
         ).run(state)
     )
 
@@ -99,6 +106,8 @@ def test_pedagogical_finder_emits_suffix_when_no_boundary_is_found():
             start_router,
             boundary_router,
             PedagogicalFinderSettings(),
+            start_token_counters=(_Counter(),),
+            boundary_token_counters=(_Counter(),),
         ).run(state)
     )
 

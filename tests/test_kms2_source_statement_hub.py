@@ -1,9 +1,16 @@
 import asyncio
 
+from kms2_token_helpers import (
+    JUDGE_BUDGET,
+    RERANKER_COUNTER,
+    direct_synthesis,
+)
+
 from kms2.config.source_semantic import SourceStatementHubSettings
 from kms2.core.model.source_semantic.source_statement_hub import (
     SourceStatementHubCandidate,
     SourceStatementHubDefinition,
+    SourceStatementHubMember,
     SourceStatementHubSynthesisResult,
 )
 from kms2.langgraph.source_semantic.state import SourceSemanticState
@@ -26,7 +33,18 @@ class _Repository:
 class _Embedding:
     async def embed(self, texts):
         assert list(texts) == []
-        return []
+
+
+class _Synthesis:
+    def __init__(self):
+        self.requests = []
+
+    async def acall(self, *, request):
+        self.requests.append(request)
+        return SourceStatementHubDefinition(
+            canonical_name='Conservation law',
+            description='Energy remains constant in a closed system.',
+        )
 
 
 async def _run_empty_statement(node, state):
@@ -51,6 +69,9 @@ def test_statement_hub_empty_source_is_independent_and_has_no_exercise_input():
         None,
         _Embedding(),
         SourceStatementHubSettings(),
+        reranker_token_counter=RERANKER_COUNTER,
+        judge_budget=JUDGE_BUDGET,
+        **direct_synthesis(),
     )
     result = asyncio.run(
         _run_empty_statement(node, SourceSemanticState(source_uuid='source-1'))
@@ -76,6 +97,37 @@ def test_statement_hub_candidate_contains_only_description_evidence():
         'right_description': 'claim B',
         'score': 0.9,
     }
+
+
+def test_statement_synthesis_keeps_model_evidence_and_membership_separate():
+    synthesis = _Synthesis()
+    node = SourceStatementHubNode(
+        None,
+        synthesis,
+        None,
+        None,
+        _Embedding(),
+        SourceStatementHubSettings(),
+        reranker_token_counter=RERANKER_COUNTER,
+        judge_budget=JUDGE_BUDGET,
+        **direct_synthesis(),
+    )
+    member = SourceStatementHubMember(
+        uuid='statement-1',
+        description='Energy remains constant in a closed system.',
+    )
+    result = asyncio.run(
+        node.synthesis_worker(
+            {
+                'source_statement_hub_synthesis_ordinal': 4,
+                'source_statement_hub_community': [member],
+            }
+        )
+    )['source_statement_hub_synthesis_results'][0]
+
+    assert synthesis.requests[0].members[0].description == member.description
+    assert result.membership_uuids == ['statement-1']
+    assert 'aliases' not in result.model_dump()
 
 
 def test_statement_synthesis_result_contains_only_embedding_inputs():

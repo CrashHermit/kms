@@ -12,7 +12,11 @@ from kms2.core.model.source_semantic.source_fact_extraction import (
     SourceFactExtractionResult,
     SourceFactTarget,
 )
-from kms2.core.windowing import select_window
+from kms2.core.windowing import (
+    TextTokenCounter,
+    count_text_tokens,
+    select_window,
+)
 from kms2.langgraph.source_semantic.state import SourceSemanticState
 from kms2.module.source_semantic.source_fact_extraction import (
     SourceFactExtractorModule,
@@ -32,19 +36,26 @@ class SourceFactExtractionNode:
         self,
         extractor: SourceFactExtractorModule,
         context_window: ContextWindowSettings,
+        *,
+        token_counters: tuple[TextTokenCounter, ...],
     ) -> None:
         self._extractor = extractor
         self._context_window = context_window
+        self._token_counters = token_counters
 
-    def dispatch(
+    async def dispatch(
         self, state: SourceSemanticState
     ) -> list[Send] | Literal['source_fact_collect']:
         """Dispatch one bounded target selection per canonical source block."""
+        token_counts = count_text_tokens(
+            [block.content for block in state.blocks], self._token_counters
+        )
         sends: list[Send] = []
         for position, _ in enumerate(state.blocks):
             window = select_window(
                 state.blocks,
                 [position],
+                token_counts=token_counts,
                 backward_budget=self._context_window.backward_budget,
                 forward_budget=self._context_window.forward_budget,
                 target_budget=self._context_window.target_budget,

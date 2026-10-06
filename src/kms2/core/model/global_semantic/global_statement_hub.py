@@ -54,6 +54,30 @@ class GlobalStatementHubSynthesisInput(BaseModel):
     members: list[GlobalStatementHubSynthesisMember] = Field(min_length=1)
 
 
+class GlobalStatementHubSummary(BaseModel):
+    """Temporary statement evidence summary, not a hub vertex."""
+
+    text: str = Field(min_length=1)
+
+
+class GlobalStatementHubSummaryInput(BaseModel):
+    """Statement evidence supplied for one summary."""
+
+    evidence: list[str] = Field(min_length=1)
+
+
+class GlobalStatementHubSummaryMergeInput(BaseModel):
+    """Ordered statement summaries supplied for one merge."""
+
+    summaries: list[GlobalStatementHubSummary] = Field(min_length=2)
+
+
+class GlobalStatementHubSummarySynthesisInput(BaseModel):
+    """Ordered statement summaries supplied to final synthesis."""
+
+    summaries: list[GlobalStatementHubSummary] = Field(min_length=1)
+
+
 class GlobalStatementHubDefinition(BaseModel):
     """Canonical definition synthesized for one global statement community."""
 

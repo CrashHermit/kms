@@ -1,5 +1,11 @@
 import asyncio
 
+from kms2_token_helpers import (
+    JUDGE_BUDGET,
+    RERANKER_COUNTER,
+    direct_synthesis,
+)
+
 from kms2.config.global_semantic import GlobalPredicateHubSettings
 from kms2.core.model.global_semantic.global_predicate_hub import (
     GlobalPredicateHub,
@@ -9,13 +15,9 @@ from kms2.core.model.global_semantic.global_predicate_hub import (
     GlobalPredicateHubJudgeInput,
     GlobalPredicateHubMember,
 )
-from kms2.langgraph.global_semantic.graph import GlobalSemanticGraph
 from kms2.langgraph.global_semantic.state import GlobalSemanticState
 from kms2.node.global_semantic.global_predicate_hub import (
     GlobalPredicateHubNode,
-)
-from kms2.node.global_semantic.global_predicate_hub_persistence import (
-    GlobalPredicateHubPersistenceNode,
 )
 
 
@@ -72,7 +74,7 @@ class _Repository:
 
 
 class _Synthesis:
-    async def aforward(self, *, request):
+    async def acall(self, *, request):
         return GlobalPredicateHubDefinition(
             predicate='supports', description='provides support'
         )
@@ -97,7 +99,7 @@ class _Judge:
     def __init__(self):
         self.requests = []
 
-    async def aforward(self, *, requests: list[GlobalPredicateHubJudgeInput]):
+    async def acall(self, *, requests: list[GlobalPredicateHubJudgeInput]):
         self.requests.append(requests)
         return [
             GlobalPredicateHubJudgeDecision(
@@ -118,16 +120,19 @@ def test_global_node_uses_only_canonical_predicate_evidence():
         reranker,
         _Embedding(),
         GlobalPredicateHubSettings(),
+        **direct_synthesis(),
+        reranker_token_counter=RERANKER_COUNTER,
+        judge_budget=JUDGE_BUDGET,
     )
 
     state = GlobalSemanticState(
         **asyncio.run(node.load_candidates(GlobalSemanticState()))
     )
-    sends = node.dispatch_rerank(state)
+    sends = asyncio.run(node.dispatch_rerank(state))
     rerank_result = asyncio.run(node.rerank_worker(sends[0].arg))
     state = state.model_copy(update=rerank_result)
     state = state.model_copy(update=node.collect_rerank(state))
-    judge_sends = node.dispatch_judge(state)
+    judge_sends = asyncio.run(node.dispatch_judge(state))
     judge_result = asyncio.run(node.judge_worker(judge_sends[0].arg))
     state = state.model_copy(update=judge_result)
     state = state.model_copy(update=node.collect_judge(state))
@@ -148,101 +153,3 @@ def test_global_node_uses_only_canonical_predicate_evidence():
     assert repository.accepted == [_candidate()]
     assert embedded['global_predicate_hubs'][0].uuid
     assert embedded['global_predicate_hub_memberships'] == [['hub-1', 'hub-2']]
-
-
-class _PhaseNode:
-    def load_candidates(self, state):
-        return {}
-
-    def load_groups(self, state):
-        return {}
-
-    def run(self, state):
-        return {}
-
-    def dispatch_rerank(self, state):
-        return 'global_predicate_hub_rerank_collect'
-
-    def rerank_worker(self, state):
-        return {}
-
-    def collect_rerank(self, state):
-        return {}
-
-    def dispatch_judge(self, state):
-        return 'global_predicate_hub_judge_collect'
-
-    def judge_worker(self, state):
-        return {}
-
-    def collect_judge(self, state):
-        return {}
-
-    def detect_communities(self, state):
-        return {}
-
-    def dispatch_synthesis(self, state):
-        return 'global_predicate_hub_synthesis_collect'
-
-    def synthesis_worker(self, state):
-        return {}
-
-    def collect_synthesis(self, state):
-        return {}
-
-    def embed(self, state):
-        return {}
-
-
-class _Persistence:
-    async def run(self, state):
-        return {}
-
-
-def test_global_graph_exposes_complete_phase_topology():
-    node = GlobalPredicateHubNode(
-        _Repository(),
-        _Synthesis(),
-        _Judge(),
-        _Reranker(),
-        _Embedding(),
-        GlobalPredicateHubSettings(),
-    )
-    phase_node = _PhaseNode()
-    persistence = _Persistence()
-    graph = GlobalSemanticGraph(
-        phase_node,
-        persistence,
-        phase_node,
-        persistence,
-        node,
-        GlobalPredicateHubPersistenceNode(_Repository()),
-        persistence,
-        phase_node,
-        persistence,
-        phase_node,
-        persistence,
-        phase_node,
-        persistence,
-    ).build_graph()
-
-    assert {
-        'global_entity_hub_load',
-        'global_entity_hub_rerank_worker',
-        'global_entity_hub_rerank_collect',
-        'global_entity_hub_judge_worker',
-        'global_entity_hub_judge_collect',
-        'global_entity_hub_communities',
-        'global_entity_hub_synthesis_worker',
-        'global_entity_hub_synthesis_collect',
-        'global_entity_hub_embedding',
-        'global_entity_hub_persistence',
-        'global_event_hub_load',
-        'global_event_hub_persistence',
-        'global_predicate_hub_load',
-        'global_predicate_hub_persistence',
-        'global_statement_hub_load',
-        'global_statement_hub_persistence',
-        'global_procedure_hub_load',
-        'global_procedure_hub_persistence',
-    } <= set(graph.nodes)

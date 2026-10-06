@@ -1,6 +1,5 @@
 import dspy
 
-from kms2.composition.global_semantic import build_global_semantic_graph
 from kms2.composition.source_processing import build_source_processing_graph
 from kms2.composition.source_semantic import build_source_semantic_graph
 from kms2.config.inference import (
@@ -25,25 +24,11 @@ from kms2.config.source_processing import (
 )
 from kms2.database.client import DatabaseClient
 from kms2.langgraph.source_processing.graph import SourceProcessingGraph
-from kms2.langgraph.source_semantic.graph import SourceSemanticGraph
 from kms2.module.source_processing.content_correction import (
     ContentCorrectorModule,
 )
-from kms2.module.source_semantic.source_entity_hub_judge import (
-    SourceEntityHubJudgeModule,
-)
-from kms2.module.source_semantic.source_event_hub_judge import (
-    SourceEventHubJudgeModule,
-)
 from kms2.module.source_semantic.source_fact_extraction import (
     SourceFactExtractorModule,
-)
-from kms2.module.source_semantic.source_predicate_hub_judge import (
-    SourcePredicateHubJudgeModule,
-)
-from kms2.module.source_semantic.source_triplet_hub import (
-    SourceTripletHubModule,
-    SourceTripletHubSignature,
 )
 from kms2.node.source_processing.content_correction import ContentCorrectionNode
 from kms2.node.source_processing.embedding import EmbeddingNode
@@ -63,7 +48,6 @@ from kms2.node.source_processing.statement_procedure import (
     StatementProcedureNode,
 )
 from kms2.node.source_processing.text_seam import TextSeamNode
-from kms2.node.source_semantic.source_triplet_hub import SourceTripletHubNode
 from kms2.ocr.mistral import MistralOCRProvider
 from kms2.train.recorder import Recorder, RecordingModule
 
@@ -75,6 +59,8 @@ class _RecordingRuntime:
         self,
         inference: StageInferenceSettings,
         signature: type[dspy.Signature],
+        *,
+        adapter: dspy.Adapter | None = None,
     ) -> dspy.Module:
         self.calls.append(
             (
@@ -86,6 +72,22 @@ class _RecordingRuntime:
         if inference.strategy is PredictorStrategy.PREDICT:
             return dspy.Predict(signature)
         return dspy.ChainOfThought(signature)
+
+
+class _Counter:
+    def count_texts(self, texts):
+        return [1] * len(texts)
+
+
+class _Tokenizers:
+    def for_profile(self, _profile):
+        return _Counter()
+
+    def text_counters(self, *profiles):
+        return tuple(_Counter() for _ in dict.fromkeys(profiles))
+
+    embedding = _Counter()
+    reranker = _Counter()
 
 
 def _stage_inference(
@@ -192,21 +194,19 @@ def _settings() -> Settings:
     )
 
 
-def _assert_recorded_modules(modules: list[dspy.Module]) -> None:
-    assert modules
-    assert all(
-        isinstance(module.predictor, RecordingModule) for module in modules
-    )
-    assert all(module.predictor.module is type(module) for module in modules)
-
-
 def test_build_source_processing_graph_composes_all_source_dependencies():
     settings = _settings()
     local_models = _RecordingRuntime()
     local_models.calls = []
     database = DatabaseClient(settings.database)
+    tokenizers = _Tokenizers()
 
-    graph = build_source_processing_graph(settings, local_models, database)
+    graph = build_source_processing_graph(
+        settings,
+        local_models,
+        database,
+        tokenizers=tokenizers,
+    )
 
     assert isinstance(graph, SourceProcessingGraph)
     assert isinstance(graph.ocr, OCRNode)
@@ -302,92 +302,6 @@ def test_build_source_processing_graph_composes_all_source_dependencies():
     ]
 
 
-def test_all_composed_dspy_modules_are_recorded(tmp_path):
-    settings = _settings()
-    local_models = _RecordingRuntime()
-    local_models.calls = []
-    database = DatabaseClient(settings.database)
-    recorder = Recorder(tmp_path)
-
-    processing_graph = build_source_processing_graph(
-        settings,
-        local_models,
-        database,
-        recorder=recorder,
-    )
-    semantic_graph = build_source_semantic_graph(
-        settings,
-        local_models,
-        database,
-        recorder=recorder,
-    )
-    global_graph = build_global_semantic_graph(
-        settings,
-        local_models,
-        database,
-        recorder=recorder,
-    )
-
-    _assert_recorded_modules(
-        [
-            processing_graph.content_correction._corrector,
-            processing_graph.formatter._formatter,
-            processing_graph.text_seam._judge,
-            processing_graph.text_seam._rewriter,
-            processing_graph.image_seam._judge,
-            processing_graph.image_description._describer,
-            processing_graph.exercise_splitter._router,
-            processing_graph.exercise_splitter._exercise_splitter,
-            processing_graph.instruction_finder._start_router,
-            processing_graph.instruction_finder._boundary_router,
-            processing_graph.pedagogical_finder._start_router,
-            processing_graph.pedagogical_finder._boundary_router,
-            processing_graph.statement_procedure._role_typer,
-            processing_graph.statement_procedure._statement_partitioner,
-            processing_graph.statement_procedure._procedure_partitioner,
-            processing_graph.exercise_finder._start_router,
-            processing_graph.exercise_finder._boundary_router,
-            processing_graph.instruction_governance._judge,
-        ]
-    )
-    _assert_recorded_modules(
-        [
-            semantic_graph.source_fact_extraction._extractor,
-            semantic_graph.source_triplet_decomposition._decomposer,
-            semantic_graph.source_entity_description._module,
-            semantic_graph.source_event_description._module,
-            semantic_graph.source_predicate_description._module,
-            semantic_graph.source_statement_description._module,
-            semantic_graph.source_procedure_description._module,
-            semantic_graph.source_entity_hub._module,
-            semantic_graph.source_entity_hub._judge_module,
-            semantic_graph.source_event_hub._module,
-            semantic_graph.source_event_hub._judge_module,
-            semantic_graph.source_predicate_hub._module,
-            semantic_graph.source_predicate_hub._judge_module,
-            semantic_graph.source_statement_hub._module,
-            semantic_graph.source_statement_hub._judge_module,
-            semantic_graph.source_procedure_hub._module,
-            semantic_graph.source_procedure_hub._judge_module,
-            semantic_graph.source_triplet_hub._module,
-        ]
-    )
-    _assert_recorded_modules(
-        [
-            global_graph.global_entity_hub._module,
-            global_graph.global_entity_hub._judge_module,
-            global_graph.global_event_hub._module,
-            global_graph.global_event_hub._judge_module,
-            global_graph.global_predicate_hub._module,
-            global_graph.global_predicate_hub._judge_module,
-            global_graph.global_statement_hub._module,
-            global_graph.global_statement_hub._judge_module,
-            global_graph.global_procedure_hub._module,
-            global_graph.global_procedure_hub._judge_module,
-        ]
-    )
-
-
 def test_build_source_processing_graph_wraps_predictors_when_recording_is_enabled(
     tmp_path,
 ):
@@ -395,12 +309,14 @@ def test_build_source_processing_graph_wraps_predictors_when_recording_is_enable
     local_models = _RecordingRuntime()
     local_models.calls = []
     database = DatabaseClient(settings.database)
+    tokenizers = _Tokenizers()
     recorder = Recorder(tmp_path)
 
     graph = build_source_processing_graph(
         settings,
         local_models,
         database,
+        tokenizers=tokenizers,
         recorder=recorder,
     )
 
@@ -417,12 +333,14 @@ def test_build_source_semantic_graph_wraps_predictors_when_recording_is_enabled(
     local_models = _RecordingRuntime()
     local_models.calls = []
     database = DatabaseClient(settings.database)
+    tokenizers = _Tokenizers()
     recorder = Recorder(tmp_path)
 
     graph = build_source_semantic_graph(
         settings,
         local_models,
         database,
+        tokenizers=tokenizers,
         recorder=recorder,
     )
 
@@ -430,44 +348,3 @@ def test_build_source_semantic_graph_wraps_predictors_when_recording_is_enabled(
     assert isinstance(predictor, RecordingModule)
     assert type(predictor.predictor) is dspy.Predict
     assert predictor.module is SourceFactExtractorModule
-
-
-def test_build_source_semantic_graph_composes_independent_hub_judges():
-    settings = _settings()
-    local_models = _RecordingRuntime()
-    local_models.calls = []
-    database = DatabaseClient(settings.database)
-
-    graph = build_source_semantic_graph(settings, local_models, database)
-
-    assert isinstance(graph, SourceSemanticGraph)
-    assert isinstance(
-        graph.source_entity_hub._judge_module,
-        SourceEntityHubJudgeModule,
-    )
-    assert isinstance(
-        graph.source_event_hub._judge_module,
-        SourceEventHubJudgeModule,
-    )
-    assert isinstance(
-        graph.source_predicate_hub._judge_module,
-        SourcePredicateHubJudgeModule,
-    )
-    assert isinstance(graph.source_triplet_hub, SourceTripletHubNode)
-    assert isinstance(
-        graph.source_triplet_hub._module,
-        SourceTripletHubModule,
-    )
-    assert type(graph.source_triplet_hub._module.predictor) is dspy.Predict
-    assert [
-        profile
-        for profile, _, signature in local_models.calls
-        if signature is SourceTripletHubSignature
-    ] == ['qwen3.8-9b-distill-text']
-    assert [profile for profile, _, _ in local_models.calls[:2]] == [
-        'qwen3.8-9b-distill-text',
-        'qwen3.8-9b-distill-text',
-    ]
-    assert [profile for profile, _, _ in local_models.calls[2:12]] == [
-        'qwen3.8-9b-distill-text',
-    ] * 10

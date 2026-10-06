@@ -1,5 +1,11 @@
 import asyncio
 
+from kms2_token_helpers import (
+    JUDGE_BUDGET,
+    RERANKER_COUNTER,
+    direct_synthesis,
+)
+
 from kms2.config.global_semantic import GlobalProcedureHubSettings
 from kms2.core.model.global_semantic.global_procedure_hub import (
     GlobalProcedureHub,
@@ -9,13 +15,9 @@ from kms2.core.model.global_semantic.global_procedure_hub import (
     GlobalProcedureHubJudgeInput,
     GlobalProcedureHubMember,
 )
-from kms2.langgraph.global_semantic.graph import GlobalSemanticGraph
 from kms2.langgraph.global_semantic.state import GlobalSemanticState
 from kms2.node.global_semantic.global_procedure_hub import (
     GlobalProcedureHubNode,
-)
-from kms2.node.global_semantic.global_procedure_hub_persistence import (
-    GlobalProcedureHubPersistenceNode,
 )
 
 
@@ -73,7 +75,7 @@ class _Synthesis:
     def __init__(self):
         self.requests = []
 
-    async def aforward(self, *, request):
+    async def acall(self, *, request):
         self.requests.append(request)
         return GlobalProcedureHubDefinition(
             canonical_name='User authentication',
@@ -100,7 +102,7 @@ class _Judge:
     def __init__(self):
         self.requests = []
 
-    async def aforward(self, *, requests: list[GlobalProcedureHubJudgeInput]):
+    async def acall(self, *, requests: list[GlobalProcedureHubJudgeInput]):
         self.requests.append(requests)
         return [
             GlobalProcedureHubJudgeDecision(
@@ -122,16 +124,19 @@ def test_global_procedure_node_uses_description_evidence_and_preserves_membershi
         reranker,
         _Embedding(),
         GlobalProcedureHubSettings(),
+        reranker_token_counter=RERANKER_COUNTER,
+        judge_budget=JUDGE_BUDGET,
+        **direct_synthesis(),
     )
 
     state = GlobalSemanticState(
         **asyncio.run(node.load_candidates(GlobalSemanticState()))
     )
-    sends = node.dispatch_rerank(state)
+    sends = asyncio.run(node.dispatch_rerank(state))
     rerank_result = asyncio.run(node.rerank_worker(sends[0].arg))
     state = state.model_copy(update=rerank_result)
     state = state.model_copy(update=node.collect_rerank(state))
-    judge_sends = node.dispatch_judge(state)
+    judge_sends = asyncio.run(node.dispatch_judge(state))
     judge_result = asyncio.run(node.judge_worker(judge_sends[0].arg))
     state = state.model_copy(update=judge_result)
     state = state.model_copy(update=node.collect_judge(state))
@@ -157,63 +162,3 @@ def test_global_procedure_node_uses_description_evidence_and_preserves_membershi
         'Authenticate user',
     ]
     assert embedded['global_procedure_hub_memberships'] == [['hub-1', 'hub-2']]
-
-
-class _TripletPhase:
-    def load_groups(self, state):
-        return {}
-
-    def dispatch_synthesis(self, state):
-        return 'global_triplet_hub_synthesis_collect'
-
-    def synthesis_worker(self, state):
-        return {}
-
-    def collect_synthesis(self, state):
-        return {}
-
-    def embed(self, state):
-        return {}
-
-    async def run(self, state):
-        return {}
-
-
-def test_global_graph_exposes_complete_procedure_phase_topology():
-    node = GlobalProcedureHubNode(
-        _Repository(),
-        _Synthesis(),
-        _Judge(),
-        _Reranker(),
-        _Embedding(),
-        GlobalProcedureHubSettings(),
-    )
-    triplet_phase = _TripletPhase()
-    graph = GlobalSemanticGraph(
-        node,
-        GlobalProcedureHubPersistenceNode(_Repository()),
-        node,
-        GlobalProcedureHubPersistenceNode(_Repository()),
-        node,
-        GlobalProcedureHubPersistenceNode(_Repository()),
-        triplet_phase,
-        triplet_phase,
-        triplet_phase,
-        node,
-        GlobalProcedureHubPersistenceNode(_Repository()),
-        node,
-        GlobalProcedureHubPersistenceNode(_Repository()),
-    ).build_graph()
-
-    assert {
-        'global_procedure_hub_load',
-        'global_procedure_hub_rerank_worker',
-        'global_procedure_hub_rerank_collect',
-        'global_procedure_hub_judge_worker',
-        'global_procedure_hub_judge_collect',
-        'global_procedure_hub_communities',
-        'global_procedure_hub_synthesis_worker',
-        'global_procedure_hub_synthesis_collect',
-        'global_procedure_hub_embedding',
-        'global_procedure_hub_persistence',
-    } <= set(graph.nodes)

@@ -59,6 +59,30 @@ class GlobalEventHubSynthesisInput(BaseModel):
     members: list[GlobalEventHubSynthesisMember] = Field(min_length=1)
 
 
+class GlobalEventHubSummary(BaseModel):
+    """Temporary text summary of global event evidence."""
+
+    text: str = Field(min_length=1)
+
+
+class GlobalEventHubSummaryInput(BaseModel):
+    """Evidence supplied to global event summarization."""
+
+    evidence: list[str] = Field(min_length=1)
+
+
+class GlobalEventHubSummaryMergeInput(BaseModel):
+    """Ordered partial summaries supplied for global event consolidation."""
+
+    summaries: list[GlobalEventHubSummary] = Field(min_length=2)
+
+
+class GlobalEventHubSummarySynthesisInput(BaseModel):
+    """Ordered partial summaries supplied for final event synthesis."""
+
+    summaries: list[GlobalEventHubSummary] = Field(min_length=1)
+
+
 class GlobalEventHubDefinition(BaseModel):
     """Canonical definition synthesized for one global event community."""
 

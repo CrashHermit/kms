@@ -13,18 +13,29 @@ from kms2.core.model.global_semantic.global_event_hub import (
     GlobalEventHubJudgeResult,
     GlobalEventHubMember,
     GlobalEventHubRerankResult,
+    GlobalEventHubSummary,
+    GlobalEventHubSummaryInput,
+    GlobalEventHubSummaryMergeInput,
+    GlobalEventHubSummarySynthesisInput,
     GlobalEventHubSynthesisInput,
     GlobalEventHubSynthesisMember,
     GlobalEventHubSynthesisResult,
 )
 from kms2.core.reranking import RerankerClient
-from kms2.core.windowing import estimate_text_tokens
+from kms2.core.windowing import (
+    TextTokenCounter,
+    TokenBudget,
+    fits_token_budget,
+    pack_items,
+)
 from kms2.database.global_semantic.global_event_hub_repository import (
     GlobalEventHubRepository,
 )
 from kms2.langgraph.global_semantic.state import GlobalSemanticState
 from kms2.module.global_semantic.global_event_hub import (
     GlobalEventHubModule,
+    GlobalEventHubSummaryMergeModule,
+    GlobalEventHubSummaryModule,
 )
 from kms2.module.global_semantic.global_event_hub_judge import (
     GlobalEventHubJudgeModule,
@@ -64,6 +75,15 @@ class GlobalEventHubNode:
         reranker: RerankerClient,
         embedding_client: EmbeddingClient,
         settings: GlobalEventHubSettings,
+        *,
+        reranker_token_counter: TextTokenCounter,
+        reranker_overhead_tokens: int,
+        judge_budget: TokenBudget,
+        summary_module: GlobalEventHubSummaryModule,
+        merge_module: GlobalEventHubSummaryMergeModule,
+        final_budget: TokenBudget,
+        summary_budget: TokenBudget,
+        merge_budget: TokenBudget,
     ) -> None:
         self._repository = repository
         self._module = module
@@ -71,6 +91,14 @@ class GlobalEventHubNode:
         self._reranker = reranker
         self._embedding_client = embedding_client
         self._settings = settings
+        self._summary_module = summary_module
+        self._merge_module = merge_module
+        self._final_budget = final_budget
+        self._summary_budget = summary_budget
+        self._merge_budget = merge_budget
+        self._reranker_token_counter = reranker_token_counter
+        self._reranker_overhead_tokens = reranker_overhead_tokens
+        self._judge_budget = judge_budget
 
     async def load_candidates(
         self, state: GlobalSemanticState
@@ -82,7 +110,7 @@ class GlobalEventHubNode:
         )
         return {'global_event_hub_candidates': candidates}
 
-    def dispatch_rerank(
+    async def dispatch_rerank(
         self, state: GlobalSemanticState
     ) -> list[Send] | Literal['global_event_hub_rerank_collect']:
         """Partition event candidates into ordered reranker batches."""
@@ -95,23 +123,24 @@ class GlobalEventHubNode:
             grouped.setdefault(candidate.left_uuid, []).append(candidate)
         for group in grouped.values():
             left = group[0]
-            left_text = _event_text(
-                left.left_name,
-                left.left_description,
+            left_text = _event_text(left.left_name, left.left_description)
+            right_texts = [
+                _event_text(candidate.right_name, candidate.right_description)
+                for candidate in group
+            ]
+            costs = self._reranker_token_counter.count_texts(
+                [left_text, *right_texts]
             )
-            left_cost = estimate_text_tokens(left_text)
+            left_cost, *right_costs = costs
             batch: list[GlobalEventHubCandidate] = []
-            batch_cost = left_cost
-            for candidate in group:
-                right_cost = estimate_text_tokens(
-                    _event_text(
-                        candidate.right_name,
-                        candidate.right_description,
-                    )
-                )
+            batch_cost = 0
+            for candidate, right_cost in zip(group, right_costs, strict=True):
                 if (
                     batch
-                    and batch_cost + right_cost
+                    and batch_cost
+                    + left_cost
+                    + right_cost
+                    + self._reranker_overhead_tokens
                     > self._settings.reranker_token_budget
                 ):
                     sends.append(
@@ -126,9 +155,11 @@ class GlobalEventHubNode:
                     )
                     ordinal += 1
                     batch = []
-                    batch_cost = left_cost
+                    batch_cost = 0
                 batch.append(candidate)
-                batch_cost += right_cost
+                batch_cost += (
+                    left_cost + right_cost + self._reranker_overhead_tokens
+                )
             if batch:
                 sends.append(
                     Send(
@@ -194,54 +225,43 @@ class GlobalEventHubNode:
             ],
         }
 
-    def dispatch_judge(
+    async def dispatch_judge(
         self, state: GlobalSemanticState
     ) -> list[Send] | Literal['global_event_hub_judge_collect']:
         """Partition borderline event pairs into ordered judge batches."""
         if not state.global_event_hub_borderline_pairs:
             return 'global_event_hub_judge_collect'
-        sends: list[Send] = []
-        batch: list[GlobalEventHubCandidate] = []
-        batch_cost = 0
-        ordinal = 0
-        for candidate in state.global_event_hub_borderline_pairs:
-            cost = estimate_text_tokens(_event_judge_text(candidate))
-            if batch and (
-                len(batch) >= self._settings.judge_batch_size
-                or batch_cost + cost > self._settings.judge_token_budget
-            ):
-                sends.append(
-                    Send(
-                        'global_event_hub_judge_worker',
-                        {
-                            'global_event_hub_judge_ordinal': ordinal,
-                            'global_event_hub_batch': batch,
-                        },
+
+        batches = pack_items(
+            state.global_event_hub_borderline_pairs,
+            token_counts=self._judge_budget.counter.count_texts(
+                [
+                    _event_judge_input(0, item).model_dump_json(
+                        exclude={'index'}
                     )
-                )
-                ordinal += 1
-                batch = []
-                batch_cost = 0
-            batch.append(candidate)
-            batch_cost += cost
-        if batch:
-            sends.append(
-                Send(
-                    'global_event_hub_judge_worker',
-                    {
-                        'global_event_hub_judge_ordinal': ordinal,
-                        'global_event_hub_batch': batch,
-                    },
-                )
+                    for item in state.global_event_hub_borderline_pairs
+                ]
+            ),
+            token_budget=self._judge_budget.token_limit,
+            max_items=self._settings.judge_batch_size,
+        )
+        return [
+            Send(
+                'global_event_hub_judge_worker',
+                {
+                    'global_event_hub_judge_ordinal': ordinal,
+                    'global_event_hub_batch': batch,
+                },
             )
-        return sends
+            for ordinal, batch in enumerate(batches)
+        ]
 
     async def judge_worker(
         self, state: GlobalEventHubJudgeWorkerState
     ) -> dict[str, list[GlobalEventHubJudgeResult]]:
         """Judge one event borderline batch."""
         batch = state['global_event_hub_batch']
-        decisions = await self._judge_module.aforward(
+        decisions = await self._judge_module.acall(
             requests=[
                 _event_judge_input(index, item)
                 for index, item in enumerate(batch)
@@ -312,19 +332,54 @@ class GlobalEventHubNode:
     async def synthesis_worker(
         self, state: GlobalEventHubSynthesisWorkerState
     ) -> dict[str, list[GlobalEventHubSynthesisResult]]:
-        """Synthesize one event community."""
+        """Reduce event evidence to one global definition."""
         community = state['global_event_hub_community']
-        definition = await self._module.aforward(
-            request=GlobalEventHubSynthesisInput(
-                members=[
-                    GlobalEventHubSynthesisMember(
-                        name=member.name,
-                        description=member.description,
-                    )
-                    for member in community
-                ]
-            )
+        original_request = GlobalEventHubSynthesisInput(
+            members=[
+                GlobalEventHubSynthesisMember(
+                    name=member.name,
+                    description=member.description,
+                )
+                for member in community
+            ]
         )
+        if fits_token_budget(
+            token_count=self._final_budget.counter.count_texts(
+                [original_request.model_dump_json()]
+            )[0],
+            threshold=self._final_budget.token_limit,
+        ):
+            definition = await self._module.acall(request=original_request)
+        else:
+            records = [
+                member.model_dump_json() for member in original_request.members
+            ]
+
+            current = [
+                await self._summary_module.acall(
+                    request=GlobalEventHubSummaryInput(evidence=batch)
+                )
+                for batch in pack_items(
+                    records,
+                    token_counts=self._summary_budget.counter.count_texts(
+                        records
+                    ),
+                    token_budget=self._summary_budget.token_limit,
+                )
+            ]
+            while True:
+                final_request = GlobalEventHubSummarySynthesisInput(
+                    summaries=current
+                )
+                if fits_token_budget(
+                    token_count=self._final_budget.counter.count_texts(
+                        [final_request.model_dump_json()]
+                    )[0],
+                    threshold=self._final_budget.token_limit,
+                ):
+                    definition = await self._module.acall(request=final_request)
+                    break
+                current = await self._merge_summary_level(current)
         return {
             'global_event_hub_synthesis_results': [
                 GlobalEventHubSynthesisResult(
@@ -335,6 +390,43 @@ class GlobalEventHubNode:
                 )
             ]
         }
+
+    async def _merge_summary_level(
+        self, summaries: list[GlobalEventHubSummary]
+    ) -> list[GlobalEventHubSummary]:
+        """Merge one fitting level while carrying a trailing singleton."""
+
+        async def merge_batch_fits(
+            batch: list[GlobalEventHubSummary],
+        ) -> bool:
+            return fits_token_budget(
+                token_count=self._merge_budget.counter.count_texts(
+                    [
+                        GlobalEventHubSummaryMergeInput(
+                            summaries=batch
+                        ).model_dump_json()
+                    ]
+                )[0],
+                threshold=self._merge_budget.token_limit,
+            )
+
+        merged: list[GlobalEventHubSummary] = []
+        for batch in pack_items(
+            summaries,
+            token_counts=self._merge_budget.counter.count_texts(
+                [summary.model_dump_json() for summary in summaries]
+            ),
+            token_budget=self._merge_budget.token_limit,
+        ):
+            if len(batch) == 1:
+                merged.extend(batch)
+            else:
+                merged.append(
+                    await self._merge_module.acall(
+                        request=GlobalEventHubSummaryMergeInput(summaries=batch)
+                    )
+                )
+        return merged
 
     def collect_synthesis(
         self, state: GlobalSemanticState
@@ -384,14 +476,6 @@ class GlobalEventHubNode:
 def _event_text(name: str, description: str) -> str:
     """Render one canonical event for reranking."""
     return f'{name}: {description}'
-
-
-def _event_judge_text(candidate: GlobalEventHubCandidate) -> str:
-    """Render canonical event evidence for token accounting."""
-    return (
-        f'{candidate.left_name}: {candidate.left_description}\n'
-        f'{candidate.right_name}: {candidate.right_description}'
-    )
 
 
 def _event_judge_input(

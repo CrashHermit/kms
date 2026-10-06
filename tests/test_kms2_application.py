@@ -11,7 +11,7 @@ from kms2.core.model.user import Deck
 
 
 class _Runtime:
-    def __init__(self, settings):
+    def __init__(self, settings, *, embedding_token_counter=None):
         self.settings = settings
         self.entered = False
 
@@ -189,7 +189,7 @@ def test_source_semantic_rejects_source_outside_user_before_runtime(
     monkeypatch.setattr(
         application,
         'LocalModelRuntime',
-        lambda _: runtime_calls.append(True),
+        lambda _, **kwargs: runtime_calls.append(True),
     )
 
     with pytest.raises(ValueError, match='not owned by user'):
@@ -262,11 +262,18 @@ def test_ingest_source_reports_all_final_state_counts(monkeypatch):
 
     monkeypatch.setattr(application.schema, 'ensure_schema', ensure_schema)
 
-    monkeypatch.setattr(application, 'LocalModelRuntime', lambda _: runtime)
+    monkeypatch.setattr(
+        application, 'LocalModelRuntime', lambda _, **kwargs: runtime
+    )
     monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
 
     def compose(
-        received_settings, received_runtime, received_database, *, recorder
+        received_settings,
+        received_runtime,
+        received_database,
+        *,
+        tokenizers,
+        recorder,
     ):
         composition_calls.append(
             (
@@ -347,10 +354,12 @@ def test_ingest_source_passes_one_opt_in_recorder(monkeypatch, tmp_path):
     graph = _SourceProcessingGraph()
     recorder_calls = []
 
-    monkeypatch.setattr(application, 'LocalModelRuntime', lambda _: runtime)
+    monkeypatch.setattr(
+        application, 'LocalModelRuntime', lambda _, **kwargs: runtime
+    )
     monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
 
-    def compose(*args, recorder):
+    def compose(*args, tokenizers, recorder):
         recorder_calls.append(recorder)
         return _ComposedGraph(graph)
 
@@ -404,11 +413,18 @@ def test_run_source_semantic_stage_uses_one_complete_semantic_graph(
     composed = _ComposedGraph(graph)
     composition_calls = []
 
-    monkeypatch.setattr(application, 'LocalModelRuntime', lambda _: runtime)
+    monkeypatch.setattr(
+        application, 'LocalModelRuntime', lambda _, **kwargs: runtime
+    )
     monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
 
     def compose(
-        received_settings, received_runtime, received_database, *, recorder
+        received_settings,
+        received_runtime,
+        received_database,
+        *,
+        tokenizers,
+        recorder,
     ):
         composition_calls.append(
             (
@@ -466,14 +482,16 @@ def test_combined_pipeline_reuses_resources_and_recorder(monkeypatch, tmp_path):
 
     monkeypatch.setattr(application.schema, 'ensure_schema', ensure_schema)
 
-    monkeypatch.setattr(application, 'LocalModelRuntime', lambda _: runtime)
+    monkeypatch.setattr(
+        application, 'LocalModelRuntime', lambda _, **kwargs: runtime
+    )
     monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
 
-    def compose_source(*args, recorder):
+    def compose_source(*args, tokenizers, recorder):
         source_calls.append((*args, recorder))
         return source_composed
 
-    def compose_semantic(*args, recorder):
+    def compose_semantic(*args, tokenizers, recorder):
         semantic_calls.append((*args, recorder))
         return semantic_composed
 
@@ -514,7 +532,9 @@ def test_schema_failure_closes_database_before_starting_runtime(monkeypatch):
         raise RuntimeError('schema failed')
 
     monkeypatch.setattr(application.schema, 'ensure_schema', fail_schema)
-    monkeypatch.setattr(application, 'LocalModelRuntime', lambda _: runtime)
+    monkeypatch.setattr(
+        application, 'LocalModelRuntime', lambda _, **kwargs: runtime
+    )
     monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
     monkeypatch.setattr(
         application,
@@ -557,7 +577,9 @@ def test_ingest_source_cancellation_closes_runtime_before_database(monkeypatch):
         return None
 
     monkeypatch.setattr(application.schema, 'ensure_schema', ensure_schema)
-    monkeypatch.setattr(application, 'LocalModelRuntime', lambda _: runtime)
+    monkeypatch.setattr(
+        application, 'LocalModelRuntime', lambda _, **kwargs: runtime
+    )
     monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
     monkeypatch.setattr(
         application,
@@ -596,7 +618,9 @@ def test_run_global_semantic_stage_reports_global_hub_count(monkeypatch):
                 'global_procedure_hub_count': 1,
             }
 
-    monkeypatch.setattr(application, 'LocalModelRuntime', lambda _: runtime)
+    monkeypatch.setattr(
+        application, 'LocalModelRuntime', lambda _, **kwargs: runtime
+    )
     monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
     monkeypatch.setattr(
         application,

@@ -19,6 +19,7 @@ from kms2.config.runtime import (
     RerankerSettings,
 )
 from kms2.core.reranking import RerankResult
+from kms2.core.windowing import TextTokenCounter, pack_items
 from kms2.local_models.ownership import (
     ProcessOwner,
     create_process_owner,
@@ -122,8 +123,14 @@ def _reranker_command(
 class LocalModelRuntime:
     """Own KMS2 local model processes and GPU role transitions."""
 
-    def __init__(self, settings: LocalModelRuntimeSettings) -> None:
+    def __init__(
+        self,
+        settings: LocalModelRuntimeSettings,
+        *,
+        embedding_token_counter: TextTokenCounter,
+    ) -> None:
         self._settings = settings
+        self._embedding_token_counter = embedding_token_counter
         self._lock = asyncio.Lock()
         self._state = 'stopped'
         self._active_role: tuple[ResidentRole, str | None] | None = None
@@ -194,18 +201,26 @@ class LocalModelRuntime:
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Embed ordered text inputs through the resident embedding server."""
+        if not texts:
+            return []
+        costs = self._embedding_token_counter.count_texts(texts)
+        batches = pack_items(
+            texts,
+            token_counts=costs,
+            token_budget=self._settings.embedding.batch_token_budget,
+            max_items=self._settings.embedding.batch_size,
+        )
 
         async def operation() -> object:
             client = self._embedding_client
             assert client is not None
             vectors: list[list[float]] = []
-            batch_size = self._settings.embedding.batch_size
-            for start in range(0, len(texts), batch_size):
+            for batch in batches:
                 response = await client.post(
                     '/v1/embeddings',
                     json={
                         'model': self._settings.embedding.model.model_id,
-                        'input': texts[start : start + batch_size],
+                        'input': batch,
                     },
                 )
                 payload = cast(_EmbeddingResponse, response.json())
@@ -248,6 +263,8 @@ class LocalModelRuntime:
         self,
         inference: StageInferenceSettings,
         signature: type[dspy.Signature],
+        *,
+        adapter: dspy.Adapter | None = None,
     ) -> RuntimePredictor:
         """Build a DSPy predictor controlled by this runtime."""
         router = self._router
@@ -271,7 +288,9 @@ class LocalModelRuntime:
         else:
             predictor = dspy.ChainOfThought(signature)
         predictor.set_lm(lm)
-        return RuntimePredictor(self, inference.model_server_profile, predictor)
+        return RuntimePredictor(
+            self, inference.model_server_profile, predictor, adapter=adapter
+        )
 
     async def _execute(
         self,
@@ -389,11 +408,14 @@ class RuntimePredictor(dspy.Module):
         runtime: LocalModelRuntime,
         model_server_profile: str,
         predictor: dspy.Module,
+        *,
+        adapter: dspy.Adapter | None = None,
     ) -> None:
         super().__init__()
         self._runtime = runtime
         self._model_server_profile = model_server_profile
         self.predictor = predictor
+        self._adapter = adapter
 
     def forward(self, **kwargs: object) -> object:
         """Run synchronous DSPy work outside an active event loop."""
@@ -403,11 +425,14 @@ class RuntimePredictor(dspy.Module):
             return asyncio.run(self.acall(**kwargs))
         raise RuntimeError('use acall() from an active event loop')
 
-    async def acall(self, **kwargs: object) -> object:
+    async def aforward(self, **kwargs: object) -> object:
         """Run asynchronous DSPy work with the requested profile resident."""
 
         async def operation() -> object:
-            return await self.predictor.acall(**kwargs)
+            if self._adapter is None:
+                return await self.predictor.acall(**kwargs)
+            with dspy.context(adapter=self._adapter):
+                return await self.predictor.acall(**kwargs)
 
         return await self._runtime._execute(
             ResidentRole.LLM,

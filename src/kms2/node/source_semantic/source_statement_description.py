@@ -45,7 +45,7 @@ class SourceStatementDescriptionNode:
     ) -> dict[str, list[SourceStatementDescriptionResult]]:
         """Generate one description for one source statement."""
         request = state['source_statement_description_request']
-        description = await self._module.aforward(request=request.model_input)
+        description = await self._module.acall(request=request.model_input)
         return {
             'source_statement_description_results': [
                 SourceStatementDescriptionResult(

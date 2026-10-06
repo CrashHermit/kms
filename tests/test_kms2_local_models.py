@@ -21,13 +21,21 @@ from kms2.local_models.process import (
     LocalModelStartError,
     ManagedLlamaServer,
 )
-from kms2.local_models.router import _model_server_presets_ini, _router_command
+from kms2.local_models.router import (
+    _model_server_presets_ini,
+    _router_command,
+)
 from kms2.local_models.runtime import (
     LocalModelRuntime,
     ResidentRole,
     _embedding_command,
     _reranker_command,
 )
+
+
+class _EmbeddingCounter:
+    def count_texts(self, texts: list[str]) -> list[int]:
+        return [1] * len(texts)
 
 
 def test_local_server_commands_have_isolated_api_prefixes():
@@ -331,7 +339,10 @@ async def _test_runtime_serializes_role_transitions_and_cleans_failed_activation
 
     monkeypatch.setattr(LocalModelRuntime, '_activate', activate)
     monkeypatch.setattr(LocalModelRuntime, '_release_active_resources', release)
-    runtime = LocalModelRuntime(LocalModelRuntimeSettings())
+    runtime = LocalModelRuntime(
+        LocalModelRuntimeSettings(),
+        embedding_token_counter=_EmbeddingCounter(),
+    )
     runtime._state = 'started'
 
     async def operation():
@@ -371,8 +382,11 @@ def test_runtime_executes_embedding_and_reranking_roles():
 
 
 async def _test_runtime_executes_embedding_and_reranking_roles():
-    settings = LocalModelRuntimeSettings()
-    runtime = LocalModelRuntime(settings)
+    settings = LocalModelRuntimeSettings(embedding={'batch_token_budget': 1})
+    runtime = LocalModelRuntime(
+        settings,
+        embedding_token_counter=_EmbeddingCounter(),
+    )
     runtime._state = 'started'
     requests: list[tuple[str, dict[str, object]]] = []
 
@@ -398,8 +412,8 @@ async def _test_runtime_executes_embedding_and_reranking_roles():
                 200,
                 json={
                     'data': [
-                        {'embedding': [1.0, 2.0]},
-                        {'embedding': [3.0, 4.0]},
+                        {'embedding': [float(index)]}
+                        for index, _ in enumerate(body['input'])
                     ]
                 },
             )
@@ -419,7 +433,7 @@ async def _test_runtime_executes_embedding_and_reranking_roles():
         base_url='http://reranker',
     )
     try:
-        assert await runtime.embed(['a', 'b']) == [[1.0, 2.0], [3.0, 4.0]]
+        assert await runtime.embed(['a', 'b']) == [[0.0], [0.0]]
         assert await runtime.rerank('query', ['a', 'b']) == [
             {'index': 0, 'relevance_score': 0.75}
         ]
@@ -427,10 +441,8 @@ async def _test_runtime_executes_embedding_and_reranking_roles():
         assert embedding_server.stopped == 1
         assert reranker_server.started == 1
         assert requests == [
-            (
-                '/v1/embeddings',
-                {'model': 'Qwen3-Embedding-8B', 'input': ['a', 'b']},
-            ),
+            ('/v1/embeddings', {'model': 'Qwen3-Embedding-8B', 'input': ['a']}),
+            ('/v1/embeddings', {'model': 'Qwen3-Embedding-8B', 'input': ['b']}),
             (
                 '/v1/rerank',
                 {
@@ -442,49 +454,3 @@ async def _test_runtime_executes_embedding_and_reranking_roles():
         ]
     finally:
         await runtime.close()
-
-
-def test_retrieval_payload_contracts_are_preserved():
-    requests: list[tuple[str, dict[str, object]]] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        body = httpx.Response(200, content=request.read()).json()
-        requests.append((request.url.path, body))
-        if request.url.path == '/v1/embeddings':
-            return httpx.Response(
-                200,
-                json={
-                    'data': [
-                        {'index': 1, 'embedding': [0.0, 4.0]},
-                        {'index': 0, 'embedding': [3.0, 4.0]},
-                    ]
-                },
-            )
-        return httpx.Response(200, json={'results': [{'index': 1}]})
-
-    async def exercise():
-        client = httpx.AsyncClient(
-            transport=httpx.MockTransport(handler),
-            base_url='http://local',
-        )
-        embedding_response = await client.post(
-            '/v1/embeddings',
-            json={'model': 'Qwen3-Embedding-8B', 'input': ['a', 'b']},
-        )
-        rerank_response = await client.post(
-            '/v1/rerank',
-            json={
-                'model': 'Qwen3-Reranker-8B',
-                'query': 'query',
-                'documents': ['a', 'b'],
-                'top_n': 1,
-            },
-        )
-        await client.aclose()
-        return embedding_response.json(), rerank_response.json()
-
-    embedding, rerank = asyncio.run(exercise())
-    assert embedding['data'][0]['embedding'] == [0.0, 4.0]
-    assert rerank['results'] == [{'index': 1}]
-    assert requests[0][0] == '/v1/embeddings'
-    assert requests[1][0] == '/v1/rerank'

@@ -54,6 +54,30 @@ class GlobalProcedureHubSynthesisInput(BaseModel):
     members: list[GlobalProcedureHubSynthesisMember] = Field(min_length=1)
 
 
+class GlobalProcedureHubSummary(BaseModel):
+    """Temporary global procedure evidence summary, not a hub vertex."""
+
+    text: str = Field(min_length=1)
+
+
+class GlobalProcedureHubSummaryInput(BaseModel):
+    """Leaf evidence supplied to procedure summarization."""
+
+    evidence: list[str] = Field(min_length=1)
+
+
+class GlobalProcedureHubSummaryMergeInput(BaseModel):
+    """Partial summaries supplied for procedure consolidation."""
+
+    summaries: list[GlobalProcedureHubSummary] = Field(min_length=2)
+
+
+class GlobalProcedureHubSummarySynthesisInput(BaseModel):
+    """Ordered partial summaries supplied for final procedure synthesis."""
+
+    summaries: list[GlobalProcedureHubSummary] = Field(min_length=1)
+
+
 class GlobalProcedureHubDefinition(BaseModel):
     """Canonical definition synthesized for one global procedure community."""
 

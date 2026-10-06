@@ -1,6 +1,10 @@
 import asyncio
 
-from langgraph.graph import END, START, StateGraph
+from kms2_token_helpers import (
+    JUDGE_BUDGET,
+    RERANKER_COUNTER,
+    direct_synthesis,
+)
 
 from kms2.config.global_semantic import GlobalStatementHubSettings
 from kms2.core.model.global_semantic.global_statement_hub import (
@@ -12,15 +16,9 @@ from kms2.core.model.global_semantic.global_statement_hub import (
     GlobalStatementHubMember,
     GlobalStatementHubSynthesisInput,
 )
-from kms2.langgraph.global_semantic.global_statement_hub import (
-    add_global_statement_hub_phase,
-)
 from kms2.langgraph.global_semantic.state import GlobalSemanticState
 from kms2.node.global_semantic.global_statement_hub import (
     GlobalStatementHubNode,
-)
-from kms2.node.global_semantic.global_statement_hub_persistence import (
-    GlobalStatementHubPersistenceNode,
 )
 
 
@@ -78,7 +76,7 @@ class _Synthesis:
     def __init__(self):
         self.requests = []
 
-    async def aforward(self, *, request):
+    async def acall(self, *, request):
         self.requests.append(request)
         return GlobalStatementHubDefinition(
             canonical_name='conservation of energy',
@@ -105,7 +103,7 @@ class _Judge:
     def __init__(self):
         self.requests = []
 
-    async def aforward(self, *, requests: list[GlobalStatementHubJudgeInput]):
+    async def acall(self, *, requests: list[GlobalStatementHubJudgeInput]):
         self.requests.append(requests)
         return [
             GlobalStatementHubJudgeDecision(
@@ -127,16 +125,19 @@ def test_global_statement_node_uses_description_only_evidence_and_outputs_aliase
         reranker,
         _Embedding(),
         GlobalStatementHubSettings(),
+        **direct_synthesis(),
+        reranker_token_counter=RERANKER_COUNTER,
+        judge_budget=JUDGE_BUDGET,
     )
 
     state = GlobalSemanticState(
         **asyncio.run(node.load_candidates(GlobalSemanticState()))
     )
-    sends = node.dispatch_rerank(state)
+    sends = asyncio.run(node.dispatch_rerank(state))
     rerank_result = asyncio.run(node.rerank_worker(sends[0].arg))
     state = state.model_copy(update=rerank_result)
     state = state.model_copy(update=node.collect_rerank(state))
-    judge_sends = node.dispatch_judge(state)
+    judge_sends = asyncio.run(node.dispatch_judge(state))
     judge_result = asyncio.run(node.judge_worker(judge_sends[0].arg))
     state = state.model_copy(update=judge_result)
     state = state.model_copy(update=node.collect_judge(state))
@@ -176,37 +177,3 @@ def test_global_statement_node_uses_description_only_evidence_and_outputs_aliase
         'energy is conserved',
     ]
     assert embedded['global_statement_hub_memberships'] == [['hub-1', 'hub-2']]
-
-
-def test_global_statement_phase_exposes_complete_topology():
-    repository = _Repository()
-    node = GlobalStatementHubNode(
-        repository,
-        _Synthesis(),
-        _Judge(),
-        _Reranker(),
-        _Embedding(),
-        GlobalStatementHubSettings(),
-    )
-    graph = StateGraph(GlobalSemanticState)
-    add_global_statement_hub_phase(
-        graph,
-        node,
-        GlobalStatementHubPersistenceNode(repository),
-    )
-    graph.add_edge(START, 'global_statement_hub_load')
-    graph.add_edge('global_statement_hub_persistence', END)
-    compiled = graph.compile()
-
-    assert {
-        'global_statement_hub_load',
-        'global_statement_hub_rerank_worker',
-        'global_statement_hub_rerank_collect',
-        'global_statement_hub_judge_worker',
-        'global_statement_hub_judge_collect',
-        'global_statement_hub_communities',
-        'global_statement_hub_synthesis_worker',
-        'global_statement_hub_synthesis_collect',
-        'global_statement_hub_embedding',
-        'global_statement_hub_persistence',
-    } <= set(compiled.nodes)

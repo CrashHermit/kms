@@ -53,6 +53,30 @@ class SourceProcedureHubSynthesisInput(BaseModel):
     members: list[SourceProcedureHubSynthesisMember] = Field(min_length=1)
 
 
+class SourceProcedureHubSummary(BaseModel):
+    """Temporary source procedure evidence summary."""
+
+    text: str = Field(min_length=1)
+
+
+class SourceProcedureHubSummaryInput(BaseModel):
+    """Evidence supplied for one procedure summary."""
+
+    evidence: list[str] = Field(min_length=1)
+
+
+class SourceProcedureHubSummaryMergeInput(BaseModel):
+    """Ordered procedure summaries supplied for consolidation."""
+
+    summaries: list[SourceProcedureHubSummary] = Field(min_length=2)
+
+
+class SourceProcedureHubSummarySynthesisInput(BaseModel):
+    """Ordered temporary procedure summaries supplied for final synthesis."""
+
+    summaries: list[SourceProcedureHubSummary] = Field(min_length=1)
+
+
 class SourceProcedureHubDefinition(BaseModel):
     """Canonical definition synthesized for one procedure community."""
 

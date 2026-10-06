@@ -45,9 +45,7 @@ class SourcePredicateDescriptionNode:
     ) -> dict[str, list[SourcePredicateDescriptionResult]]:
         """Generate one description for one predicate occurrence."""
         request = state['source_predicate_description_request']
-        description = await self._module.aforward(
-            request=request.model_input,
-        )
+        description = await self._module.acall(request=request.model_input)
         return {
             'source_predicate_description_results': [
                 SourcePredicateDescriptionResult(

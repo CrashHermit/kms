@@ -2,7 +2,12 @@
 
 from kms2.config.source_processing import InstructionGovernanceSettings
 from kms2.core.model.source_processing.instruction import Instruction
-from kms2.core.windowing import project_block, select_window
+from kms2.core.windowing import (
+    TextTokenCounter,
+    count_text_tokens,
+    project_block,
+    select_window,
+)
 from kms2.langgraph.source_processing.state import SourceProcessingState
 from kms2.module.source_processing.instruction_governance import (
     InstructionGovernanceModule,
@@ -16,9 +21,12 @@ class InstructionGovernanceNode:
         self,
         judge: InstructionGovernanceModule,
         settings: InstructionGovernanceSettings,
+        *,
+        token_counters: tuple[TextTokenCounter, ...],
     ) -> None:
         self._judge = judge
         self._settings = settings
+        self._token_counters = token_counters
 
     async def run(
         self, state: SourceProcessingState
@@ -55,7 +63,26 @@ class InstructionGovernanceNode:
                 (member_positions[0], member_positions[-1], statement)
             )
         statement_ranges.sort(key=lambda item: item[0])
-
+        has_eligible_statement = any(
+            instruction_end < statement_start < next_instruction_start
+            for instruction_index, (
+                _instruction_start,
+                instruction_end,
+                _instruction,
+                _instruction_positions,
+            ) in enumerate(instruction_ranges)
+            for next_instruction_start in [
+                instruction_ranges[instruction_index + 1][0]
+                if instruction_index + 1 < len(instruction_ranges)
+                else len(blocks)
+            ]
+            for statement_start, _statement_end, _statement in statement_ranges
+        )
+        token_counts = []
+        if instruction_ranges and has_eligible_statement:
+            token_counts = count_text_tokens(
+                [block.content for block in blocks], self._token_counters
+            )
         governed_instructions: list[Instruction] = []
         statement_cursor = 0
         for instruction_index, (
@@ -88,6 +115,7 @@ class InstructionGovernanceNode:
                 statement_window = select_window(
                     blocks,
                     statement_positions,
+                    token_counts=token_counts,
                     backward_budget=self._settings.context_window.backward_budget,
                     forward_budget=self._settings.context_window.forward_budget,
                     target_budget=self._settings.context_window.target_budget,

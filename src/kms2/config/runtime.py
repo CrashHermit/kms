@@ -7,6 +7,7 @@ class ModelServerProfileSettings(BaseModel):
     """Load-time settings for one llama.cpp model-server profile."""
 
     model_path: str
+    tokenizer_path: str
     mmproj_path: str | None = None
     context_size: int = 32768
     cache_type_k: str = ''
@@ -40,10 +41,12 @@ class RouterServerSettings(LlamaServerSettings):
         default_factory=lambda: {
             'gemma-text-32k': ModelServerProfileSettings(
                 model_path='~/models/gemma-4-e4b-qat/gemma-4-E4B_q4_0-it.gguf',
+                tokenizer_path='~/models/gemma-4-e4b-qat/tokenizer.json',
                 reasoning='on',
             ),
             'gemma-vision-8k': ModelServerProfileSettings(
                 model_path='~/models/gemma-4-e4b-qat/gemma-4-E4B_q4_0-it.gguf',
+                tokenizer_path='~/models/gemma-4-e4b-qat/tokenizer.json',
                 mmproj_path=(
                     '~/models/gemma-4-e4b-qat/gemma-4-E4B-it-mmproj.gguf'
                 ),
@@ -55,6 +58,7 @@ class RouterServerSettings(LlamaServerSettings):
                 model_path=(
                     '~/models/qwen3.8-9b-distill/Qwen3.8-9B-Q4_K_M.gguf'
                 ),
+                tokenizer_path=('~/models/qwen3.8-9b-distill/tokenizer.json'),
                 context_size=32768,
                 cache_type_v='q4_0',
                 reasoning='on',
@@ -105,6 +109,7 @@ class EmbeddingModelSettings(BaseModel):
     model_path: str = (
         '~/models/qwen3-embedding-8b/Qwen3-Embedding-8B-Q4_K_M.gguf'
     )
+    tokenizer_path: str = '~/models/qwen3-embedding-8b/tokenizer.json'
     dimension: int = 4096
 
 
@@ -115,6 +120,7 @@ class RerankerModelSettings(BaseModel):
     model_path: str = (
         '~/models/qwen3-reranker-8b-verified/Qwen3-Reranker-8B-Q4_K_M.gguf'
     )
+    tokenizer_path: str = '~/models/qwen3-reranker-8b-verified/tokenizer.json'
 
 
 class EmbeddingSettings(BaseModel):
@@ -127,6 +133,7 @@ class EmbeddingSettings(BaseModel):
         default_factory=EmbeddingServerSettings
     )
     batch_size: int = 32
+    batch_token_budget: int = Field(default=4096, gt=0)
     timeout_seconds: float = 120.0
 
 
@@ -137,6 +144,7 @@ class RerankerSettings(BaseModel):
     server: RerankerServerSettings = Field(
         default_factory=RerankerServerSettings
     )
+    safety_margin_tokens: int = Field(default=256, ge=0)
     timeout_seconds: float = 120.0
 
 

@@ -1,4 +1,8 @@
-"""Select ordered, budgeted context around source blocks."""
+"""Count model tokens and select ordered, budgeted evidence."""
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
 from kms2.core.model.block import SourceBlock
 from kms2.core.model.context import (
@@ -16,22 +20,58 @@ def project_block(source_block: SourceBlock) -> SourceBlockContext:
     )
 
 
-def estimate_text_tokens(text: str | None) -> int:
-    """Estimate text tokens using the repository's four-characters-per-token rule."""
+@runtime_checkable
+class TextTokenCounter(Protocol):
+    """Count ordered text payloads with the consuming model's tokenizer."""
 
-    return len(text or '') // 4 + 1
+    def count_texts(self, texts: list[str]) -> list[int]:
+        """Return one raw token count per text, preserving input order."""
+        ...
 
 
-def estimate_tokens(context: SourceBlockContext) -> int:
-    """Estimate the text-context cost of one projected source block."""
+@dataclass(frozen=True, slots=True)
+class TokenBudget:
+    """Configured token counter and inclusive workload limit."""
 
-    return estimate_text_tokens(context.content)
+    counter: TextTokenCounter
+    token_limit: int
+
+
+def fits_token_budget(*, token_count: int, threshold: int) -> bool:
+    """Return whether the measured count is within the inclusive threshold."""
+    return token_count <= threshold
+
+
+class InputBudgetExceeded(ValueError):
+    """One atomic input cannot fit within the configured request budget."""
+
+
+def count_text_tokens(
+    texts: Sequence[str | None], counters: Sequence[TextTokenCounter]
+) -> list[int]:
+    """Count each payload, taking conservative costs across consuming models.
+
+    Counter results align with inputs. At least one counter is supplied for
+    nonempty text; absent content has no raw tokens or automatic BOS/EOS.
+    """
+    normalized = [text or '' for text in texts]
+    if not any(normalized):
+        return [0] * len(normalized)
+    counts = counters[0].count_texts(normalized)
+    for counter in counters[1:]:
+        other_counts = counter.count_texts(normalized)
+        counts = [
+            max(first, second)
+            for first, second in zip(counts, other_counts, strict=True)
+        ]
+    return counts
 
 
 def select_window(
     blocks: list[SourceBlock],
     target_positions: list[int],
     *,
+    token_counts: Sequence[int],
     backward_budget: int | None = None,
     forward_budget: int | None = None,
     target_budget: int = 0,
@@ -41,22 +81,24 @@ def select_window(
 
     target_start = target_positions[0]
     target_end = target_positions[-1]
-    target_cost = sum(estimate_tokens(context) for context in target)
-    for position in range(target_end + 1, len(blocks)):
-        context = project_block(blocks[position])
-        cost = estimate_tokens(context)
-        if target_cost + cost > target_budget:
-            break
-        target.append(context)
-        target_cost += cost
-        target_end = position
+    if target_budget > 0:
+        target_cost = sum(
+            token_counts[position] for position in target_positions
+        )
+        for position in range(target_end + 1, len(blocks)):
+            cost = token_counts[position]
+            if target_cost + cost > target_budget:
+                break
+            target.append(project_block(blocks[position]))
+            target_cost += cost
+            target_end = position
 
     context_before: list[SourceBlockContext] = []
-    if backward_budget is not None:
+    if backward_budget is not None and backward_budget > 0:
         before_cost = 0
         for position in range(target_start - 1, -1, -1):
             context = project_block(blocks[position])
-            cost = estimate_tokens(context)
+            cost = token_counts[position]
             if before_cost + cost > backward_budget:
                 break
             context_before.append(context)
@@ -64,11 +106,11 @@ def select_window(
         context_before.reverse()
 
     context_after: list[SourceBlockContext] = []
-    if forward_budget is not None:
+    if forward_budget is not None and forward_budget > 0:
         after_cost = 0
         for position in range(target_end + 1, len(blocks)):
             context = project_block(blocks[position])
-            cost = estimate_tokens(context)
+            cost = token_counts[position]
             if after_cost + cost > forward_budget:
                 break
             context_after.append(context)
@@ -81,14 +123,34 @@ def select_window(
     )
 
 
-def window_from(blocks: list[SourceBlock], cursor: int, budget: int) -> int:
-    """Return the exclusive endpoint of the next forward token window."""
-    end = cursor
-    accumulated = 0
-    while end < len(blocks):
-        token_count = estimate_text_tokens(blocks[end].content)
-        if end > cursor and accumulated + token_count > budget:
-            break
-        accumulated += token_count
-        end += 1
-    return end
+def pack_items[Item](
+    items: Sequence[Item],
+    *,
+    token_counts: Sequence[int],
+    token_budget: int,
+    max_items: int | None = None,
+) -> list[list[Item]]:
+    """Pack ordered whole items by precomputed integer costs."""
+    batches: list[list[Item]] = []
+    batch: list[Item] = []
+    batch_cost = 0
+    for index, (item, item_cost) in enumerate(
+        zip(items, token_counts, strict=True)
+    ):
+        exceeds_budget = batch and batch_cost + item_cost > token_budget
+        exceeds_item_limit = (
+            batch and max_items is not None and len(batch) >= max_items
+        )
+        if exceeds_budget or exceeds_item_limit:
+            batches.append(batch)
+            batch = []
+            batch_cost = 0
+        if not batch and item_cost > token_budget:
+            raise InputBudgetExceeded(
+                f'Item at index {index} cannot fit as a singleton'
+            )
+        batch.append(item)
+        batch_cost += item_cost
+    if batch:
+        batches.append(batch)
+    return batches

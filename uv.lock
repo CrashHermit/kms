@@ -628,6 +628,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pypdfium2" },
     { name = "python-dotenv" },
+    { name = "tokenizers" },
 ]
 
 [package.dev-dependencies]
@@ -650,6 +651,7 @@ requires-dist = [
     { name = "pydantic-settings", specifier = ">=2.15.0" },
     { name = "pypdfium2", specifier = ">=4" },
     { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "tokenizers", specifier = ">=0.23.1,<0.24" },
 ]
 
 [package.metadata.requires-dev]

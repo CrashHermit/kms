@@ -11,6 +11,11 @@ from kms2.config.runtime import LocalModelRuntimeSettings
 from kms2.local_models.runtime import ResidentRole, RuntimePredictor
 
 
+class _EmbeddingCounter:
+    def count_texts(self, texts: list[str]) -> list[int]:
+        return [1] * len(texts)
+
+
 class _RecordingLM:
     calls: list[tuple[str, dict[str, object]]]
 
@@ -81,7 +86,10 @@ def test_runtime_predictor_forwards_inference_options(monkeypatch):
 
     from kms2.local_models.runtime import LocalModelRuntime
 
-    runtime = LocalModelRuntime(LocalModelRuntimeSettings())
+    runtime = LocalModelRuntime(
+        LocalModelRuntimeSettings(),
+        embedding_token_counter=_EmbeddingCounter(),
+    )
     runtime._router = _Router()
     predictor = runtime.predictor(
         _stage_inference(PredictorStrategy.PREDICT),
@@ -117,7 +125,10 @@ def test_runtime_predictor_supports_configured_strategies(monkeypatch):
     )
     from kms2.local_models.runtime import LocalModelRuntime
 
-    runtime = LocalModelRuntime(LocalModelRuntimeSettings())
+    runtime = LocalModelRuntime(
+        LocalModelRuntimeSettings(),
+        embedding_token_counter=_EmbeddingCounter(),
+    )
     runtime._router = _Router()
     predictor = runtime.predictor(
         _stage_inference(PredictorStrategy.CHAIN_OF_THOUGHT),
@@ -150,3 +161,40 @@ async def _test_runtime_predictor_executes_through_requested_residency():
         (ResidentRole.LLM, 'text'),
         (ResidentRole.LLM, 'vision'),
     ]
+
+
+def test_strict_adapter_scope_is_local_to_its_predictor():
+    asyncio.run(_test_strict_adapter_scope_is_local_to_its_predictor())
+
+
+async def _test_strict_adapter_scope_is_local_to_its_predictor():
+    strict = dspy.ChatAdapter(use_json_adapter_fallback=False)
+    ambient = dspy.JSONAdapter()
+    observed = []
+    strict_running = asyncio.Event()
+    release_strict = asyncio.Event()
+
+    class Runtime:
+        async def _execute(self, role, profile, operation):
+            return await operation()
+
+    class Predictor:
+        async def acall(self, *, wait=False):
+            observed.append(dspy.settings.adapter)
+            if wait:
+                strict_running.set()
+                await release_strict.wait()
+            return 'ok'
+
+    bounded = RuntimePredictor(
+        Runtime(), 'bounded', Predictor(), adapter=strict
+    )
+    ordinary = RuntimePredictor(Runtime(), 'ordinary', Predictor())
+    with dspy.context(adapter=ambient):
+        task = asyncio.create_task(bounded.acall(wait=True))
+        await strict_running.wait()
+        assert await ordinary.acall() == 'ok'
+        release_strict.set()
+        assert await task == 'ok'
+        assert dspy.settings.adapter is ambient
+    assert observed == [strict, ambient]

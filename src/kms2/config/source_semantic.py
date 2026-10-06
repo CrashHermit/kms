@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 from kms2.config.inference import (
     ContextWindowSettings,
+    HubSynthesisBudgetSettings,
     NoRetryTextInferenceSettings,
     TextInferenceSettings,
 )
@@ -28,6 +29,9 @@ class _SourceHubSettings(BaseModel):
 
     inference: TextInferenceSettings = Field(
         default_factory=TextInferenceSettings
+    )
+    synthesis_budget: HubSynthesisBudgetSettings = Field(
+        default_factory=HubSynthesisBudgetSettings
     )
     judge: NoRetryTextInferenceSettings = Field(
         default_factory=NoRetryTextInferenceSettings
@@ -69,6 +73,9 @@ class SourceTripletHubSettings(BaseModel):
 
     inference: NoRetryTextInferenceSettings = Field(
         default_factory=NoRetryTextInferenceSettings
+    )
+    synthesis_budget: HubSynthesisBudgetSettings = Field(
+        default_factory=HubSynthesisBudgetSettings
     )
 
 

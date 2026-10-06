@@ -25,6 +25,11 @@ from kms2.node.source_processing.text_seam import TextSeamNode
 from kms2.ocr.provider import OCRProvider
 
 
+class _Counter:
+    def count_texts(self, texts: list[str]) -> list[int]:
+        return [1 for _ in texts]
+
+
 class _FalseRouter:
     async def aforward(self, **kwargs: object) -> bool:
         return False
@@ -70,6 +75,7 @@ def _no_exercise_splitter() -> ExerciseSplitterNode:
             backward_budget=100,
             forward_budget=100,
         ),
+        token_counters=(_Counter(),),
     )
 
 
@@ -77,6 +83,7 @@ def _no_describer() -> ImageDescriptionNode:
     return ImageDescriptionNode(
         _UnexpectedDescriber(),
         ContextWindowSettings(backward_budget=100, forward_budget=100),
+        token_counters=(_Counter(),),
     )
 
 
@@ -467,6 +474,7 @@ def test_source_graph_merges_adjacent_image_artifacts_after_text_seams():
         ImageDescriptionNode(
             FakeDescriber(),
             ContextWindowSettings(backward_budget=100, forward_budget=100),
+            token_counters=(_Counter(),),
         ),
         _no_exercise_splitter(),
         _NoInstructionFinder(),

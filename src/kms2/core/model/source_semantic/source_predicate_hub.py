@@ -67,6 +67,30 @@ class SourcePredicateHubSynthesisInput(BaseModel):
     members: list[SourcePredicateHubSynthesisMember] = Field(min_length=1)
 
 
+class SourcePredicateHubSummary(BaseModel):
+    """Temporary predicate-hub summary content."""
+
+    text: str = Field(min_length=1)
+
+
+class SourcePredicateHubSummaryInput(BaseModel):
+    """Evidence supplied to predicate-hub summary generation."""
+
+    evidence: list[str] = Field(min_length=1)
+
+
+class SourcePredicateHubSummaryMergeInput(BaseModel):
+    """Ordered partial summaries supplied to predicate-hub merging."""
+
+    summaries: list[SourcePredicateHubSummary] = Field(min_length=2)
+
+
+class SourcePredicateHubSummarySynthesisInput(BaseModel):
+    """Partial summaries supplied to final predicate-hub synthesis."""
+
+    summaries: list[SourcePredicateHubSummary] = Field(min_length=1)
+
+
 class SourcePredicateHubDefinition(BaseModel):
     """Canonical definition synthesized for one predicate community."""
 

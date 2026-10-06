@@ -45,7 +45,7 @@ class SourceProcedureDescriptionNode:
     ) -> dict[str, list[SourceProcedureDescriptionResult]]:
         """Generate one description for one source procedure."""
         request = state['source_procedure_description_request']
-        description = await self._module.aforward(request=request.model_input)
+        description = await self._module.acall(request=request.model_input)
         return {
             'source_procedure_description_results': [
                 SourceProcedureDescriptionResult(

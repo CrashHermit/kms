@@ -13,18 +13,29 @@ from kms2.core.model.global_semantic.global_procedure_hub import (
     GlobalProcedureHubJudgeResult,
     GlobalProcedureHubMember,
     GlobalProcedureHubRerankResult,
+    GlobalProcedureHubSummary,
+    GlobalProcedureHubSummaryInput,
+    GlobalProcedureHubSummaryMergeInput,
+    GlobalProcedureHubSummarySynthesisInput,
     GlobalProcedureHubSynthesisInput,
     GlobalProcedureHubSynthesisMember,
     GlobalProcedureHubSynthesisResult,
 )
 from kms2.core.reranking import RerankerClient
-from kms2.core.windowing import estimate_text_tokens
+from kms2.core.windowing import (
+    TextTokenCounter,
+    TokenBudget,
+    fits_token_budget,
+    pack_items,
+)
 from kms2.database.global_semantic.global_procedure_hub_repository import (
     GlobalProcedureHubRepository,
 )
 from kms2.langgraph.global_semantic.state import GlobalSemanticState
 from kms2.module.global_semantic.global_procedure_hub import (
     GlobalProcedureHubModule,
+    GlobalProcedureHubSummaryMergeModule,
+    GlobalProcedureHubSummaryModule,
 )
 from kms2.module.global_semantic.global_procedure_hub_judge import (
     GlobalProcedureHubJudgeModule,
@@ -64,6 +75,15 @@ class GlobalProcedureHubNode:
         reranker: RerankerClient,
         embedding_client: EmbeddingClient,
         settings: GlobalProcedureHubSettings,
+        *,
+        reranker_token_counter: TextTokenCounter,
+        reranker_overhead_tokens: int,
+        judge_budget: TokenBudget,
+        summary_module: GlobalProcedureHubSummaryModule,
+        merge_module: GlobalProcedureHubSummaryMergeModule,
+        final_budget: TokenBudget,
+        summary_budget: TokenBudget,
+        merge_budget: TokenBudget,
     ) -> None:
         self._repository = repository
         self._module = module
@@ -71,6 +91,14 @@ class GlobalProcedureHubNode:
         self._reranker = reranker
         self._embedding_client = embedding_client
         self._settings = settings
+        self._reranker_token_counter = reranker_token_counter
+        self._reranker_overhead_tokens = reranker_overhead_tokens
+        self._judge_budget = judge_budget
+        self._summary_module = summary_module
+        self._merge_module = merge_module
+        self._final_budget = final_budget
+        self._summary_budget = summary_budget
+        self._merge_budget = merge_budget
 
     async def load_candidates(
         self, state: GlobalSemanticState
@@ -84,7 +112,7 @@ class GlobalProcedureHubNode:
         )
         return {'global_procedure_hub_candidates': candidates}
 
-    def dispatch_rerank(
+    async def dispatch_rerank(
         self, state: GlobalSemanticState
     ) -> list[Send] | Literal['global_procedure_hub_rerank_collect']:
         """Partition procedure candidates into ordered reranker batches."""
@@ -98,16 +126,23 @@ class GlobalProcedureHubNode:
         for group in grouped.values():
             left = group[0]
             left_text = _procedure_text(left.left_description)
-            left_cost = estimate_text_tokens(left_text)
+            right_texts = [
+                _procedure_text(candidate.right_description)
+                for candidate in group
+            ]
+            costs = self._reranker_token_counter.count_texts(
+                [left_text, *right_texts]
+            )
+            left_cost, *right_costs = costs
             batch: list[GlobalProcedureHubCandidate] = []
-            batch_cost = left_cost
-            for candidate in group:
-                right_cost = estimate_text_tokens(
-                    _procedure_text(candidate.right_description)
-                )
+            batch_cost = 0
+            for candidate, right_cost in zip(group, right_costs, strict=True):
                 if (
                     batch
-                    and batch_cost + right_cost
+                    and batch_cost
+                    + left_cost
+                    + right_cost
+                    + self._reranker_overhead_tokens
                     > self._settings.reranker_token_budget
                 ):
                     sends.append(
@@ -122,9 +157,11 @@ class GlobalProcedureHubNode:
                     )
                     ordinal += 1
                     batch = []
-                    batch_cost = left_cost
+                    batch_cost = 0
                 batch.append(candidate)
-                batch_cost += right_cost
+                batch_cost += (
+                    left_cost + right_cost + self._reranker_overhead_tokens
+                )
             if batch:
                 sends.append(
                     Send(
@@ -187,54 +224,43 @@ class GlobalProcedureHubNode:
             ],
         }
 
-    def dispatch_judge(
+    async def dispatch_judge(
         self, state: GlobalSemanticState
     ) -> list[Send] | Literal['global_procedure_hub_judge_collect']:
         """Partition borderline procedure pairs into ordered judge batches."""
         if not state.global_procedure_hub_borderline_pairs:
             return 'global_procedure_hub_judge_collect'
-        sends: list[Send] = []
-        batch: list[GlobalProcedureHubCandidate] = []
-        batch_cost = 0
-        ordinal = 0
-        for candidate in state.global_procedure_hub_borderline_pairs:
-            cost = estimate_text_tokens(_procedure_judge_text(candidate))
-            if batch and (
-                len(batch) >= self._settings.judge_batch_size
-                or batch_cost + cost > self._settings.judge_token_budget
-            ):
-                sends.append(
-                    Send(
-                        'global_procedure_hub_judge_worker',
-                        {
-                            'global_procedure_hub_judge_ordinal': ordinal,
-                            'global_procedure_hub_batch': batch,
-                        },
+
+        batches = pack_items(
+            state.global_procedure_hub_borderline_pairs,
+            token_counts=self._judge_budget.counter.count_texts(
+                [
+                    _procedure_judge_input(0, item).model_dump_json(
+                        exclude={'index'}
                     )
-                )
-                ordinal += 1
-                batch = []
-                batch_cost = 0
-            batch.append(candidate)
-            batch_cost += cost
-        if batch:
-            sends.append(
-                Send(
-                    'global_procedure_hub_judge_worker',
-                    {
-                        'global_procedure_hub_judge_ordinal': ordinal,
-                        'global_procedure_hub_batch': batch,
-                    },
-                )
+                    for item in state.global_procedure_hub_borderline_pairs
+                ]
+            ),
+            token_budget=self._judge_budget.token_limit,
+            max_items=self._settings.judge_batch_size,
+        )
+        return [
+            Send(
+                'global_procedure_hub_judge_worker',
+                {
+                    'global_procedure_hub_judge_ordinal': ordinal,
+                    'global_procedure_hub_batch': batch,
+                },
             )
-        return sends
+            for ordinal, batch in enumerate(batches)
+        ]
 
     async def judge_worker(
         self, state: GlobalProcedureHubJudgeWorkerState
     ) -> dict[str, list[GlobalProcedureHubJudgeResult]]:
         """Judge one procedure borderline batch."""
         batch = state['global_procedure_hub_batch']
-        decisions = await self._judge_module.aforward(
+        decisions = await self._judge_module.acall(
             requests=[
                 _procedure_judge_input(index, item)
                 for index, item in enumerate(batch)
@@ -305,18 +331,50 @@ class GlobalProcedureHubNode:
     async def synthesis_worker(
         self, state: GlobalProcedureHubSynthesisWorkerState
     ) -> dict[str, list[GlobalProcedureHubSynthesisResult]]:
-        """Synthesize one procedure community."""
+        """Synthesize one procedure community with evidence reduction."""
         community = state['global_procedure_hub_community']
-        definition = await self._module.aforward(
-            request=GlobalProcedureHubSynthesisInput(
-                members=[
-                    GlobalProcedureHubSynthesisMember(
-                        description=member.description,
-                    )
-                    for member in community
-                ]
-            )
+        original = GlobalProcedureHubSynthesisInput(
+            members=[
+                GlobalProcedureHubSynthesisMember(
+                    description=member.description
+                )
+                for member in community
+            ]
         )
+        if fits_token_budget(
+            token_count=self._final_budget.counter.count_texts(
+                [original.model_dump_json()]
+            )[0],
+            threshold=self._final_budget.token_limit,
+        ):
+            definition = await self._module.acall(request=original)
+        else:
+            records = [member.model_dump_json() for member in original.members]
+
+            current: list[GlobalProcedureHubSummary] = []
+            for batch in pack_items(
+                records,
+                token_counts=self._summary_budget.counter.count_texts(records),
+                token_budget=self._summary_budget.token_limit,
+            ):
+                current.append(
+                    await self._summary_module.acall(
+                        request=GlobalProcedureHubSummaryInput(evidence=batch)
+                    )
+                )
+            while True:
+                final_request = GlobalProcedureHubSummarySynthesisInput(
+                    summaries=current
+                )
+                if fits_token_budget(
+                    token_count=self._final_budget.counter.count_texts(
+                        [final_request.model_dump_json()]
+                    )[0],
+                    threshold=self._final_budget.token_limit,
+                ):
+                    definition = await self._module.acall(request=final_request)
+                    break
+                current = await self._merge_summary_level(current)
         return {
             'global_procedure_hub_synthesis_results': [
                 GlobalProcedureHubSynthesisResult(
@@ -327,6 +385,31 @@ class GlobalProcedureHubNode:
                 )
             ]
         }
+
+    async def _merge_summary_level(
+        self, summaries: list[GlobalProcedureHubSummary]
+    ) -> list[GlobalProcedureHubSummary]:
+        """Merge procedure summaries in ordered fitting batches."""
+
+        merged: list[GlobalProcedureHubSummary] = []
+        for batch in pack_items(
+            summaries,
+            token_counts=self._merge_budget.counter.count_texts(
+                [summary.model_dump_json() for summary in summaries]
+            ),
+            token_budget=self._merge_budget.token_limit,
+        ):
+            if len(batch) == 1:
+                merged.append(batch[0])
+            else:
+                merged.append(
+                    await self._merge_module.acall(
+                        request=GlobalProcedureHubSummaryMergeInput(
+                            summaries=batch
+                        )
+                    )
+                )
+        return merged
 
     def collect_synthesis(
         self, state: GlobalSemanticState
@@ -373,11 +456,6 @@ class GlobalProcedureHubNode:
 def _procedure_text(description: str) -> str:
     """Render one procedure description for reranking."""
     return description
-
-
-def _procedure_judge_text(candidate: GlobalProcedureHubCandidate) -> str:
-    """Render canonical procedure evidence for token accounting."""
-    return f'{candidate.left_description}\n{candidate.right_description}'
 
 
 def _procedure_judge_input(

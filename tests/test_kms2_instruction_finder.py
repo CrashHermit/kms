@@ -29,6 +29,11 @@ class BoundaryRouter:
         return candidate_block.content in self.boundaries
 
 
+class _Counter:
+    def count_texts(self, texts: list[str]) -> list[int]:
+        return [1 for _ in texts]
+
+
 def _state(*contents: str) -> SourceProcessingState:
     blocks = [
         SourceBlock(
@@ -52,6 +57,8 @@ def test_instruction_finder_reconsiders_exclusive_boundary_candidate():
         start_router,
         boundary_router,
         InstructionFinderSettings(),
+        start_token_counters=(_Counter(),),
+        boundary_token_counters=(_Counter(),),
     )
 
     result = asyncio.run(

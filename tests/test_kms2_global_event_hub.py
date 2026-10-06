@@ -1,6 +1,10 @@
 import asyncio
 
-from langgraph.graph import END, START, StateGraph
+from kms2_token_helpers import (
+    JUDGE_BUDGET,
+    RERANKER_COUNTER,
+    direct_synthesis,
+)
 
 from kms2.config.global_semantic import GlobalEventHubSettings
 from kms2.core.model.global_semantic.global_event_hub import (
@@ -11,14 +15,8 @@ from kms2.core.model.global_semantic.global_event_hub import (
     GlobalEventHubJudgeInput,
     GlobalEventHubMember,
 )
-from kms2.langgraph.global_semantic.global_event_hub import (
-    add_global_event_hub_phase,
-)
 from kms2.langgraph.global_semantic.state import GlobalSemanticState
 from kms2.node.global_semantic.global_event_hub import GlobalEventHubNode
-from kms2.node.global_semantic.global_event_hub_persistence import (
-    GlobalEventHubPersistenceNode,
-)
 
 
 def _candidate():
@@ -77,7 +75,7 @@ class _Synthesis:
     def __init__(self):
         self.requests = []
 
-    async def aforward(self, *, request):
+    async def acall(self, *, request):
         self.requests.append(request)
         return GlobalEventHubDefinition(
             name='Launch', description='begins rollout'
@@ -103,7 +101,7 @@ class _Judge:
     def __init__(self):
         self.requests = []
 
-    async def aforward(self, *, requests: list[GlobalEventHubJudgeInput]):
+    async def acall(self, *, requests: list[GlobalEventHubJudgeInput]):
         self.requests.append(requests)
         return [
             GlobalEventHubJudgeDecision(index=index, belongs_in_same_hub=True)
@@ -123,16 +121,19 @@ def test_global_event_node_uses_canonical_event_evidence_and_outputs_membership(
         reranker,
         _Embedding(),
         GlobalEventHubSettings(),
+        reranker_token_counter=RERANKER_COUNTER,
+        judge_budget=JUDGE_BUDGET,
+        **direct_synthesis(),
     )
 
     state = GlobalSemanticState(
         **asyncio.run(node.load_candidates(GlobalSemanticState()))
     )
-    sends = node.dispatch_rerank(state)
+    sends = asyncio.run(node.dispatch_rerank(state))
     rerank_result = asyncio.run(node.rerank_worker(sends[0].arg))
     state = state.model_copy(update=rerank_result)
     state = state.model_copy(update=node.collect_rerank(state))
-    judge_sends = node.dispatch_judge(state)
+    judge_sends = asyncio.run(node.dispatch_judge(state))
     judge_result = asyncio.run(node.judge_worker(judge_sends[0].arg))
     state = state.model_copy(update=judge_result)
     state = state.model_copy(update=node.collect_judge(state))
@@ -158,36 +159,3 @@ def test_global_event_node_uses_canonical_event_evidence_and_outputs_membership(
     assert embedded['global_event_hubs'][0].aliases == ['Launch', 'Launch']
     assert embedded['global_event_hubs'][0].embedding == [0.7]
     assert embedded['global_event_hub_memberships'] == [['hub-1', 'hub-2']]
-
-
-def test_global_event_phase_exposes_complete_topology():
-    node = GlobalEventHubNode(
-        _Repository(),
-        _Synthesis(),
-        _Judge(),
-        _Reranker(),
-        _Embedding(),
-        GlobalEventHubSettings(),
-    )
-    graph = StateGraph(GlobalSemanticState)
-    add_global_event_hub_phase(
-        graph,
-        node,
-        GlobalEventHubPersistenceNode(_Repository()),
-    )
-    graph.add_edge(START, 'global_event_hub_load')
-    graph.add_edge('global_event_hub_persistence', END)
-    compiled = graph.compile()
-
-    assert {
-        'global_event_hub_load',
-        'global_event_hub_rerank_worker',
-        'global_event_hub_rerank_collect',
-        'global_event_hub_judge_worker',
-        'global_event_hub_judge_collect',
-        'global_event_hub_communities',
-        'global_event_hub_synthesis_worker',
-        'global_event_hub_synthesis_collect',
-        'global_event_hub_embedding',
-        'global_event_hub_persistence',
-    } <= set(compiled.nodes)

@@ -53,6 +53,30 @@ class SourceStatementHubSynthesisInput(BaseModel):
     members: list[SourceStatementHubSynthesisMember] = Field(min_length=1)
 
 
+class SourceStatementHubSummary(BaseModel):
+    """Temporary statement-hub summary content."""
+
+    text: str = Field(min_length=1)
+
+
+class SourceStatementHubSummaryInput(BaseModel):
+    """Evidence supplied to statement-hub summary generation."""
+
+    evidence: list[str] = Field(min_length=1)
+
+
+class SourceStatementHubSummaryMergeInput(BaseModel):
+    """Ordered partial summaries supplied to statement-hub merging."""
+
+    summaries: list[SourceStatementHubSummary] = Field(min_length=2)
+
+
+class SourceStatementHubSummarySynthesisInput(BaseModel):
+    """Partial summaries supplied to final statement-hub synthesis."""
+
+    summaries: list[SourceStatementHubSummary] = Field(min_length=1)
+
+
 class SourceStatementHubDefinition(BaseModel):
     """Canonical definition synthesized for one statement community."""
 

@@ -3,6 +3,7 @@
 from pydantic import BaseModel, Field
 
 from kms2.config.inference import (
+    HubSynthesisBudgetSettings,
     NoRetryTextInferenceSettings,
     TextInferenceSettings,
 )
@@ -13,6 +14,9 @@ class GlobalPredicateHubSettings(BaseModel):
 
     inference: TextInferenceSettings = Field(
         default_factory=TextInferenceSettings
+    )
+    synthesis_budget: HubSynthesisBudgetSettings = Field(
+        default_factory=HubSynthesisBudgetSettings
     )
     judge: NoRetryTextInferenceSettings = Field(
         default_factory=NoRetryTextInferenceSettings
@@ -35,6 +39,9 @@ class GlobalEntityHubSettings(BaseModel):
     inference: TextInferenceSettings = Field(
         default_factory=TextInferenceSettings
     )
+    synthesis_budget: HubSynthesisBudgetSettings = Field(
+        default_factory=HubSynthesisBudgetSettings
+    )
     judge: NoRetryTextInferenceSettings = Field(
         default_factory=NoRetryTextInferenceSettings
     )
@@ -55,6 +62,9 @@ class GlobalEventHubSettings(BaseModel):
 
     inference: TextInferenceSettings = Field(
         default_factory=TextInferenceSettings
+    )
+    synthesis_budget: HubSynthesisBudgetSettings = Field(
+        default_factory=HubSynthesisBudgetSettings
     )
     judge: NoRetryTextInferenceSettings = Field(
         default_factory=NoRetryTextInferenceSettings
@@ -77,6 +87,9 @@ class GlobalTripletHubSettings(BaseModel):
     inference: NoRetryTextInferenceSettings = Field(
         default_factory=NoRetryTextInferenceSettings
     )
+    synthesis_budget: HubSynthesisBudgetSettings = Field(
+        default_factory=HubSynthesisBudgetSettings
+    )
 
 
 class GlobalStatementHubSettings(BaseModel):
@@ -84,6 +97,9 @@ class GlobalStatementHubSettings(BaseModel):
 
     inference: TextInferenceSettings = Field(
         default_factory=TextInferenceSettings
+    )
+    synthesis_budget: HubSynthesisBudgetSettings = Field(
+        default_factory=HubSynthesisBudgetSettings
     )
     judge: NoRetryTextInferenceSettings = Field(
         default_factory=NoRetryTextInferenceSettings
@@ -105,6 +121,9 @@ class GlobalProcedureHubSettings(BaseModel):
 
     inference: TextInferenceSettings = Field(
         default_factory=TextInferenceSettings
+    )
+    synthesis_budget: HubSynthesisBudgetSettings = Field(
+        default_factory=HubSynthesisBudgetSettings
     )
     judge: NoRetryTextInferenceSettings = Field(
         default_factory=NoRetryTextInferenceSettings

@@ -21,6 +21,15 @@ from kms2.module.source_processing import image_description
 from kms2.node.source_processing.image_description import ImageDescriptionNode
 
 
+class _Counter:
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+
+    def count_texts(self, texts: list[str]) -> list[int]:
+        self.calls.append(texts)
+        return [1 for _ in texts]
+
+
 class _Predictor:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
@@ -156,9 +165,10 @@ def test_dispatch_targets_only_images_but_keeps_generic_neighbor_context():
     node = ImageDescriptionNode(
         object(),
         _context_window(),
+        token_counters=(_Counter(),),
     )
 
-    sends = node.dispatch(_state(pages))
+    sends = asyncio.run(node.dispatch(_state(pages)))
 
     assert isinstance(sends, list)
     assert len(sends) == 2
@@ -178,6 +188,7 @@ def test_worker_passes_merged_assets_as_one_ordered_target():
     node = ImageDescriptionNode(
         module,
         _context_window(),
+        token_counters=(_Counter(),),
     )
     source_block = _block(
         block_type=BlockType.IMAGE,
@@ -206,9 +217,11 @@ def test_worker_passes_merged_assets_as_one_ordered_target():
 
 
 def test_no_images_route_directly_to_collect():
+    counter = _Counter()
     node = ImageDescriptionNode(
         object(),
         _context_window(),
+        token_counters=(counter,),
     )
     state = _state(
         [
@@ -219,7 +232,8 @@ def test_no_images_route_directly_to_collect():
         ]
     )
 
-    assert node.dispatch(state) == 'image_description_collect'
+    assert asyncio.run(node.dispatch(state)) == 'image_description_collect'
+    assert counter.calls == []
 
 
 def test_collect_applies_out_of_order_results_without_losing_metadata():
@@ -246,6 +260,7 @@ def test_collect_applies_out_of_order_results_without_losing_metadata():
     result = ImageDescriptionNode(
         object(),
         _context_window(),
+        token_counters=(_Counter(),),
     ).collect(state)
     described_pages = result['image_described_pages']
 

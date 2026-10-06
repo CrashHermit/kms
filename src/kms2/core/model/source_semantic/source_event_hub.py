@@ -59,6 +59,30 @@ class SourceEventHubSynthesisInput(BaseModel):
     members: list[SourceEventHubSynthesisMember] = Field(min_length=1)
 
 
+class SourceEventHubSummary(BaseModel):
+    """Temporary event evidence summary, not a hub vertex."""
+
+    text: str = Field(min_length=1)
+
+
+class SourceEventHubSummaryInput(BaseModel):
+    """Ordered source evidence to summarize."""
+
+    evidence: list[str] = Field(min_length=1)
+
+
+class SourceEventHubSummaryMergeInput(BaseModel):
+    """Ordered event summaries to consolidate."""
+
+    summaries: list[SourceEventHubSummary] = Field(min_length=2)
+
+
+class SourceEventHubSummarySynthesisInput(BaseModel):
+    """Reduced event evidence supplied for final synthesis."""
+
+    summaries: list[SourceEventHubSummary] = Field(min_length=1)
+
+
 class SourceEventHubDefinition(BaseModel):
     """Canonical definition synthesized for one event community."""
 

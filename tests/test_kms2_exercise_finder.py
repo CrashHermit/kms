@@ -1,5 +1,6 @@
 import asyncio
 
+from kms2.config.inference import ContextWindowSettings
 from kms2.config.source_processing import ExerciseFinderSettings
 from kms2.core.model.block import SourceBlock
 from kms2.core.model.block_types import BlockType
@@ -28,6 +29,16 @@ class BoundaryRouter:
     async def aforward(self, *, candidate_block, **_kwargs) -> bool:
         self.calls.append(candidate_block.content)
         return candidate_block.content in self.boundaries
+
+
+class _Counter:
+    def __init__(self, counts: dict[str, int] | None = None) -> None:
+        self.counts = counts or {}
+        self.calls = 0
+
+    def count_texts(self, texts: list[str]) -> list[int]:
+        self.calls += 1
+        return [self.counts.get(text, 1) for text in texts]
 
 
 def _state() -> SourceProcessingState:
@@ -65,6 +76,8 @@ def test_exercise_finder_reconsiders_exclusive_boundary_candidate():
         start_router,
         boundary_router,
         ExerciseFinderSettings(),
+        start_token_counters=(_Counter(),),
+        boundary_token_counters=(_Counter(),),
     )
 
     result = asyncio.run(node.run(_state()))
@@ -93,6 +106,8 @@ def test_exercise_finder_emits_suffix_when_no_boundary_is_found():
         start_router,
         boundary_router,
         ExerciseFinderSettings(),
+        start_token_counters=(_Counter(),),
+        boundary_token_counters=(_Counter(),),
     )
 
     result = asyncio.run(node.run(_state()))
@@ -110,3 +125,71 @@ def test_exercise_finder_emits_suffix_when_no_boundary_is_found():
             'block-7',
         ]
     ]
+
+
+def test_distinct_profile_costs_select_start_and_boundary_contexts():
+    class CapturingRouter:
+        def __init__(self, answer: bool) -> None:
+            self.answer = answer
+            self.calls = []
+
+        async def aforward(self, **kwargs):
+            self.calls.append(kwargs)
+            return self.answer
+
+    class ProfileCounter:
+        def __init__(self, costs: list[int]) -> None:
+            self.costs = costs
+
+        def count_texts(self, texts: list[str]) -> list[int]:
+            return self.costs
+
+    state = SourceProcessingState(
+        pdf_path='source.pdf',
+        source=Source(key='source-1'),
+        split_pages=[
+            SourcePage(
+                index=0,
+                blocks=[
+                    SourceBlock(
+                        uuid=f'candidate-{i}',
+                        block_type=BlockType.PARAGRAPH,
+                        content=text,
+                    )
+                    for i, text in enumerate(['start', 'boundary', 'tail'])
+                ],
+            )
+        ],
+    )
+    start_router = CapturingRouter(True)
+    boundary_router = CapturingRouter(True)
+    node = ExerciseFinderNode(
+        start_router,
+        boundary_router,
+        ExerciseFinderSettings(
+            start_router=ExerciseFinderSettings().start_router.model_copy(
+                update={'model_server_profile': 'start'}
+            ),
+            boundary_router=ExerciseFinderSettings().boundary_router.model_copy(
+                update={'model_server_profile': 'boundary'}
+            ),
+            start_context_window=ContextWindowSettings(
+                backward_budget=0,
+                forward_budget=3,
+            ),
+            boundary_context_window=ContextWindowSettings(
+                backward_budget=1,
+                forward_budget=0,
+            ),
+        ),
+        start_token_counters=(ProfileCounter([1, 3, 1]),),
+        boundary_token_counters=(ProfileCounter([3, 1, 1]),),
+    )
+
+    asyncio.run(node.run(state))
+
+    assert [
+        block.content for block in start_router.calls[0]['context_after']
+    ] == ['boundary']
+    assert boundary_router.calls[0]['candidate_block'].content == 'boundary'
+    assert boundary_router.calls[0]['context_before'] == []

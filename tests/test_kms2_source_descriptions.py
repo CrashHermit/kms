@@ -41,7 +41,7 @@ class _SemanticRepository:
 
 
 class _DescriptionModule:
-    async def aforward(self, *, request):
+    async def acall(self, *, request):
         return 'generated description'
 
 
@@ -56,6 +56,14 @@ def _blocks():
         SourceBlock(uuid='block-2', block_type='paragraph', content='two'),
         SourceBlock(uuid='block-3', block_type='paragraph', content='three'),
     ]
+
+
+class _TokenCounter:
+    def count_texts(self, texts):
+        return [int(bool(text)) for text in texts]
+
+
+_TOKEN_COUNTERS = (_TokenCounter(),)
 
 
 def test_statement_loader_orders_targets_and_skips_missing_members():
@@ -81,6 +89,7 @@ def test_statement_loader_orders_targets_and_skips_missing_members():
         _SourceRepository(_blocks()),
         repository,
         ContextWindowSettings(backward_budget=0, forward_budget=0),
+        token_counters=_TOKEN_COUNTERS,
     )
 
     result = asyncio.run(node.run(SourceSemanticState(source_uuid='source-1')))
@@ -104,6 +113,7 @@ def test_procedure_loader_projects_multi_block_targets():
         _SourceRepository(_blocks()),
         _SemanticRepository([], [procedure]),
         ContextWindowSettings(backward_budget=0, forward_budget=0),
+        token_counters=_TOKEN_COUNTERS,
     )
 
     result = asyncio.run(node.run(SourceSemanticState(source_uuid='source-1')))

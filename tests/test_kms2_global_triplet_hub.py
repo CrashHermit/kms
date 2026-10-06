@@ -1,5 +1,7 @@
 import asyncio
 
+from kms2_token_helpers import direct_synthesis
+
 from kms2.core.model.global_semantic.global_triplet_hub import (
     GlobalTripletHubDefinition,
     GlobalTripletHubEvidence,
@@ -70,7 +72,7 @@ class _Module:
     def __init__(self):
         self.requests = []
 
-    async def aforward(self, *, request):
+    async def acall(self, *, request):
         self.requests.append(request)
         return GlobalTripletHubDefinition(
             canonical_name='supports relation',
@@ -166,7 +168,12 @@ def test_global_triplet_hub_node_deduplicates_evidence_and_preserves_memberships
     repository = _Repository([_group()])
     module = _Module()
     embedding = _EmbeddingClient()
-    node = GlobalTripletHubNode(repository, module, embedding)
+    node = GlobalTripletHubNode(
+        repository,
+        module,
+        embedding,
+        **direct_synthesis(include_reranker=False),
+    )
 
     async def run():
         state = GlobalSemanticState()
@@ -205,7 +212,12 @@ def test_global_triplet_hub_node_skips_empty_synthesis_and_embedding():
     repository = _Repository([])
     module = _Module()
     embedding = _EmbeddingClient()
-    node = GlobalTripletHubNode(repository, module, embedding)
+    node = GlobalTripletHubNode(
+        repository,
+        module,
+        embedding,
+        **direct_synthesis(include_reranker=False),
+    )
 
     async def run():
         state = GlobalSemanticState()

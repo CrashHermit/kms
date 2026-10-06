@@ -59,6 +59,30 @@ class GlobalEntityHubSynthesisInput(BaseModel):
     members: list[GlobalEntityHubSynthesisMember] = Field(min_length=1)
 
 
+class GlobalEntityHubSummary(BaseModel):
+    """Temporary text summary of global entity evidence."""
+
+    text: str = Field(min_length=1)
+
+
+class GlobalEntityHubSummaryInput(BaseModel):
+    """Evidence supplied to global entity summarization."""
+
+    evidence: list[str] = Field(min_length=1)
+
+
+class GlobalEntityHubSummaryMergeInput(BaseModel):
+    """Ordered partial summaries supplied for global entity consolidation."""
+
+    summaries: list[GlobalEntityHubSummary] = Field(min_length=2)
+
+
+class GlobalEntityHubSummarySynthesisInput(BaseModel):
+    """Ordered partial summaries supplied for final entity synthesis."""
+
+    summaries: list[GlobalEntityHubSummary] = Field(min_length=1)
+
+
 class GlobalEntityHubDefinition(BaseModel):
     """Canonical definition synthesized for one global entity community."""
 

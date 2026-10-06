@@ -1,5 +1,10 @@
 import asyncio
 
+from kms2_token_helpers import (
+    JUDGE_BUDGET,
+    RERANKER_COUNTER,
+    direct_synthesis,
+)
 from langgraph.graph import START, StateGraph
 
 from kms2.config.source_semantic import SourceEntityHubSettings
@@ -200,6 +205,9 @@ def test_entity_collectors_restore_ordinal_order_after_reversed_workers():
         None,
         _Embedding(),
         SourceEntityHubSettings(),
+        reranker_token_counter=RERANKER_COUNTER,
+        judge_budget=JUDGE_BUDGET,
+        **direct_synthesis(),
     )
     state = SourceSemanticState(
         source_uuid='source-1',

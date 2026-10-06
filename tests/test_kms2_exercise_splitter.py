@@ -145,6 +145,18 @@ def test_splitter_forwards_candidates_and_returns_model_decisions():
     ]
 
 
+class _Counter:
+    def __init__(self, counts: list[int] | None = None) -> None:
+        self.counts = counts
+        self.calls: list[list[str]] = []
+
+    def count_texts(self, texts: list[str]) -> list[int]:
+        self.calls.append(texts)
+        if self.counts is not None:
+            return self.counts
+        return [1 for _ in texts]
+
+
 class _Router:
     def __init__(self, positive_contents: set[str]) -> None:
         self.positive_contents = positive_contents
@@ -179,6 +191,7 @@ def _node(
     exercise_splitter: _Splitter,
     *,
     target_budget: int = 0,
+    token_counters: tuple[_Counter, ...] | None = None,
 ) -> ExerciseSplitterNode:
     return ExerciseSplitterNode(
         router,
@@ -188,6 +201,7 @@ def _node(
             forward_budget=2,
             target_budget=target_budget,
         ),
+        token_counters=token_counters or (_Counter(),),
     )
 
 
@@ -209,9 +223,11 @@ def test_node_dispatches_one_context_window_per_flat_block():
             ],
         ),
     ]
-    node = _node(_Router(set()), _Splitter([]))
+    node = _node(
+        _Router(set()), _Splitter([]), token_counters=(_Counter([2, 2, 4]),)
+    )
 
-    sends = node.dispatch(_state(pages))
+    sends = asyncio.run(node.dispatch(_state(pages)))
 
     assert isinstance(sends, list)
     assert [send.node for send in sends] == [
@@ -249,9 +265,14 @@ def test_node_dispatches_multiple_targets_when_target_budget_is_increased():
             ],
         )
     ]
-    node = _node(_Router(set()), _Splitter([]), target_budget=3)
+    node = _node(
+        _Router(set()),
+        _Splitter([]),
+        target_budget=3,
+        token_counters=(_Counter([1, 1, 2]),),
+    )
 
-    sends = node.dispatch(_state(pages))
+    sends = asyncio.run(node.dispatch(_state(pages)))
     requests = [send.arg['split_request'] for send in sends]
 
     assert [request.flat_position for request in requests] == [0, 2]
@@ -262,6 +283,49 @@ def test_node_dispatches_multiple_targets_when_target_budget_is_increased():
     assert [
         block.content for request in requests for block in request.window.target
     ] == ['one', 'two', 'three']
+
+
+def test_dispatch_uses_pointwise_maximum_of_two_profile_costs():
+    blocks = [
+        SourceBlock(block_type=BlockType.PARAGRAPH, content=content)
+        for content in ('one', 'two', 'three')
+    ]
+    router_counter = _Counter([1, 4, 1])
+    splitter_counter = _Counter([4, 1, 4])
+    node = ExerciseSplitterNode(
+        _Router(set()),
+        _Splitter([]),
+        ContextWindowSettings(
+            backward_budget=0,
+            forward_budget=0,
+            target_budget=5,
+        ),
+        token_counters=(router_counter, splitter_counter),
+    )
+
+    sends = asyncio.run(
+        node.dispatch(_state([SourcePage(index=0, blocks=blocks)]))
+    )
+    requests = [send.arg['split_request'] for send in sends]
+
+    assert [request.flat_position for request in requests] == [0, 1, 2]
+    assert [request.window.target[0].content for request in requests] == [
+        'one',
+        'two',
+        'three',
+    ]
+    assert [request.window.context_before for request in requests] == [
+        [],
+        [],
+        [],
+    ]
+    assert [request.window.context_after for request in requests] == [
+        [],
+        [],
+        [],
+    ]
+    assert router_counter.calls == [['one', 'two', 'three']]
+    assert splitter_counter.calls == [['one', 'two', 'three']]
 
 
 def test_worker_returns_results_for_multiple_routed_targets():
@@ -275,17 +339,28 @@ def test_worker_returns_results_for_multiple_routed_targets():
         ]
     )
     node = _node(router, splitter, target_budget=2)
-    sends = node.dispatch(_state([SourcePage(index=0, blocks=[first, second])]))
+    sends = asyncio.run(
+        node.dispatch(_state([SourcePage(index=0, blocks=[first, second])]))
+    )
 
     result = asyncio.run(node.worker(sends[0].arg))
 
     assert [item.flat_position for item in result['split_results']] == [0, 1]
     assert [
         candidate.position for candidate in splitter.calls[0]['candidates']
-    ] == [
-        0,
-        1,
-    ]
+    ] == [0, 1]
+
+
+def test_empty_dispatch_collects_without_loading_counter():
+    counter = _Counter()
+    node = _node(
+        _Router(set()),
+        _Splitter([]),
+        token_counters=(counter,),
+    )
+
+    assert asyncio.run(node.dispatch(_state([]))) == 'exercise_splitter_collect'
+    assert counter.calls == []
 
 
 def test_worker_returns_unsplit_result_without_calling_splitter():
@@ -294,7 +369,9 @@ def test_worker_returns_unsplit_result_without_calling_splitter():
         content='ordinary',
     )
     node = _node(_Router(set()), _Splitter([]))
-    sends = node.dispatch(_state([SourcePage(index=0, blocks=[parent])]))
+    sends = asyncio.run(
+        node.dispatch(_state([SourcePage(index=0, blocks=[parent])]))
+    )
 
     result = asyncio.run(node.worker(sends[0].arg))
 
@@ -326,19 +403,22 @@ def test_worker_splits_one_routed_candidate_at_local_position_zero():
         ]
     )
     node = _node(router, splitter)
-    sends = node.dispatch(
-        _state(
-            [
-                SourcePage(
-                    index=0,
-                    blocks=[
-                        SourceBlock(
-                            block_type=BlockType.PARAGRAPH, content='before'
-                        ),
-                        parent,
-                    ],
-                )
-            ]
+    sends = asyncio.run(
+        node.dispatch(
+            _state(
+                [
+                    SourcePage(
+                        index=0,
+                        blocks=[
+                            SourceBlock(
+                                block_type=BlockType.PARAGRAPH,
+                                content='before',
+                            ),
+                            parent,
+                        ],
+                    )
+                ]
+            )
         )
     )
 

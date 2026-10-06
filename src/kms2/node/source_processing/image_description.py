@@ -12,7 +12,11 @@ from kms2.core.model.source_processing.image_description import (
     ImageDescriptionRequest,
     ImageDescriptionResult,
 )
-from kms2.core.windowing import select_window
+from kms2.core.windowing import (
+    TextTokenCounter,
+    count_text_tokens,
+    select_window,
+)
 from kms2.langgraph.source_processing.state import SourceProcessingState
 from kms2.module.source_processing.image_description import (
     ImageDescriptionModule,
@@ -32,11 +36,14 @@ class ImageDescriptionNode:
         self,
         describer: ImageDescriptionModule,
         context_window: ContextWindowSettings,
+        *,
+        token_counters: tuple[TextTokenCounter, ...],
     ) -> None:
         self._describer = describer
         self._context_window = context_window
+        self._token_counters = token_counters
 
-    def dispatch(
+    async def dispatch(
         self, state: SourceProcessingState
     ) -> list[Send] | Literal['image_description_collect']:
         """Dispatch one context-window request per image block."""
@@ -45,6 +52,13 @@ class ImageDescriptionNode:
             for page in state.image_seam_pages
             for source_block in page.blocks
         ]
+        if not any(
+            block.block_type is BlockType.IMAGE for block in flat_blocks
+        ):
+            return 'image_description_collect'
+        token_counts = count_text_tokens(
+            [block.content for block in flat_blocks], self._token_counters
+        )
         sends: list[Send] = []
         for flat_position, source_block in enumerate(flat_blocks):
             if source_block.block_type is not BlockType.IMAGE:
@@ -59,10 +73,11 @@ class ImageDescriptionNode:
                             window=select_window(
                                 flat_blocks,
                                 [flat_position],
+                                token_counts=token_counts,
                                 backward_budget=self._context_window.backward_budget,
                                 forward_budget=self._context_window.forward_budget,
                             ),
-                        )
+                        ),
                     },
                 )
             )

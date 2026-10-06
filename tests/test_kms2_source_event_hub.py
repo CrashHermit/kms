@@ -1,5 +1,11 @@
 import asyncio
 
+from kms2_token_helpers import (
+    JUDGE_BUDGET,
+    RERANKER_COUNTER,
+    direct_synthesis,
+)
+
 from kms2.config.source_semantic import SourceEventHubSettings
 from kms2.core.model.source_semantic.source_event_hub import (
     SourceEventHubCandidate,
@@ -131,7 +137,7 @@ class _Repository:
 
 
 class _Synthesis:
-    async def aforward(self, *, request):
+    async def acall(self, *, request):
         return SourceEventHubDefinition(
             name='Integration', description='the integration process'
         )
@@ -152,7 +158,7 @@ class _Judge:
     def __init__(self):
         self.requests = []
 
-    async def aforward(self, *, requests: list[SourceEventHubJudgeInput]):
+    async def acall(self, *, requests: list[SourceEventHubJudgeInput]):
         self.requests.append(requests)
         return [
             SourceEventHubJudgeDecision(index=index, belongs_in_same_hub=False)
@@ -163,7 +169,7 @@ class _Judge:
 async def _run_event(node, state):
     state = state.model_copy(update=await node.load_candidates(state))
     rerank_results = []
-    sends = node.dispatch_rerank(state)
+    sends = await node.dispatch_rerank(state)
     if isinstance(sends, list):
         for send in sends:
             rerank_results.extend(
@@ -176,7 +182,7 @@ async def _run_event(node, state):
     )
     state = state.model_copy(update=node.collect_rerank(state))
     judge_results = []
-    sends = node.dispatch_judge(state)
+    sends = await node.dispatch_judge(state)
     if isinstance(sends, list):
         for send in sends:
             judge_results.extend(
@@ -215,6 +221,9 @@ def test_event_node_sends_borderline_pairs_only_to_event_judge():
         _Reranker(),
         _Embedding(),
         SourceEventHubSettings(),
+        reranker_token_counter=RERANKER_COUNTER,
+        judge_budget=JUDGE_BUDGET,
+        **direct_synthesis(),
     )
 
     result = asyncio.run(
@@ -236,13 +245,15 @@ def test_event_node_limits_judge_batches():
         _Reranker(),
         _Embedding(),
         SourceEventHubSettings(judge_batch_size=2),
+        reranker_token_counter=RERANKER_COUNTER,
+        judge_budget=JUDGE_BUDGET,
+        **direct_synthesis(),
     )
-
     state = SourceSemanticState(
         source_uuid='source-1',
         source_event_hub_borderline_pairs=[_candidate() for _ in range(3)],
     )
-    sends = node.dispatch_judge(state)
+    sends = asyncio.run(node.dispatch_judge(state))
     for send in sends:
         asyncio.run(node.judge_worker(send.arg))
 

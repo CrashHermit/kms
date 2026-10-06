@@ -13,6 +13,15 @@ from kms2.node.source_processing.instruction_governance import (
 )
 
 
+class _Counter:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def count_texts(self, texts: list[str]) -> list[int]:
+        self.calls += 1
+        return [1 for _ in texts]
+
+
 class Judge:
     def __init__(self) -> None:
         self.calls = []
@@ -63,9 +72,11 @@ def test_instruction_governance_projects_only_accepted_exercise_statements():
     original_pages = state.split_pages
 
     result = asyncio.run(
-        InstructionGovernanceNode(judge, InstructionGovernanceSettings()).run(
-            state
-        )
+        InstructionGovernanceNode(
+            judge,
+            InstructionGovernanceSettings(),
+            token_counters=(_Counter(),),
+        ).run(state)
     )
 
     assert [
@@ -80,3 +91,28 @@ def test_instruction_governance_projects_only_accepted_exercise_statements():
     ] == ['later exercise']
     assert state.split_pages is original_pages
     assert state.statements[0].is_exercise is True
+
+
+def test_governance_clears_old_ids_without_counting_when_no_eligible_statements():
+    counter = _Counter()
+    judge = Judge()
+    state = _state()
+    state.statements = []
+    state.instructions = [
+        Instruction(
+            member_block_uuids=['block-0'],
+            governed_statement_uuids=['stale-statement'],
+        )
+    ]
+
+    result = asyncio.run(
+        InstructionGovernanceNode(
+            judge,
+            InstructionGovernanceSettings(),
+            token_counters=(counter,),
+        ).run(state)
+    )
+
+    assert result['instructions'][0].governed_statement_uuids == []
+    assert counter.calls == 0
+    assert judge.calls == []

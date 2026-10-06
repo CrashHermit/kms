@@ -13,18 +13,29 @@ from kms2.core.model.source_semantic.source_predicate_hub import (
     SourcePredicateHubJudgeResult,
     SourcePredicateHubMember,
     SourcePredicateHubRerankResult,
+    SourcePredicateHubSummary,
+    SourcePredicateHubSummaryInput,
+    SourcePredicateHubSummaryMergeInput,
+    SourcePredicateHubSummarySynthesisInput,
     SourcePredicateHubSynthesisInput,
     SourcePredicateHubSynthesisMember,
     SourcePredicateHubSynthesisResult,
 )
 from kms2.core.reranking import RerankerClient
-from kms2.core.windowing import estimate_text_tokens
+from kms2.core.windowing import (
+    TextTokenCounter,
+    TokenBudget,
+    fits_token_budget,
+    pack_items,
+)
 from kms2.database.source_semantic.source_predicate_repository import (
     SourcePredicateRepository,
 )
 from kms2.langgraph.source_semantic.state import SourceSemanticState
 from kms2.module.source_semantic.source_predicate_hub import (
     SourcePredicateHubModule,
+    SourcePredicateHubSummaryMergeModule,
+    SourcePredicateHubSummaryModule,
 )
 from kms2.module.source_semantic.source_predicate_hub_judge import (
     SourcePredicateHubJudgeModule,
@@ -64,6 +75,15 @@ class SourcePredicateHubNode:
         reranker: RerankerClient,
         embedding_client: EmbeddingClient,
         settings: SourcePredicateHubSettings,
+        *,
+        reranker_token_counter: TextTokenCounter,
+        reranker_overhead_tokens: int,
+        judge_budget: TokenBudget,
+        summary_module: SourcePredicateHubSummaryModule,
+        merge_module: SourcePredicateHubSummaryMergeModule,
+        final_budget: TokenBudget,
+        summary_budget: TokenBudget,
+        merge_budget: TokenBudget,
     ) -> None:
         self._repository = repository
         self._module = module
@@ -71,6 +91,14 @@ class SourcePredicateHubNode:
         self._reranker = reranker
         self._embedding_client = embedding_client
         self._settings = settings
+        self._reranker_token_counter = reranker_token_counter
+        self._reranker_overhead_tokens = reranker_overhead_tokens
+        self._judge_budget = judge_budget
+        self._summary_module = summary_module
+        self._merge_module = merge_module
+        self._final_budget = final_budget
+        self._summary_budget = summary_budget
+        self._merge_budget = merge_budget
 
     async def load_candidates(
         self, state: SourceSemanticState
@@ -85,7 +113,7 @@ class SourcePredicateHubNode:
         )
         return {'source_predicate_hub_candidates': candidates}
 
-    def dispatch_rerank(
+    async def dispatch_rerank(
         self, state: SourceSemanticState
     ) -> list[Send] | Literal['source_predicate_hub_rerank_collect']:
         """Partition predicate candidates into ordered reranker batches."""
@@ -104,21 +132,28 @@ class SourcePredicateHubNode:
                 left.left_object,
                 left.left_description,
             )
-            left_cost = estimate_text_tokens(left_text)
-            batch: list[SourcePredicateHubCandidate] = []
-            batch_cost = left_cost
-            for candidate in group:
-                right_cost = estimate_text_tokens(
-                    _predicate_text(
-                        candidate.right_subject,
-                        candidate.right_predicate,
-                        candidate.right_object,
-                        candidate.right_description,
-                    )
+            right_texts = [
+                _predicate_text(
+                    candidate.right_subject,
+                    candidate.right_predicate,
+                    candidate.right_object,
+                    candidate.right_description,
                 )
+                for candidate in group
+            ]
+            costs = self._reranker_token_counter.count_texts(
+                [left_text, *right_texts]
+            )
+            left_cost, *right_costs = costs
+            batch: list[SourcePredicateHubCandidate] = []
+            batch_cost = 0
+            for candidate, right_cost in zip(group, right_costs, strict=True):
                 if (
                     batch
-                    and batch_cost + right_cost
+                    and batch_cost
+                    + left_cost
+                    + right_cost
+                    + self._reranker_overhead_tokens
                     > self._settings.reranker_token_budget
                 ):
                     sends.append(
@@ -133,9 +168,11 @@ class SourcePredicateHubNode:
                     )
                     ordinal += 1
                     batch = []
-                    batch_cost = left_cost
+                    batch_cost = 0
                 batch.append(candidate)
-                batch_cost += right_cost
+                batch_cost += (
+                    left_cost + right_cost + self._reranker_overhead_tokens
+                )
             if batch:
                 sends.append(
                     Send(
@@ -203,54 +240,43 @@ class SourcePredicateHubNode:
             ],
         }
 
-    def dispatch_judge(
+    async def dispatch_judge(
         self, state: SourceSemanticState
     ) -> list[Send] | Literal['source_predicate_hub_judge_collect']:
         """Partition borderline predicate pairs into ordered judge batches."""
         if not state.source_predicate_hub_borderline_pairs:
             return 'source_predicate_hub_judge_collect'
-        sends: list[Send] = []
-        batch: list[SourcePredicateHubCandidate] = []
-        batch_cost = 0
-        ordinal = 0
-        for candidate in state.source_predicate_hub_borderline_pairs:
-            cost = estimate_text_tokens(_predicate_judge_text(candidate))
-            if batch and (
-                len(batch) >= self._settings.judge_batch_size
-                or batch_cost + cost > self._settings.judge_token_budget
-            ):
-                sends.append(
-                    Send(
-                        'source_predicate_hub_judge_worker',
-                        {
-                            'source_predicate_hub_judge_ordinal': ordinal,
-                            'source_predicate_hub_batch': batch,
-                        },
+
+        batches = pack_items(
+            state.source_predicate_hub_borderline_pairs,
+            token_counts=self._judge_budget.counter.count_texts(
+                [
+                    _predicate_judge_input(0, item).model_dump_json(
+                        exclude={'index'}
                     )
-                )
-                ordinal += 1
-                batch = []
-                batch_cost = 0
-            batch.append(candidate)
-            batch_cost += cost
-        if batch:
-            sends.append(
-                Send(
-                    'source_predicate_hub_judge_worker',
-                    {
-                        'source_predicate_hub_judge_ordinal': ordinal,
-                        'source_predicate_hub_batch': batch,
-                    },
-                )
+                    for item in state.source_predicate_hub_borderline_pairs
+                ]
+            ),
+            token_budget=self._judge_budget.token_limit,
+            max_items=self._settings.judge_batch_size,
+        )
+        return [
+            Send(
+                'source_predicate_hub_judge_worker',
+                {
+                    'source_predicate_hub_judge_ordinal': ordinal,
+                    'source_predicate_hub_batch': batch,
+                },
             )
-        return sends
+            for ordinal, batch in enumerate(batches)
+        ]
 
     async def judge_worker(
         self, state: SourcePredicateHubJudgeWorkerState
     ) -> dict[str, list[SourcePredicateHubJudgeResult]]:
         """Judge one predicate borderline batch."""
         batch = state['source_predicate_hub_batch']
-        decisions = await self._judge_module.aforward(
+        decisions = await self._judge_module.acall(
             requests=[
                 _predicate_judge_input(index, item)
                 for index, item in enumerate(batch)
@@ -322,19 +348,56 @@ class SourcePredicateHubNode:
     async def synthesis_worker(
         self, state: SourcePredicateHubSynthesisWorkerState
     ) -> dict[str, list[SourcePredicateHubSynthesisResult]]:
-        """Synthesize one predicate community."""
+        """Synthesize one predicate community using evidence reduction."""
         community = state['source_predicate_hub_community']
-        definition = await self._module.aforward(
-            request=SourcePredicateHubSynthesisInput(
-                members=[
-                    SourcePredicateHubSynthesisMember(
-                        predicate=member.predicate,
-                        description=member.description,
-                    )
-                    for member in community
-                ]
+        synthesis_members = [
+            SourcePredicateHubSynthesisMember(
+                predicate=member.predicate,
+                description=member.description,
             )
-        )
+            for member in community
+        ]
+        request = SourcePredicateHubSynthesisInput(members=synthesis_members)
+        if fits_token_budget(
+            token_count=self._final_budget.counter.count_texts(
+                [request.model_dump_json()]
+            )[0],
+            threshold=self._final_budget.token_limit,
+        ):
+            definition = await self._module.acall(request=request)
+        else:
+            evidence = [
+                member.model_dump_json() for member in synthesis_members
+            ]
+
+            current = [
+                await self._summary_module.acall(
+                    request=SourcePredicateHubSummaryInput(evidence=batch)
+                )
+                for batch in pack_items(
+                    evidence,
+                    token_counts=self._summary_budget.counter.count_texts(
+                        evidence
+                    ),
+                    token_budget=self._summary_budget.token_limit,
+                )
+            ]
+            while not fits_token_budget(
+                token_count=self._final_budget.counter.count_texts(
+                    [
+                        SourcePredicateHubSummarySynthesisInput(
+                            summaries=current
+                        ).model_dump_json()
+                    ]
+                )[0],
+                threshold=self._final_budget.token_limit,
+            ):
+                current = await self._merge_summary_level(current)
+            definition = await self._module.acall(
+                request=SourcePredicateHubSummarySynthesisInput(
+                    summaries=current
+                )
+            )
         return {
             'source_predicate_hub_synthesis_results': [
                 SourcePredicateHubSynthesisResult(
@@ -345,6 +408,41 @@ class SourcePredicateHubNode:
                 )
             ]
         }
+
+    async def _merge_summary_level(
+        self, summaries: list[SourcePredicateHubSummary]
+    ) -> list[SourcePredicateHubSummary]:
+        """Merge one level, carrying a trailing singleton unchanged."""
+
+        async def merge_batch_fits(
+            batch: list[SourcePredicateHubSummary],
+        ) -> bool:
+            return fits_token_budget(
+                token_count=self._merge_budget.counter.count_texts(
+                    [
+                        SourcePredicateHubSummaryMergeInput(
+                            summaries=batch
+                        ).model_dump_json()
+                    ]
+                )[0],
+                threshold=self._merge_budget.token_limit,
+            )
+
+        batches = pack_items(
+            summaries,
+            token_counts=self._merge_budget.counter.count_texts(
+                [summary.model_dump_json() for summary in summaries]
+            ),
+            token_budget=self._merge_budget.token_limit,
+        )
+        return [
+            await self._merge_module.acall(
+                request=SourcePredicateHubSummaryMergeInput(summaries=batch)
+            )
+            if len(batch) > 1
+            else batch[0]
+            for batch in batches
+        ]
 
     def collect_synthesis(
         self, state: SourceSemanticState
@@ -397,16 +495,6 @@ def _predicate_text(
 ) -> str:
     """Render one directed predicate occurrence for reranking."""
     return f'{subject} --{predicate}--> {object_}: {description}'
-
-
-def _predicate_judge_text(candidate: SourcePredicateHubCandidate) -> str:
-    """Render complete predicate evidence for judge token accounting."""
-    return (
-        f'{candidate.left_subject} --{candidate.left_predicate}--> '
-        f'{candidate.left_object}: {candidate.left_description}\n'
-        f'{candidate.right_subject} --{candidate.right_predicate}--> '
-        f'{candidate.right_object}: {candidate.right_description}'
-    )
 
 
 def _predicate_judge_input(

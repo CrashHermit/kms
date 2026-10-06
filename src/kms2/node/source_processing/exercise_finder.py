@@ -2,7 +2,11 @@
 
 from kms2.config.source_processing import ExerciseFinderSettings
 from kms2.core.model.source_processing.pedagogical import ExerciseComponent
-from kms2.core.windowing import select_window
+from kms2.core.windowing import (
+    TextTokenCounter,
+    count_text_tokens,
+    select_window,
+)
 from kms2.langgraph.source_processing.state import SourceProcessingState
 from kms2.module.source_processing.exercise_finder import (
     ExerciseBoundaryRouterModule,
@@ -18,10 +22,15 @@ class ExerciseFinderNode:
         start_router: ExerciseStartRouterModule,
         boundary_router: ExerciseBoundaryRouterModule,
         settings: ExerciseFinderSettings,
+        *,
+        start_token_counters: tuple[TextTokenCounter, ...],
+        boundary_token_counters: tuple[TextTokenCounter, ...],
     ) -> None:
         self._start_router = start_router
         self._boundary_router = boundary_router
         self._settings = settings
+        self._start_token_counters = start_token_counters
+        self._boundary_token_counters = boundary_token_counters
 
     async def run(
         self, state: SourceProcessingState
@@ -39,6 +48,21 @@ class ExerciseFinderNode:
             if block.uuid not in instruction_members
         ]
         eligible_blocks = [blocks[position] for position in eligible_positions]
+        start_token_counts = count_text_tokens(
+            [block.content for block in eligible_blocks],
+            self._start_token_counters,
+        )
+        boundary_token_counts = (
+            start_token_counts
+            if (
+                self._settings.start_router.model_server_profile
+                == self._settings.boundary_router.model_server_profile
+            )
+            else count_text_tokens(
+                [block.content for block in eligible_blocks],
+                self._boundary_token_counters,
+            )
+        )
         components: list[ExerciseComponent] = []
         cursor = 0
 
@@ -46,6 +70,7 @@ class ExerciseFinderNode:
             start_window = select_window(
                 eligible_blocks,
                 [cursor],
+                token_counts=start_token_counts,
                 backward_budget=self._settings.start_context_window.backward_budget,
                 forward_budget=self._settings.start_context_window.forward_budget,
                 target_budget=self._settings.start_context_window.target_budget,
@@ -65,6 +90,7 @@ class ExerciseFinderNode:
                 boundary_window = select_window(
                     eligible_blocks,
                     [candidate],
+                    token_counts=boundary_token_counts,
                     backward_budget=self._settings.boundary_context_window.backward_budget,
                     forward_budget=self._settings.boundary_context_window.forward_budget,
                     target_budget=self._settings.boundary_context_window.target_budget,

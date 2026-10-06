@@ -24,6 +24,7 @@ from kms2.core.model.user import Deck, User
 from kms2.database import schema
 from kms2.database.client import DatabaseClient
 from kms2.local_models.runtime import LocalModelRuntime
+from kms2.local_models.token_counting import LocalTokenizers
 from kms2.train.recorder import Recorder
 
 
@@ -106,6 +107,7 @@ class _ApplicationResources:
     """Resources shared by the stages of one application invocation."""
 
     local_models: LocalModelRuntime
+    tokenizers: LocalTokenizers
     database: DatabaseClient
     recorder: Recorder | None
 
@@ -121,13 +123,19 @@ async def _application_resources(
         if settings.training.examples_directory is None
         else Recorder(settings.training.examples_directory)
     )
+    tokenizers = LocalTokenizers(settings.local_models)
     try:
         await schema.ensure_schema(
             database.session,
             embedding_dimension=settings.local_models.embedding.model.dimension,
         )
-        async with LocalModelRuntime(settings.local_models) as local_models:
-            yield _ApplicationResources(local_models, database, recorder)
+        async with LocalModelRuntime(
+            settings.local_models,
+            embedding_token_counter=tokenizers.embedding,
+        ) as local_models:
+            yield _ApplicationResources(
+                local_models, tokenizers, database, recorder
+            )
     finally:
         await database.close()
 
@@ -301,6 +309,7 @@ async def _run_source_processing_stage(
         settings,
         resources.local_models,
         resources.database,
+        tokenizers=resources.tokenizers,
         recorder=resources.recorder,
     ).build_graph()
     final_state = await graph.ainvoke(initial_state)
@@ -317,6 +326,7 @@ async def _run_source_semantic_stage(
         settings,
         resources.local_models,
         resources.database,
+        tokenizers=resources.tokenizers,
         recorder=resources.recorder,
     ).build_graph()
     final_state = await graph.ainvoke({'source_uuid': source_uuid})
@@ -348,6 +358,7 @@ async def _run_global_semantic_stage(
         settings,
         resources.local_models,
         resources.database,
+        tokenizers=resources.tokenizers,
         recorder=resources.recorder,
     ).build_graph()
     final_state = await graph.ainvoke({})

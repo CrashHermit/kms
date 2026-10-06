@@ -45,9 +45,7 @@ class SourceEntityDescriptionNode:
     ) -> dict[str, list[SourceEntityDescriptionResult]]:
         """Generate one description for one entity occurrence."""
         request = state['source_entity_description_request']
-        description = await self._module.aforward(
-            request=request.model_input,
-        )
+        description = await self._module.acall(request=request.model_input)
         return {
             'source_entity_description_results': [
                 SourceEntityDescriptionResult(

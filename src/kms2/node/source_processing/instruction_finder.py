@@ -2,7 +2,11 @@
 
 from kms2.config.source_processing import InstructionFinderSettings
 from kms2.core.model.source_processing.instruction import Instruction
-from kms2.core.windowing import select_window
+from kms2.core.windowing import (
+    TextTokenCounter,
+    count_text_tokens,
+    select_window,
+)
 from kms2.langgraph.source_processing.state import SourceProcessingState
 from kms2.module.source_processing.instruction_finder import (
     InstructionBoundaryRouterModule,
@@ -18,22 +22,42 @@ class InstructionFinderNode:
         start_router: InstructionStartRouterModule,
         boundary_router: InstructionBoundaryRouterModule,
         settings: InstructionFinderSettings,
+        *,
+        start_token_counters: tuple[TextTokenCounter, ...],
+        boundary_token_counters: tuple[TextTokenCounter, ...],
     ) -> None:
         self._start_router = start_router
         self._boundary_router = boundary_router
         self._settings = settings
+        self._start_token_counters = start_token_counters
+        self._boundary_token_counters = boundary_token_counters
 
     async def run(
         self, state: SourceProcessingState
     ) -> dict[str, list[Instruction]]:
         """Discover shared instructions across the final split source stream."""
         blocks = [block for page in state.split_pages for block in page.blocks]
+        start_token_counts = count_text_tokens(
+            [block.content for block in blocks], self._start_token_counters
+        )
+        boundary_token_counts = (
+            start_token_counts
+            if (
+                self._settings.start_router.model_server_profile
+                == self._settings.boundary_router.model_server_profile
+            )
+            else count_text_tokens(
+                [block.content for block in blocks],
+                self._boundary_token_counters,
+            )
+        )
         instructions: list[Instruction] = []
         cursor = 0
         while cursor < len(blocks):
             start_window = select_window(
                 blocks,
                 [cursor],
+                token_counts=start_token_counts,
                 backward_budget=self._settings.start_context_window.backward_budget,
                 forward_budget=self._settings.start_context_window.forward_budget,
                 target_budget=self._settings.start_context_window.target_budget,
@@ -53,6 +77,7 @@ class InstructionFinderNode:
                 boundary_window = select_window(
                     blocks,
                     [candidate],
+                    token_counts=boundary_token_counts,
                     backward_budget=(
                         self._settings.boundary_context_window.backward_budget
                     ),

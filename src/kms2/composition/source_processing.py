@@ -6,6 +6,7 @@ from kms2.database.client import DatabaseClient
 from kms2.database.source.source_graph_repository import SourceGraphRepository
 from kms2.langgraph.source_processing.graph import SourceProcessingGraph
 from kms2.local_models.runtime import LocalModelRuntime
+from kms2.local_models.token_counting import LocalTokenizers
 from kms2.module.source_processing.content_correction import (
     ContentCorrectorModule,
     ContentCorrectorSignature,
@@ -95,6 +96,7 @@ def build_source_processing_graph(
     local_models: LocalModelRuntime,
     database: DatabaseClient,
     *,
+    tokenizers: LocalTokenizers,
     recorder: Recorder | None = None,
 ) -> SourceProcessingGraph:
     """Compose the source graph from settings and started runtime resources."""
@@ -236,26 +238,51 @@ def build_source_processing_graph(
         image_description=ImageDescriptionNode(
             image_describer,
             source.image_description.context_window,
+            token_counters=tokenizers.text_counters(
+                source.image_description.inference.model_server_profile
+            ),
         ),
         exercise_splitter=ExerciseSplitterNode(
             splitter_router,
             exercise_splitter,
             source.exercise_splitter.context_window,
+            token_counters=tokenizers.text_counters(
+                source.exercise_splitter.router.model_server_profile,
+                source.exercise_splitter.splitter.model_server_profile,
+            ),
         ),
         instruction_finder=InstructionFinderNode(
             instruction_start_router,
             instruction_boundary_router,
             source.instruction_finder,
+            start_token_counters=tokenizers.text_counters(
+                source.instruction_finder.start_router.model_server_profile
+            ),
+            boundary_token_counters=tokenizers.text_counters(
+                source.instruction_finder.boundary_router.model_server_profile
+            ),
         ),
         exercise_finder=ExerciseFinderNode(
             exercise_start_router,
             exercise_boundary_router,
             source.exercise_finder,
+            start_token_counters=tokenizers.text_counters(
+                source.exercise_finder.start_router.model_server_profile
+            ),
+            boundary_token_counters=tokenizers.text_counters(
+                source.exercise_finder.boundary_router.model_server_profile
+            ),
         ),
         pedagogical_finder=PedagogicalFinderNode(
             pedagogical_start_router,
             pedagogical_boundary_router,
             source.pedagogical_finder,
+            start_token_counters=tokenizers.text_counters(
+                source.pedagogical_finder.start_router.model_server_profile
+            ),
+            boundary_token_counters=tokenizers.text_counters(
+                source.pedagogical_finder.boundary_router.model_server_profile
+            ),
         ),
         statement_procedure=StatementProcedureNode(
             role_typer,
@@ -265,6 +292,9 @@ def build_source_processing_graph(
         instruction_governance=InstructionGovernanceNode(
             instruction_governance,
             source.instruction_governance,
+            token_counters=tokenizers.text_counters(
+                source.instruction_governance.inference.model_server_profile
+            ),
         ),
         embedding=EmbeddingNode(local_models),
         persistence=SourcePersistenceNode(

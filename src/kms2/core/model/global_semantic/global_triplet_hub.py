@@ -44,6 +44,30 @@ class GlobalTripletHubSynthesisInput(BaseModel):
     global_triplets: list[str] = Field(min_length=1)
 
 
+class GlobalTripletHubSummary(BaseModel):
+    """Temporary global triplet evidence summary, not a hub vertex."""
+
+    text: str = Field(min_length=1)
+
+
+class GlobalTripletHubSummaryInput(BaseModel):
+    """Leaf evidence supplied to triplet summarization."""
+
+    evidence: list[str] = Field(min_length=1)
+
+
+class GlobalTripletHubSummaryMergeInput(BaseModel):
+    """Partial summaries supplied for triplet consolidation."""
+
+    summaries: list[GlobalTripletHubSummary] = Field(min_length=2)
+
+
+class GlobalTripletHubSummarySynthesisInput(BaseModel):
+    """Ordered partial summaries supplied for final triplet synthesis."""
+
+    summaries: list[GlobalTripletHubSummary] = Field(min_length=1)
+
+
 class GlobalTripletHubDefinition(BaseModel):
     """Canonical definition synthesized for one global triplet group."""
 

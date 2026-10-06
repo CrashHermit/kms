@@ -12,7 +12,11 @@ from kms2.core.model.source_processing.exercise_splitter import (
     SplitRequest,
     SplitResult,
 )
-from kms2.core.windowing import select_window
+from kms2.core.windowing import (
+    TextTokenCounter,
+    count_text_tokens,
+    select_window,
+)
 from kms2.langgraph.source_processing.state import SourceProcessingState
 from kms2.module.source_processing.exercise_splitter import (
     ExerciseSplitterModule,
@@ -36,12 +40,15 @@ class ExerciseSplitterNode:
         router: ExerciseStripRouterModule,
         exercise_splitter: ExerciseSplitterModule,
         context_window: ContextWindowSettings,
+        *,
+        token_counters: tuple[TextTokenCounter, ...],
     ) -> None:
         self._router = router
         self._exercise_splitter = exercise_splitter
         self._context_window = context_window
+        self._token_counters = token_counters
 
-    def dispatch(
+    async def dispatch(
         self, state: SourceProcessingState
     ) -> list[Send] | Literal['exercise_splitter_collect']:
         """Dispatch one context-window request per source block."""
@@ -50,12 +57,16 @@ class ExerciseSplitterNode:
             for page in state.image_described_pages
             for source_block in page.blocks
         ]
+        token_counts = count_text_tokens(
+            [block.content for block in flat_blocks], self._token_counters
+        )
         sends: list[Send] = []
         flat_position = 0
         while flat_position < len(flat_blocks):
             window = select_window(
                 flat_blocks,
                 [flat_position],
+                token_counts=token_counts,
                 backward_budget=self._context_window.backward_budget,
                 forward_budget=self._context_window.forward_budget,
                 target_budget=self._context_window.target_budget,

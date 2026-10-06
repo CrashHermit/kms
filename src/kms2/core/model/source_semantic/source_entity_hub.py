@@ -59,6 +59,30 @@ class SourceEntityHubSynthesisInput(BaseModel):
     members: list[SourceEntityHubSynthesisMember] = Field(min_length=1)
 
 
+class SourceEntityHubSummary(BaseModel):
+    """Temporary entity evidence summary, not a hub vertex."""
+
+    text: str = Field(min_length=1)
+
+
+class SourceEntityHubSummaryInput(BaseModel):
+    """Ordered source evidence to summarize."""
+
+    evidence: list[str] = Field(min_length=1)
+
+
+class SourceEntityHubSummaryMergeInput(BaseModel):
+    """Ordered entity summaries to consolidate."""
+
+    summaries: list[SourceEntityHubSummary] = Field(min_length=2)
+
+
+class SourceEntityHubSummarySynthesisInput(BaseModel):
+    """Reduced entity evidence supplied for final synthesis."""
+
+    summaries: list[SourceEntityHubSummary] = Field(min_length=1)
+
+
 class SourceEntityHubDefinition(BaseModel):
     """Canonical definition synthesized for one entity community."""
 

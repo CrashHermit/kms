@@ -13,18 +13,29 @@ from kms2.core.model.global_semantic.global_entity_hub import (
     GlobalEntityHubJudgeResult,
     GlobalEntityHubMember,
     GlobalEntityHubRerankResult,
+    GlobalEntityHubSummary,
+    GlobalEntityHubSummaryInput,
+    GlobalEntityHubSummaryMergeInput,
+    GlobalEntityHubSummarySynthesisInput,
     GlobalEntityHubSynthesisInput,
     GlobalEntityHubSynthesisMember,
     GlobalEntityHubSynthesisResult,
 )
 from kms2.core.reranking import RerankerClient
-from kms2.core.windowing import estimate_text_tokens
+from kms2.core.windowing import (
+    TextTokenCounter,
+    TokenBudget,
+    fits_token_budget,
+    pack_items,
+)
 from kms2.database.global_semantic.global_entity_hub_repository import (
     GlobalEntityHubRepository,
 )
 from kms2.langgraph.global_semantic.state import GlobalSemanticState
 from kms2.module.global_semantic.global_entity_hub import (
     GlobalEntityHubModule,
+    GlobalEntityHubSummaryMergeModule,
+    GlobalEntityHubSummaryModule,
 )
 from kms2.module.global_semantic.global_entity_hub_judge import (
     GlobalEntityHubJudgeModule,
@@ -64,6 +75,15 @@ class GlobalEntityHubNode:
         reranker: RerankerClient,
         embedding_client: EmbeddingClient,
         settings: GlobalEntityHubSettings,
+        *,
+        reranker_token_counter: TextTokenCounter,
+        reranker_overhead_tokens: int,
+        judge_budget: TokenBudget,
+        summary_module: GlobalEntityHubSummaryModule,
+        merge_module: GlobalEntityHubSummaryMergeModule,
+        final_budget: TokenBudget,
+        summary_budget: TokenBudget,
+        merge_budget: TokenBudget,
     ) -> None:
         self._repository = repository
         self._module = module
@@ -71,6 +91,14 @@ class GlobalEntityHubNode:
         self._reranker = reranker
         self._embedding_client = embedding_client
         self._settings = settings
+        self._summary_module = summary_module
+        self._merge_module = merge_module
+        self._final_budget = final_budget
+        self._summary_budget = summary_budget
+        self._merge_budget = merge_budget
+        self._reranker_token_counter = reranker_token_counter
+        self._reranker_overhead_tokens = reranker_overhead_tokens
+        self._judge_budget = judge_budget
 
     async def load_candidates(
         self, state: GlobalSemanticState
@@ -82,7 +110,7 @@ class GlobalEntityHubNode:
         )
         return {'global_entity_hub_candidates': candidates}
 
-    def dispatch_rerank(
+    async def dispatch_rerank(
         self, state: GlobalSemanticState
     ) -> list[Send] | Literal['global_entity_hub_rerank_collect']:
         """Partition entity candidates into ordered reranker batches."""
@@ -99,19 +127,26 @@ class GlobalEntityHubNode:
                 left.left_canonical_name,
                 left.left_description,
             )
-            left_cost = estimate_text_tokens(left_text)
-            batch: list[GlobalEntityHubCandidate] = []
-            batch_cost = left_cost
-            for candidate in group:
-                right_cost = estimate_text_tokens(
-                    _entity_text(
-                        candidate.right_canonical_name,
-                        candidate.right_description,
-                    )
+            right_texts = [
+                _entity_text(
+                    candidate.right_canonical_name,
+                    candidate.right_description,
                 )
+                for candidate in group
+            ]
+            costs = self._reranker_token_counter.count_texts(
+                [left_text, *right_texts]
+            )
+            left_cost, *right_costs = costs
+            batch: list[GlobalEntityHubCandidate] = []
+            batch_cost = 0
+            for candidate, right_cost in zip(group, right_costs, strict=True):
                 if (
                     batch
-                    and batch_cost + right_cost
+                    and batch_cost
+                    + left_cost
+                    + right_cost
+                    + self._reranker_overhead_tokens
                     > self._settings.reranker_token_budget
                 ):
                     sends.append(
@@ -126,9 +161,11 @@ class GlobalEntityHubNode:
                     )
                     ordinal += 1
                     batch = []
-                    batch_cost = left_cost
+                    batch_cost = 0
                 batch.append(candidate)
-                batch_cost += right_cost
+                batch_cost += (
+                    left_cost + right_cost + self._reranker_overhead_tokens
+                )
             if batch:
                 sends.append(
                     Send(
@@ -194,54 +231,43 @@ class GlobalEntityHubNode:
             ],
         }
 
-    def dispatch_judge(
+    async def dispatch_judge(
         self, state: GlobalSemanticState
     ) -> list[Send] | Literal['global_entity_hub_judge_collect']:
         """Partition borderline entity pairs into ordered judge batches."""
         if not state.global_entity_hub_borderline_pairs:
             return 'global_entity_hub_judge_collect'
-        sends: list[Send] = []
-        batch: list[GlobalEntityHubCandidate] = []
-        batch_cost = 0
-        ordinal = 0
-        for candidate in state.global_entity_hub_borderline_pairs:
-            cost = estimate_text_tokens(_entity_judge_text(candidate))
-            if batch and (
-                len(batch) >= self._settings.judge_batch_size
-                or batch_cost + cost > self._settings.judge_token_budget
-            ):
-                sends.append(
-                    Send(
-                        'global_entity_hub_judge_worker',
-                        {
-                            'global_entity_hub_judge_ordinal': ordinal,
-                            'global_entity_hub_batch': batch,
-                        },
+
+        batches = pack_items(
+            state.global_entity_hub_borderline_pairs,
+            token_counts=self._judge_budget.counter.count_texts(
+                [
+                    _entity_judge_input(0, item).model_dump_json(
+                        exclude={'index'}
                     )
-                )
-                ordinal += 1
-                batch = []
-                batch_cost = 0
-            batch.append(candidate)
-            batch_cost += cost
-        if batch:
-            sends.append(
-                Send(
-                    'global_entity_hub_judge_worker',
-                    {
-                        'global_entity_hub_judge_ordinal': ordinal,
-                        'global_entity_hub_batch': batch,
-                    },
-                )
+                    for item in state.global_entity_hub_borderline_pairs
+                ]
+            ),
+            token_budget=self._judge_budget.token_limit,
+            max_items=self._settings.judge_batch_size,
+        )
+        return [
+            Send(
+                'global_entity_hub_judge_worker',
+                {
+                    'global_entity_hub_judge_ordinal': ordinal,
+                    'global_entity_hub_batch': batch,
+                },
             )
-        return sends
+            for ordinal, batch in enumerate(batches)
+        ]
 
     async def judge_worker(
         self, state: GlobalEntityHubJudgeWorkerState
     ) -> dict[str, list[GlobalEntityHubJudgeResult]]:
         """Judge one entity borderline batch."""
         batch = state['global_entity_hub_batch']
-        decisions = await self._judge_module.aforward(
+        decisions = await self._judge_module.acall(
             requests=[
                 _entity_judge_input(index, item)
                 for index, item in enumerate(batch)
@@ -312,19 +338,54 @@ class GlobalEntityHubNode:
     async def synthesis_worker(
         self, state: GlobalEntityHubSynthesisWorkerState
     ) -> dict[str, list[GlobalEntityHubSynthesisResult]]:
-        """Synthesize one entity community."""
+        """Reduce entity evidence to one global definition."""
         community = state['global_entity_hub_community']
-        definition = await self._module.aforward(
-            request=GlobalEntityHubSynthesisInput(
-                members=[
-                    GlobalEntityHubSynthesisMember(
-                        canonical_name=member.canonical_name,
-                        description=member.description,
-                    )
-                    for member in community
-                ]
-            )
+        original_request = GlobalEntityHubSynthesisInput(
+            members=[
+                GlobalEntityHubSynthesisMember(
+                    canonical_name=member.canonical_name,
+                    description=member.description,
+                )
+                for member in community
+            ]
         )
+        if fits_token_budget(
+            token_count=self._final_budget.counter.count_texts(
+                [original_request.model_dump_json()]
+            )[0],
+            threshold=self._final_budget.token_limit,
+        ):
+            definition = await self._module.acall(request=original_request)
+        else:
+            records = [
+                member.model_dump_json() for member in original_request.members
+            ]
+
+            current = [
+                await self._summary_module.acall(
+                    request=GlobalEntityHubSummaryInput(evidence=batch)
+                )
+                for batch in pack_items(
+                    records,
+                    token_counts=self._summary_budget.counter.count_texts(
+                        records
+                    ),
+                    token_budget=self._summary_budget.token_limit,
+                )
+            ]
+            while True:
+                final_request = GlobalEntityHubSummarySynthesisInput(
+                    summaries=current
+                )
+                if fits_token_budget(
+                    token_count=self._final_budget.counter.count_texts(
+                        [final_request.model_dump_json()]
+                    )[0],
+                    threshold=self._final_budget.token_limit,
+                ):
+                    definition = await self._module.acall(request=final_request)
+                    break
+                current = await self._merge_summary_level(current)
         return {
             'global_entity_hub_synthesis_results': [
                 GlobalEntityHubSynthesisResult(
@@ -335,6 +396,45 @@ class GlobalEntityHubNode:
                 )
             ]
         }
+
+    async def _merge_summary_level(
+        self, summaries: list[GlobalEntityHubSummary]
+    ) -> list[GlobalEntityHubSummary]:
+        """Merge one fitting level while carrying a trailing singleton."""
+
+        async def merge_batch_fits(
+            batch: list[GlobalEntityHubSummary],
+        ) -> bool:
+            return fits_token_budget(
+                token_count=self._merge_budget.counter.count_texts(
+                    [
+                        GlobalEntityHubSummaryMergeInput(
+                            summaries=batch
+                        ).model_dump_json()
+                    ]
+                )[0],
+                threshold=self._merge_budget.token_limit,
+            )
+
+        merged: list[GlobalEntityHubSummary] = []
+        for batch in pack_items(
+            summaries,
+            token_counts=self._merge_budget.counter.count_texts(
+                [summary.model_dump_json() for summary in summaries]
+            ),
+            token_budget=self._merge_budget.token_limit,
+        ):
+            if len(batch) == 1:
+                merged.extend(batch)
+            else:
+                merged.append(
+                    await self._merge_module.acall(
+                        request=GlobalEntityHubSummaryMergeInput(
+                            summaries=batch
+                        )
+                    )
+                )
+        return merged
 
     def collect_synthesis(
         self, state: GlobalSemanticState
@@ -384,14 +484,6 @@ class GlobalEntityHubNode:
 def _entity_text(canonical_name: str, description: str) -> str:
     """Render one canonical entity for reranking."""
     return f'{canonical_name}: {description}'
-
-
-def _entity_judge_text(candidate: GlobalEntityHubCandidate) -> str:
-    """Render canonical entity evidence for token accounting."""
-    return (
-        f'{candidate.left_canonical_name}: {candidate.left_description}\n'
-        f'{candidate.right_canonical_name}: {candidate.right_description}'
-    )
 
 
 def _entity_judge_input(

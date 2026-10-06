@@ -59,6 +59,30 @@ class GlobalPredicateHubSynthesisInput(BaseModel):
     members: list[GlobalPredicateHubSynthesisMember] = Field(min_length=1)
 
 
+class GlobalPredicateHubSummary(BaseModel):
+    """Temporary predicate evidence summary, not a hub vertex."""
+
+    text: str = Field(min_length=1)
+
+
+class GlobalPredicateHubSummaryInput(BaseModel):
+    """Predicate evidence supplied for one summary."""
+
+    evidence: list[str] = Field(min_length=1)
+
+
+class GlobalPredicateHubSummaryMergeInput(BaseModel):
+    """Ordered predicate summaries supplied for one merge."""
+
+    summaries: list[GlobalPredicateHubSummary] = Field(min_length=2)
+
+
+class GlobalPredicateHubSummarySynthesisInput(BaseModel):
+    """Ordered predicate summaries supplied to final synthesis."""
+
+    summaries: list[GlobalPredicateHubSummary] = Field(min_length=1)
+
+
 class GlobalPredicateHubDefinition(BaseModel):
     """Canonical definition synthesized for one global predicate community."""
 

@@ -6,7 +6,11 @@ from kms2.core.model.source_semantic.source_entity import (
     SourceEntityDescriptionRequest,
     SourceEntityDescriptionTarget,
 )
-from kms2.core.windowing import select_window
+from kms2.core.windowing import (
+    TextTokenCounter,
+    count_text_tokens,
+    select_window,
+)
 from kms2.database.source.source_block_repository import SourceBlockRepository
 from kms2.database.source_semantic.source_entity_repository import (
     SourceEntityRepository,
@@ -22,10 +26,13 @@ class SourceEntityDescriptionLoadNode:
         source_repository: SourceBlockRepository,
         semantic_repository: SourceEntityRepository,
         context_window: ContextWindowSettings,
+        *,
+        token_counters: tuple[TextTokenCounter, ...],
     ) -> None:
         self._source_repository = source_repository
         self._semantic_repository = semantic_repository
         self._context_window = context_window
+        self._token_counters = token_counters
 
     async def run(self, state: SourceSemanticState) -> dict[str, object]:
         """Load one typed request for every persisted entity occurrence."""
@@ -43,6 +50,13 @@ class SourceEntityDescriptionLoadNode:
                 occurrence.uuid,
             ),
         )
+        token_counts = (
+            count_text_tokens(
+                [block.content for block in blocks], self._token_counters
+            )
+            if ordered
+            else []
+        )
         requests = []
         for occurrence in ordered:
             target = SourceEntityDescriptionTarget.model_validate(
@@ -51,6 +65,7 @@ class SourceEntityDescriptionLoadNode:
             window = select_window(
                 blocks,
                 [positions[occurrence.source_block_uuid]],
+                token_counts=token_counts,
                 backward_budget=self._context_window.backward_budget,
                 forward_budget=self._context_window.forward_budget,
                 target_budget=self._context_window.target_budget,
