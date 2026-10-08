@@ -1,106 +1,81 @@
-"""Complete typed source-learning LangGraph assembly."""
+"""Complete two-pass source-learning LangGraph assembly."""
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from kms2.database.source_learning.repository import SourceLearningRepository
-from kms2.langgraph.source_learning.entity import (
-    add_source_entity_learning_phase,
+from kms2.langgraph.source_learning.atomic import (
+    add_source_atomic_flashcard_phase,
 )
-from kms2.langgraph.source_learning.event import add_source_event_learning_phase
-from kms2.langgraph.source_learning.predicate import (
-    add_source_predicate_learning_phase,
+from kms2.langgraph.source_learning.coherent import (
+    add_source_coherent_flashcard_phase,
 )
 from kms2.langgraph.source_learning.state import SourceLearningState
-from kms2.langgraph.source_learning.triplet import (
-    add_source_triplet_learning_phase,
+from kms2.node.source_learning.atomic import SourceAtomicFlashcardNode
+from kms2.node.source_learning.atomic_persistence import (
+    SourceAtomicFlashcardPersistenceNode,
 )
-from kms2.node.source_learning.entity import (
-    SourceEntityFlashcardNode,
-    SourceEntityLearningFactNode,
-)
-from kms2.node.source_learning.event import (
-    SourceEventFlashcardNode,
-    SourceEventLearningFactNode,
-)
-from kms2.node.source_learning.predicate import (
-    SourcePredicateFlashcardNode,
-    SourcePredicateLearningFactNode,
-)
-from kms2.node.source_learning.triplet import (
-    SourceTripletFlashcardNode,
-    SourceTripletLearningFactNode,
+from kms2.node.source_learning.coherent import SourceCoherentFlashcardNode
+from kms2.node.source_learning.coherent_persistence import (
+    SourceCoherentFlashcardPersistenceNode,
 )
 
 
 class SourceLearningCleanupNode:
-    """Clear generated source-learning records before regeneration."""
+    """Clear generated source-learning cards before regeneration."""
 
     def __init__(self, repository: SourceLearningRepository) -> None:
         self._repository = repository
 
-    async def run(self, state: SourceLearningState) -> dict:
+    async def run(self, state: SourceLearningState) -> dict[str, object]:
         """Delete only generated artifacts for the requested source."""
         await self._repository.clear_source_learning(state.source_uuid)
         return {}
 
 
 class SourceLearningGraph:
-    """Compile entity, event, predicate, and triplet learning phases."""
+    """Compile generation phases with separately injected persistence nodes.
+
+    Processing prepares card occurrences; persistence nodes own card writes
+    and persisted counts. Atomic cards are written before coherent preparation
+    so coherent persistence can link the existing parent identities.
+    """
 
     def __init__(
         self,
         repository: SourceLearningRepository,
-        entity_learning_fact: SourceEntityLearningFactNode,
-        entity_flashcard: SourceEntityFlashcardNode,
-        event_learning_fact: SourceEventLearningFactNode,
-        event_flashcard: SourceEventFlashcardNode,
-        predicate_learning_fact: SourcePredicateLearningFactNode,
-        predicate_flashcard: SourcePredicateFlashcardNode,
-        triplet_learning_fact: SourceTripletLearningFactNode,
-        triplet_flashcard: SourceTripletFlashcardNode,
+        atomic: SourceAtomicFlashcardNode,
+        atomic_persistence: SourceAtomicFlashcardPersistenceNode,
+        coherent: SourceCoherentFlashcardNode,
+        coherent_persistence: SourceCoherentFlashcardPersistenceNode,
     ) -> None:
         self._cleanup = SourceLearningCleanupNode(repository)
-        self._entity_learning_fact = entity_learning_fact
-        self._entity_flashcard = entity_flashcard
-        self._event_learning_fact = event_learning_fact
-        self._event_flashcard = event_flashcard
-        self._predicate_learning_fact = predicate_learning_fact
-        self._predicate_flashcard = predicate_flashcard
-        self._triplet_learning_fact = triplet_learning_fact
-        self._triplet_flashcard = triplet_flashcard
+        self._atomic = atomic
+        self._atomic_persistence = atomic_persistence
+        self._coherent = coherent
+        self._coherent_persistence = coherent_persistence
         self.graph = StateGraph(SourceLearningState)
 
     def build_graph(self) -> CompiledStateGraph:
-        """Compile the explicit source-learning phase sequence."""
+        """Compile cleanup, atomic generation, and coherent generation."""
         self.graph.add_node('source_learning_cleanup', self._cleanup.run)
-        add_source_entity_learning_phase(
-            self.graph, self._entity_learning_fact, self._entity_flashcard
+        add_source_atomic_flashcard_phase(
+            self.graph, self._atomic, self._atomic_persistence
         )
-        add_source_event_learning_phase(
-            self.graph, self._event_learning_fact, self._event_flashcard
-        )
-        add_source_predicate_learning_phase(
-            self.graph, self._predicate_learning_fact, self._predicate_flashcard
-        )
-        add_source_triplet_learning_phase(
-            self.graph, self._triplet_learning_fact, self._triplet_flashcard
+        add_source_coherent_flashcard_phase(
+            self.graph, self._coherent, self._coherent_persistence
         )
         self.graph.add_edge(START, 'source_learning_cleanup')
         self.graph.add_edge(
-            'source_learning_cleanup', 'source_entity_learning_fact_load'
+            'source_learning_cleanup',
+            'source_atomic_flashcard_load',
         )
         self.graph.add_edge(
-            'source_entity_flashcard_persistence',
-            'source_event_learning_fact_load',
+            'source_atomic_flashcard_persistence',
+            'source_coherent_flashcard_prepare',
         )
         self.graph.add_edge(
-            'source_event_flashcard_persistence',
-            'source_predicate_learning_fact_load',
+            'source_coherent_flashcard_persistence',
+            END,
         )
-        self.graph.add_edge(
-            'source_predicate_flashcard_persistence',
-            'source_triplet_learning_fact_load',
-        )
-        self.graph.add_edge('source_triplet_flashcard_persistence', END)
         return self.graph.compile()

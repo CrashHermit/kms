@@ -12,13 +12,19 @@ class SourceTripletDecompositionSignature(dspy.Signature):
     r"""Decompose one accepted source fact into explicit relations.
 
     Preserve source wording and mathematical notation. Use exact source
-    phrases for subject and object, and a concise directed predicate. Classify
-    persistent things, concepts, places, documents, and quantities as entity;
-    classify explicitly named occurrences, actions, transitions, and state
-    changes as event. Reject directives, questions, unsupported implications,
-    unresolved pronouns, and facts without a defensible distinct subject,
-    predicate, and object. Every accepted fact must produce at least one
-    explicit triplet; do not return an empty list for an accepted fact.
+    phrases for subject and object, and a concise directed predicate. For a
+    mathematical symbol or expression, preserve the notation separately from
+    any concept it denotes; emit that interpretation only when the source
+    explicitly establishes it. Do not replace $x$ with an inferred concept or
+    treat equal-looking symbols across contexts as equivalent. Use `$...$` for
+    inline LaTeX and `$$...$$` for display math. Do not use alternate math
+    delimiters. Classify persistent things, concepts, places, documents, and
+    quantities as entity; classify explicitly named occurrences, actions,
+    transitions, and state changes as event. Reject directives, questions,
+    unsupported implications, unresolved pronouns, and facts without a
+    defensible distinct subject, predicate, and object. Every accepted fact
+    must produce at least one explicit triplet; do not return an empty list for
+    an accepted fact.
     """
 
     fact_text: str = dspy.InputField(description='One accepted source fact.')

@@ -16,9 +16,16 @@ class SourceEntityHubSignature(dspy.Signature):
     r"""Synthesize one source-local concept from fixed entity evidence.
 
     Return a concise canonical name and source-grounded description for the
-    supplied entity occurrences or ordered temporary summaries. The members
-    are fixed evidence; never decide membership, add aliases from outside the
-    members, or invent facts.
+    supplied entity occurrences or ordered temporary summaries. Preserve
+    mathematical notation separately from the concept it denotes. When the
+    evidence supports the association, describe it with source-scoped wording
+    such as "Velocity is represented by $v$ in this source." If different
+    symbols denote the same supported concept, use the concept as the
+    canonical name and mention the source-specific notation in the
+    description. Never decide membership, add aliases from outside the
+    members, infer equivalence from notation alone, or invent facts. Use
+    `$...$` for inline LaTeX and `$$...$$` for display math; do not use
+    alternate math delimiters.
     """
 
     request: (
@@ -35,9 +42,12 @@ class SourceEntityHubSummarySignature(dspy.Signature):
     r"""Summarize ordered entity evidence into a concise, self-contained summary.
 
     Summarize only the supplied evidence, preserving distinguishing content,
-    conditions, negation, quantities, mathematics, and direction while removing
-    repetition. Keep each member's name and description associated. Do not
-    choose a canonical hub name or change membership.
+    conditions, negation, quantities, mathematics, direction, and associations
+    between mathematical notation and its explicitly supported concepts while
+    removing repetition. Keep each member's name and description associated.
+    Do not choose a canonical hub name or change membership. Use `$...$` for
+    inline LaTeX and `$$...$$` for display math; do not use alternate math
+    delimiters.
     """
 
     request: SourceEntityHubSummaryInput = dspy.InputField(
@@ -71,8 +81,9 @@ class SourceEntityHubSummaryModule(dspy.Module):
 class SourceEntityHubSummaryMergeSignature(dspy.Signature):
     r"""Merge ordered temporary entity summaries without inventing agreement.
 
-    Consolidate repetition while preserving distinctions, qualifications, and
-    member associations. Do not infer agreement or consequences. Produce one
+    Consolidate repetition while preserving distinctions, qualifications,
+    member associations, and explicit associations between mathematical
+    notation and concepts. Do not infer agreement or consequences. Produce one
     concise, self-contained temporary summary, not a hub definition.
     """
 

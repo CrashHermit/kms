@@ -13,11 +13,7 @@ CALL (source) {
     FOREACH (event IN events | DETACH DELETE event)
     FOREACH (review IN reviews | DETACH DELETE review)
     FOREACH (card IN cards | DETACH DELETE card)
-    WITH source
-    OPTIONAL MATCH (source)-[:HAS_LEARNING_FACT]->(learning_fact)
-    WITH collect(learning_fact) AS learning_facts
-    FOREACH (learning_fact IN learning_facts | DETACH DELETE learning_fact)
-    RETURN count(*) AS learning_artifacts_deleted
+    RETURN size(cards) AS learning_artifacts_deleted
 }
 WITH source
 CALL (source) {

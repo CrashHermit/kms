@@ -220,6 +220,21 @@ def test_kms2_training_examples_use_nested_environment(monkeypatch, tmp_path):
     assert settings.training.examples_directory == tmp_path
 
 
+def test_kms2_source_learning_defaults_use_gemma_e4b():
+    settings = Settings()
+
+    assert (
+        settings.source_learning.atomic_flashcards.model_server_profile
+        == 'gemma-text-32k'
+    )
+    assert (
+        settings.source_learning.coherent_flashcards.model_server_profile
+        == 'gemma-text-32k'
+    )
+    assert settings.source_learning.atomic_flashcards.max_tokens == 2048
+    assert settings.source_learning.coherent_flashcards.max_tokens == 2048
+
+
 def test_kms2_semantic_defaults_survive_nested_environment(monkeypatch):
     monkeypatch.setenv(
         'KMS2_SOURCE_SEMANTIC__SOURCE_FACT_EXTRACTION__MAX_TOKENS',

@@ -11,9 +11,16 @@ class SourceEntityDescriptionSignature(dspy.Signature):
     r"""Describe one entity term in its supplied technical passage.
 
     Write a concise source-local gloss of what the noun phrase, object, or
-    concept means in this passage. Resolve notation and local references, but
-    do not create a general definition, merge synonyms, or invent facts.
-    Describe only target_block; neighboring blocks are reference context.
+    concept means in this passage. Preserve mathematical notation exactly, but
+    distinguish a symbol or expression from the concept it denotes. When the
+    passage explicitly identifies that meaning, use source-scoped wording such
+    as "The symbol $v$ denotes velocity in this passage." If the meaning is not
+    explicit, describe only the observed mathematical role and do not infer a
+    referent. Use `$...$` for inline LaTeX and `$$...$$` for display math.
+    Do not use alternate math delimiters. Do not create a general definition,
+    merge synonyms, or invent facts. Describe only target_block; neighboring
+    blocks are reference context.
+
     """
 
     request: SourceEntityDescriptionInput = dspy.InputField(

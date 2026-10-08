@@ -1,34 +1,26 @@
-"""Configuration for typed source-learning inference phases."""
+"""Configuration for the two source-learning inference passes."""
 
 from pydantic import BaseModel, Field
 
-from kms2.config.inference import TextInferenceSettings
+from kms2.config.inference import NoRetryTextInferenceSettings
+
+
+def _default_flashcard_inference() -> NoRetryTextInferenceSettings:
+    """Use the local Gemma E4B profile for source-learning cards."""
+    return NoRetryTextInferenceSettings(
+        model_server_profile='gemma-text-32k',
+        max_tokens=2048,
+    )
 
 
 class SourceLearningSettings(BaseModel):
-    """Independent model settings for each source-learning boundary."""
+    """Independent inference profiles and payload budgets for source learning."""
 
-    source_entity_learning_fact: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
+    atomic_flashcards: NoRetryTextInferenceSettings = Field(
+        default_factory=_default_flashcard_inference
     )
-    source_entity_flashcard: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
+    coherent_flashcards: NoRetryTextInferenceSettings = Field(
+        default_factory=_default_flashcard_inference
     )
-    source_event_learning_fact: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
-    )
-    source_event_flashcard: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
-    )
-    source_predicate_learning_fact: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
-    )
-    source_predicate_flashcard: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
-    )
-    source_triplet_learning_fact: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
-    )
-    source_triplet_flashcard: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
-    )
+    input_token_budget: int = Field(default=8192, gt=0)
+    safety_margin_tokens: int = Field(default=256, ge=0)

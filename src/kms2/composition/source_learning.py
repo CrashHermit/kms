@@ -1,50 +1,27 @@
-"""Dependency composition for the typed source-learning graph."""
+"""Dependency composition for the two-pass source-learning graph."""
 
-from kms2.composition.predictors import PredictorFactory
+from kms2.composition.predictors import PredictorFactory, build_token_budget
 from kms2.config.settings import Settings
 from kms2.database.client import DatabaseClient
 from kms2.database.source_learning.repository import SourceLearningRepository
 from kms2.langgraph.source_learning.graph import SourceLearningGraph
 from kms2.local_models.runtime import LocalModelRuntime
-from kms2.module.source_learning.entity import (
-    SourceEntityFlashcardModule,
-    SourceEntityFlashcardSignature,
-    SourceEntityLearningFactModule,
-    SourceEntityLearningFactSignature,
+from kms2.local_models.token_counting import LocalTokenizers
+from kms2.module.source_learning.atomic import (
+    SourceAtomicFlashcardModule,
+    SourceAtomicFlashcardSignature,
 )
-from kms2.module.source_learning.event import (
-    SourceEventFlashcardModule,
-    SourceEventFlashcardSignature,
-    SourceEventLearningFactModule,
-    SourceEventLearningFactSignature,
+from kms2.module.source_learning.coherent import (
+    SourceCoherentFlashcardModule,
+    SourceCoherentFlashcardSignature,
 )
-from kms2.module.source_learning.predicate import (
-    SourcePredicateFlashcardModule,
-    SourcePredicateFlashcardSignature,
-    SourcePredicateLearningFactModule,
-    SourcePredicateLearningFactSignature,
+from kms2.node.source_learning.atomic import SourceAtomicFlashcardNode
+from kms2.node.source_learning.atomic_persistence import (
+    SourceAtomicFlashcardPersistenceNode,
 )
-from kms2.module.source_learning.triplet import (
-    SourceTripletFlashcardModule,
-    SourceTripletFlashcardSignature,
-    SourceTripletLearningFactModule,
-    SourceTripletLearningFactSignature,
-)
-from kms2.node.source_learning.entity import (
-    SourceEntityFlashcardNode,
-    SourceEntityLearningFactNode,
-)
-from kms2.node.source_learning.event import (
-    SourceEventFlashcardNode,
-    SourceEventLearningFactNode,
-)
-from kms2.node.source_learning.predicate import (
-    SourcePredicateFlashcardNode,
-    SourcePredicateLearningFactNode,
-)
-from kms2.node.source_learning.triplet import (
-    SourceTripletFlashcardNode,
-    SourceTripletLearningFactNode,
+from kms2.node.source_learning.coherent import SourceCoherentFlashcardNode
+from kms2.node.source_learning.coherent_persistence import (
+    SourceCoherentFlashcardPersistenceNode,
 )
 from kms2.train.recorder import Recorder
 
@@ -54,78 +31,52 @@ def build_source_learning_graph(
     local_models: LocalModelRuntime,
     database: DatabaseClient,
     *,
+    tokenizers: LocalTokenizers,
     recorder: Recorder | None = None,
 ) -> SourceLearningGraph:
-    """Compose all eight typed source-learning modules and nodes."""
+    """Compose predictors, budgets, processing nodes, and persistence nodes."""
     learning = settings.source_learning
     predictors = PredictorFactory(local_models, recorder)
     repository = SourceLearningRepository(database.session)
-
-    entity_learning_fact = SourceEntityLearningFactModule(
+    atomic_module = SourceAtomicFlashcardModule(
         predictors.create(
-            SourceEntityLearningFactModule,
-            learning.source_entity_learning_fact,
-            SourceEntityLearningFactSignature,
+            SourceAtomicFlashcardModule,
+            learning.atomic_flashcards,
+            SourceAtomicFlashcardSignature,
         )
     )
-    entity_flashcard = SourceEntityFlashcardModule(
+    coherent_module = SourceCoherentFlashcardModule(
         predictors.create(
-            SourceEntityFlashcardModule,
-            learning.source_entity_flashcard,
-            SourceEntityFlashcardSignature,
+            SourceCoherentFlashcardModule,
+            learning.coherent_flashcards,
+            SourceCoherentFlashcardSignature,
         )
     )
-    event_learning_fact = SourceEventLearningFactModule(
-        predictors.create(
-            SourceEventLearningFactModule,
-            learning.source_event_learning_fact,
-            SourceEventLearningFactSignature,
-        )
+    atomic_budget = build_token_budget(
+        settings.local_models,
+        tokenizers,
+        learning.atomic_flashcards,
+        input_token_budget=learning.input_token_budget,
+        safety_margin_tokens=learning.safety_margin_tokens,
     )
-    event_flashcard = SourceEventFlashcardModule(
-        predictors.create(
-            SourceEventFlashcardModule,
-            learning.source_event_flashcard,
-            SourceEventFlashcardSignature,
-        )
+    coherent_budget = build_token_budget(
+        settings.local_models,
+        tokenizers,
+        learning.coherent_flashcards,
+        input_token_budget=learning.input_token_budget,
+        safety_margin_tokens=learning.safety_margin_tokens,
     )
-    predicate_learning_fact = SourcePredicateLearningFactModule(
-        predictors.create(
-            SourcePredicateLearningFactModule,
-            learning.source_predicate_learning_fact,
-            SourcePredicateLearningFactSignature,
-        )
-    )
-    predicate_flashcard = SourcePredicateFlashcardModule(
-        predictors.create(
-            SourcePredicateFlashcardModule,
-            learning.source_predicate_flashcard,
-            SourcePredicateFlashcardSignature,
-        )
-    )
-    triplet_learning_fact = SourceTripletLearningFactModule(
-        predictors.create(
-            SourceTripletLearningFactModule,
-            learning.source_triplet_learning_fact,
-            SourceTripletLearningFactSignature,
-        )
-    )
-    triplet_flashcard = SourceTripletFlashcardModule(
-        predictors.create(
-            SourceTripletFlashcardModule,
-            learning.source_triplet_flashcard,
-            SourceTripletFlashcardSignature,
-        )
-    )
-
     return SourceLearningGraph(
         repository,
-        SourceEntityLearningFactNode(repository, entity_learning_fact),
-        SourceEntityFlashcardNode(repository, entity_flashcard),
-        SourceEventLearningFactNode(repository, event_learning_fact),
-        SourceEventFlashcardNode(repository, event_flashcard),
-        SourcePredicateLearningFactNode(repository, predicate_learning_fact),
-        SourcePredicateFlashcardNode(repository, predicate_flashcard),
-        SourceTripletLearningFactNode(repository, triplet_learning_fact),
-        SourceTripletFlashcardNode(repository, triplet_flashcard),
+        SourceAtomicFlashcardNode(
+            repository,
+            atomic_module,
+            budget=atomic_budget,
+        ),
+        SourceAtomicFlashcardPersistenceNode(repository),
+        SourceCoherentFlashcardNode(
+            coherent_module,
+            budget=coherent_budget,
+        ),
+        SourceCoherentFlashcardPersistenceNode(repository),
     )

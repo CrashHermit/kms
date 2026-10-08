@@ -18,8 +18,13 @@ class GlobalTripletHubSummarySignature(dspy.Signature):
     Field and role labels identify evidence context, not new claims. Preserve
     directed subject/predicate/object roles and distinguishing qualified,
     negative, conditional, and quantified content with its role/member
-    associations. Remove repetition and produce a concise, self-contained
-    temporary summary. Do not name a canonical hub or change membership.
+    associations. Keep source-specific mathematical notation distinct from
+    the concepts it explicitly denotes; when evidence supports a shared
+    concept, preserve each notation in the explanation rather than treating
+    symbols as the concept itself. Remove repetition and produce a concise,
+    self-contained temporary summary. Do not name a canonical hub or change
+    membership. Use `$...$` for inline LaTeX and `$$...$$` for display math;
+    do not use alternate math delimiters.
     """
 
     request: GlobalTripletHubSummaryInput = dspy.InputField(
@@ -54,8 +59,9 @@ class GlobalTripletHubSummaryMergeSignature(dspy.Signature):
     r"""Merge ordered global triplet partials without adding claims.
 
     Consolidate repetition while preserving directed roles, distinctions,
-    qualifications, and member/role associations without inferring agreement or
-    consequences. Produce a concise temporary summary, not a hub definition.
+    qualifications, member/role associations, and explicit notation-to-concept
+    associations without inferring agreement or consequences. Produce a concise
+    temporary summary, not a hub definition.
     """
 
     request: GlobalTripletHubSummaryMergeInput = dspy.InputField(
@@ -92,7 +98,10 @@ class GlobalTripletHubSignature(dspy.Signature):
     Produce a canonical relation and standalone explanation grounded only in
     supplied roles and source-triplet-hub evidence. Preserve directed subject,
     predicate, and object roles and qualified, negative, conditional, and
-    quantified claims. Do not infer consequences or add unsupported facts.
+    quantified claims. Keep source-specific mathematical notation distinct
+    from any concept it denotes; mention notation variants in the explanation
+    only when the evidence supports their equivalence. Do not infer
+    consequences or add unsupported facts.
     """
 
     request: (

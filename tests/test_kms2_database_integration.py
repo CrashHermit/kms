@@ -152,7 +152,7 @@ def test_kms2_neo4j_materializes_and_replaces_source():
         initial_instructions = [
             Instruction(
                 uuid='kms2-integration-instruction-1',
-                member_block_uuids=[old_block_uuids[0]],
+                member_block_uuids=old_block_uuids,
                 governed_statement_uuids=['kms2-integration-statement-1'],
             )
         ]
@@ -487,8 +487,10 @@ def test_kms2_neo4j_materializes_and_replaces_source():
                 result = await session.run(
                     """
                     MATCH (source:Source {uuid: $source_uuid})
-                          -[:HAS_INSTRUCTION]->
-                          (instruction:Instruction)
+                          -[:HAS_PAGE]->(:SourcePage)
+                          -[:CONTAINS_BLOCK]->(:SourceBlock)
+                          -[:MEMBER_OF]->(instruction:Instruction)
+                    WITH DISTINCT instruction
                     OPTIONAL MATCH (member:SourceBlock)-[:MEMBER_OF]->(instruction)
                     OPTIONAL MATCH (instruction)-[:GOVERNS]->(statement:SourceStatement)
                     RETURN instruction.uuid AS instruction_uuid,
@@ -508,6 +510,18 @@ def test_kms2_neo4j_materializes_and_replaces_source():
                     'kms2-integration-statement-2'
                 ]
                 assert stale['stale_nodes'] == 0
+
+                result = await session.run(
+                    """
+                    MATCH (source:Source {uuid: $source_uuid})-[edge]->
+                          (:Instruction)
+                    RETURN count(edge) AS direct_instruction_edges
+                    """,
+                    source_uuid=source_uuid,
+                )
+                assert (await result.single(strict=True))[
+                    'direct_instruction_edges'
+                ] == 0
 
                 result = await session.run(
                     """

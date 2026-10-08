@@ -71,14 +71,8 @@ class SourceSemanticStageResult:
 class SourceLearningStageResult:
     """Counts persisted by one complete source-learning stage."""
 
-    entity_learning_fact_count: int
-    entity_flashcard_count: int
-    event_learning_fact_count: int
-    event_flashcard_count: int
-    predicate_learning_fact_count: int
-    predicate_flashcard_count: int
-    triplet_learning_fact_count: int
-    triplet_flashcard_count: int
+    atomic_flashcard_count: int
+    coherent_flashcard_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -211,16 +205,8 @@ def _source_learning_stage_result(
 ) -> SourceLearningStageResult:
     """Convert the final source-learning graph state to its public result."""
     return SourceLearningStageResult(
-        entity_learning_fact_count=final_state['entity_learning_fact_count'],
-        entity_flashcard_count=final_state['entity_flashcard_count'],
-        event_learning_fact_count=final_state['event_learning_fact_count'],
-        event_flashcard_count=final_state['event_flashcard_count'],
-        predicate_learning_fact_count=final_state[
-            'predicate_learning_fact_count'
-        ],
-        predicate_flashcard_count=final_state['predicate_flashcard_count'],
-        triplet_learning_fact_count=final_state['triplet_learning_fact_count'],
-        triplet_flashcard_count=final_state['triplet_flashcard_count'],
+        atomic_flashcard_count=final_state['atomic_flashcard_count'],
+        coherent_flashcard_count=final_state['coherent_flashcard_count'],
     )
 
 
@@ -343,6 +329,7 @@ async def _run_source_learning_stage(
         settings,
         resources.local_models,
         resources.database,
+        tokenizers=resources.tokenizers,
         recorder=resources.recorder,
     ).build_graph()
     final_state = await graph.ainvoke({'source_uuid': source_uuid})

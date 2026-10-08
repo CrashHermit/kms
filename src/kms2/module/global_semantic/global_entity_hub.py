@@ -17,8 +17,13 @@ class GlobalEntityHubSignature(dspy.Signature):
 
     Accept either original source-hub evidence or ordered partial summaries.
     Define the entity's conceptual identity with a concise canonical name and
-    description. The supplied evidence is fixed; never decide membership. Do
-    not treat evidence field labels as domain claims.
+    description. When the evidence supports it, distinguish source-specific
+    mathematical notation from the shared concept: use the concept as the
+    canonical name and mention notation such as $v$ or $x$ in the description.
+    Do not infer equivalence from matching or differing symbols alone. The
+    supplied evidence is fixed; never decide membership or treat evidence field
+    labels as domain claims. Use `$...$` for inline LaTeX and `$$...$$` for
+    display math; do not use alternate math delimiters.
     """
 
     request: (
@@ -35,9 +40,11 @@ class GlobalEntityHubSummarySignature(dspy.Signature):
     r"""Summarize only the ordered supplied global entity evidence.
 
     Preserve member and field associations, distinguishing content, conditions,
-    negation, quantities, and mathematics. Remove repetition and emit a concise,
-    self-contained partial summary. Do not choose a canonical hub name or
-    change membership.
+    negation, quantities, mathematics, and explicit associations between
+    source-specific notation and the concepts it denotes. Remove repetition and
+    emit a concise, self-contained partial summary. Do not choose a canonical
+    hub name or change membership. Use `$...$` for inline LaTeX and `$$...$$`
+    for display math; do not use alternate math delimiters.
     """
 
     request: GlobalEntityHubSummaryInput = dspy.InputField(
@@ -51,9 +58,10 @@ class GlobalEntityHubSummarySignature(dspy.Signature):
 class GlobalEntityHubSummaryMergeSignature(dspy.Signature):
     r"""Consolidate ordered partial global entity summaries.
 
-    Remove repetition while preserving distinctions, qualifications, and
-    member/field associations. Do not infer agreement or consequences. Produce
-    one concise temporary summary, not a hub definition.
+    Remove repetition while preserving distinctions, qualifications,
+    member/field associations, and explicit notation-to-concept associations.
+    Do not infer agreement or consequences. Produce one concise temporary
+    summary, not a hub definition.
     """
 
     request: GlobalEntityHubSummaryMergeInput = dspy.InputField(

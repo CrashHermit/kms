@@ -44,6 +44,15 @@ class RouterServerSettings(LlamaServerSettings):
                 tokenizer_path='~/models/gemma-4-e4b-qat/tokenizer.json',
                 reasoning='on',
             ),
+            'gemma-4-e2b-text': ModelServerProfileSettings(
+                model_path=(
+                    '~/models/gemma-4-e2b-qat-q4_0/gemma-4-E2B_q4_0-it.gguf'
+                ),
+                tokenizer_path=('~/models/gemma-4-e2b-qat-q4_0/tokenizer.json'),
+                context_size=32768,
+                cache_type_v='q4_0',
+                reasoning='off',
+            ),
             'gemma-vision-8k': ModelServerProfileSettings(
                 model_path='~/models/gemma-4-e4b-qat/gemma-4-E4B_q4_0-it.gguf',
                 tokenizer_path='~/models/gemma-4-e4b-qat/tokenizer.json',

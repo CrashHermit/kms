@@ -114,22 +114,6 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     FOR (hub:SourceTripletHub) ON (hub.source_uuid)
     """,
     """
-    CREATE CONSTRAINT source_entity_learning_fact_uuid IF NOT EXISTS
-    FOR (fact:SourceEntityLearningFact) REQUIRE fact.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_event_learning_fact_uuid IF NOT EXISTS
-    FOR (fact:SourceEventLearningFact) REQUIRE fact.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_predicate_learning_fact_uuid IF NOT EXISTS
-    FOR (fact:SourcePredicateLearningFact) REQUIRE fact.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_triplet_learning_fact_uuid IF NOT EXISTS
-    FOR (fact:SourceTripletLearningFact) REQUIRE fact.uuid IS UNIQUE
-    """,
-    """
     CREATE CONSTRAINT source_flashcard_uuid IF NOT EXISTS
     FOR (card:SourceFlashcard) REQUIRE card.uuid IS UNIQUE
     """,

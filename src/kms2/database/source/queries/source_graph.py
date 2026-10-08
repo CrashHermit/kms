@@ -16,11 +16,7 @@ CALL (source) {
     FOREACH (event IN events | DETACH DELETE event)
     FOREACH (review IN reviews | DETACH DELETE review)
     FOREACH (card IN cards | DETACH DELETE card)
-    WITH source
-    OPTIONAL MATCH (source)-[:HAS_LEARNING_FACT]->(learning_fact)
-    WITH collect(learning_fact) AS learning_facts
-    FOREACH (learning_fact IN learning_facts | DETACH DELETE learning_fact)
-    RETURN count(*) AS learning_artifacts_deleted
+    RETURN size(cards) AS learning_artifacts_deleted
 }
 WITH source
 CALL (source) {
@@ -54,7 +50,7 @@ OPTIONAL MATCH (old_page)-[:CONTAINS_BLOCK]->(old_block:SourceBlock)
 OPTIONAL MATCH (old_block)-[:MEMBER_OF]->(old_statement:SourceStatement)
 OPTIONAL MATCH (old_block)-[:MEMBER_OF]->(old_procedure:SourceProcedure)
 OPTIONAL MATCH (old_block)-[:CONTAINS_VISUAL_ASSET]->(old_asset:VisualAsset)
-OPTIONAL MATCH (source)-[:HAS_INSTRUCTION]->(old_instruction:Instruction)
+OPTIONAL MATCH (old_block)-[:MEMBER_OF]->(old_instruction:Instruction)
 WITH source,
      collect(DISTINCT old_page) AS old_pages,
      collect(DISTINCT old_block) AS old_blocks,
@@ -154,7 +150,6 @@ WITH source
 CALL (source) {
     UNWIND $instructions AS row
     CREATE (instruction:Instruction {uuid: row.uuid})
-    CREATE (source)-[:HAS_INSTRUCTION]->(instruction)
     RETURN count(*) AS _
 }
 WITH source

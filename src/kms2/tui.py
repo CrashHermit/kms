@@ -356,21 +356,14 @@ def _run_existing_source(
 
 
 def _log_source_learning_completion(source: Source, learning) -> None:
-    """Log all counts persisted by one source-learning stage."""
+    """Log both persisted source-learning pass counts."""
     logger.info(
-        'Done: source %s (%s), Source Learning persisted %d/%d entity '
-        'learning fact(s)/card(s), %d/%d event, %d/%d predicate, and %d/%d '
-        'triplet learning fact(s)/card(s).',
+        'Done: source %s (%s), Source Learning persisted %d atomic and '
+        '%d coherent flashcard(s).',
         source.uuid,
         source.key,
-        learning.entity_learning_fact_count,
-        learning.entity_flashcard_count,
-        learning.event_learning_fact_count,
-        learning.event_flashcard_count,
-        learning.predicate_learning_fact_count,
-        learning.predicate_flashcard_count,
-        learning.triplet_learning_fact_count,
-        learning.triplet_flashcard_count,
+        learning.atomic_flashcard_count,
+        learning.coherent_flashcard_count,
     )
 
 
