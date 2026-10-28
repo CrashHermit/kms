@@ -5,6 +5,10 @@ from enum import StrEnum
 from pydantic import BaseModel, Field
 
 from kms2.core.model.source_semantic.source_fact_extraction import SourceFact
+from kms2.core.model.source_semantic.source_triplet_context import (
+    SourceTripletInterpretiveBindingCandidate,
+    SourceTripletQualifierCandidate,
+)
 
 
 class SourceTripletEndpointKind(StrEnum):
@@ -22,6 +26,9 @@ class SourceTripletDecompositionCandidate(BaseModel):
     object: str = Field(min_length=1)
     subject_kind: SourceTripletEndpointKind
     object_kind: SourceTripletEndpointKind
+    qualifiers: list[SourceTripletQualifierCandidate]
+
+    interpretive_bindings: list[SourceTripletInterpretiveBindingCandidate]
 
 
 class SourceTripletDecompositionRequest(BaseModel):

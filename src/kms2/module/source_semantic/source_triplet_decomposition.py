@@ -25,6 +25,14 @@ class SourceTripletDecompositionSignature(dspy.Signature):
     defensible distinct subject, predicate, and object. Every accepted fact
     must produce at least one explicit triplet; do not return an empty list for
     an accepted fact.
+
+    For each triplet, extract only qualifiers and interpretive bindings that
+    the source fact explicitly supplies. A qualifier restricts the whole
+    triplet or one of its roles; an interpretive binding gives a source-stated
+    meaning for a term or symbol. Preserve negation, exceptions, conditions,
+    quantities, units, and notation with the associated triplet. Do not infer
+    definitions, assumptions, or meanings from external knowledge. Return an
+    empty array for either collection when the fact supplies none.
     """
 
     fact_text: str = dspy.InputField(description='One accepted source fact.')

@@ -79,6 +79,26 @@ class SourceTripletRepository:
                 }
                 for occurrence in occurrences
             ],
+            'qualifiers': [
+                {
+                    **qualifier.model_dump(mode='json'),
+                    'triplet_uuid': occurrence.triplet.uuid,
+                    'position': position,
+                }
+                for occurrence in occurrences
+                for position, qualifier in enumerate(occurrence.qualifiers)
+            ],
+            'interpretive_bindings': [
+                {
+                    **binding.model_dump(mode='json'),
+                    'triplet_uuid': occurrence.triplet.uuid,
+                    'position': position,
+                }
+                for occurrence in occurrences
+                for position, binding in enumerate(
+                    occurrence.interpretive_bindings
+                )
+            ],
         }
         async with self._session_factory() as session:
             result = await session.run(

@@ -91,20 +91,15 @@ class SourceTripletHubNode:
     ) -> dict[str, list[SourceTripletHubSynthesisResult]]:
         """Synthesize one exact triplet group."""
         group = state['source_triplet_hub_group']
+        evidence = sorted(
+            group.evidence,
+            key=lambda item: item.triplet_uuid,
+        )
         request = SourceTripletHubSynthesisInput(
             subject_hub=group.subject_hub,
             predicate_hub=group.predicate_hub,
             object_hub=group.object_hub,
-            source_facts=sorted(
-                {evidence.fact_text for evidence in group.evidence}
-            ),
-            triplets=sorted(
-                {
-                    f'{evidence.subject} | {evidence.predicate} | '
-                    f'{evidence.object}'
-                    for evidence in group.evidence
-                }
-            ),
+            evidence=[item.model_input() for item in evidence],
         )
         if fits_token_budget(
             token_count=self._final_budget.counter.count_texts(
@@ -114,7 +109,7 @@ class SourceTripletHubNode:
         ):
             definition = await self._module.acall(request=request)
         else:
-            evidence = [
+            overflow_evidence = [
                 json.dumps(
                     {
                         'role': role,
@@ -129,15 +124,14 @@ class SourceTripletHubNode:
                     ('object_hub', request.object_hub),
                 )
             ]
-            evidence.extend(
-                json.dumps({'source_fact': text}, ensure_ascii=False)
-                for text in request.source_facts
+            overflow_evidence.extend(
+                json.dumps(
+                    {'triplet_evidence': item.model_dump(mode='json')},
+                    ensure_ascii=False,
+                )
+                for item in request.evidence
             )
-            evidence.extend(
-                json.dumps({'triplet': text}, ensure_ascii=False)
-                for text in request.triplets
-            )
-            summaries = await self._summarize_evidence(evidence)
+            summaries = await self._summarize_evidence(overflow_evidence)
             while not fits_token_budget(
                 token_count=self._final_budget.counter.count_texts(
                     [

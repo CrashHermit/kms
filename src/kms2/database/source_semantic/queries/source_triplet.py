@@ -17,9 +17,9 @@ CALL (source) {
 }
 WITH source
 CALL (source) {
-    MATCH (source)-[:FIRST_BLOCK]->(first:SourceBlock)
-    MATCH (first)-[:NEXT_BLOCK*0..]->(source_block:SourceBlock)
-    MATCH (source_block)<-[:HAS_SOURCE_BLOCK]-(:SourceFactTarget)
+    OPTIONAL MATCH (source)-[:FIRST_BLOCK]->(first:SourceBlock)
+    OPTIONAL MATCH (first)-[:NEXT_BLOCK*0..]->(source_block:SourceBlock)
+    OPTIONAL MATCH (source_block)<-[:HAS_SOURCE_BLOCK]-(:SourceFactTarget)
         <-[:HAS_TARGET]-(fact:SourceFact)-[:HAS_TRIPLET]->(
         old_triplet:SourceTriplet
     )
@@ -27,9 +27,14 @@ CALL (source) {
     OPTIONAL MATCH (old_triplet)-[:HAS_PREDICATE]->(
         old_predicate:SourcePredicate
     )
+    OPTIONAL MATCH (old_triplet)-[
+        :HAS_QUALIFIER|HAS_INTERPRETIVE_BINDING
+    ]->(old_attachment)
     WITH collect(DISTINCT old_triplet) AS old_triplets,
          collect(DISTINCT old_endpoint) AS old_endpoints,
-         collect(DISTINCT old_predicate) AS old_predicates
+         collect(DISTINCT old_predicate) AS old_predicates,
+         collect(DISTINCT old_attachment) AS old_attachments
+    FOREACH (node IN old_attachments | DETACH DELETE node)
     FOREACH (node IN old_triplets | DETACH DELETE node)
     FOREACH (node IN old_endpoints | DETACH DELETE node)
     FOREACH (node IN old_predicates | DETACH DELETE node)
@@ -70,6 +75,34 @@ CALL () {
         predicate: row.predicate
     })
     RETURN count(*) AS source_predicates_persisted
+}
+CALL () {
+    UNWIND $qualifiers AS row
+    MATCH (triplet:SourceTriplet {uuid: row.triplet_uuid})
+    CREATE (qualifier:SourceTripletQualifier {
+        uuid: row.uuid,
+        source_uuid: row.source_uuid,
+        target: row.target,
+        relation: row.relation,
+        value: row.value
+    })
+    CREATE (triplet)-[:HAS_QUALIFIER {position: row.position}]->(qualifier)
+    RETURN count(*) AS qualifiers_persisted
+}
+CALL () {
+    UNWIND $interpretive_bindings AS row
+    MATCH (triplet:SourceTriplet {uuid: row.triplet_uuid})
+    CREATE (binding:SourceTripletInterpretiveBinding {
+        uuid: row.uuid,
+        source_uuid: row.source_uuid,
+        target: row.target,
+        term: row.term,
+        meaning: row.meaning
+    })
+    CREATE (triplet)-[:HAS_INTERPRETIVE_BINDING {
+        position: row.position
+    }]->(binding)
+    RETURN count(*) AS interpretive_bindings_persisted
 }
 CALL () {
     UNWIND $fact_triplet_pairs AS row
@@ -115,6 +148,22 @@ WHERE (object:SourceEntity OR object:SourceEvent)
 MATCH (object)-[:IN_SOURCE_HUB]->(object_hub)
 WHERE (object_hub:SourceEntityHub OR object_hub:SourceEventHub)
   AND object_hub.source_uuid = $source_uuid
+WITH DISTINCT fact, triplet, subject, predicate, object,
+              subject_hub, predicate_hub, object_hub
+CALL (triplet) {
+    MATCH (triplet)-[ownership:HAS_QUALIFIER]->(
+        qualifier:SourceTripletQualifier
+    )
+    WITH qualifier, ownership ORDER BY ownership.position
+    RETURN collect(qualifier{.target, .relation, .value}) AS qualifiers
+}
+CALL (triplet) {
+    MATCH (triplet)-[ownership:HAS_INTERPRETIVE_BINDING]->(
+        binding:SourceTripletInterpretiveBinding
+    )
+    WITH binding, ownership ORDER BY ownership.position
+    RETURN collect(binding{.target, .term, .meaning}) AS interpretive_bindings
+}
 WITH subject_hub,
      predicate_hub,
      object_hub,
@@ -124,7 +173,9 @@ WITH subject_hub,
          fact_text: fact.text,
          subject: subject.name,
          predicate: predicate.predicate,
-         object: object.name
+         object: object.name,
+         qualifiers: qualifiers,
+         interpretive_bindings: interpretive_bindings
      }) AS evidence
 RETURN
     subject_hub.uuid AS subject_hub_uuid,

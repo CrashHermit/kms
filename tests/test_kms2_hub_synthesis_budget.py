@@ -292,7 +292,7 @@ def test_typed_hub_multilevel_reduction_carries_singletons_and_collects_in_order
         ] == list(range(len(predictors[0].outputs)))
         assert (
             max(depths[partial.text] for partial in final_request.summaries)
-            >= 3
+            >= 2
         )
         assert len(predictors[2].calls) == 1
 

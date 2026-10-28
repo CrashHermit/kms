@@ -20,9 +20,9 @@ CALL (source) {
 }
 WITH source
 CALL (source) {
-    MATCH (source)-[:FIRST_BLOCK]->(first:SourceBlock)
-    MATCH (first)-[:NEXT_BLOCK*0..]->(source_block:SourceBlock)
-    MATCH (source_block)<-[:HAS_SOURCE_BLOCK]-(:SourceFactTarget)
+    OPTIONAL MATCH (source)-[:FIRST_BLOCK]->(first:SourceBlock)
+    OPTIONAL MATCH (first)-[:NEXT_BLOCK*0..]->(source_block:SourceBlock)
+    OPTIONAL MATCH (source_block)<-[:HAS_SOURCE_BLOCK]-(:SourceFactTarget)
         <-[:HAS_TARGET]-(old_fact:SourceFact)
     OPTIONAL MATCH (old_fact)-[:HAS_TARGET|HAS_CONTEXT_BEFORE|HAS_CONTEXT_AFTER]->(
         old_pointer
@@ -32,16 +32,21 @@ CALL (source) {
     OPTIONAL MATCH (old_triplet)-[:HAS_PREDICATE]->(
         old_predicate:SourcePredicate
     )
+    OPTIONAL MATCH (old_triplet)-[
+        :HAS_QUALIFIER|HAS_INTERPRETIVE_BINDING
+    ]->(old_attachment)
     WITH collect(DISTINCT old_fact) AS facts,
          collect(DISTINCT old_pointer) AS pointers,
          collect(DISTINCT old_triplet) AS triplets,
          collect(DISTINCT old_endpoint) AS endpoints,
-         collect(DISTINCT old_predicate) AS predicates
-    FOREACH (node IN triplets | DETACH DELETE node)
-    FOREACH (node IN facts | DETACH DELETE node)
-    FOREACH (node IN pointers | DETACH DELETE node)
-    FOREACH (node IN endpoints | DETACH DELETE node)
-    FOREACH (node IN predicates | DETACH DELETE node)
+         collect(DISTINCT old_predicate) AS predicates,
+         collect(DISTINCT old_attachment) AS attachments
+    FOREACH (attachment IN attachments | DETACH DELETE attachment)
+    FOREACH (triplet IN triplets | DETACH DELETE triplet)
+    FOREACH (fact IN facts | DETACH DELETE fact)
+    FOREACH (pointer IN pointers | DETACH DELETE pointer)
+    FOREACH (endpoint IN endpoints | DETACH DELETE endpoint)
+    FOREACH (predicate IN predicates | DETACH DELETE predicate)
     RETURN count(*) AS _
 }
 WITH source

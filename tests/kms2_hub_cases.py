@@ -141,6 +141,8 @@ def _triplet_group(
                 subject=f'alpha-{index}',
                 predicate='directs',
                 object=f'beta-{index}',
+                qualifiers=[],
+                interpretive_bindings=[],
             )
             for index in range(5)
         ]

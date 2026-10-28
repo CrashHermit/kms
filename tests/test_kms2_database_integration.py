@@ -1,5 +1,6 @@
 import asyncio
 import os
+from uuid import uuid4
 
 import pytest
 
@@ -54,7 +55,20 @@ from kms2.core.model.source_semantic.source_triplet import (
     SourceTriplet,
     SourceTripletOccurrence,
 )
+from kms2.core.model.source_semantic.source_triplet_context import (
+    SourceTripletContextTarget,
+    SourceTripletInterpretiveBindingCandidate,
+    SourceTripletQualifierCandidate,
+)
+from kms2.core.model.source_semantic.source_triplet_decomposition import (
+    SourceTripletDecompositionCandidate,
+    SourceTripletEndpointKind,
+)
+from kms2.core.model.source_semantic.source_triplet_hub import (
+    SourceTripletHubDefinition,
+)
 from kms2.core.model.visual_asset import VisualAsset
+from kms2.core.windowing import TokenBudget
 from kms2.database import schema
 from kms2.database.client import DatabaseClient
 from kms2.database.global_semantic.global_entity_hub_repository import (
@@ -91,6 +105,14 @@ from kms2.database.source_semantic.source_predicate_repository import (
 )
 from kms2.database.source_semantic.source_triplet_repository import (
     SourceTripletRepository,
+)
+from kms2.langgraph.source_semantic.state import SourceSemanticState
+from kms2.node.source_semantic.source_triplet_decomposition import (
+    SourceTripletDecompositionNode,
+)
+from kms2.node.source_semantic.source_triplet_hub import SourceTripletHubNode
+from kms2.node.source_semantic.source_triplet_persistence import (
+    SourceTripletPersistenceNode,
 )
 
 _REQUIRED_ENVIRONMENT = (
@@ -352,6 +374,8 @@ def test_kms2_neo4j_materializes_and_replaces_source():
                     source_block_uuid=old_block_uuids[0],
                     predicate='relates to',
                 ),
+                qualifiers=[],
+                interpretive_bindings=[],
             )
             await source_fact_repository.replace_source_facts(
                 source_uuid,
@@ -654,6 +678,8 @@ def test_kms2_neo4j_clean_schema_materializes_vectors():
                         source_block_uuid=block_uuids[0],
                         predicate='supports',
                     ),
+                    qualifiers=[],
+                    interpretive_bindings=[],
                 ),
                 SourceTripletOccurrence(
                     fact=fact_two,
@@ -676,6 +702,8 @@ def test_kms2_neo4j_clean_schema_materializes_vectors():
                         source_block_uuid=block_uuids[1],
                         predicate='causes',
                     ),
+                    qualifiers=[],
+                    interpretive_bindings=[],
                 ),
             ]
             await source_fact_repository.replace_source_facts(
@@ -1756,6 +1784,430 @@ def test_kms2_neo4j_global_triplet_projection_contracts():
                     DETACH DELETE node
                     """,
                     prefix=prefix,
+                )
+                await result.consume()
+            await database.close()
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.skipif(
+    os.getenv('KMS2_NEO4J_IT') != '1'
+    or not all(os.getenv(name) for name in _REQUIRED_ENVIRONMENT),
+    reason='KMS2 Neo4j integration environment is not enabled',
+)
+def test_kms2_neo4j_triplet_context_round_trip_and_cleanup():
+    async def exercise() -> None:
+        database = DatabaseClient(Settings().database)
+        source_uuid = f'kms2-triplet-context-{uuid4().hex}'
+        source = Source(
+            uuid=source_uuid,
+            key='triplet-context.pdf',
+            metadata={'suite': 'kms2'},
+        )
+        block_a = SourceBlock(
+            uuid=f'{source_uuid}-block-a',
+            block_type='paragraph',
+            content='enzyme facts',
+        )
+        block_b = SourceBlock(
+            uuid=f'{source_uuid}-block-b',
+            block_type='paragraph',
+            content='second witness',
+        )
+        source_graph_repository = SourceGraphRepository(database.session)
+        source_fact_repository = SourceFactRepository(database.session)
+        source_triplet_repository = SourceTripletRepository(database.session)
+        source_triplet_persistence = SourceTripletPersistenceNode(
+            source_triplet_repository
+        )
+        facts = [
+            SourceFact(
+                uuid=f'{source_uuid}-fact-a',
+                text=('Enzyme E catalyzes reaction R at pH 7 and 25 °C.'),
+                target=SourceFactTarget(
+                    source_blocks=[block_a, block_b],
+                ),
+                context_before=SourceFactContext(source_blocks=[]),
+                context_after=SourceFactContext(source_blocks=[]),
+            ),
+            SourceFact(
+                uuid=f'{source_uuid}-fact-b',
+                text=('Enzyme E catalyzes reaction R at pH 9 and 25 °C.'),
+                target=SourceFactTarget(source_blocks=[block_a]),
+                context_before=SourceFactContext(source_blocks=[]),
+                context_after=SourceFactContext(source_blocks=[]),
+            ),
+            SourceFact(
+                uuid=f'{source_uuid}-fact-c',
+                text='Enzyme E catalyzes reaction R.',
+                target=SourceFactTarget(source_blocks=[block_a]),
+                context_before=SourceFactContext(source_blocks=[]),
+                context_after=SourceFactContext(source_blocks=[]),
+            ),
+        ]
+        qualifier_values = ('7', '9')
+        candidate_by_text = {
+            facts[0].text: SourceTripletDecompositionCandidate(
+                subject='E',
+                predicate='catalyzes',
+                object='R',
+                subject_kind=SourceTripletEndpointKind.ENTITY,
+                object_kind=SourceTripletEndpointKind.EVENT,
+                qualifiers=[
+                    SourceTripletQualifierCandidate(
+                        target=SourceTripletContextTarget.TRIPLET,
+                        relation='pH',
+                        value=qualifier_values[0],
+                    ),
+                    SourceTripletQualifierCandidate(
+                        target=SourceTripletContextTarget.TRIPLET,
+                        relation='temperature',
+                        value='25 °C',
+                    ),
+                ],
+                interpretive_bindings=[
+                    SourceTripletInterpretiveBindingCandidate(
+                        target=SourceTripletContextTarget.SUBJECT,
+                        term='E',
+                        meaning='catalase',
+                    ),
+                    SourceTripletInterpretiveBindingCandidate(
+                        target=SourceTripletContextTarget.OBJECT,
+                        term='R',
+                        meaning='hydrogen-peroxide decomposition',
+                    ),
+                ],
+            ),
+            facts[1].text: SourceTripletDecompositionCandidate(
+                subject='E',
+                predicate='catalyzes',
+                object='R',
+                subject_kind=SourceTripletEndpointKind.ENTITY,
+                object_kind=SourceTripletEndpointKind.EVENT,
+                qualifiers=[
+                    SourceTripletQualifierCandidate(
+                        target=SourceTripletContextTarget.TRIPLET,
+                        relation='pH',
+                        value=qualifier_values[1],
+                    ),
+                    SourceTripletQualifierCandidate(
+                        target=SourceTripletContextTarget.TRIPLET,
+                        relation='temperature',
+                        value='25 °C',
+                    ),
+                ],
+                interpretive_bindings=[
+                    SourceTripletInterpretiveBindingCandidate(
+                        target=SourceTripletContextTarget.SUBJECT,
+                        term='E',
+                        meaning='catalase',
+                    ),
+                    SourceTripletInterpretiveBindingCandidate(
+                        target=SourceTripletContextTarget.OBJECT,
+                        term='R',
+                        meaning='hydrogen-peroxide decomposition',
+                    ),
+                ],
+            ),
+            facts[2].text: SourceTripletDecompositionCandidate(
+                subject='E',
+                predicate='catalyzes',
+                object='R',
+                subject_kind=SourceTripletEndpointKind.ENTITY,
+                object_kind=SourceTripletEndpointKind.EVENT,
+                qualifiers=[],
+                interpretive_bindings=[],
+            ),
+        }
+
+        class _Decomposer:
+            async def aforward(self, *, request):
+                return [candidate_by_text[request.fact_text]]
+
+        class _Counter:
+            def count_texts(self, texts):
+                return [1] * len(texts)
+
+        class _HubModule:
+            def __init__(self):
+                self.requests = []
+
+            async def acall(self, *, request):
+                self.requests.append(request)
+                return SourceTripletHubDefinition(
+                    canonical_name='catalase reaction',
+                    description='Catalase catalyzes hydrogen-peroxide decomposition.',
+                )
+
+        attachment_uuids: list[str] = []
+        seeded_hub_uuids = [
+            f'{source_uuid}-entity-hub',
+            f'{source_uuid}-predicate-hub',
+            f'{source_uuid}-event-hub',
+        ]
+        try:
+            await schema.ensure_structural_schema(database.session)
+            await source_graph_repository.replace_source(
+                source,
+                [SourcePage(index=0, blocks=[block_a, block_b])],
+                [],
+                [],
+                [],
+            )
+            await source_fact_repository.replace_source_facts(
+                source_uuid,
+                facts,
+            )
+
+            decomposition_node = SourceTripletDecompositionNode(_Decomposer())
+            state = SourceSemanticState(
+                source_uuid=source_uuid,
+                source_facts=facts,
+            )
+            sends = decomposition_node.dispatch(state)
+            triplet_results = []
+            for send in sends:
+                triplet_results.extend(
+                    (await decomposition_node.worker(send.arg))[
+                        'triplet_results'
+                    ]
+                )
+            state = state.model_copy(
+                update={'triplet_results': triplet_results}
+            )
+            state = state.model_copy(update=decomposition_node.collect(state))
+            occurrences = state.triplet_occurrences
+            assert len(occurrences) == 3
+            await source_triplet_persistence.run(state)
+
+            entity_rows = [
+                {
+                    'hub_uuid': seeded_hub_uuids[0],
+                    'member_uuid': occurrence.subject.uuid,
+                    'name': occurrence.subject.name,
+                    'description': 'The enzyme symbol E.',
+                }
+                for occurrence in occurrences
+            ]
+            event_rows = [
+                {
+                    'hub_uuid': seeded_hub_uuids[2],
+                    'member_uuid': occurrence.object.uuid,
+                    'name': occurrence.object.name,
+                    'description': 'The reaction symbol R.',
+                }
+                for occurrence in occurrences
+            ]
+            predicate_rows = [
+                {
+                    'hub_uuid': seeded_hub_uuids[1],
+                    'member_uuid': occurrence.predicate.uuid,
+                    'name': occurrence.predicate.predicate,
+                    'description': 'An enzyme catalysis relation.',
+                }
+                for occurrence in occurrences
+            ]
+            async with database.session() as session:
+                await (
+                    await session.run(
+                        """
+                        UNWIND $entity_rows AS row
+                        MERGE (hub:SourceEntityHub {uuid: row.hub_uuid})
+                        SET hub.source_uuid = $source_uuid,
+                            hub.canonical_name = row.name,
+                            hub.aliases = [],
+                            hub.description = row.description
+                        WITH hub, row
+                        MATCH (member:SourceEntity {uuid: row.member_uuid})
+                        CREATE (member)-[:IN_SOURCE_HUB]->(hub)
+                        """,
+                        source_uuid=source_uuid,
+                        entity_rows=entity_rows,
+                    )
+                ).consume()
+                await (
+                    await session.run(
+                        """
+                        UNWIND $event_rows AS row
+                        MERGE (hub:SourceEventHub {uuid: row.hub_uuid})
+                        SET hub.source_uuid = $source_uuid,
+                            hub.name = row.name,
+                            hub.aliases = [],
+                            hub.description = row.description
+                        WITH hub, row
+                        MATCH (member:SourceEvent {uuid: row.member_uuid})
+                        CREATE (member)-[:IN_SOURCE_HUB]->(hub)
+                        """,
+                        source_uuid=source_uuid,
+                        event_rows=event_rows,
+                    )
+                ).consume()
+                await (
+                    await session.run(
+                        """
+                        UNWIND $predicate_rows AS row
+                        MERGE (hub:SourcePredicateHub {uuid: row.hub_uuid})
+                        SET hub.source_uuid = $source_uuid,
+                            hub.predicate = row.name,
+                            hub.aliases = [],
+                            hub.description = row.description
+                        WITH hub, row
+                        MATCH (member:SourcePredicate {uuid: row.member_uuid})
+                        CREATE (member)-[:IN_SOURCE_HUB]->(hub)
+                        """,
+                        source_uuid=source_uuid,
+                        predicate_rows=predicate_rows,
+                    )
+                ).consume()
+
+            groups = (
+                await source_triplet_repository.read_source_triplet_hub_groups(
+                    source_uuid
+                )
+            )
+            assert len(groups) == 1
+            assert len(groups[0].evidence) == 3
+            by_fact = {
+                evidence.fact_text: evidence for evidence in groups[0].evidence
+            }
+            assert [
+                item.value for item in by_fact[facts[0].text].qualifiers
+            ] == ['7', '25 °C']
+            assert [
+                item.value for item in by_fact[facts[1].text].qualifiers
+            ] == ['9', '25 °C']
+            assert by_fact[facts[2].text].qualifiers == []
+            assert [
+                item.meaning
+                for item in by_fact[facts[0].text].interpretive_bindings
+            ] == ['catalase', 'hydrogen-peroxide decomposition']
+            assert by_fact[facts[2].text].interpretive_bindings == []
+
+            attachment_uuids = [
+                attachment.uuid
+                for occurrence in occurrences
+                for attachment in (
+                    *occurrence.qualifiers,
+                    *occurrence.interpretive_bindings,
+                )
+            ]
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (triplet:SourceTriplet)
+                    MATCH (triplet)-[ownership:HAS_QUALIFIER]->(
+                        qualifier:SourceTripletQualifier
+                    )
+                    WHERE qualifier.uuid IN $attachment_uuids
+                    RETURN count(DISTINCT triplet) AS owners,
+                           count(DISTINCT qualifier) AS qualifiers,
+                           collect(ownership.position)
+                               AS positions
+                    """,
+                    attachment_uuids=attachment_uuids,
+                )
+                owner_record = await result.single()
+            assert owner_record['owners'] == 2
+            assert owner_record['qualifiers'] == 4
+            assert sorted(owner_record['positions']) == [0, 0, 1, 1]
+
+            class _NoopModule:
+                async def acall(self, *, request):
+                    return SourceTripletHubDefinition(
+                        canonical_name='summary',
+                        description='summary',
+                    )
+
+            hub_module = _HubModule()
+            hub_node = SourceTripletHubNode(
+                source_triplet_repository,
+                hub_module,
+                object(),
+                summary_module=_NoopModule(),
+                merge_module=_NoopModule(),
+                final_budget=TokenBudget(_Counter(), 100000),
+                summary_budget=TokenBudget(_Counter(), 100000),
+                merge_budget=TokenBudget(_Counter(), 100000),
+            )
+            await hub_node.synthesis_worker(
+                {
+                    'source_triplet_hub_synthesis_ordinal': 0,
+                    'source_triplet_hub_group': groups[0],
+                }
+            )
+            synthesis_request = hub_module.requests[0]
+            assert {
+                item.fact_text: (
+                    item.qualifiers[0].value if item.qualifiers else None
+                )
+                for item in synthesis_request.evidence
+            } == {
+                facts[0].text: '7',
+                facts[1].text: '9',
+                facts[2].text: None,
+            }
+
+            await source_triplet_repository.replace_source_triplets(
+                source_uuid,
+                [],
+            )
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (node)
+                    WHERE node.uuid IN $attachment_uuids
+                    RETURN count(node) AS remaining
+                    """,
+                    attachment_uuids=attachment_uuids,
+                )
+                assert (await result.single())['remaining'] == 0
+
+            await source_triplet_persistence.run(state)
+            await source_fact_repository.replace_source_facts(source_uuid, [])
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (node)
+                    WHERE node.uuid IN $attachment_uuids
+                    RETURN count(node) AS remaining
+                    """,
+                    attachment_uuids=attachment_uuids,
+                )
+                assert (await result.single())['remaining'] == 0
+
+            await source_fact_repository.replace_source_facts(
+                source_uuid, facts
+            )
+            await source_triplet_persistence.run(state)
+            await source_graph_repository.replace_source(
+                source,
+                [],
+                [],
+                [],
+                [],
+            )
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (node)
+                    WHERE node.uuid IN $attachment_uuids
+                    RETURN count(node) AS remaining
+                    """,
+                    attachment_uuids=attachment_uuids,
+                )
+                assert (await result.single())['remaining'] == 0
+        finally:
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (node)
+                    WHERE node.uuid = $source_uuid
+                       OR node.uuid IN $seeded_hub_uuids
+                    DETACH DELETE node
+                    """,
+                    source_uuid=source_uuid,
+                    seeded_hub_uuids=seeded_hub_uuids,
                 )
                 await result.consume()
             await database.close()

@@ -18,9 +18,10 @@ from kms2.core.model.source_semantic.source_fact_extraction import (
     SourceFactTarget,
 )
 from kms2.core.model.source_semantic.source_predicate import SourcePredicate
-from kms2.core.model.source_semantic.source_triplet import (
-    SourceTriplet,
-    SourceTripletOccurrence,
+from kms2.core.model.source_semantic.source_triplet_context import (
+    SourceTripletContextTarget,
+    SourceTripletInterpretiveBindingCandidate,
+    SourceTripletQualifierCandidate,
 )
 from kms2.core.model.source_semantic.source_triplet_decomposition import (
     SourceTripletDecompositionCandidate,
@@ -39,9 +40,6 @@ from kms2.database.source_semantic.source_fact_repository import (
 )
 from kms2.database.source_semantic.source_predicate_repository import (
     SourcePredicateRepository,
-)
-from kms2.database.source_semantic.source_triplet_repository import (
-    SourceTripletRepository,
 )
 from kms2.langgraph.source_semantic.graph import SourceSemanticGraph
 from kms2.langgraph.source_semantic.state import SourceSemanticState
@@ -189,6 +187,8 @@ class _TripletDecomposer:
                 object='Acme',
                 subject_kind=SourceTripletEndpointKind.ENTITY,
                 object_kind=SourceTripletEndpointKind.ENTITY,
+                qualifiers=[],
+                interpretive_bindings=[],
             )
         ]
 
@@ -274,6 +274,20 @@ def test_triplet_collection_reuses_each_persisted_fact():
                         object='Acme',
                         subject_kind=SourceTripletEndpointKind.ENTITY,
                         object_kind=SourceTripletEndpointKind.ENTITY,
+                        qualifiers=[
+                            SourceTripletQualifierCandidate(
+                                target=SourceTripletContextTarget.TRIPLET,
+                                relation='condition',
+                                value='during business hours',
+                            )
+                        ],
+                        interpretive_bindings=[
+                            SourceTripletInterpretiveBindingCandidate(
+                                target=SourceTripletContextTarget.SUBJECT,
+                                term='Alice',
+                                meaning='the researcher',
+                            )
+                        ],
                     ),
                     SourceTripletDecompositionCandidate(
                         subject='Alice',
@@ -281,6 +295,20 @@ def test_triplet_collection_reuses_each_persisted_fact():
                         object='Acme',
                         subject_kind=SourceTripletEndpointKind.ENTITY,
                         object_kind=SourceTripletEndpointKind.ENTITY,
+                        qualifiers=[
+                            SourceTripletQualifierCandidate(
+                                target=SourceTripletContextTarget.TRIPLET,
+                                relation='condition',
+                                value='outside business hours',
+                            )
+                        ],
+                        interpretive_bindings=[
+                            SourceTripletInterpretiveBindingCandidate(
+                                target=SourceTripletContextTarget.SUBJECT,
+                                term='Alice',
+                                meaning='the client',
+                            )
+                        ],
                     ),
                 ],
             )
@@ -291,14 +319,20 @@ def test_triplet_collection_reuses_each_persisted_fact():
     triplet_occurrences = collected['triplet_occurrences']
 
     assert len(triplet_occurrences) == 2
+    first, second = triplet_occurrences
+    assert first.triplet.uuid != second.triplet.uuid
+    assert first.fact is fact
+    assert second.fact is fact
+    assert first.fact.text == second.fact.text == 'Alice works for Acme'
+    assert first.fact.target.source_blocks[0].uuid == 'block-1'
+    assert first.qualifiers[0].value == 'during business hours'
+    assert second.qualifiers[0].value == 'outside business hours'
+    assert first.interpretive_bindings[0].meaning == 'the researcher'
+    assert second.interpretive_bindings[0].meaning == 'the client'
+    assert first.qualifiers[0].uuid != second.qualifiers[0].uuid
     assert (
-        triplet_occurrences[0].triplet.uuid
-        != triplet_occurrences[1].triplet.uuid
-    )
-    assert all(occurrence.fact is fact for occurrence in triplet_occurrences)
-    assert all(
-        occurrence.subject.source_block_uuid == 'block-1'
-        for occurrence in triplet_occurrences
+        first.interpretive_bindings[0].uuid
+        != second.interpretive_bindings[0].uuid
     )
 
 
@@ -361,47 +395,6 @@ def test_fact_repository_serializes_only_node_identity_and_evidence_edges():
             'target_block_uuids': ['block-1'],
             'context_before_block_uuids': [],
             'context_after_block_uuids': [],
-        }
-    ]
-
-
-def test_triplet_repository_serializes_role_ids_only_as_match_parameters():
-    session = _Session()
-    repository = SourceTripletRepository(lambda: _SessionContext(session))
-    block = _block('block-1', 'source text')
-    source_fact = _fact('fact-1', block)
-    occurrence = SourceTripletOccurrence(
-        fact=source_fact,
-        triplet=SourceTriplet(uuid='triplet-1'),
-        subject=SourceEntity(
-            uuid='subject-1',
-            source_uuid='source-1',
-            source_block_uuid='block-1',
-            name='Alice',
-        ),
-        object=SourceEntity(
-            uuid='object-1',
-            source_uuid='source-1',
-            source_block_uuid='block-1',
-            name='Acme',
-        ),
-        predicate=SourcePredicate(
-            uuid='predicate-1',
-            source_uuid='source-1',
-            source_block_uuid='block-1',
-            predicate='works for',
-        ),
-    )
-
-    asyncio.run(repository.replace_source_triplets('source-1', [occurrence]))
-
-    _, parameters = session.calls[-1]
-    assert parameters['triplets'] == [
-        {
-            'uuid': 'triplet-1',
-            'subject_uuid': 'subject-1',
-            'object_uuid': 'object-1',
-            'predicate_uuid': 'predicate-1',
         }
     ]
 

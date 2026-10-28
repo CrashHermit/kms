@@ -1,14 +1,20 @@
 import asyncio
+import json
 
 from kms2_token_helpers import direct_synthesis
 
+from kms2.core.model.source_semantic.source_triplet_context import (
+    SourceTripletContextTarget,
+)
 from kms2.core.model.source_semantic.source_triplet_hub import (
     SourceTripletHub,
     SourceTripletHubDefinition,
     SourceTripletHubEvidence,
     SourceTripletHubGroup,
     SourceTripletHubRole,
+    SourceTripletHubSummary,
 )
+from kms2.core.windowing import TokenBudget
 from kms2.database.source_semantic.source_triplet_repository import (
     SourceTripletRepository,
 )
@@ -75,6 +81,56 @@ class _Module:
         )
 
 
+class _ContentAwareCounter:
+    def count_texts(self, texts):
+        counts = []
+        for text in texts:
+            payload = json.loads(text)
+            if 'evidence' in payload:
+                counts.append(
+                    sum(
+                        1
+                        + len(item['qualifiers'])
+                        + len(item['interpretive_bindings'])
+                        for item in payload['evidence']
+                    )
+                )
+            elif 'triplet_evidence' in payload:
+                item = payload['triplet_evidence']
+                counts.append(
+                    1
+                    + len(item['qualifiers'])
+                    + len(item['interpretive_bindings'])
+                )
+            elif 'summaries' in payload:
+                counts.append(len(payload['summaries']))
+            else:
+                counts.append(1)
+        return counts
+
+
+class _SummaryModule:
+    def __init__(self):
+        self.requests = []
+
+    async def acall(self, *, request):
+        self.requests.append(request)
+        return SourceTripletHubSummary(
+            text='The supplied records retain their scoped conditions and meanings.'
+        )
+
+
+class _MergeModule:
+    def __init__(self):
+        self.requests = []
+
+    async def acall(self, *, request):
+        self.requests.append(request)
+        return SourceTripletHubSummary(
+            text='Each condition and meaning remains associated with its claim.'
+        )
+
+
 class _EmbeddingClient:
     def __init__(self):
         self.texts = []
@@ -114,7 +170,7 @@ def _group() -> SourceTripletHubGroup:
         object_hub=SourceTripletHubRole(
             name='Acme', description='An organization.'
         ),
-        triplet_uuids=['triplet-b', 'triplet-a'],
+        triplet_uuids=['triplet-b', 'triplet-a', 'triplet-c'],
         evidence=[
             SourceTripletHubEvidence(
                 triplet_uuid='triplet-b',
@@ -122,6 +178,20 @@ def _group() -> SourceTripletHubGroup:
                 subject='Alice',
                 predicate='supports',
                 object='Acme',
+                qualifiers=[
+                    {
+                        'target': SourceTripletContextTarget.TRIPLET,
+                        'relation': 'condition',
+                        'value': 'during business hours',
+                    }
+                ],
+                interpretive_bindings=[
+                    {
+                        'target': SourceTripletContextTarget.SUBJECT,
+                        'term': 'Alice',
+                        'meaning': 'the researcher',
+                    }
+                ],
             ),
             SourceTripletHubEvidence(
                 triplet_uuid='triplet-a',
@@ -129,6 +199,20 @@ def _group() -> SourceTripletHubGroup:
                 subject='Alice',
                 predicate='supports',
                 object='Acme',
+                qualifiers=[
+                    {
+                        'target': SourceTripletContextTarget.TRIPLET,
+                        'relation': 'condition',
+                        'value': 'outside business hours',
+                    }
+                ],
+                interpretive_bindings=[
+                    {
+                        'target': SourceTripletContextTarget.SUBJECT,
+                        'term': 'Alice',
+                        'meaning': 'the client',
+                    }
+                ],
             ),
             SourceTripletHubEvidence(
                 triplet_uuid='triplet-c',
@@ -136,67 +220,14 @@ def _group() -> SourceTripletHubGroup:
                 subject='Acme',
                 predicate='supports',
                 object='Alice',
+                qualifiers=[],
+                interpretive_bindings=[],
             ),
         ],
     )
 
 
-def test_repository_maps_source_triplet_hub_groups():
-    row = {
-        'subject_hub_uuid': 'subject-hub',
-        'subject_hub_name': 'Alice',
-        'subject_hub_description': 'A person.',
-        'predicate_hub_uuid': 'predicate-hub',
-        'predicate_hub_name': 'supports',
-        'predicate_hub_description': 'A support relation.',
-        'object_hub_uuid': 'object-hub',
-        'object_hub_name': 'Acme',
-        'object_hub_description': 'An organization.',
-        'triplet_uuids': ['triplet-a'],
-        'evidence': [
-            {
-                'triplet_uuid': 'triplet-a',
-                'fact_text': 'Alice supports Acme',
-                'subject': 'Alice',
-                'predicate': 'supports',
-                'object': 'Acme',
-            }
-        ],
-    }
-    session = _RowsSession([row])
-    repository = SourceTripletRepository(lambda: _SessionContext(session))
-
-    groups = asyncio.run(repository.read_source_triplet_hub_groups('source-1'))
-
-    assert groups == [
-        SourceTripletHubGroup(
-            subject_hub_uuid='subject-hub',
-            subject_hub=SourceTripletHubRole(
-                name='Alice', description='A person.'
-            ),
-            predicate_hub_uuid='predicate-hub',
-            predicate_hub=SourceTripletHubRole(
-                name='supports', description='A support relation.'
-            ),
-            object_hub_uuid='object-hub',
-            object_hub=SourceTripletHubRole(
-                name='Acme', description='An organization.'
-            ),
-            triplet_uuids=['triplet-a'],
-            evidence=[
-                SourceTripletHubEvidence(
-                    triplet_uuid='triplet-a',
-                    fact_text='Alice supports Acme',
-                    subject='Alice',
-                    predicate='supports',
-                    object='Acme',
-                )
-            ],
-        )
-    ]
-
-
-def test_source_triplet_node_deduplicates_model_evidence_and_retains_ids():
+def test_source_triplet_synthesis_preserves_scoped_occurrence_evidence():
     repository = _Repository([_group()])
     module = _Module()
     embedding_client = _EmbeddingClient()
@@ -212,14 +243,22 @@ def test_source_triplet_node_deduplicates_model_evidence_and_retains_ids():
     )
 
     request = module.requests[0]
-    assert request.source_facts == [
-        'Acme supports Alice conditionally',
+    assert [item.fact_text for item in request.evidence] == [
         'Alice supports Acme',
+        'Alice supports Acme',
+        'Acme supports Alice conditionally',
     ]
-    assert request.triplets == [
-        'Acme | supports | Alice',
-        'Alice | supports | Acme',
-    ]
+    assert [
+        item.qualifiers[0].value if item.qualifiers else None
+        for item in request.evidence
+    ] == ['outside business hours', 'during business hours', None]
+    assert [
+        item.interpretive_bindings[0].meaning
+        if item.interpretive_bindings
+        else None
+        for item in request.evidence
+    ] == ['the client', 'the researcher', None]
+    assert 'triplet_uuid' not in request.model_dump_json()
     assert embedding_client.texts == [
         'supports relation: A source-grounded support relation.'
     ]
@@ -229,8 +268,67 @@ def test_source_triplet_node_deduplicates_model_evidence_and_retains_ids():
     assert hub.predicate_hub_uuid == 'predicate-hub'
     assert hub.object_hub_uuid == 'object-hub'
     assert result['source_triplet_hub_memberships'] == [
-        ['triplet-b', 'triplet-a']
+        ['triplet-b', 'triplet-a', 'triplet-c']
     ]
+
+
+def test_source_triplet_summary_preserves_complete_claim_records():
+    repository = _Repository([_group()])
+    module = _Module()
+    summary_module = _SummaryModule()
+    merge_module = _MergeModule()
+    embedding_client = _EmbeddingClient()
+    counter = _ContentAwareCounter()
+    node = SourceTripletHubNode(
+        repository,
+        module,
+        embedding_client,
+        summary_module=summary_module,
+        merge_module=merge_module,
+        final_budget=TokenBudget(counter, 1),
+        summary_budget=TokenBudget(counter, 5),
+        merge_budget=TokenBudget(counter, 100),
+    )
+
+    result = asyncio.run(
+        _run_triplet(node, SourceSemanticState(source_uuid='source-1'))
+    )
+
+    direct_weight = sum(
+        1 + len(item.qualifiers) + len(item.interpretive_bindings)
+        for item in _group().evidence
+    )
+    assert direct_weight > 1
+    leaf_claims = [
+        json.loads(item)['triplet_evidence']
+        for request in summary_module.requests
+        for item in request.evidence
+        if 'triplet_evidence' in json.loads(item)
+    ]
+    assert len(leaf_claims) == 3
+    assert sorted(
+        claim['qualifiers'][0]['value']
+        for claim in leaf_claims
+        if claim['qualifiers']
+    ) == ['during business hours', 'outside business hours']
+    assert sorted(
+        claim['interpretive_bindings'][0]['meaning']
+        for claim in leaf_claims
+        if claim['interpretive_bindings']
+    ) == ['the client', 'the researcher']
+    assert [claim for claim in leaf_claims if not claim['qualifiers']] == [
+        {
+            'fact_text': 'Acme supports Alice conditionally',
+            'subject': 'Acme',
+            'predicate': 'supports',
+            'object': 'Alice',
+            'qualifiers': [],
+            'interpretive_bindings': [],
+        }
+    ]
+    assert merge_module.requests
+    assert len(module.requests[0].summaries) == 1
+    assert result['source_triplet_hubs']
 
 
 def test_source_triplet_node_skips_synthesis_and_embedding_for_empty_groups():

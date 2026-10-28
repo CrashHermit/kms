@@ -11,6 +11,10 @@ from kms2.core.model.source_semantic.source_triplet import (
     SourceTriplet,
     SourceTripletOccurrence,
 )
+from kms2.core.model.source_semantic.source_triplet_context import (
+    SourceTripletInterpretiveBinding,
+    SourceTripletQualifier,
+)
 from kms2.core.model.source_semantic.source_triplet_decomposition import (
     SourceTripletDecompositionRequest,
     SourceTripletDecompositionResult,
@@ -121,6 +125,24 @@ class SourceTripletDecompositionNode:
                         subject=subject,
                         object=object_,
                         predicate=predicate,
+                        qualifiers=[
+                            SourceTripletQualifier(
+                                source_uuid=state.source_uuid,
+                                target=item.target,
+                                relation=item.relation,
+                                value=item.value,
+                            )
+                            for item in candidate.qualifiers
+                        ],
+                        interpretive_bindings=[
+                            SourceTripletInterpretiveBinding(
+                                source_uuid=state.source_uuid,
+                                target=item.target,
+                                term=item.term,
+                                meaning=item.meaning,
+                            )
+                            for item in candidate.interpretive_bindings
+                        ],
                     )
                 )
         return {'triplet_occurrences': triplet_occurrences}

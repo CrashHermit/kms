@@ -83,6 +83,8 @@ def test_ensure_schema_runs_structural_vector_and_wait_ddl():
     assert 'SourceEventHub' in schema
     assert 'SourcePredicateHub' in schema
     assert 'SourceTripletHub' in schema
+    assert 'source_triplet_qualifier_uuid' in schema
+    assert 'source_triplet_interpretive_binding_uuid' in schema
     assert 'source_triplet_hub_uuid' in schema
     assert 'source_triplet_hub_source_uuid' in schema
     assert 'source_triplet_hub_embedding' in schema

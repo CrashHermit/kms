@@ -7,6 +7,10 @@ from kms2.core.model.source_semantic.source_entity import SourceEntity
 from kms2.core.model.source_semantic.source_event import SourceEvent
 from kms2.core.model.source_semantic.source_fact_extraction import SourceFact
 from kms2.core.model.source_semantic.source_predicate import SourcePredicate
+from kms2.core.model.source_semantic.source_triplet_context import (
+    SourceTripletInterpretiveBinding,
+    SourceTripletQualifier,
+)
 
 
 class SourceTriplet(Vertex):
@@ -21,3 +25,5 @@ class SourceTripletOccurrence(BaseModel):
     subject: SourceEntity | SourceEvent
     object: SourceEntity | SourceEvent
     predicate: SourcePredicate
+    qualifiers: list[SourceTripletQualifier]
+    interpretive_bindings: list[SourceTripletInterpretiveBinding]

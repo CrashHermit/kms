@@ -34,6 +34,14 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     FOR (triplet:SourceTriplet) REQUIRE triplet.uuid IS UNIQUE
     """,
     """
+    CREATE CONSTRAINT source_triplet_qualifier_uuid IF NOT EXISTS
+    FOR (qualifier:SourceTripletQualifier) REQUIRE qualifier.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT source_triplet_interpretive_binding_uuid IF NOT EXISTS
+    FOR (binding:SourceTripletInterpretiveBinding) REQUIRE binding.uuid IS UNIQUE
+    """,
+    """
     CREATE CONSTRAINT source_fact_uuid IF NOT EXISTS
     FOR (fact:SourceFact) REQUIRE fact.uuid IS UNIQUE
     """,

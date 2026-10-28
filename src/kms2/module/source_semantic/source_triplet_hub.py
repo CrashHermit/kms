@@ -17,14 +17,16 @@ class SourceTripletHubSignature(dspy.Signature):
 
     Accept original evidence or ordered temporary summaries. Return a concise
     canonical assertion and standalone explanation grounded only in that
-    evidence. Preserve directed relations and qualified, negative, conditional,
-    quantified, and mathematical content. Keep mathematical symbols and
-    expressions distinct from the concepts they explicitly denote; when
-    supported, describe the concept first and mention source-specific notation
-    in the explanation. Use `$...$` for inline LaTeX and `$$...$$` for display
-    math; do not use alternate math delimiters. Final naming occurs only here.
-    Never select membership, infer consequences, merge neighboring facts, or
-    introduce unsupported facts.
+    evidence. Preserve each fact, directed SPO claim, qualifier, and
+    interpretive binding as one associated record. Keep qualifier target scope
+    and distinguish relationship conditions from term meanings. Preserve
+    negative, conditional, quantified, and mathematical content. Keep
+    mathematical symbols and expressions distinct from the concepts they
+    explicitly denote; when supported, describe the concept first and mention
+    source-specific notation in the explanation. Use `$...$` for inline LaTeX
+    and `$$...$$` for display math; do not use alternate math delimiters.
+    Final naming occurs only here. Never select membership, infer consequences,
+    merge neighboring facts, or introduce unsupported facts.
     """
 
     request: (
@@ -66,11 +68,13 @@ class SourceTripletHubModule(dspy.Module):
 class SourceTripletHubSummarySignature(dspy.Signature):
     r"""Summarize only the ordered supplied triplet evidence.
 
-    Preserve distinguishing content, directed relation, qualifications,
-    negation, conditions, quantities, mathematics, and associations between
-    notation and explicitly supported concepts; remove repetition without
-    changing meaning. Keep role names and descriptions associated, and retain
-    distinctions among role, source-fact, and triplet records. Do not choose a
+    Preserve each complete fact/SPO/qualifier/binding association, including
+    qualifier target scope and the distinction between relationship conditions
+    and term meanings. Preserve directed relation, negation, quantities,
+    mathematics, and associations between notation and explicitly supported
+    concepts; remove repetition without changing meaning. Keep role names and
+    descriptions associated. Retain member-specific alternatives rather than
+    promoting a union of conditions to a universal condition. Do not choose a
     canonical hub name or change membership. Emit a concise, self-contained
     summary.
     """
@@ -106,10 +110,11 @@ class SourceTripletHubSummaryModule(dspy.Module):
 class SourceTripletHubSummaryMergeSignature(dspy.Signature):
     r"""Merge ordered triplet summaries into one concise, self-contained summary.
 
-    Consolidate repetition while preserving distinctions, qualifications,
-    direction, negation, conditions, quantities, mathematics, notation-to-
-    concept associations, and associations within the role records. Do not
-    infer agreement or consequences. Do not create a hub definition or
+    Consolidate repetition while preserving complete claim associations,
+    qualifier target scope, term meanings, direction, negation, conditions,
+    quantities, mathematics, and notation-to-concept associations. Retain
+    member-specific alternatives rather than universalizing their union. Do
+    not infer agreement or consequences. Do not create a hub definition or
     canonical name.
     """
 

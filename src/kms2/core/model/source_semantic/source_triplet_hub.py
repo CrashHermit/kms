@@ -3,6 +3,10 @@
 from pydantic import BaseModel, Field
 
 from kms2.core.model.base import Vertex
+from kms2.core.model.source_semantic.source_triplet_context import (
+    SourceTripletInterpretiveBindingCandidate,
+    SourceTripletQualifierCandidate,
+)
 
 
 class SourceTripletHubRole(BaseModel):
@@ -12,14 +16,32 @@ class SourceTripletHubRole(BaseModel):
     description: str = Field(min_length=1)
 
 
-class SourceTripletHubEvidence(BaseModel):
-    """One raw triplet and its source-fact evidence."""
+class SourceTripletHubSynthesisEvidence(BaseModel):
+    """One UUID-free source triplet claim for model-facing synthesis."""
 
-    triplet_uuid: str = Field(min_length=1)
     fact_text: str = Field(min_length=1)
     subject: str = Field(min_length=1)
     predicate: str = Field(min_length=1)
     object: str = Field(min_length=1)
+    qualifiers: list[SourceTripletQualifierCandidate]
+    interpretive_bindings: list[SourceTripletInterpretiveBindingCandidate]
+
+
+class SourceTripletHubEvidence(SourceTripletHubSynthesisEvidence):
+    """One raw triplet and its source-fact evidence."""
+
+    triplet_uuid: str = Field(min_length=1)
+
+    def model_input(self) -> SourceTripletHubSynthesisEvidence:
+        """Project backend evidence into the UUID-free model contract."""
+        return SourceTripletHubSynthesisEvidence(
+            fact_text=self.fact_text,
+            subject=self.subject,
+            predicate=self.predicate,
+            object=self.object,
+            qualifiers=self.qualifiers,
+            interpretive_bindings=self.interpretive_bindings,
+        )
 
 
 class SourceTripletHubGroup(BaseModel):
@@ -41,8 +63,7 @@ class SourceTripletHubSynthesisInput(BaseModel):
     subject_hub: SourceTripletHubRole
     predicate_hub: SourceTripletHubRole
     object_hub: SourceTripletHubRole
-    source_facts: list[str] = Field(min_length=1)
-    triplets: list[str] = Field(min_length=1)
+    evidence: list[SourceTripletHubSynthesisEvidence] = Field(min_length=1)
 
 
 class SourceTripletHubSummary(BaseModel):
