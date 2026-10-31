@@ -24,19 +24,13 @@ class _Prompt:
 
 def _semantic_result() -> SourceSemanticStageResult:
     return SourceSemanticStageResult(
-        source_fact_count=5,
-        triplet_count=4,
-        source_entity_description_count=3,
-        source_event_description_count=2,
-        source_predicate_description_count=1,
-        source_statement_description_count=0,
-        source_procedure_description_count=0,
-        source_entity_hub_count=6,
-        source_event_hub_count=7,
-        source_predicate_hub_count=8,
-        source_triplet_hub_count=0,
+        source_proposition_count=5,
+        source_proposition_hub_count=2,
         source_statement_hub_count=0,
         source_procedure_hub_count=0,
+        source_entity_count=0,
+        source_entity_description_count=0,
+        source_entity_hub_count=0,
     )
 
 
@@ -52,6 +46,81 @@ def _install_single_user(monkeypatch):
     monkeypatch.setattr(tui, 'list_users', list_users)
     monkeypatch.setattr(tui, 'list_unowned_sources', list_unowned_sources)
     return user
+
+
+def test_cli_login_runs_without_loading_settings(monkeypatch):
+    calls = []
+    monkeypatch.setattr(tui.sys, 'argv', ['kms2', '--login-chatgpt'])
+    monkeypatch.setattr(tui, 'login_chatgpt', lambda: calls.append('login'))
+    monkeypatch.setattr(
+        tui,
+        'Settings',
+        lambda: pytest.fail('login must not load application settings'),
+    )
+
+    tui.run()
+
+    assert calls == ['login']
+
+
+def test_cli_profile_selects_current_invocation_default(monkeypatch):
+    settings = Settings()
+    selected = []
+    monkeypatch.setattr(
+        tui.sys,
+        'argv',
+        ['kms2', '--llm-profile', 'chatgpt-luna'],
+    )
+    monkeypatch.setattr(tui, 'Settings', lambda: settings)
+    monkeypatch.setattr(
+        tui, '_run_tui', lambda current: selected.append(current)
+    )
+
+    tui.run()
+
+    assert selected == [settings]
+    assert settings.llm.default_text_profile == 'chatgpt-luna'
+
+
+def test_tui_profile_selection_precedes_selected_inference(monkeypatch):
+    settings = Settings()
+    _install_single_user(monkeypatch)
+    prompts = iter(
+        [
+            _Prompt(tui.SELECT_LLM_PROFILE_OPTION),
+            _Prompt('chatgpt-luna'),
+            _Prompt(tui.NEW_SOURCE_OPTION),
+            _Prompt('book.pdf'),
+            _Prompt(''),
+        ]
+    )
+    ingestion_profiles = []
+
+    async def list_sources(current_settings, user_uuid):
+        return []
+
+    async def ingest(current_settings, user_uuid, pdf_path, pages):
+        ingestion_profiles.append(current_settings.llm.default_text_profile)
+        return SimpleNamespace(
+            source=Source(uuid='source-1', key=pdf_path),
+            embedded_page_count=0,
+        )
+
+    monkeypatch.setattr(tui, 'list_sources', list_sources)
+    monkeypatch.setattr(tui, 'ingest_source', ingest)
+    monkeypatch.setattr(
+        tui,
+        'inquirer',
+        SimpleNamespace(
+            select=lambda **kwargs: next(prompts),
+            filepath=lambda **kwargs: next(prompts),
+            text=lambda **kwargs: next(prompts),
+        ),
+    )
+
+    tui._run_tui(settings)
+
+    assert ingestion_profiles == ['chatgpt-luna']
 
 
 def test_tui_creates_first_user_before_new_source(monkeypatch):
@@ -85,7 +154,10 @@ def test_tui_creates_first_user_before_new_source(monkeypatch):
 
     async def ingest(settings, user_uuid, pdf_path, pages):
         ingested.append((user_uuid, pdf_path, pages))
-        return SimpleNamespace(source=source, split_page_count=1)
+        return SimpleNamespace(
+            source=source,
+            embedded_page_count=1,
+        )
 
     monkeypatch.setattr(
         tui,
@@ -112,7 +184,7 @@ def test_tui_creates_first_user_before_new_source(monkeypatch):
         tui.REMOVE_CARD_OPTION,
         tui.REVIEW_CARDS_OPTION,
         tui.REVIEW_HISTORY_OPTION,
-        tui.GLOBAL_SEMANTIC_OPTION,
+        tui.SELECT_LLM_PROFILE_OPTION,
     ]
 
 
@@ -232,11 +304,62 @@ def test_existing_source_semantics_receive_selected_user(monkeypatch):
         tui.REMOVE_CARD_OPTION,
         tui.REVIEW_CARDS_OPTION,
         tui.REVIEW_HISTORY_OPTION,
+        tui.SELECT_LLM_PROFILE_OPTION,
+        tui.SOURCE_PEDAGOGICAL_OPTION,
         tui.EXISTING_SOURCE_OPTION,
         tui.SOURCE_LEARNING_OPTION,
-        tui.GLOBAL_SEMANTIC_OPTION,
     ]
     assert calls == [(user.uuid, source.uuid)]
+
+
+def test_existing_source_pedagogical_stage_receives_selected_user(monkeypatch):
+    user = _install_single_user(monkeypatch)
+    source = Source(uuid='source-1', key='book.pdf')
+    prompts = iter(
+        [
+            _Prompt(tui.SOURCE_PEDAGOGICAL_OPTION),
+            _Prompt(source),
+            _Prompt(True),
+        ]
+    )
+    choices = []
+    calls = []
+
+    async def list_sources(settings, user_uuid):
+        assert user_uuid == user.uuid
+        return [source]
+
+    async def run_pedagogical(settings, user_uuid, source_uuid):
+        calls.append((user_uuid, source_uuid))
+        return SimpleNamespace(
+            split_page_count=1,
+            instruction_count=1,
+            exercise_component_count=1,
+            pedagogical_component_count=0,
+            statement_count=1,
+            procedure_count=0,
+            reembedded_block_count=0,
+        )
+
+    monkeypatch.setattr(tui, 'list_sources', list_sources)
+    monkeypatch.setattr(tui, 'run_source_pedagogical_stage', run_pedagogical)
+    monkeypatch.setattr(
+        tui,
+        'inquirer',
+        SimpleNamespace(
+            select=lambda **kwargs: _record_select(choices, prompts, kwargs),
+            confirm=lambda **kwargs: next(prompts),
+        ),
+    )
+
+    tui._run_tui()
+
+    assert calls == [(user.uuid, source.uuid)]
+    assert choices[0]['choices'][7:10] == [
+        tui.SOURCE_PEDAGOGICAL_OPTION,
+        tui.EXISTING_SOURCE_OPTION,
+        tui.SOURCE_LEARNING_OPTION,
+    ]
 
 
 def test_tui_offers_explicit_adoption_only_for_unowned_sources(monkeypatch):
@@ -276,48 +399,10 @@ def test_tui_offers_explicit_adoption_only_for_unowned_sources(monkeypatch):
         tui.REMOVE_CARD_OPTION,
         tui.REVIEW_CARDS_OPTION,
         tui.REVIEW_HISTORY_OPTION,
+        tui.SELECT_LLM_PROFILE_OPTION,
         tui.ADOPT_SOURCE_OPTION,
-        tui.GLOBAL_SEMANTIC_OPTION,
     ]
     assert adopted == [(user.uuid, source.uuid)]
-
-
-def test_tui_runs_global_semantic_without_changing_global_scope(
-    monkeypatch,
-    caplog,
-):
-    _install_single_user(monkeypatch)
-    calls = []
-
-    async def list_sources(settings, user_uuid):
-        return []
-
-    async def run_global(settings):
-        calls.append(settings)
-        return SimpleNamespace(
-            global_entity_hub_count=1,
-            global_event_hub_count=2,
-            global_predicate_hub_count=3,
-            global_statement_hub_count=4,
-            global_procedure_hub_count=5,
-        )
-
-    monkeypatch.setattr(tui, 'list_sources', list_sources)
-    monkeypatch.setattr(tui, 'run_global_semantic_stage', run_global)
-    monkeypatch.setattr(
-        tui,
-        'inquirer',
-        SimpleNamespace(
-            select=lambda **kwargs: _Prompt(tui.GLOBAL_SEMANTIC_OPTION),
-            confirm=lambda **kwargs: _Prompt(True),
-        ),
-    )
-    caplog.set_level(logging.INFO, logger='kms2.tui')
-
-    tui._run_tui()
-
-    assert len(calls) == 1
-    assert 'Global Semantic persisted 1 entity, 2 event' in caplog.text
 
 
 def test_pdf_directory_is_created_under_working_directory(
@@ -333,11 +418,12 @@ def test_pdf_directory_is_created_under_working_directory(
 
 
 def test_tui_reports_cancelled_pipeline(monkeypatch, caplog):
-    def cancel():
+    def cancel(settings=None):
         raise asyncio.CancelledError
 
     monkeypatch.setattr(tui, '_run_tui', cancel)
     caplog.set_level(logging.INFO, logger='kms2.tui')
+    monkeypatch.setattr(tui.sys, 'argv', ['kms2'])
     with pytest.raises(SystemExit) as exit_info:
         tui.run()
 

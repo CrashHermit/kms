@@ -1,33 +1,31 @@
 import asyncio
 
-import dspy
+import pytest
 
 from kms2.core.model.block import SourceBlock
 from kms2.core.model.block_types import BlockType
 from kms2.core.model.page import SourcePage
 from kms2.core.model.source import Source
 from kms2.core.model.source_processing.text_seam import (
+    TextSeamDecision,
+    TextSeamInput,
     TextSeamRequest,
     TextSeamResult,
+    TextSeamRewriteOutput,
 )
 from kms2.core.model.visual_asset import VisualAsset
+from kms2.core.windowing import InputBudgetExceeded, TokenBudget
 from kms2.langgraph.source_processing.state import SourceProcessingState
-from kms2.module.source_processing import text_seam_judge, text_seam_rewriter
 from kms2.node.source_processing.text_seam import TextSeamNode
 
 
-class _Predictor:
-    def __init__(self, **values: object) -> None:
-        self.values = values
-        self.calls: list[dict[str, object]] = []
+class _Counter:
+    def __init__(self) -> None:
+        self.calls = 0
 
-    def __call__(self, **kwargs: object) -> dspy.Prediction:
-        self.calls.append(kwargs)
-        return dspy.Prediction(**self.values)
-
-    async def acall(self, **kwargs: object) -> dspy.Prediction:
-        self.calls.append(kwargs)
-        return dspy.Prediction(**self.values)
+    def count_texts(self, texts: list[str]) -> list[int]:
+        self.calls += 1
+        return [1 for _ in texts]
 
 
 def _block(
@@ -47,14 +45,6 @@ def _block(
     )
 
 
-def _module(
-    module_type: type[text_seam_judge.TextSeamJudgeModule]
-    | type[text_seam_rewriter.TextSeamRewriterModule],
-    predictor: _Predictor,
-):
-    return module_type(predictor)
-
-
 def _state(pages: list[SourcePage]) -> SourceProcessingState:
     return SourceProcessingState(
         pdf_path='document.pdf',
@@ -63,274 +53,317 @@ def _state(pages: list[SourcePage]) -> SourceProcessingState:
     )
 
 
-def test_signatures_and_module_calls_preserve_exact_text_boundary():
-    assert set(text_seam_judge.TextSeamSignature.input_fields) == {
-        'top_node_context',
-        'top_bottom_edge_node',
-        'bottom_top_edge_node',
-        'bottom_node_context',
-    }
-    assert set(text_seam_judge.TextSeamSignature.output_fields) == {'is_split'}
-    assert set(text_seam_rewriter.TextSeamRewriteSignature.input_fields) == {
-        'tail',
-        'head',
-        'tail_kind',
-        'head_kind',
-        'before_tail',
-        'after_head',
-    }
-    assert set(text_seam_rewriter.TextSeamRewriteSignature.output_fields) == {
-        'merged'
-    }
-
-    tail = _block(1, 'tail')
-    head = _block(2, 'head', BlockType.PARAGRAPH)
-    judge_predictor = _Predictor(is_split=True)
-    judge = _module(text_seam_judge.TextSeamJudgeModule, judge_predictor)
-    assert (
-        judge(
-            tail=tail,
-            head=head,
-            top_context=None,
-            bottom_context=None,
-        )
-        is True
-    )
-    assert judge_predictor.calls == [
-        {
-            'top_node_context': '',
-            'top_bottom_edge_node': 'tail',
-            'bottom_top_edge_node': 'head',
-            'bottom_node_context': '',
-        }
-    ]
-    assert (
-        asyncio.run(
-            judge.aforward(
-                tail=tail, head=head, top_context=None, bottom_context=None
-            )
-        )
-        is True
-    )
-
-    rewriter_predictor = _Predictor(merged='tail head')
-    rewriter = _module(
-        text_seam_rewriter.TextSeamRewriterModule, rewriter_predictor
-    )
-    assert (
-        rewriter(
-            tail=tail,
-            head=head,
-            top_context=None,
-            bottom_context=None,
-        )
-        == 'tail head'
-    )
-    assert rewriter_predictor.calls == [
-        {
-            'tail': 'tail',
-            'head': 'head',
-            'tail_kind': 'paragraph',
-            'head_kind': 'paragraph',
-            'before_tail': '',
-            'after_head': '',
-        }
-    ]
-    assert (
-        asyncio.run(
-            rewriter.aforward(
-                tail=tail,
-                head=head,
-                top_context=None,
-                bottom_context=None,
-            )
-        )
-        == 'tail head'
-    )
-
-
 class _Judge:
-    def __init__(self, is_split: bool) -> None:
-        self.is_split = is_split
-        self.calls: list[dict[str, object]] = []
+    def __init__(self) -> None:
+        self.calls: list[list[TextSeamInput]] = []
 
-    async def aforward(self, **kwargs: object) -> bool:
-        self.calls.append(kwargs)
-        return self.is_split
+    async def acall(
+        self, *, items: list[TextSeamInput]
+    ) -> list[TextSeamDecision]:
+        self.calls.append(items)
+        return [
+            TextSeamDecision(
+                position=item.position,
+                is_split=item.tail.content in {'tail-0', 'tail-2'},
+            )
+            for item in reversed(items)
+        ]
 
 
 class _Rewriter:
-    def __init__(self, merged: str = 'merged') -> None:
-        self.merged = merged
-        self.calls: list[dict[str, object]] = []
+    def __init__(self) -> None:
+        self.calls: list[list[TextSeamInput]] = []
 
-    async def aforward(self, **kwargs: object) -> str:
-        self.calls.append(kwargs)
-        return self.merged
-
-
-def test_true_merge_preserves_tail_metadata_and_removes_head():
-    top_context = _block(0, 'before')
-    tail = _block(1, 'tail')
-    head = _block(4, 'head')
-    bottom_context = _block(5, 'after')
-    top = SourcePage(index=0, blocks=[top_context, tail])
-    bottom = SourcePage(index=1, blocks=[head, bottom_context])
-    judge = _Judge(True)
-    rewriter = _Rewriter('merged text')
-
-    result = asyncio.run(
-        TextSeamNode(judge, rewriter).even_worker(
-            {
-                'text_seam_request': TextSeamRequest(
-                    top_page=top, bottom_page=bottom
-                )
-            }
-        )
-    )['text_seam_even_results'][0]
-
-    assert [block.content for block in result.top_page.blocks] == [
-        'before',
-        'merged text',
-    ]
-    assert [block.content for block in result.bottom_page.blocks] == ['after']
-    merged_tail = result.top_page.blocks[1]
-    assert merged_tail.uuid == tail.uuid
-    assert merged_tail.block_type is tail.block_type
-    assert merged_tail.assets == tail.assets
-    assert merged_tail.crop_path == tail.crop_path
-    assert merged_tail.crop_bbox == tail.crop_bbox
-    assert judge.calls[0]['top_context'] == top_context
-    assert judge.calls[0]['bottom_context'] == bottom_context
-    assert len(rewriter.calls) == 1
-    assert top.blocks[1].content == 'tail'
-    assert bottom.blocks[0].content == 'head'
+    async def acall(
+        self, *, items: list[TextSeamInput]
+    ) -> list[TextSeamRewriteOutput]:
+        self.calls.append(items)
+        return [
+            TextSeamRewriteOutput(
+                position=item.position, merged=f'merged-{item.position}'
+            )
+            for item in reversed(items)
+        ]
 
 
-def test_false_judgment_preserves_pages_and_skips_rewriter():
-    top = SourcePage(index=0, blocks=[_block(0, 'tail')])
-    bottom = SourcePage(index=1, blocks=[_block(0, 'head')])
-    judge = _Judge(False)
+def _node(judge: object, rewriter: object) -> TextSeamNode:
+    return TextSeamNode(
+        judge,
+        rewriter,
+        judge_budget=TokenBudget(_Counter(), 10_000),
+        rewrite_budget=TokenBudget(_Counter(), 10_000),
+        judge_batch_size=16,
+        rewrite_batch_size=16,
+    )
+
+
+def _pair(index: int) -> TextSeamRequest:
+    top_context = _block(index * 2, f'context-top-{index}')
+    tail = _block(index * 2 + 1, f'tail-{index}')
+    head = _block(index * 2 + 2, f'head-{index}')
+    bottom_context = _block(index * 2 + 3, f'context-bottom-{index}')
+    return TextSeamRequest(
+        top_page=SourcePage(index=index * 2, blocks=[top_context, tail]),
+        bottom_page=SourcePage(
+            index=index * 2 + 1, blocks=[head, bottom_context]
+        ),
+    )
+
+
+def test_positive_only_sparse_rewrites_preserve_tail_provenance_and_negative_pages():
+    requests = [_pair(index) for index in range(3)]
+    original = [request.model_copy(deep=True) for request in requests]
+    judge = _Judge()
     rewriter = _Rewriter()
+    results = asyncio.run(
+        _node(judge, rewriter).even_worker({'text_seam_requests': requests})
+    )['text_seam_even_results']
 
-    result = asyncio.run(
-        TextSeamNode(judge, rewriter).even_worker(
-            {
-                'text_seam_request': TextSeamRequest(
-                    top_page=top, bottom_page=bottom
-                )
-            }
+    assert len(judge.calls) == 1
+    assert [item.position for item in judge.calls[0]] == [0, 1, 2]
+    assert len(rewriter.calls) == 1
+    assert [item.position for item in rewriter.calls[0]] == [0, 2]
+    assert [result.top_page.blocks[-1].content for result in results] == [
+        'merged-0',
+        'tail-1',
+        'merged-2',
+    ]
+    assert [len(result.bottom_page.blocks) for result in results] == [1, 2, 1]
+    for position in (0, 2):
+        assert (
+            results[position].top_page.blocks[-1].uuid
+            == original[position].top_page.blocks[-1].uuid
         )
-    )['text_seam_even_results'][0]
+        assert (
+            results[position].top_page.blocks[-1].crop_path
+            == original[position].top_page.blocks[-1].crop_path
+        )
+        assert (
+            results[position].top_page.blocks[-1].assets
+            == original[position].top_page.blocks[-1].assets
+        )
+    assert requests == original
 
-    assert result.top_page == top
-    assert result.bottom_page == bottom
-    assert rewriter.calls == []
 
-
-def test_selection_skips_visual_apparatus_and_asset_blocks_for_edges_and_context():
-    asset_block = _block(2, 'asset', assets=[VisualAsset(path='asset.png')])
+def test_text_edge_selection_skips_visual_apparatus_and_assets():
     top = SourcePage(
         index=0,
         blocks=[
             _block(0, 'top context'),
             _block(1, 'bibliographic', BlockType.BIBLIOGRAPHIC),
             _block(2, 'image', BlockType.IMAGE),
-            asset_block,
-            _block(3, 'tail'),
+            _block(3, 'asset', assets=[VisualAsset(path='asset.png')]),
+            _block(4, 'tail'),
         ],
     )
     bottom = SourcePage(
         index=1,
         blocks=[
-            _block(4, 'head'),
-            _block(5, 'image', BlockType.IMAGE),
-            _block(6, 'note', BlockType.NOTE),
-            _block(7, 'asset after', assets=[VisualAsset(path='after.png')]),
-            _block(8, 'bottom context'),
+            _block(5, 'head'),
+            _block(6, 'image', BlockType.IMAGE),
+            _block(7, 'note', BlockType.NOTE),
+            _block(8, 'asset after', assets=[VisualAsset(path='after.png')]),
+            _block(9, 'bottom context'),
         ],
     )
-    judge = _Judge(False)
-
+    judge = _Judge()
     asyncio.run(
-        TextSeamNode(judge, _Rewriter()).even_worker(
+        _node(judge, _Rewriter()).even_worker(
             {
-                'text_seam_request': TextSeamRequest(
-                    top_page=top, bottom_page=bottom
-                )
+                'text_seam_requests': [
+                    TextSeamRequest(top_page=top, bottom_page=bottom)
+                ]
             }
         )
     )
+    assert judge.calls[0][0].tail.content == 'tail'
+    assert judge.calls[0][0].head.content == 'head'
+    assert judge.calls[0][0].top_context.content == 'top context'
+    assert judge.calls[0][0].bottom_context.content == 'bottom context'
 
-    assert judge.calls[0]['tail'].content == 'tail'
-    assert judge.calls[0]['head'].content == 'head'
-    assert judge.calls[0]['top_context'].content == 'top context'
-    assert judge.calls[0]['bottom_context'].content == 'bottom context'
-
-    invalid_top = SourcePage(index=0, blocks=[_block(0, ''), _block(1, 'tail')])
-    invalid_bottom = SourcePage(
-        index=1, blocks=[_block(0, ''), _block(1, 'head')]
+    empty_top = SourcePage(index=0, blocks=[_block(11, 'tail'), _block(10, '')])
+    empty_bottom = SourcePage(
+        index=1, blocks=[_block(12, ''), _block(13, 'head')]
     )
-    node = TextSeamNode(_Judge(True), _Rewriter())
-    assert node.dispatch_even(_state([invalid_top, invalid_bottom])) == (
-        'text_seam_even_collect'
+    counter = _Counter()
+    node = TextSeamNode(
+        judge,
+        _Rewriter(),
+        judge_budget=TokenBudget(counter, 10_000),
+        rewrite_budget=TokenBudget(counter, 10_000),
+        judge_batch_size=16,
+        rewrite_batch_size=16,
+    )
+    assert (
+        node.dispatch_even(_state([empty_top, empty_bottom]))
+        == 'text_seam_even_collect'
     )
 
 
-def test_dispatch_uses_upper_page_parity_and_collectors_preserve_page_order():
+def test_physical_page_gaps_block_candidates_and_collectors_preserve_order():
     pages = [
+        SourcePage(index=index, blocks=[_block(index, f'page {index}')])
+        for index in (0, 2, 3, 5)
+    ]
+    node = _node(_Judge(), _Rewriter())
+    sends = node.dispatch_even(_state(pages))
+    assert isinstance(sends, list)
+    pairs = [
+        request for send in sends for request in send.arg['text_seam_requests']
+    ]
+    assert [
+        (pair.top_page.index, pair.bottom_page.index) for pair in pairs
+    ] == [(2, 3)]
+
+    all_pages = [
         SourcePage(index=index, blocks=[_block(index, f'page {index}')])
         for index in range(5)
     ]
-    node = TextSeamNode(_Judge(False), _Rewriter())
-
-    even_sends = node.dispatch_even(_state(pages))
-    assert [
-        (
-            send.arg['text_seam_request'].top_page.index,
-            send.arg['text_seam_request'].bottom_page.index,
-        )
-        for send in even_sends
-    ] == [
-        (0, 1),
-        (2, 3),
-    ]
-    even_state = _state(pages)
-    even_state.text_seam_even_results = [
+    state = _state(all_pages)
+    state.text_seam_even_results = [
         TextSeamResult(
-            top_page=pages[2].model_copy(
+            top_page=all_pages[2].model_copy(
                 update={'blocks': [_block(2, 'merged 2')]}
             ),
-            bottom_page=pages[3].model_copy(update={'blocks': []}),
+            bottom_page=all_pages[3].model_copy(
+                update={'blocks': [_block(30, 'remaining 3')]}
+            ),
         ),
         TextSeamResult(
-            top_page=pages[0].model_copy(
+            top_page=all_pages[0].model_copy(
                 update={'blocks': [_block(0, 'merged 0')]}
             ),
-            bottom_page=pages[1].model_copy(update={'blocks': []}),
+            bottom_page=all_pages[1].model_copy(update={'blocks': []}),
         ),
     ]
-    collected = node.even_collect(even_state)['text_seam_even_pages']
+    collected = node.even_collect(state)['text_seam_even_pages']
     assert [page.index for page in collected] == [0, 1, 2, 3, 4]
     assert [
         page.blocks[0].content if page.blocks else None for page in collected
-    ] == [
-        'merged 0',
-        None,
-        'merged 2',
-        None,
-        'page 4',
-    ]
-    odd_sends = node.dispatch_odd(
-        even_state.model_copy(update={'text_seam_even_pages': pages})
-    )
-    assert [
-        (
-            send.arg['text_seam_request'].top_page.index,
-            send.arg['text_seam_request'].bottom_page.index,
-        )
+    ] == ['merged 0', None, 'merged 2', 'remaining 3', 'page 4']
+
+    odd_state = state.model_copy(update={'text_seam_even_pages': collected})
+    odd_sends = node.dispatch_odd(odd_state)
+    assert isinstance(odd_sends, list)
+    odd_pairs = [
+        request
         for send in odd_sends
-    ] == [(1, 2), (3, 4)]
-    assert node.dispatch_odd(_state([SourcePage(index=0, blocks=[])])) == (
-        'text_seam_odd_collect'
+        for request in send.arg['text_seam_requests']
+    ]
+    assert [
+        (pair.top_page.index, pair.bottom_page.index) for pair in odd_pairs
+    ] == [(3, 4)]
+    assert odd_pairs[0].top_page.blocks[0].content == 'remaining 3'
+
+
+def test_no_positive_judgments_never_calls_rewriter():
+    class _NegativeJudge:
+        async def acall(
+            self, *, items: list[TextSeamInput]
+        ) -> list[TextSeamDecision]:
+            return [
+                TextSeamDecision(position=item.position, is_split=False)
+                for item in items
+            ]
+
+    rewriter = _Rewriter()
+    results = asyncio.run(
+        _node(_NegativeJudge(), rewriter).even_worker(
+            {'text_seam_requests': [_pair(0)]}
+        )
     )
+    assert (
+        results['text_seam_even_results'][0].top_page.blocks[-1].content
+        == 'tail-0'
+    )
+    assert rewriter.calls == []
+
+
+def test_positive_merge_keeps_empty_page_after_removing_only_head():
+    class _PositiveJudge:
+        async def acall(
+            self, *, items: list[TextSeamInput]
+        ) -> list[TextSeamDecision]:
+            return [
+                TextSeamDecision(position=item.position, is_split=True)
+                for item in items
+            ]
+
+    class _FixedRewriter:
+        async def acall(
+            self, *, items: list[TextSeamInput]
+        ) -> list[TextSeamRewriteOutput]:
+            return [
+                TextSeamRewriteOutput(position=item.position, merged='joined')
+                for item in items
+            ]
+
+    request = TextSeamRequest(
+        top_page=SourcePage(index=0, blocks=[_block(20, 'tail')]),
+        bottom_page=SourcePage(index=1, blocks=[_block(21, 'head')]),
+    )
+    result = asyncio.run(
+        _node(_PositiveJudge(), _FixedRewriter()).even_worker(
+            {'text_seam_requests': [request]}
+        )
+    )['text_seam_even_results'][0]
+    assert result.top_page.blocks[0].content == 'joined'
+    assert result.bottom_page.blocks == []
+
+
+@pytest.mark.parametrize(
+    ('token_limit', 'packet_sizes'),
+    [(6, [1, 1]), (7, [2])],
+)
+def test_token_budget_packs_whole_pairs_at_the_inclusive_limit(
+    token_limit, packet_sizes
+):
+    class _PayloadCounter:
+        def count_texts(self, texts: list[str]) -> list[int]:
+            return [
+                1 if text in ('{"items":[]}', '[,]') else 2 for text in texts
+            ]
+
+    pages = [
+        SourcePage(index=index, blocks=[_block(index, f'page {index}')])
+        for index in range(4)
+    ]
+    counter = _PayloadCounter()
+    node = TextSeamNode(
+        _Judge(),
+        _Rewriter(),
+        judge_budget=TokenBudget(counter, token_limit),
+        rewrite_budget=TokenBudget(counter, 10_000),
+        judge_batch_size=16,
+        rewrite_batch_size=16,
+    )
+    sends = node.dispatch_even(_state(pages))
+    assert isinstance(sends, list)
+    assert [
+        len(send.arg['text_seam_requests']) for send in sends
+    ] == packet_sizes
+
+
+def test_oversized_atomic_seam_request_raises_without_fallback_calls():
+    class _OversizeCounter:
+        def count_texts(self, texts: list[str]) -> list[int]:
+            return [
+                1 if text in ('{"items":[]}', '[,]') else 100 for text in texts
+            ]
+
+    judge = _Judge()
+    rewriter = _Rewriter()
+    node = TextSeamNode(
+        judge,
+        rewriter,
+        judge_budget=TokenBudget(_OversizeCounter(), 10),
+        rewrite_budget=TokenBudget(_OversizeCounter(), 10),
+        judge_batch_size=16,
+        rewrite_batch_size=16,
+    )
+    request = _pair(0)
+    state = _state([request.top_page, request.bottom_page])
+    with pytest.raises(InputBudgetExceeded, match='singleton'):
+        node.dispatch_even(state)
+    assert judge.calls == []
+    assert rewriter.calls == []

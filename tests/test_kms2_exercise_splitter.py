@@ -1,148 +1,33 @@
+from __future__ import annotations
+
 import asyncio
 import uuid
-
-import dspy
 
 from kms2.config.inference import ContextWindowSettings
 from kms2.core.model.block import SourceBlock
 from kms2.core.model.block_types import BlockType
-from kms2.core.model.context import SourceBlockContext
+from kms2.core.model.context import PositionedSourceBlock, SourceBlockContext
 from kms2.core.model.page import SourcePage
-from kms2.core.model.source import Source
-from kms2.core.model.source_processing.exercise_splitter import (
+from kms2.core.model.source_pedagogical.exercise_splitter import (
     SplitCandidate,
     SplitDecision,
     SplitPiece,
     SplitResult,
+    SplitRouteDecision,
 )
 from kms2.core.model.visual_asset import VisualAsset
-from kms2.langgraph.source_processing.state import SourceProcessingState
-from kms2.module.source_processing import (
-    exercise_splitter,
-    exercise_strip_router,
-)
-from kms2.node.source_processing.exercise_splitter import ExerciseSplitterNode
+from kms2.langgraph.source_pedagogical.state import SourcePedagogicalState
+from kms2.node.source_pedagogical.exercise_splitter import ExerciseSplitterNode
 
 
-class _Predictor:
-    def __init__(self, **values: object) -> None:
-        self.values = values
-        self.calls: list[dict[str, object]] = []
-
-    def __call__(self, **kwargs: object) -> dspy.Prediction:
-        self.calls.append(kwargs)
-        return dspy.Prediction(**self.values)
-
-    async def acall(self, **kwargs: object) -> dspy.Prediction:
-        self.calls.append(kwargs)
-        return dspy.Prediction(**self.values)
-
-
-def _context(content: str, block_type: BlockType = BlockType.PARAGRAPH):
+def _context(
+    content: str, block_type: BlockType = BlockType.PARAGRAPH
+) -> SourceBlockContext:
     return SourceBlockContext(block_type=block_type, content=content)
 
 
 def _projected_parent(content: str) -> SourceBlockContext:
     return _context(content, BlockType.LIST)
-
-
-def test_signatures_expose_routed_split_contracts():
-    assert set(
-        exercise_strip_router.ExerciseStripRouterSignature.input_fields
-    ) == {
-        'context_before',
-        'target_block',
-        'context_after',
-    }
-    assert set(
-        exercise_strip_router.ExerciseStripRouterSignature.output_fields
-    ) == {'contains_multiple_exercises'}
-    assert set(exercise_splitter.ExerciseSplitterSignature.input_fields) == {
-        'context_before',
-        'candidates',
-        'context_after',
-    }
-    assert set(exercise_splitter.ExerciseSplitterSignature.output_fields) == {
-        'splits'
-    }
-
-
-def test_router_forwards_context_and_returns_model_boolean():
-    predictor = _Predictor(contains_multiple_exercises=True)
-    router = exercise_strip_router.ExerciseStripRouterModule(predictor)
-    before = [_context('before')]
-    target = _context('1. first 2. second')
-    after = [_context('after')]
-
-    assert (
-        router(
-            context_before=before,
-            target_block=target,
-            context_after=after,
-        )
-        is True
-    )
-    assert (
-        asyncio.run(
-            router.aforward(
-                context_before=before,
-                target_block=target,
-                context_after=after,
-            )
-        )
-        is True
-    )
-    assert predictor.calls == [
-        {
-            'context_before': before,
-            'target_block': target,
-            'context_after': after,
-        },
-        {
-            'context_before': before,
-            'target_block': target,
-            'context_after': after,
-        },
-    ]
-
-
-def test_splitter_forwards_candidates_and_returns_model_decisions():
-    decision = SplitDecision(
-        position=1,
-        pieces=[SplitPiece(content='one'), SplitPiece(content='two')],
-    )
-    predictor = _Predictor(splits=[decision])
-    splitter = exercise_splitter.ExerciseSplitterModule(predictor)
-    before = [_context('before')]
-    candidates = [
-        SplitCandidate(position=1, source_block=_context('packed')),
-    ]
-    after = [_context('after')]
-
-    assert splitter(
-        context_before=before,
-        candidates=candidates,
-        context_after=after,
-    ) == [decision]
-    assert asyncio.run(
-        splitter.aforward(
-            context_before=before,
-            candidates=candidates,
-            context_after=after,
-        )
-    ) == [decision]
-    assert predictor.calls == [
-        {
-            'context_before': before,
-            'candidates': candidates,
-            'context_after': after,
-        },
-        {
-            'context_before': before,
-            'candidates': candidates,
-            'context_after': after,
-        },
-    ]
 
 
 class _Counter:
@@ -152,9 +37,7 @@ class _Counter:
 
     def count_texts(self, texts: list[str]) -> list[int]:
         self.calls.append(texts)
-        if self.counts is not None:
-            return self.counts
-        return [1 for _ in texts]
+        return self.counts if self.counts is not None else [1 for _ in texts]
 
 
 class _Router:
@@ -162,10 +45,29 @@ class _Router:
         self.positive_contents = positive_contents
         self.calls: list[dict[str, object]] = []
 
-    async def aforward(self, **kwargs: object) -> bool:
-        self.calls.append(kwargs)
-        target_block = kwargs['target_block']
-        return target_block.content in self.positive_contents
+    async def acall(
+        self,
+        *,
+        context_before: list[SourceBlockContext],
+        targets: list[PositionedSourceBlock],
+        context_after: list[SourceBlockContext],
+    ) -> list[SplitRouteDecision]:
+        self.calls.append(
+            {
+                'context_before': context_before,
+                'targets': targets,
+                'context_after': context_after,
+            }
+        )
+        return [
+            SplitRouteDecision(
+                position=target.position,
+                contains_multiple_exercises=(
+                    target.source_block.content in self.positive_contents
+                ),
+            )
+            for target in reversed(targets)
+        ]
 
 
 class _Splitter:
@@ -173,16 +75,27 @@ class _Splitter:
         self.decisions = decisions
         self.calls: list[dict[str, object]] = []
 
-    async def aforward(self, **kwargs: object) -> list[SplitDecision]:
-        self.calls.append(kwargs)
+    async def acall(
+        self,
+        *,
+        context_before: list[SourceBlockContext],
+        candidates: list[SplitCandidate],
+        context_after: list[SourceBlockContext],
+    ) -> list[SplitDecision]:
+        self.calls.append(
+            {
+                'context_before': context_before,
+                'candidates': candidates,
+                'context_after': context_after,
+            }
+        )
         return self.decisions
 
 
-def _state(pages: list[SourcePage]) -> SourceProcessingState:
-    return SourceProcessingState(
-        pdf_path='document.pdf',
-        source=Source(uuid='source-1', key='document.pdf'),
-        image_described_pages=pages,
+def _state(pages: list[SourcePage]) -> SourcePedagogicalState:
+    return SourcePedagogicalState(
+        source_uuid='source-1',
+        source_pages=pages,
     )
 
 
@@ -191,6 +104,7 @@ def _node(
     exercise_splitter: _Splitter,
     *,
     target_budget: int = 0,
+    batch_size: int = 32,
     token_counters: tuple[_Counter, ...] | None = None,
 ) -> ExerciseSplitterNode:
     return ExerciseSplitterNode(
@@ -201,6 +115,7 @@ def _node(
             forward_budget=2,
             target_budget=target_budget,
         ),
+        batch_size=batch_size,
         token_counters=token_counters or (_Counter(),),
     )
 
@@ -223,8 +138,12 @@ def test_node_dispatches_one_context_window_per_flat_block():
             ],
         ),
     ]
+    router = _Router(set())
     node = _node(
-        _Router(set()), _Splitter([]), token_counters=(_Counter([2, 2, 4]),)
+        router,
+        _Splitter([]),
+        batch_size=1,
+        token_counters=(_Counter([2, 2, 4]),),
     )
 
     sends = asyncio.run(node.dispatch(_state(pages)))
@@ -252,6 +171,9 @@ def test_node_dispatches_one_context_window_per_flat_block():
         [],
         [],
     ]
+    for send in sends:
+        asyncio.run(node.worker(send.arg))
+    assert len(router.calls) == 3
 
 
 def test_node_dispatches_multiple_targets_when_target_budget_is_increased():
@@ -268,8 +190,8 @@ def test_node_dispatches_multiple_targets_when_target_budget_is_increased():
     node = _node(
         _Router(set()),
         _Splitter([]),
+        batch_size=2,
         target_budget=3,
-        token_counters=(_Counter([1, 1, 2]),),
     )
 
     sends = asyncio.run(node.dispatch(_state(pages)))
@@ -279,6 +201,11 @@ def test_node_dispatches_multiple_targets_when_target_budget_is_increased():
     assert [request.window.target for request in requests] == [
         [_context('one'), _context('two')],
         [_context('three')],
+    ]
+    assert requests[0].window.context_after == [_context('three')]
+    assert requests[1].window.context_before == [
+        _context('one'),
+        _context('two'),
     ]
     assert [
         block.content for request in requests for block in request.window.target
@@ -300,6 +227,7 @@ def test_dispatch_uses_pointwise_maximum_of_two_profile_costs():
             forward_budget=0,
             target_budget=5,
         ),
+        batch_size=32,
         token_counters=(router_counter, splitter_counter),
     )
 
@@ -349,6 +277,60 @@ def test_worker_returns_results_for_multiple_routed_targets():
     assert [
         candidate.position for candidate in splitter.calls[0]['candidates']
     ] == [0, 1]
+    assert len(router.calls) == 1
+    assert [target.position for target in router.calls[0]['targets']] == [0, 1]
+
+
+def test_router_excludes_context_only_blocks_and_maps_local_positions():
+    blocks = [
+        SourceBlock(block_type=BlockType.LIST, content=content)
+        for content in ('context only', 'packed exercise', 'numbered procedure')
+    ]
+    router = _Router({'packed exercise'})
+    splitter = _Splitter(
+        [
+            SplitDecision(
+                position=0,
+                pieces=[
+                    SplitPiece(content='Exercise one'),
+                    SplitPiece(content='Exercise two'),
+                ],
+            )
+        ]
+    )
+    node = _node(router, splitter, target_budget=1)
+    sends = asyncio.run(
+        node.dispatch(_state([SourcePage(index=0, blocks=blocks)]))
+    )
+
+    result = asyncio.run(node.worker(sends[1].arg))
+
+    assert len(router.calls) == 1
+    assert router.calls[0] == {
+        'context_before': [_context('context only', BlockType.LIST)],
+        'targets': [
+            PositionedSourceBlock(
+                position=0,
+                source_block=_projected_parent('packed exercise'),
+            )
+        ],
+        'context_after': [_context('numbered procedure', BlockType.LIST)],
+    }
+    assert splitter.calls[0]['candidates'] == [
+        SplitCandidate(
+            position=0,
+            source_block=_projected_parent('packed exercise'),
+        )
+    ]
+    assert result['split_results'] == [
+        SplitResult(
+            flat_position=1,
+            pieces=[
+                SplitPiece(content='Exercise one'),
+                SplitPiece(content='Exercise two'),
+            ],
+        )
+    ]
 
 
 def test_empty_dispatch_collects_without_loading_counter():
@@ -436,7 +418,12 @@ def test_worker_splits_one_routed_candidate_at_local_position_zero():
     assert router.calls == [
         {
             'context_before': [_context('before')],
-            'target_block': _projected_parent(parent.content),
+            'targets': [
+                PositionedSourceBlock(
+                    position=0,
+                    source_block=_projected_parent(parent.content),
+                )
+            ],
             'context_after': [],
         }
     ]

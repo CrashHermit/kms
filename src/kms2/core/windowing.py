@@ -75,6 +75,7 @@ def select_window(
     backward_budget: int | None = None,
     forward_budget: int | None = None,
     target_budget: int = 0,
+    max_targets: int | None = None,
 ) -> SourceContextWindow:
     """Select one or more targets and budgeted context around them."""
     target = [project_block(blocks[position]) for position in target_positions]
@@ -86,6 +87,8 @@ def select_window(
             token_counts[position] for position in target_positions
         )
         for position in range(target_end + 1, len(blocks)):
+            if max_targets is not None and len(target) >= max_targets:
+                break
             cost = token_counts[position]
             if target_cost + cost > target_budget:
                 break

@@ -2,12 +2,15 @@ import asyncio
 
 import dspy
 
+from kms2.composition.predictors import PredictorFactory
 from kms2.config.inference import (
     PredictorStrategy,
     StageInferenceSettings,
     TextInferenceSettings,
 )
+from kms2.config.llm import ChatGPTLLMProfile, LLMSettings
 from kms2.config.runtime import LocalModelRuntimeSettings
+from kms2.config.settings import Settings
 from kms2.local_models.runtime import ResidentRole, RuntimePredictor
 
 
@@ -51,7 +54,7 @@ class _AsyncPredictor:
 
 def _stage_inference(strategy: PredictorStrategy) -> StageInferenceSettings:
     return StageInferenceSettings(
-        model_server_profile='text',
+        profile='qwen3.8-9b-distill-text',
         strategy=strategy,
         temperature=0.2,
         top_p=0.8,
@@ -62,57 +65,18 @@ def _stage_inference(strategy: PredictorStrategy) -> StageInferenceSettings:
 
 
 def test_inference_defaults_match_model_recommendations():
-    settings = StageInferenceSettings(model_server_profile='text')
+    settings = StageInferenceSettings(profile='qwen3.8-9b-distill-text')
     text_settings = TextInferenceSettings()
 
     assert settings.temperature == 1.0
     assert settings.top_p == 0.95
     assert settings.top_k == 64
     assert settings.max_tokens == 8192
-    assert text_settings.model_server_profile == 'qwen3.8-9b-distill-text'
+    assert text_settings.profile is None
     assert text_settings.temperature == 0.6
     assert text_settings.top_p == 0.95
     assert text_settings.top_k == 20
     assert text_settings.max_tokens == 16384
-
-
-def test_runtime_predictor_forwards_inference_options(monkeypatch):
-    calls: list[tuple[str, dict[str, object]]] = []
-    _RecordingLM.calls = calls
-    monkeypatch.setattr('kms2.local_models.runtime.dspy.LM', _RecordingLM)
-    monkeypatch.setattr(
-        'kms2.local_models.runtime.dspy.Predict', _RecordingPredictor
-    )
-
-    from kms2.local_models.runtime import LocalModelRuntime
-
-    runtime = LocalModelRuntime(
-        LocalModelRuntimeSettings(),
-        embedding_token_counter=_EmbeddingCounter(),
-    )
-    runtime._router = _Router()
-    predictor = runtime.predictor(
-        _stage_inference(PredictorStrategy.PREDICT),
-        _Signature,
-    )
-
-    assert isinstance(predictor, RuntimePredictor)
-    assert calls == [
-        (
-            'text',
-            {
-                'api_base': 'http://router/v1',
-                'api_key': 'not-needed',
-                'custom_llm_provider': 'openai',
-                'temperature': 0.2,
-                'top_p': 0.8,
-                'top_k': 12,
-                'max_tokens': 123,
-                'num_retries': 4,
-                'cache': True,
-            },
-        )
-    ]
 
 
 def test_runtime_predictor_supports_configured_strategies(monkeypatch):
@@ -133,8 +97,8 @@ def test_runtime_predictor_supports_configured_strategies(monkeypatch):
     predictor = runtime.predictor(
         _stage_inference(PredictorStrategy.CHAIN_OF_THOUGHT),
         _Signature,
+        model_server_profile='qwen3.8-9b-distill-text',
     )
-
     assert isinstance(predictor.predictor, _RecordingChainOfThought)
 
 
@@ -198,3 +162,87 @@ async def _test_strict_adapter_scope_is_local_to_its_predictor():
         assert await task == 'ok'
         assert dspy.settings.adapter is ambient
     assert observed == [strict, ambient]
+
+
+class _CloudPredictor(dspy.Module):
+    active_count = 0
+    peak_count = 0
+
+    def __init__(self, signature: type[dspy.Signature]) -> None:
+        super().__init__()
+        self.signature = signature
+        self.lm = None
+
+    def set_lm(self, lm: object) -> None:
+        self.lm = lm
+
+    async def aforward(self, **kwargs: object) -> dict[str, object]:
+        type(self).active_count += 1
+        type(self).peak_count = max(
+            type(self).peak_count, type(self).active_count
+        )
+        try:
+            await asyncio.sleep(0.01)
+            return dict(kwargs)
+        finally:
+            type(self).active_count -= 1
+
+
+def test_chatgpt_predictor_uses_native_responses_without_local_options(
+    monkeypatch,
+):
+    _CloudPredictor.active_count = 0
+    _CloudPredictor.peak_count = 0
+    calls: list[tuple[str, dict[str, object]]] = []
+    _RecordingLM.calls = calls
+    cloud_predictors: list[_CloudPredictor] = []
+
+    def create_predictor(signature: type[dspy.Signature]) -> _CloudPredictor:
+        predictor = _CloudPredictor(signature)
+        cloud_predictors.append(predictor)
+        return predictor
+
+    monkeypatch.setattr('kms2.composition.predictors.dspy.LM', _RecordingLM)
+    monkeypatch.setattr(
+        'kms2.composition.predictors.dspy.Predict', create_predictor
+    )
+
+    class LocalModels:
+        def predictor(self, *args: object, **kwargs: object) -> object:
+            raise AssertionError('remote profile touched local models')
+
+    settings = Settings(
+        llm=LLMSettings(
+            max_concurrency=2,
+            default_text_profile='cloud',
+            profiles={'cloud': ChatGPTLLMProfile()},
+        )
+    )
+    factory = PredictorFactory(settings, LocalModels(), None)
+    inference = StageInferenceSettings(
+        strategy=PredictorStrategy.PREDICT,
+        temperature=0.1,
+        top_p=0.2,
+        top_k=3,
+        max_tokens=99,
+        num_retries=0,
+    )
+    first = factory.create(_CloudPredictor, inference, _Signature)
+    second = factory.create(_CloudPredictor, inference, _Signature)
+    third = factory.create(_CloudPredictor, inference, _Signature)
+    fourth = factory.create(_CloudPredictor, inference, _Signature)
+    asyncio.run(
+        _assert_cloud_predictors_are_bounded(first, second, third, fourth)
+    )
+
+
+async def _assert_cloud_predictors_are_bounded(
+    *predictors: dspy.Module,
+) -> None:
+    await asyncio.gather(
+        *(
+            predictor.acall(value=str(index))
+            for index, predictor in enumerate(predictors)
+        )
+    )
+    assert _CloudPredictor.peak_count == 2

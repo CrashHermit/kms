@@ -30,80 +30,20 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     FOR (asset:VisualAsset) REQUIRE asset.uuid IS UNIQUE
     """,
     """
-    CREATE CONSTRAINT source_triplet_uuid IF NOT EXISTS
-    FOR (triplet:SourceTriplet) REQUIRE triplet.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_triplet_qualifier_uuid IF NOT EXISTS
-    FOR (qualifier:SourceTripletQualifier) REQUIRE qualifier.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_triplet_interpretive_binding_uuid IF NOT EXISTS
-    FOR (binding:SourceTripletInterpretiveBinding) REQUIRE binding.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_fact_uuid IF NOT EXISTS
-    FOR (fact:SourceFact) REQUIRE fact.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_fact_target_uuid IF NOT EXISTS
-    FOR (target:SourceFactTarget) REQUIRE target.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_fact_context_uuid IF NOT EXISTS
-    FOR (context:SourceFactContext) REQUIRE context.uuid IS UNIQUE
+    CREATE CONSTRAINT source_proposition_uuid IF NOT EXISTS
+    FOR (proposition:SourceProposition) REQUIRE proposition.uuid IS UNIQUE
     """,
     """
     CREATE CONSTRAINT source_entity_uuid IF NOT EXISTS
     FOR (entity:SourceEntity) REQUIRE entity.uuid IS UNIQUE
     """,
     """
-    CREATE CONSTRAINT source_event_uuid IF NOT EXISTS
-    FOR (event:SourceEvent) REQUIRE event.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_predicate_uuid IF NOT EXISTS
-    FOR (predicate:SourcePredicate) REQUIRE predicate.uuid IS UNIQUE
-    """,
-    """
     CREATE CONSTRAINT source_entity_hub_uuid IF NOT EXISTS
     FOR (hub:SourceEntityHub) REQUIRE hub.uuid IS UNIQUE
     """,
     """
-    CREATE CONSTRAINT source_event_hub_uuid IF NOT EXISTS
-    FOR (hub:SourceEventHub) REQUIRE hub.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_predicate_hub_uuid IF NOT EXISTS
-    FOR (hub:SourcePredicateHub) REQUIRE hub.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT global_entity_hub_uuid IF NOT EXISTS
-    FOR (hub:GlobalEntityHub) REQUIRE hub.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT global_event_hub_uuid IF NOT EXISTS
-    FOR (hub:GlobalEventHub) REQUIRE hub.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT global_statement_hub_uuid IF NOT EXISTS
-    FOR (hub:GlobalStatementHub) REQUIRE hub.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT global_procedure_hub_uuid IF NOT EXISTS
-    FOR (hub:GlobalProcedureHub) REQUIRE hub.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT global_predicate_hub_uuid IF NOT EXISTS
-    FOR (hub:GlobalPredicateHub) REQUIRE hub.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT global_triplet_uuid IF NOT EXISTS
-    FOR (triplet:GlobalTriplet) REQUIRE triplet.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT global_triplet_hub_uuid IF NOT EXISTS
-    FOR (hub:GlobalTripletHub) REQUIRE hub.uuid IS UNIQUE
+    CREATE CONSTRAINT source_proposition_hub_uuid IF NOT EXISTS
+    FOR (hub:SourcePropositionHub) REQUIRE hub.uuid IS UNIQUE
     """,
     """
     CREATE CONSTRAINT source_statement_hub_uuid IF NOT EXISTS
@@ -112,14 +52,6 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     """
     CREATE CONSTRAINT source_procedure_hub_uuid IF NOT EXISTS
     FOR (hub:SourceProcedureHub) REQUIRE hub.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_triplet_hub_uuid IF NOT EXISTS
-    FOR (hub:SourceTripletHub) REQUIRE hub.uuid IS UNIQUE
-    """,
-    """
-    CREATE INDEX source_triplet_hub_source_uuid IF NOT EXISTS
-    FOR (hub:SourceTripletHub) ON (hub.source_uuid)
     """,
     """
     CREATE CONSTRAINT source_flashcard_uuid IF NOT EXISTS
@@ -146,9 +78,36 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     FOR (event:ReviewEvent) REQUIRE event.uuid IS UNIQUE
     """,
     """
+    CREATE CONSTRAINT teaching_session_uuid IF NOT EXISTS
+    FOR (session:TeachingSession) REQUIRE session.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT teaching_turn_uuid IF NOT EXISTS
+    FOR (turn:TeachingTurn) REQUIRE turn.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT probe_assessment_uuid IF NOT EXISTS
+    FOR (assessment:ProbeAssessment) REQUIRE assessment.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT teaching_plan_uuid IF NOT EXISTS
+    FOR (plan:TeachingPlan) REQUIRE plan.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT teaching_plan_step_uuid IF NOT EXISTS
+    FOR (step:TeachingPlanStep) REQUIRE step.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT teaching_question_uuid IF NOT EXISTS
+    FOR (question:TeachingQuestion) REQUIRE question.uuid IS UNIQUE
+    """,
+    """
     CREATE INDEX user_card_review_due_at IF NOT EXISTS
     FOR (review:UserCardReview) ON (review.due_at)
     """,
+    # Native GDS projections require these schema keys even with zero edges.
+    "CALL db.createRelationshipType('SIMILAR_TO')",
+    "CALL db.createProperty('score')",
 )
 
 
@@ -165,46 +124,24 @@ def vector_index_statements(embedding_dimension: int) -> tuple[str, ...]:
         """
         for index_name, label in (
             ('source_block_embedding', 'SourceBlock'),
+            ('source_proposition_embedding', 'SourceProposition'),
             ('source_entity_embedding', 'SourceEntity'),
-            ('source_event_embedding', 'SourceEvent'),
-            ('source_predicate_embedding', 'SourcePredicate'),
             ('source_statement_embedding', 'SourceStatement'),
             ('source_procedure_embedding', 'SourceProcedure'),
-            ('source_entity_hub_embedding', 'SourceEntityHub'),
-            ('source_event_hub_embedding', 'SourceEventHub'),
-            ('global_entity_hub_embedding', 'GlobalEntityHub'),
-            ('global_event_hub_embedding', 'GlobalEventHub'),
-            ('global_statement_hub_embedding', 'GlobalStatementHub'),
-            ('global_procedure_hub_embedding', 'GlobalProcedureHub'),
-            ('global_predicate_hub_embedding', 'GlobalPredicateHub'),
-            ('global_triplet_hub_embedding', 'GlobalTripletHub'),
-            ('source_predicate_hub_embedding', 'SourcePredicateHub'),
             ('source_statement_hub_embedding', 'SourceStatementHub'),
             ('source_procedure_hub_embedding', 'SourceProcedureHub'),
-            ('source_triplet_hub_embedding', 'SourceTripletHub'),
         )
     )
 
 
 VECTOR_INDEX_NAMES = (
     'source_block_embedding',
+    'source_proposition_embedding',
     'source_entity_embedding',
-    'source_event_embedding',
-    'source_predicate_embedding',
     'source_statement_embedding',
     'source_procedure_embedding',
-    'source_entity_hub_embedding',
     'source_statement_hub_embedding',
     'source_procedure_hub_embedding',
-    'source_event_hub_embedding',
-    'global_entity_hub_embedding',
-    'global_event_hub_embedding',
-    'global_predicate_hub_embedding',
-    'global_statement_hub_embedding',
-    'global_procedure_hub_embedding',
-    'source_predicate_hub_embedding',
-    'source_triplet_hub_embedding',
-    'global_triplet_hub_embedding',
 )
 AWAIT_INDEX = 'CALL db.awaitIndex($index_name, $timeout_seconds)'
 
@@ -212,7 +149,7 @@ AWAIT_INDEX = 'CALL db.awaitIndex($index_name, $timeout_seconds)'
 async def ensure_structural_schema(
     session_factory: Callable[[], AsyncSession],
 ) -> None:
-    """Create KMS2 structural constraints without vector indexes."""
+    """Create KMS2 structural constraints without rewriting stored data."""
     async with session_factory() as session:
         for statement in SCHEMA_STATEMENTS:
             result = await session.run(statement)
@@ -225,9 +162,55 @@ async def ensure_schema(
     *,
     embedding_dimension: int,
 ) -> None:
-    """Create KMS2 structural and vector schema in order."""
+    """Create structural and vector schema for the selected embedding dimension."""
     await ensure_structural_schema(session_factory)
     async with session_factory() as session:
+        result = await session.run(
+            """
+            SHOW INDEXES YIELD name, type, options
+            WHERE name IN $names
+            RETURN name, type, options
+            """,
+            names=list(VECTOR_INDEX_NAMES),
+        )
+        for index in await result.data():
+            dimension = (
+                index['options'].get('indexConfig', {}).get('vector.dimensions')
+            )
+            if index['type'] != 'VECTOR' or dimension != embedding_dimension:
+                raise ValueError(
+                    f'Embedding index {index["name"]} has dimension {dimension}; '
+                    f'selected embeddings require {embedding_dimension}. '
+                    'Re-embed stored material and explicitly rebuild the vector '
+                    'indexes before changing embedding models.'
+                )
+        result = await session.run(
+            """
+            MATCH (node)
+            WHERE node.embedding IS NOT NULL
+              AND any(label IN labels(node) WHERE label IN $labels)
+              AND size(node.embedding) <> $dimension
+            RETURN labels(node) AS labels, size(node.embedding) AS dimension
+            LIMIT 1
+            """,
+            labels=[
+                'SourceBlock',
+                'SourceProposition',
+                'SourceEntity',
+                'SourceStatement',
+                'SourceProcedure',
+                'SourceStatementHub',
+                'SourceProcedureHub',
+            ],
+            dimension=embedding_dimension,
+        )
+        incompatible = await result.data()
+        if incompatible:
+            raise ValueError(
+                f'Stored embeddings have dimension {incompatible[0]["dimension"]}; '
+                f'selected embeddings require {embedding_dimension}. '
+                'Re-embed stored material before changing embedding models.'
+            )
         for statement in vector_index_statements(embedding_dimension):
             result = await session.run(statement)
             if result is not None:

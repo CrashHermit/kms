@@ -1,22 +1,42 @@
 import asyncio
 
+from PIL import Image
+
 from kms2.config.inference import ContextWindowSettings
 from kms2.core.model.block import SourceBlock
 from kms2.core.model.page import SourcePage
 from kms2.core.model.source import Source
 from kms2.core.model.source_processing.content_correction import (
+    ContentCorrectionOutput,
     ContentCorrectionResult,
+)
+from kms2.core.model.source_processing.formatting import (
+    FormattingInput,
+    FormattingOutput,
+)
+from kms2.core.model.source_processing.image_description import (
+    ImageDescriptionInput,
+    ImageDescriptionOutput,
+)
+from kms2.core.model.source_processing.image_seam import (
+    ImageSeamDecision,
+    ImageSeamInput,
 )
 from kms2.core.model.source_processing.ocr import (
     OCRArtifact,
     OCRImageArtifact,
     OCRPageArtifact,
 )
+from kms2.core.model.source_processing.text_seam import (
+    TextSeamDecision,
+    TextSeamInput,
+    TextSeamRewriteOutput,
+)
+from kms2.core.windowing import TokenBudget
 from kms2.langgraph.source_processing.graph import SourceProcessingGraph
 from kms2.langgraph.source_processing.state import SourceProcessingState
 from kms2.node.source_processing.content_correction import ContentCorrectionNode
 from kms2.node.source_processing.embedding import EmbeddingNode
-from kms2.node.source_processing.exercise_splitter import ExerciseSplitterNode
 from kms2.node.source_processing.formatting import FormattingNode
 from kms2.node.source_processing.image_description import ImageDescriptionNode
 from kms2.node.source_processing.image_seam import ImageSeamNode
@@ -30,18 +50,25 @@ class _Counter:
         return [1 for _ in texts]
 
 
-class _FalseRouter:
-    async def aforward(self, **kwargs: object) -> bool:
-        return False
+def _content_correction_node(corrector: object) -> ContentCorrectionNode:
+    return ContentCorrectionNode(
+        corrector,
+        budget=TokenBudget(counter=_Counter(), token_limit=10_000),
+        batch_size=32,
+    )
 
 
-class _UnexpectedSplitter:
-    async def aforward(self, **kwargs: object) -> object:
-        raise AssertionError('splitter must not run without routed candidates')
+def _formatting_node(formatter: object) -> FormattingNode:
+
+    return FormattingNode(
+        formatter,
+        budget=TokenBudget(counter=_Counter(), token_limit=10_000),
+        batch_size=32,
+    )
 
 
 class _UnexpectedDescriber:
-    async def aforward(self, **kwargs: object) -> str:
+    async def acall(self, **kwargs: object) -> list[ImageDescriptionOutput]:
         raise AssertionError('describer must not run without image blocks')
 
 
@@ -67,122 +94,34 @@ def _embedding_node() -> EmbeddingNode:
     return EmbeddingNode(_RecordingEmbeddingClient())
 
 
-def _no_exercise_splitter() -> ExerciseSplitterNode:
-    return ExerciseSplitterNode(
-        _FalseRouter(),
-        _UnexpectedSplitter(),
-        ContextWindowSettings(
-            backward_budget=100,
-            forward_budget=100,
-        ),
-        token_counters=(_Counter(),),
-    )
-
-
 def _no_describer() -> ImageDescriptionNode:
+    counter = _Counter()
     return ImageDescriptionNode(
         _UnexpectedDescriber(),
         ContextWindowSettings(backward_budget=100, forward_budget=100),
-        token_counters=(_Counter(),),
+        budget=TokenBudget(counter, 10_000),
+        batch_size=4,
+        token_counters=(counter,),
     )
 
 
-class _NoInstructionFinder:
-    def run(self, state: SourceProcessingState) -> dict[str, object]:
-        return {'instructions': []}
-
-
-class _NoPedagogicalFinder:
-    async def run(self, state: SourceProcessingState) -> dict[str, object]:
-        return {'pedagogical_components': []}
-
-
-class _NoStatementProcedure:
-    async def run(self, state: SourceProcessingState) -> dict[str, object]:
-        return {'statements': [], 'procedures': []}
-
-
-class _NoExerciseFinder:
-    async def run(self, state: SourceProcessingState) -> dict[str, object]:
-        return {'exercise_components': []}
-
-
-class _NoInstructionGovernance:
-    def run(self, state: SourceProcessingState) -> dict[str, object]:
-        return {'instructions': state.instructions}
-
-
-def test_source_state_carries_source_pipeline_data():
-    source = Source(uuid='source-1', key='document.pdf')
-    artifact = SourceBlock(
-        uuid='content-1',
-        block_type='paragraph',
-        content='original',
-        crop_path='output/blocks/block-0.png',
-    )
-    ocr_page = SourcePage(index=0, blocks=[artifact])
-    corrected_content = SourceBlock(
-        uuid='content-1',
-        block_type='paragraph',
-        content='corrected source content',
-    )
-    corrected_page = SourcePage(index=0, blocks=[corrected_content])
-    state = SourceProcessingState(
-        pdf_path='document.pdf',
-        pages=[1, 2],
-        source=source,
-        ocr_pages=[ocr_page],
-        corrected_pages=[corrected_page],
+def _text_seam_node(judge: object, rewriter: object) -> TextSeamNode:
+    return TextSeamNode(
+        judge,
+        rewriter,
+        judge_budget=TokenBudget(_Counter(), 10_000),
+        rewrite_budget=TokenBudget(_Counter(), 10_000),
+        judge_batch_size=16,
+        rewrite_batch_size=16,
     )
 
-    assert state.source is source
-    assert state.pages == [1, 2]
-    assert state.ocr_pages == [ocr_page]
-    assert state.correction_results == []
-    assert state.corrected_pages == [corrected_page]
-    assert state.formatting_results == []
-    assert state.formatted_pages == []
-    assert state.text_seam_even_results == []
-    assert state.text_seam_even_pages == []
-    assert state.text_seam_odd_results == []
-    assert state.text_seam_pages == []
-    assert state.image_seam_even_results == []
-    assert state.image_seam_even_pages == []
-    assert state.image_seam_odd_results == []
-    assert state.image_seam_pages == []
-    assert state.image_description_results == []
-    assert state.image_described_pages == []
-    assert state.split_pages == []
-    assert state.embedded_pages == []
-    assert state.embedding_results == []
-    assert state.split_results == []
 
-
-def test_source_state_defaults_optional_pipeline_fields():
-    source = Source(uuid='source-1', key='document.pdf')
-
-    state = SourceProcessingState(pdf_path='document.pdf', source=source)
-
-    assert state.pages is None
-    assert state.ocr_pages == []
-    assert state.correction_results == []
-    assert state.corrected_pages == []
-    assert state.formatting_results == []
-    assert state.formatted_pages == []
-    assert state.text_seam_even_results == []
-    assert state.text_seam_even_pages == []
-    assert state.text_seam_odd_results == []
-    assert state.text_seam_pages == []
-    assert state.image_seam_even_results == []
-    assert state.image_seam_even_pages == []
-    assert state.image_seam_odd_results == []
-    assert state.image_seam_pages == []
-    assert state.image_description_results == []
-    assert state.image_described_pages == []
-    assert state.split_pages == []
-    assert state.embedded_pages == []
-    assert state.split_results == []
-    assert state.embedding_results == []
+def _image_seam_node(judge: object) -> ImageSeamNode:
+    return ImageSeamNode(
+        judge,
+        budget=TokenBudget(_Counter(), 10_000),
+        batch_size=4,
+    )
 
 
 def test_ocr_node_delegates_once_to_injected_provider():
@@ -234,7 +173,7 @@ def test_ocr_node_delegates_once_to_injected_provider():
 
 
 def test_content_correction_dispatch_routes_empty_ocr_to_collect():
-    node = ContentCorrectionNode(object())
+    node = _content_correction_node(object())
     state = SourceProcessingState(
         pdf_path='book.pdf',
         source=Source(uuid='source-1', key='book.pdf'),
@@ -270,7 +209,7 @@ def test_content_correction_collects_results_by_page_and_block_position():
         ),
     ]
 
-    result = ContentCorrectionNode(object()).collect(state)
+    result = _content_correction_node(object()).collect(state)
 
     assert [block.content for block in result['corrected_pages'][0].blocks] == [
         'corrected first',
@@ -278,7 +217,9 @@ def test_content_correction_collects_results_by_page_and_block_position():
     ]
 
 
-def test_source_graph_runs_correction_formatting_and_text_seams():
+def test_source_graph_runs_correction_formatting_and_text_seams(tmp_path):
+    crop = tmp_path / 'crop.png'
+    Image.new('RGB', (2, 2), 'red').save(crop)
     artifacts = [
         OCRPageArtifact(
             page_index=page_index,
@@ -289,7 +230,7 @@ def test_source_graph_runs_correction_formatting_and_text_seams():
                     block_index=0,
                     block_type='paragraph',
                     content=content,
-                    crop_path='data:image/png;base64,AA==',
+                    crop_path=str(crop),
                 )
             ],
         )
@@ -308,48 +249,69 @@ def test_source_graph_runs_correction_formatting_and_text_seams():
         async def acall(
             self,
             *,
-            block_crop: object,
-            block_type: str,
-            content: str,
-        ) -> str:
-            return f'corrected {content}'
+            blocks: list[object],
+            block_crops: list[object],
+        ) -> list[ContentCorrectionOutput]:
+            return [
+                ContentCorrectionOutput(
+                    position=block.position,
+                    corrected_content=f'corrected {block.content}',
+                )
+                for block in blocks
+            ]
 
     class FakeFormatter:
-        async def acall(self, *, content: str) -> str:
-            events.append(f'format {content}')
-            return f'formatted {content}'
+        async def acall(
+            self, *, blocks: list[FormattingInput]
+        ) -> list[FormattingOutput]:
+            events.extend(f'format {block.content}' for block in blocks)
+            return [
+                FormattingOutput(
+                    position=block.position,
+                    formatted_content=f'formatted {block.content}',
+                )
+                for block in blocks
+            ]
 
     class FakeJudge:
-        async def aforward(self, **kwargs: object) -> bool:
+        async def acall(
+            self, *, items: list[TextSeamInput]
+        ) -> list[TextSeamDecision]:
             assert events == [
                 'format corrected first',
                 'format corrected second',
             ]
-            return True
+            return [
+                TextSeamDecision(position=item.position, is_split=True)
+                for item in items
+            ]
 
     class FakeRewriter:
-        async def aforward(self, **kwargs: object) -> str:
+        async def acall(
+            self, *, items: list[TextSeamInput]
+        ) -> list[TextSeamRewriteOutput]:
             events.append('rewrite')
-            return 'merged tail and head'
+            return [
+                TextSeamRewriteOutput(
+                    position=item.position, merged='merged tail and head'
+                )
+                for item in items
+            ]
 
     class FakeImageJudge:
-        async def aforward(self, **kwargs: object) -> bool:
-            raise AssertionError('image judge must not run for text-only pages')
+        async def acall(
+            self, *, items: list[ImageSeamInput], seam_images: list[object]
+        ) -> list[ImageSeamDecision]:
+            raise AssertionError('no eligible image seams')
 
     persistence = _RecordingPersistence()
     source_graph = SourceProcessingGraph(
         OCRNode(FakeProvider()),
-        ContentCorrectionNode(FakeCorrector()),
-        FormattingNode(FakeFormatter()),
-        TextSeamNode(FakeJudge(), FakeRewriter()),
-        ImageSeamNode(FakeImageJudge()),
+        _content_correction_node(FakeCorrector()),
+        _formatting_node(FakeFormatter()),
+        _text_seam_node(FakeJudge(), FakeRewriter()),
+        _image_seam_node(FakeImageJudge()),
         _no_describer(),
-        _no_exercise_splitter(),
-        _NoInstructionFinder(),
-        _NoExerciseFinder(),
-        _NoPedagogicalFinder(),
-        _NoStatementProcedure(),
-        _NoInstructionGovernance(),
         _embedding_node(),
         persistence,
     ).build_graph()
@@ -379,14 +341,22 @@ def test_source_graph_runs_correction_formatting_and_text_seams():
         for content in page.blocks
     ] == ['merged tail and head']
     assert [page.index for page in result['text_seam_pages']] == [0, 1]
-    assert [page.markdown for page in result['split_pages']] == [
+    assert [page.markdown for page in result['image_described_pages']] == [
         '# Page 0',
         '# Page 1',
     ]
     assert persistence.pages == result['embedded_pages']
 
 
-def test_source_graph_merges_adjacent_image_artifacts_after_text_seams():
+def test_source_graph_merges_adjacent_image_artifacts_after_text_seams(
+    tmp_path,
+):
+    crop = tmp_path / 'crop.png'
+    top_image = tmp_path / 'top.png'
+    bottom_image = tmp_path / 'bottom.png'
+    Image.new('RGB', (2, 2), 'red').save(crop)
+    Image.new('RGB', (2, 2), 'blue').save(top_image)
+    Image.new('RGB', (2, 2), 'green').save(bottom_image)
     artifacts = [
         OCRPageArtifact(
             page_index=0,
@@ -396,8 +366,8 @@ def test_source_graph_merges_adjacent_image_artifacts_after_text_seams():
                     page_index=0,
                     block_index=0,
                     block_type='image',
-                    images=[OCRImageArtifact(path='top.png')],
-                    crop_path='data:image/png;base64,AA==',
+                    images=[OCRImageArtifact(path=str(top_image))],
+                    crop_path=str(crop),
                 )
             ],
         ),
@@ -409,8 +379,8 @@ def test_source_graph_merges_adjacent_image_artifacts_after_text_seams():
                     page_index=1,
                     block_index=0,
                     block_type='image',
-                    images=[OCRImageArtifact(path='bottom.png')],
-                    crop_path='data:image/png;base64,AA==',
+                    images=[OCRImageArtifact(path=str(bottom_image))],
+                    crop_path=str(crop),
                 )
             ],
         ),
@@ -426,62 +396,77 @@ def test_source_graph_merges_adjacent_image_artifacts_after_text_seams():
         async def acall(
             self,
             *,
-            block_crop: object,
-            block_type: str,
-            content: str | None,
-        ) -> str | None:
-            return content
+            blocks: list[object],
+            block_crops: list[object],
+        ) -> list[ContentCorrectionOutput]:
+            return [
+                ContentCorrectionOutput(
+                    position=block.position,
+                    corrected_content=block.content,
+                )
+                for block in blocks
+            ]
 
     class FakeFormatter:
-        async def acall(self, *, content: str) -> str:
+        async def acall(
+            self, *, blocks: list[FormattingInput]
+        ) -> list[FormattingOutput]:
             raise AssertionError('formatter must not run for image-only pages')
 
     class FakeTextJudge:
-        async def aforward(self, **kwargs: object) -> bool:
+        async def acall(
+            self, *, items: list[TextSeamInput]
+        ) -> list[TextSeamDecision]:
             raise AssertionError('text judge must not run for image-only pages')
 
     class FakeTextRewriter:
-        async def aforward(self, **kwargs: object) -> str:
+        async def acall(
+            self, *, items: list[TextSeamInput]
+        ) -> list[TextSeamRewriteOutput]:
             raise AssertionError(
                 'text rewriter must not run for image-only pages'
             )
 
     class FakeImageJudge:
-        async def aforward(self, **kwargs: object) -> bool:
-            return True
+        async def acall(
+            self, *, items: list[ImageSeamInput], seam_images: list[object]
+        ) -> list[ImageSeamDecision]:
+            return [
+                ImageSeamDecision(position=item.position, is_continuation=True)
+                for item in items
+            ]
 
     class FakeDescriber:
-        async def aforward(
+        async def acall(
             self,
             *,
-            source_block: SourceBlock,
-            context_before: object,
-            context_after: object,
-        ) -> str:
-            assert [asset.path for asset in source_block.assets] == [
-                'top.png',
-                'bottom.png',
+            items: list[ImageDescriptionInput],
+            target_images: list[object],
+        ) -> list[ImageDescriptionOutput]:
+            assert len(items) == 1
+            assert items[0].image_positions == [0, 1]
+            assert len(target_images) == 2
+            return [
+                ImageDescriptionOutput(
+                    position=items[0].position,
+                    description='one merged visual description',
+                )
             ]
-            return 'one merged visual description'
 
     persistence = _RecordingPersistence()
     source_graph = SourceProcessingGraph(
         OCRNode(FakeProvider()),
-        ContentCorrectionNode(FakeCorrector()),
-        FormattingNode(FakeFormatter()),
-        TextSeamNode(FakeTextJudge(), FakeTextRewriter()),
-        ImageSeamNode(FakeImageJudge()),
+        _content_correction_node(FakeCorrector()),
+        _formatting_node(FakeFormatter()),
+        _text_seam_node(FakeTextJudge(), FakeTextRewriter()),
+        _image_seam_node(FakeImageJudge()),
         ImageDescriptionNode(
             FakeDescriber(),
             ContextWindowSettings(backward_budget=100, forward_budget=100),
+            budget=TokenBudget(_Counter(), 10_000),
+            batch_size=4,
             token_counters=(_Counter(),),
         ),
-        _no_exercise_splitter(),
-        _NoInstructionFinder(),
-        _NoExerciseFinder(),
-        _NoPedagogicalFinder(),
-        _NoStatementProcedure(),
-        _NoInstructionGovernance(),
         _embedding_node(),
         persistence,
     ).build_graph()
@@ -498,14 +483,13 @@ def test_source_graph_merges_adjacent_image_artifacts_after_text_seams():
     assert [
         [asset.path for asset in page.blocks[0].assets]
         for page in result['text_seam_pages']
-    ] == [['top.png'], ['bottom.png']]
+    ] == [[str(top_image)], [str(bottom_image)]]
     assert [
         [asset.path for asset in page.blocks[0].assets] if page.blocks else []
         for page in result['image_seam_pages']
-    ] == [['top.png', 'bottom.png'], []]
+    ] == [[str(top_image), str(bottom_image)], []]
     assert [
         page.blocks[0].content if page.blocks else None
         for page in result['image_described_pages']
     ] == ['one merged visual description', None]
-    assert result['split_pages'] == result['image_described_pages']
     assert persistence.pages == result['embedded_pages']

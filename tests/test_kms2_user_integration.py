@@ -96,9 +96,6 @@ def test_user_decks_and_exclusive_source_ownership():
             await SourceGraphRepository(database.session).replace_source(
                 Source(uuid=source_uuid, key='legacy.pdf'),
                 [],
-                [],
-                [],
-                [],
             )
             assert [
                 source.uuid

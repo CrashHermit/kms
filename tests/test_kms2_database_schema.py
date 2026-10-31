@@ -1,110 +1,67 @@
 import asyncio
 
-from kms2.database.schema import (
-    SCHEMA_STATEMENTS,
-    VECTOR_INDEX_NAMES,
-    ensure_schema,
-    ensure_structural_schema,
-    vector_index_statements,
-)
+import pytest
+
+from kms2.database.schema import ensure_schema
 
 
-class _RecordingSession:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, dict[str, object]]] = []
+class Result:
+    def __init__(self, rows=()):
+        self.rows = list(rows)
 
-    async def run(self, statement: str, **parameters: object) -> None:
-        self.calls.append((statement, parameters))
+    async def data(self):
+        return self.rows
 
-
-class _SessionContext:
-    def __init__(self, session: _RecordingSession) -> None:
-        self._session = session
-
-    async def __aenter__(self) -> _RecordingSession:
-        return self._session
-
-    async def __aexit__(self, *args: object) -> None:
-        return None
+    async def consume(self):
+        pass
 
 
-def test_ensure_structural_schema_runs_only_structural_ddl():
-    session = _RecordingSession()
+class Session:
+    def __init__(self, *, indexes=(), incompatible_vectors=()):
+        self.indexes = indexes
+        self.incompatible_vectors = incompatible_vectors
+        self.vector_writes = []
 
-    asyncio.run(ensure_structural_schema(lambda: _SessionContext(session)))
+    async def __aenter__(self):
+        return self
 
-    assert [statement for statement, _ in session.calls] == list(
-        SCHEMA_STATEMENTS
+    async def __aexit__(self, *args):
+        pass
+
+    async def run(self, statement, **parameters):
+        if 'SHOW INDEXES' in statement:
+            return Result(self.indexes)
+        if 'size(node.embedding)' in statement:
+            return Result(self.incompatible_vectors)
+        if 'CREATE VECTOR INDEX' in statement:
+            self.vector_writes.append(statement)
+        return Result()
+
+
+def test_incompatible_index_requires_explicit_reembedding_without_index_writes():
+    session = Session(
+        indexes=[
+            {
+                'name': 'source_block_embedding',
+                'type': 'VECTOR',
+                'options': {'indexConfig': {'vector.dimensions': 4096}},
+            }
+        ]
     )
+    with pytest.raises(ValueError, match='explicitly rebuild'):
+        asyncio.run(ensure_schema(lambda: session, embedding_dimension=1024))
+    assert session.vector_writes == []
 
 
-def test_ensure_schema_runs_structural_vector_and_wait_ddl():
-    session = _RecordingSession()
-
-    asyncio.run(
-        ensure_schema(
-            lambda: _SessionContext(session),
-            embedding_dimension=4096,
-        )
+def test_old_vectors_cannot_be_mixed_into_new_dimension_without_an_index():
+    session = Session(
+        incompatible_vectors=[
+            {
+                'labels': ['SourceBlock'],
+                'dimension': 4096,
+            }
+        ]
     )
-
-    statements = [statement for statement, _ in session.calls]
-    expected_prefix = (
-        *SCHEMA_STATEMENTS,
-        *vector_index_statements(4096),
-    )
-    assert statements[: len(expected_prefix)] == list(expected_prefix)
-    assert statements[len(expected_prefix) :] == [
-        'CALL db.awaitIndex($index_name, $timeout_seconds)'
-    ] * len(VECTOR_INDEX_NAMES)
-    assert all(
-        parameters == {}
-        for _, parameters in session.calls[: len(expected_prefix)]
-    )
-    assert [
-        parameters for _, parameters in session.calls[len(expected_prefix) :]
-    ] == [
-        {'index_name': index_name, 'timeout_seconds': 300}
-        for index_name in VECTOR_INDEX_NAMES
-    ]
-
-    schema = '\n'.join(statements)
-    assert 'SourcePage' not in schema
-    assert 'SourceBlock' in schema
-    assert 'VisualAsset' in schema
-    assert 'SourceTriplet' in schema
-    assert 'FOR (statement:Statement)' not in schema
-    assert 'FOR (procedure:Procedure)' not in schema
-    assert 'FOR (triplet:Triplet)' not in schema
-    assert 'SourceFact' in schema
-    assert 'SourceEntity' in schema
-    assert 'SourceEvent' in schema
-    assert 'SourceEntityHub' in schema
-    assert 'SourceEventHub' in schema
-    assert 'SourcePredicateHub' in schema
-    assert 'SourceTripletHub' in schema
-    assert 'source_triplet_qualifier_uuid' in schema
-    assert 'source_triplet_interpretive_binding_uuid' in schema
-    assert 'source_triplet_hub_uuid' in schema
-    assert 'source_triplet_hub_source_uuid' in schema
-    assert 'source_triplet_hub_embedding' in schema
-    assert 'source_entity_hub_embedding' in schema
-    assert 'source_event_hub_embedding' in schema
-    assert 'source_predicate_hub_embedding' in schema
-    assert 'GlobalEntityHub' in schema
-    assert 'global_entity_hub_uuid' in schema
-    assert 'global_entity_hub_embedding' in schema
-    assert 'GlobalEventHub' in schema
-    assert 'global_event_hub_uuid' in schema
-    assert 'global_event_hub_embedding' in schema
-    assert 'GlobalPredicateHub' in schema
-    assert 'global_predicate_hub_uuid' in schema
-    assert 'global_predicate_hub_embedding' in schema
-    assert 'GlobalStatementHub' in schema
-    assert 'global_statement_hub_uuid' in schema
-    assert 'global_statement_hub_embedding' in schema
-    assert 'GlobalProcedureHub' in schema
-    assert 'global_procedure_hub_uuid' in schema
-    assert 'global_procedure_hub_embedding' in schema
-    assert 'HAS_PAGE' not in schema
-    assert 'CONTAINS_BLOCK' not in schema
+    with pytest.raises(ValueError, match='Re-embed stored material'):
+        asyncio.run(ensure_schema(lambda: session, embedding_dimension=1024))
+    assert session.vector_writes == []

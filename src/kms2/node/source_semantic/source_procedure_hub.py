@@ -126,8 +126,8 @@ class SourceProcedureHubNode:
             grouped.setdefault(candidate.left_uuid, []).append(candidate)
         for group in grouped.values():
             left = group[0]
-            left_text = left.left_description
-            right_texts = [candidate.right_description for candidate in group]
+            left_text = left.left_content
+            right_texts = [candidate.right_content for candidate in group]
             costs = self._reranker_token_counter.count_texts(
                 [left_text, *right_texts]
             )
@@ -181,7 +181,7 @@ class SourceProcedureHubNode:
         batch = state['source_procedure_hub_batch']
         results = await self._reranker.rerank(
             state['source_procedure_hub_left_text'],
-            [candidate.right_description for candidate in batch],
+            [candidate.right_content for candidate in batch],
             top_n=None,
         )
         direct: list[SourceProcedureHubCandidate] = []
@@ -331,9 +331,7 @@ class SourceProcedureHubNode:
         community = state['source_procedure_hub_community']
         request = SourceProcedureHubSynthesisInput(
             members=[
-                SourceProcedureHubSynthesisMember(
-                    description=member.description
-                )
+                SourceProcedureHubSynthesisMember(content=member.content)
                 for member in community
             ]
         )
@@ -444,7 +442,6 @@ class SourceProcedureHubNode:
         )
         hubs = [
             SourceProcedureHub(
-                source_uuid=state.source_uuid,
                 canonical_name=definition.canonical_name,
                 description=definition.description,
                 embedding=vector,
@@ -465,6 +462,6 @@ def _procedure_judge_input(
     """Build one indexed procedure judge request."""
     return SourceProcedureHubJudgeInput(
         index=index,
-        left_description=candidate.left_description,
-        right_description=candidate.right_description,
+        left_content=candidate.left_content,
+        right_content=candidate.right_content,
     )

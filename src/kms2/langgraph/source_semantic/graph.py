@@ -1,55 +1,34 @@
-"""Complete semantic LangGraph assembly for KMS2."""
+"""Independent source extraction and local semantic hub graph."""
 
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from kms2.langgraph.source_semantic.source_entity import add_source_entity_phase
+from kms2.langgraph.source_semantic.source_entity import (
+    add_source_entity_phase,
+)
 from kms2.langgraph.source_semantic.source_entity_description import (
     add_source_entity_description_phase,
+)
+from kms2.langgraph.source_semantic.source_entity_extraction import (
+    add_source_entity_extraction_phase,
 )
 from kms2.langgraph.source_semantic.source_entity_hub import (
     add_source_entity_hub_phase,
 )
-from kms2.langgraph.source_semantic.source_event import add_source_event_phase
-from kms2.langgraph.source_semantic.source_event_description import (
-    add_source_event_description_phase,
-)
-from kms2.langgraph.source_semantic.source_event_hub import (
-    add_source_event_hub_phase,
-)
-from kms2.langgraph.source_semantic.source_facts import add_source_fact_phase
-from kms2.langgraph.source_semantic.source_predicate import (
-    add_source_predicate_phase,
-)
-from kms2.langgraph.source_semantic.source_predicate_description import (
-    add_source_predicate_description_phase,
-)
-from kms2.langgraph.source_semantic.source_predicate_hub import (
-    add_source_predicate_hub_phase,
-)
-from kms2.langgraph.source_semantic.source_procedure import (
-    add_source_procedure_phase,
-)
-from kms2.langgraph.source_semantic.source_procedure_description import (
-    add_source_procedure_description_phase,
-)
 from kms2.langgraph.source_semantic.source_procedure_hub import (
     add_source_procedure_hub_phase,
 )
-from kms2.langgraph.source_semantic.source_statement import (
-    add_source_statement_phase,
+from kms2.langgraph.source_semantic.source_proposition_embedding import (
+    add_source_proposition_embedding_phase,
 )
-from kms2.langgraph.source_semantic.source_statement_description import (
-    add_source_statement_description_phase,
+from kms2.langgraph.source_semantic.source_proposition_extraction import (
+    add_source_proposition_extraction_phase,
+)
+from kms2.langgraph.source_semantic.source_proposition_hub import (
+    add_source_proposition_hub_phase,
 )
 from kms2.langgraph.source_semantic.source_statement_hub import (
     add_source_statement_hub_phase,
-)
-from kms2.langgraph.source_semantic.source_triplet_hub import (
-    add_source_triplet_hub_phase,
-)
-from kms2.langgraph.source_semantic.source_triplets import (
-    add_source_triplet_phase,
 )
 from kms2.langgraph.source_semantic.state import SourceSemanticState
 from kms2.node.source_semantic.source_entity_description import (
@@ -61,6 +40,12 @@ from kms2.node.source_semantic.source_entity_description_load import (
 from kms2.node.source_semantic.source_entity_embedding import (
     SourceEntityEmbeddingNode,
 )
+from kms2.node.source_semantic.source_entity_extraction import (
+    SourceEntityExtractionNode,
+)
+from kms2.node.source_semantic.source_entity_extraction_persistence import (
+    SourceEntityExtractionPersistenceNode,
+)
 from kms2.node.source_semantic.source_entity_hub import SourceEntityHubNode
 from kms2.node.source_semantic.source_entity_hub_persistence import (
     SourceEntityHubPersistenceNode,
@@ -68,72 +53,30 @@ from kms2.node.source_semantic.source_entity_hub_persistence import (
 from kms2.node.source_semantic.source_entity_persistence import (
     SourceEntityPersistenceNode,
 )
-from kms2.node.source_semantic.source_event_description import (
-    SourceEventDescriptionNode,
-)
-from kms2.node.source_semantic.source_event_description_load import (
-    SourceEventDescriptionLoadNode,
-)
-from kms2.node.source_semantic.source_event_embedding import (
-    SourceEventEmbeddingNode,
-)
-from kms2.node.source_semantic.source_event_hub import SourceEventHubNode
-from kms2.node.source_semantic.source_event_hub_persistence import (
-    SourceEventHubPersistenceNode,
-)
-from kms2.node.source_semantic.source_event_persistence import (
-    SourceEventPersistenceNode,
-)
-from kms2.node.source_semantic.source_fact_extraction import (
-    SourceFactExtractionNode,
-)
-from kms2.node.source_semantic.source_fact_persistence import (
-    SourceFactPersistenceNode,
-)
-from kms2.node.source_semantic.source_predicate_description import (
-    SourcePredicateDescriptionNode,
-)
-from kms2.node.source_semantic.source_predicate_description_load import (
-    SourcePredicateDescriptionLoadNode,
-)
-from kms2.node.source_semantic.source_predicate_embedding import (
-    SourcePredicateEmbeddingNode,
-)
-from kms2.node.source_semantic.source_predicate_hub import (
-    SourcePredicateHubNode,
-)
-from kms2.node.source_semantic.source_predicate_hub_persistence import (
-    SourcePredicateHubPersistenceNode,
-)
-from kms2.node.source_semantic.source_predicate_persistence import (
-    SourcePredicatePersistenceNode,
-)
-from kms2.node.source_semantic.source_procedure_description import (
-    SourceProcedureDescriptionNode,
-)
-from kms2.node.source_semantic.source_procedure_description_load import (
-    SourceProcedureDescriptionLoadNode,
-)
-from kms2.node.source_semantic.source_procedure_embedding import (
-    SourceProcedureEmbeddingNode,
-)
+from kms2.node.source_semantic.source_load import SourceSemanticSourceLoadNode
 from kms2.node.source_semantic.source_procedure_hub import (
     SourceProcedureHubNode,
 )
 from kms2.node.source_semantic.source_procedure_hub_persistence import (
     SourceProcedureHubPersistenceNode,
 )
-from kms2.node.source_semantic.source_procedure_persistence import (
-    SourceProcedurePersistenceNode,
+from kms2.node.source_semantic.source_proposition_embedding import (
+    SourcePropositionEmbeddingNode,
 )
-from kms2.node.source_semantic.source_statement_description import (
-    SourceStatementDescriptionNode,
+from kms2.node.source_semantic.source_proposition_embedding_persistence import (
+    SourcePropositionEmbeddingPersistenceNode,
 )
-from kms2.node.source_semantic.source_statement_description_load import (
-    SourceStatementDescriptionLoadNode,
+from kms2.node.source_semantic.source_proposition_extraction import (
+    SourcePropositionExtractionNode,
 )
-from kms2.node.source_semantic.source_statement_embedding import (
-    SourceStatementEmbeddingNode,
+from kms2.node.source_semantic.source_proposition_hub import (
+    SourcePropositionHubNode,
+)
+from kms2.node.source_semantic.source_proposition_hub_persistence import (
+    SourcePropositionHubPersistenceNode,
+)
+from kms2.node.source_semantic.source_proposition_persistence import (
+    SourcePropositionPersistenceNode,
 )
 from kms2.node.source_semantic.source_statement_hub import (
     SourceStatementHubNode,
@@ -141,245 +84,122 @@ from kms2.node.source_semantic.source_statement_hub import (
 from kms2.node.source_semantic.source_statement_hub_persistence import (
     SourceStatementHubPersistenceNode,
 )
-from kms2.node.source_semantic.source_statement_persistence import (
-    SourceStatementPersistenceNode,
-)
-from kms2.node.source_semantic.source_triplet_decomposition import (
-    SourceTripletDecompositionNode,
-)
-from kms2.node.source_semantic.source_triplet_fact_load import (
-    SourceTripletFactLoadNode,
-)
-from kms2.node.source_semantic.source_triplet_hub import SourceTripletHubNode
-from kms2.node.source_semantic.source_triplet_hub_persistence import (
-    SourceTripletHubPersistenceNode,
-)
-from kms2.node.source_semantic.source_triplet_load import (
-    SourceFactSourceLoadNode,
-)
-from kms2.node.source_semantic.source_triplet_persistence import (
-    SourceTripletPersistenceNode,
-)
 
 
 class SourceSemanticGraph:
-    """Compile raw extraction and typed descriptions as one semantic graph."""
+    """Compile extraction, entity description, and local hub pipelines."""
 
     def __init__(
         self,
-        source_fact_source_load: SourceFactSourceLoadNode,
-        source_fact_extraction: SourceFactExtractionNode,
-        source_fact_persistence: SourceFactPersistenceNode,
-        source_triplet_fact_load: SourceTripletFactLoadNode,
-        source_triplet_decomposition: SourceTripletDecompositionNode,
-        source_triplet_persistence: SourceTripletPersistenceNode,
+        source_semantic_load: SourceSemanticSourceLoadNode,
+        source_proposition_extraction: SourcePropositionExtractionNode,
+        source_proposition_persistence: SourcePropositionPersistenceNode,
+        source_proposition_embedding: SourcePropositionEmbeddingNode,
+        source_proposition_embedding_persistence: SourcePropositionEmbeddingPersistenceNode,
+        source_entity_extraction: SourceEntityExtractionNode,
+        source_entity_extraction_persistence: SourceEntityExtractionPersistenceNode,
         source_entity_description_load: SourceEntityDescriptionLoadNode,
         source_entity_description: SourceEntityDescriptionNode,
         source_entity_embedding: SourceEntityEmbeddingNode,
         source_entity_persistence: SourceEntityPersistenceNode,
-        source_event_description_load: SourceEventDescriptionLoadNode,
-        source_event_description: SourceEventDescriptionNode,
-        source_event_embedding: SourceEventEmbeddingNode,
-        source_event_persistence: SourceEventPersistenceNode,
-        source_predicate_description_load: SourcePredicateDescriptionLoadNode,
-        source_predicate_description: SourcePredicateDescriptionNode,
-        source_predicate_embedding: SourcePredicateEmbeddingNode,
-        source_predicate_persistence: SourcePredicatePersistenceNode,
-        source_statement_description_load: SourceStatementDescriptionLoadNode,
-        source_statement_description: SourceStatementDescriptionNode,
-        source_statement_embedding: SourceStatementEmbeddingNode,
-        source_statement_persistence: SourceStatementPersistenceNode,
-        source_procedure_description_load: SourceProcedureDescriptionLoadNode,
-        source_procedure_description: SourceProcedureDescriptionNode,
-        source_procedure_embedding: SourceProcedureEmbeddingNode,
-        source_procedure_persistence: SourceProcedurePersistenceNode,
         source_entity_hub: SourceEntityHubNode,
-        source_event_hub: SourceEventHubNode,
-        source_predicate_hub: SourcePredicateHubNode,
-        source_triplet_hub: SourceTripletHubNode,
+        source_entity_hub_persistence: SourceEntityHubPersistenceNode,
+        source_proposition_hub: SourcePropositionHubNode,
         source_statement_hub: SourceStatementHubNode,
         source_procedure_hub: SourceProcedureHubNode,
-        source_entity_hub_persistence: SourceEntityHubPersistenceNode,
-        source_event_hub_persistence: SourceEventHubPersistenceNode,
-        source_predicate_hub_persistence: SourcePredicateHubPersistenceNode,
+        source_proposition_hub_persistence: SourcePropositionHubPersistenceNode,
         source_statement_hub_persistence: SourceStatementHubPersistenceNode,
         source_procedure_hub_persistence: SourceProcedureHubPersistenceNode,
-        source_triplet_hub_persistence: SourceTripletHubPersistenceNode,
     ) -> None:
+        self.source_entity_hub = source_entity_hub
+        self.source_entity_hub_persistence = source_entity_hub_persistence
         self.graph = StateGraph(SourceSemanticState)
-        self.source_fact_source_load = source_fact_source_load
-        self.source_fact_extraction = source_fact_extraction
-        self.source_fact_persistence = source_fact_persistence
-        self.source_triplet_fact_load = source_triplet_fact_load
-        self.source_triplet_decomposition = source_triplet_decomposition
-        self.source_triplet_persistence = source_triplet_persistence
+        self.source_semantic_load = source_semantic_load
+        self.source_proposition_extraction = source_proposition_extraction
+        self.source_proposition_persistence = source_proposition_persistence
+        self.source_proposition_embedding = source_proposition_embedding
+        self.source_proposition_embedding_persistence = (
+            source_proposition_embedding_persistence
+        )
+        self.source_entity_extraction = source_entity_extraction
+        self.source_entity_extraction_persistence = (
+            source_entity_extraction_persistence
+        )
         self.source_entity_description_load = source_entity_description_load
         self.source_entity_description = source_entity_description
         self.source_entity_embedding = source_entity_embedding
         self.source_entity_persistence = source_entity_persistence
-        self.source_event_description_load = source_event_description_load
-        self.source_event_description = source_event_description
-        self.source_event_embedding = source_event_embedding
-        self.source_event_persistence = source_event_persistence
-        self.source_predicate_description_load = (
-            source_predicate_description_load
-        )
-        self.source_predicate_description = source_predicate_description
-        self.source_predicate_embedding = source_predicate_embedding
-        self.source_predicate_persistence = source_predicate_persistence
-        self.source_statement_description_load = (
-            source_statement_description_load
-        )
-        self.source_statement_description = source_statement_description
-        self.source_statement_embedding = source_statement_embedding
-        self.source_statement_persistence = source_statement_persistence
-        self.source_procedure_description_load = (
-            source_procedure_description_load
-        )
-        self.source_procedure_description = source_procedure_description
-        self.source_procedure_embedding = source_procedure_embedding
-        self.source_procedure_persistence = source_procedure_persistence
-        self.source_entity_hub = source_entity_hub
-        self.source_event_hub = source_event_hub
-        self.source_predicate_hub = source_predicate_hub
-        self.source_triplet_hub = source_triplet_hub
-
+        self.source_proposition_hub = source_proposition_hub
         self.source_statement_hub = source_statement_hub
         self.source_procedure_hub = source_procedure_hub
-        self.source_entity_hub_persistence = source_entity_hub_persistence
-        self.source_event_hub_persistence = source_event_hub_persistence
-        self.source_predicate_hub_persistence = source_predicate_hub_persistence
+        self.source_proposition_hub_persistence = (
+            source_proposition_hub_persistence
+        )
         self.source_statement_hub_persistence = source_statement_hub_persistence
-        self.source_triplet_hub_persistence = source_triplet_hub_persistence
-
         self.source_procedure_hub_persistence = source_procedure_hub_persistence
 
     def build_graph(self) -> CompiledStateGraph:
-        """Compile the complete semantic graph."""
-        self.graph.add_node(
-            'source_fact_load', self.source_fact_source_load.run
-        )
-        self.graph.add_edge(START, 'source_fact_load')
-        add_source_fact_phase(
-            self.graph,
-            self.source_fact_extraction,
-            self.source_fact_persistence,
-        )
-        add_source_triplet_phase(
-            self.graph,
-            self.source_triplet_fact_load,
-            self.source_triplet_decomposition,
-        )
-        self.graph.add_node(
-            'source_triplet_persistence', self.source_triplet_persistence.run
-        )
-        self.graph.add_edge(
-            'source_triplet_collect', 'source_triplet_persistence'
+        """Join extraction and entity persistence before serial hub processing."""
+        graph = self.graph
+        graph.add_node('source_semantic_load', self.source_semantic_load.run)
+        graph.add_edge(START, 'source_semantic_load')
+        add_source_entity_extraction_phase(
+            graph,
+            self.source_entity_extraction,
+            self.source_entity_extraction_persistence,
         )
         add_source_entity_description_phase(
-            self.graph,
+            graph,
             self.source_entity_description_load,
             self.source_entity_description,
         )
+        add_source_proposition_extraction_phase(
+            graph,
+            self.source_proposition_extraction,
+            self.source_proposition_persistence,
+        )
+        add_source_proposition_embedding_phase(
+            graph,
+            self.source_proposition_embedding,
+            self.source_proposition_embedding_persistence,
+        )
         add_source_entity_phase(
-            self.graph,
+            graph,
             self.source_entity_embedding,
             self.source_entity_persistence,
         )
-        add_source_event_description_phase(
-            self.graph,
-            self.source_event_description_load,
-            self.source_event_description,
-        )
-        add_source_event_phase(
-            self.graph,
-            self.source_event_embedding,
-            self.source_event_persistence,
-        )
-        add_source_predicate_description_phase(
-            self.graph,
-            self.source_predicate_description_load,
-            self.source_predicate_description,
-        )
-        add_source_predicate_phase(
-            self.graph,
-            self.source_predicate_embedding,
-            self.source_predicate_persistence,
-        )
-        add_source_statement_description_phase(
-            self.graph,
-            self.source_statement_description_load,
-            self.source_statement_description,
-        )
-        add_source_statement_phase(
-            self.graph,
-            self.source_statement_embedding,
-            self.source_statement_persistence,
-        )
-        add_source_procedure_description_phase(
-            self.graph,
-            self.source_procedure_description_load,
-            self.source_procedure_description,
-        )
-        add_source_procedure_phase(
-            self.graph,
-            self.source_procedure_embedding,
-            self.source_procedure_persistence,
-        )
         add_source_entity_hub_phase(
-            self.graph,
-            self.source_entity_hub,
-            self.source_entity_hub_persistence,
+            graph, self.source_entity_hub, self.source_entity_hub_persistence
         )
-        add_source_event_hub_phase(
-            self.graph,
-            self.source_event_hub,
-            self.source_event_hub_persistence,
-        )
-        add_source_predicate_hub_phase(
-            self.graph,
-            self.source_predicate_hub,
-            self.source_predicate_hub_persistence,
+        add_source_proposition_hub_phase(
+            graph,
+            self.source_proposition_hub,
+            self.source_proposition_hub_persistence,
         )
         add_source_statement_hub_phase(
-            self.graph,
+            graph,
             self.source_statement_hub,
             self.source_statement_hub_persistence,
         )
         add_source_procedure_hub_phase(
-            self.graph,
+            graph,
             self.source_procedure_hub,
             self.source_procedure_hub_persistence,
         )
-        add_source_triplet_hub_phase(
-            self.graph,
-            self.source_triplet_hub,
-            self.source_triplet_hub_persistence,
-        )
-        self.graph.add_edge(
+        graph.add_edge(
             [
+                'source_proposition_embedding_persistence',
                 'source_entity_persistence',
-                'source_event_persistence',
-                'source_predicate_persistence',
-                'source_statement_persistence',
-                'source_procedure_persistence',
             ],
             'source_entity_hub_load',
         )
-        self.graph.add_edge(
-            'source_entity_hub_persistence', 'source_event_hub_load'
+        graph.add_edge(
+            'source_entity_hub_persistence', 'source_proposition_hub_load'
         )
-        self.graph.add_edge(
-            'source_event_hub_persistence', 'source_predicate_hub_load'
+        graph.add_edge(
+            'source_proposition_hub_persistence', 'source_statement_hub_load'
         )
-        self.graph.add_edge(
-            'source_predicate_hub_persistence', 'source_statement_hub_load'
-        )
-        self.graph.add_edge(
+        graph.add_edge(
             'source_statement_hub_persistence', 'source_procedure_hub_load'
         )
-        self.graph.add_edge(
-            'source_procedure_hub_persistence', 'source_triplet_hub_load'
-        )
-        self.graph.add_edge('source_triplet_hub_persistence', END)
-        return self.graph.compile()
+        return graph.compile()

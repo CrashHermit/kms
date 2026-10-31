@@ -7,6 +7,7 @@ from kms2.core.model.page import SourcePage
 from kms2.core.model.source import Source
 from kms2.core.model.visual_asset import VisualAsset
 from kms2.langgraph.source_processing.state import SourceProcessingState
+from kms2.node.source_embedding import embed_source_pages
 from kms2.node.source_processing.embedding import EmbeddingNode
 
 
@@ -26,7 +27,7 @@ def test_embedding_client_protocol_is_structural():
     assert isinstance(_RecordingEmbeddingClient(), EmbeddingClient)
 
 
-def test_embedding_dispatch_worker_collect_preserves_final_block_order():
+def test_embedding_preserves_final_block_order_and_provenance():
     asset = VisualAsset(uuid='asset-1', path='figure.png')
     first = SourceBlock(
         uuid='child-1',
@@ -50,17 +51,10 @@ def test_embedding_dispatch_worker_collect_preserves_final_block_order():
     state = SourceProcessingState(
         pdf_path='book.pdf',
         source=Source(uuid='source-1', key='book.pdf'),
-        split_pages=pages,
+        image_described_pages=pages,
     )
 
-    sends = node.dispatch(state)
-    assert len(sends) == 1
-    result = asyncio.run(node.worker(sends[0].arg))
-    embedded_pages = node.collect(
-        state.model_copy(
-            update={'embedding_results': result['embedding_results']}
-        )
-    )['embedded_pages']
+    embedded_pages = asyncio.run(node.run(state))['embedded_pages']
 
     assert client.calls == [['first split child', 'second split child']]
     assert [
@@ -76,14 +70,70 @@ def test_embedding_dispatch_worker_collect_preserves_final_block_order():
     assert embedded_pages[1].blocks[0].uuid == 'child-2'
 
 
-def test_embedding_collect_passes_empty_split_pages_through():
+def test_embedding_preserves_empty_pages_without_provider_call():
     pages = [SourcePage(index=0)]
-    node = EmbeddingNode(_RecordingEmbeddingClient())
+    client = _RecordingEmbeddingClient()
+    node = EmbeddingNode(client)
     state = SourceProcessingState(
         pdf_path='book.pdf',
         source=Source(uuid='source-1', key='book.pdf'),
-        split_pages=pages,
+        image_described_pages=pages,
     )
 
-    assert node.dispatch(state) == 'embedding_collect'
-    assert node.collect(state) == {'embedded_pages': pages}
+    assert asyncio.run(node.run(state)) == {'embedded_pages': pages}
+    assert client.calls == []
+
+
+def test_shared_embedding_preserves_existing_vectors_and_embeds_missing_in_order():
+    first = SourceBlock(
+        uuid='child-1',
+        block_type='paragraph',
+        content='first missing block',
+    )
+    existing = SourceBlock(
+        uuid='existing',
+        block_type='paragraph',
+        content='already embedded',
+        embedding=[9.0, 9.0],
+    )
+    second = SourceBlock(
+        uuid='child-2',
+        block_type='paragraph',
+        content='second missing block',
+    )
+    pages = [
+        SourcePage(index=0, blocks=[first, existing]),
+        SourcePage(index=1, blocks=[second]),
+    ]
+    client = _RecordingEmbeddingClient()
+
+    embedded_pages = asyncio.run(embed_source_pages(client, pages))
+
+    assert client.calls == [['first missing block', 'second missing block']]
+    assert [
+        block.embedding for page in embedded_pages for block in page.blocks
+    ] == [
+        [0.0, 1.0],
+        [9.0, 9.0],
+        [1.0, 2.0],
+    ]
+    assert embedded_pages[0].blocks[1] is existing
+
+
+def test_shared_embedding_returns_fully_embedded_pages_without_provider_call():
+    pages = [
+        SourcePage(
+            index=0,
+            blocks=[
+                SourceBlock(
+                    uuid='block-1',
+                    block_type='paragraph',
+                    embedding=[1.0, 2.0],
+                )
+            ],
+        )
+    ]
+    client = _RecordingEmbeddingClient()
+
+    assert asyncio.run(embed_source_pages(client, pages)) is pages
+    assert client.calls == []

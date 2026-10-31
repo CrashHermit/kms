@@ -10,19 +10,14 @@ from kms2.core.model.base import (
 from kms2.core.model.block import SourceBlock
 from kms2.core.model.page import SourcePage
 from kms2.core.model.source import Source
-from kms2.core.model.source_processing.instruction import Instruction
-from kms2.core.model.source_processing.ocr import (
-    OCRArtifact,
-    OCRImageArtifact,
-)
-from kms2.core.model.source_processing.pedagogical import (
+from kms2.core.model.source_pedagogical.instruction import Instruction
+from kms2.core.model.source_pedagogical.pedagogical import (
     ProcedureDraft,
     StatementDraft,
 )
-from kms2.core.model.source_semantic.source_fact_extraction import (
-    SourceFact,
-    SourceFactContext,
-    SourceFactTarget,
+from kms2.core.model.source_processing.ocr import (
+    OCRArtifact,
+    OCRImageArtifact,
 )
 from kms2.core.model.visual_asset import VisualAsset
 
@@ -35,43 +30,6 @@ def test_vertex_generates_uuid4_and_rejects_extra_fields():
 
     with pytest.raises(ValidationError):
         Vertex(label='unexpected')
-
-
-def test_source_fact_owns_node_first_evidence_pointers():
-    target = SourceFactTarget(
-        uuid='target-1',
-        source_blocks=[SourceBlock(uuid='block-1', block_type='paragraph')],
-    )
-    before = SourceFactContext(uuid='before-1')
-    after = SourceFactContext(uuid='after-1')
-    fact = SourceFact(
-        uuid='fact-1',
-        text='Alice works for Acme.',
-        target=target,
-        context_before=before,
-        context_after=after,
-    )
-
-    assert fact.model_dump() == {
-        'uuid': 'fact-1',
-        'text': 'Alice works for Acme.',
-        'target': {
-            'uuid': 'target-1',
-            'source_blocks': [
-                {
-                    'uuid': 'block-1',
-                    'block_type': 'paragraph',
-                    'content': None,
-                    'embedding': None,
-                    'crop_path': None,
-                    'crop_bbox': None,
-                    'assets': [],
-                }
-            ],
-        },
-        'context_before': {'uuid': 'before-1', 'source_blocks': []},
-        'context_after': {'uuid': 'after-1', 'source_blocks': []},
-    }
 
 
 def test_edge_contains_directed_vertex_references():

@@ -9,18 +9,22 @@ from kms2.core.model.source_semantic.source_entity_hub import (
 
 
 class SourceEntityHubJudgeSignature(dspy.Signature):
-    r"""Judge whether entity occurrences denote one canonical identity.
+    r"""Judge identity equivalence between source-local entity occurrences.
 
-    Return one boolean for each ordered pair. True means the two occurrences may
-    belong to the same final source-local entity hub. False means do not connect
-    them. Reject topical relatedness, co-occurrence, and merely similar names.
+    Return one boolean for each ordered pair. True only when evidence establishes
+    that both occurrences denote the same entity. The owning block content and
+    consumer-selected bounded source context are occurrence-local evidence; use them to
+    distinguish repeated symbols such as f that have independently defined
+    meanings in different exercises. Shared notation, topic, co-occurrence, or
+    similar descriptions alone are not identity. False means the evidence does
+    not establish sameness; never infer identity from a high similarity score.
     """
 
     requests: list[SourceEntityHubJudgeInput] = dspy.InputField(
-        description='Ordered entity occurrence pairs to judge independently.'
+        description='Ordered pairs with UUID-free owning-block content and local context.'
     )
     decisions: list[SourceEntityHubJudgeDecision] = dspy.OutputField(
-        description='One indexed identity-equivalence decision per supplied pair.'
+        description='One indexed explicit identity-equivalence decision per pair.'
     )
 
 

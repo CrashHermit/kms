@@ -82,19 +82,19 @@ def test_statement_hub_empty_source_is_independent_and_has_no_exercise_input():
     }
 
 
-def test_statement_hub_candidate_contains_only_description_evidence():
+def test_statement_hub_candidate_contains_only_reconstructed_content_evidence():
     candidate = SourceStatementHubCandidate(
         left_uuid='a',
-        left_description='claim A',
+        left_content='claim A in full',
         right_uuid='b',
-        right_description='claim B',
+        right_content='claim B in full',
         score=0.9,
     )
     assert candidate.model_dump() == {
         'left_uuid': 'a',
-        'left_description': 'claim A',
+        'left_content': 'claim A in full',
         'right_uuid': 'b',
-        'right_description': 'claim B',
+        'right_content': 'claim B in full',
         'score': 0.9,
     }
 
@@ -114,7 +114,7 @@ def test_statement_synthesis_keeps_model_evidence_and_membership_separate():
     )
     member = SourceStatementHubMember(
         uuid='statement-1',
-        description='Energy remains constant in a closed system.',
+        content='Energy remains constant in a closed system.',
     )
     result = asyncio.run(
         node.synthesis_worker(
@@ -125,7 +125,7 @@ def test_statement_synthesis_keeps_model_evidence_and_membership_separate():
         )
     )['source_statement_hub_synthesis_results'][0]
 
-    assert synthesis.requests[0].members[0].description == member.description
+    assert synthesis.requests[0].members[0].content == member.content
     assert result.membership_uuids == ['statement-1']
     assert 'aliases' not in result.model_dump()
 

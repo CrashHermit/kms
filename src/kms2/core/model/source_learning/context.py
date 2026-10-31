@@ -2,24 +2,19 @@
 
 from pydantic import BaseModel, Field
 
-from kms2.core.model.source_semantic.source_triplet_hub import (
-    SourceTripletHubRole,
+from kms2.core.model.source_extraction import (
+    SourceEvidenceInput,
 )
 
 
 class SourceLearningHubContext(BaseModel):
-    """The persisted triplet hub and its three role-hub descriptions."""
+    """An original member statement used as shared learning context."""
 
-    triplet_hub: SourceTripletHubRole
-    subject_hub: SourceTripletHubRole
-    predicate_hub: SourceTripletHubRole
-    object_hub: SourceTripletHubRole
+    proposition_statement: str = Field(min_length=1)
 
 
 class SourceLearningEvidence(BaseModel):
-    """One exact directed triplet and its originating source-fact text."""
+    """One proposition occurrence and its exact source evidence."""
 
-    subject: str = Field(min_length=1)
-    predicate: str = Field(min_length=1)
-    object: str = Field(min_length=1)
-    source_fact_text: str = Field(min_length=1)
+    proposition_text: str = Field(min_length=1)
+    source_context: SourceEvidenceInput

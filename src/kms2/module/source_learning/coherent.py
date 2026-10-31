@@ -9,28 +9,26 @@ from kms2.core.model.source_learning.coherent import (
 
 
 class SourceCoherentFlashcardSignature(dspy.Signature):
-    """Generate standalone cards for useful relationships among source ideas."""
+    """Generate useful cards from distinct propositions in one hub."""
 
     request: SourceCoherentFlashcardInput = dspy.InputField(
         description=(
-            'Inspect the first-pass cards and every original triplet and source '
-            'fact. Use the represented concepts and directed source relationships, '
-            'not card wording alone, to identify meaningful connections. Generate '
-            'zero or more additional focused cards only when a connection adds a '
-            'new retrieval target beyond restating a parent card: for example a '
-            'dependency, contrast, mechanism, explanation, application, or valid '
-            'inference. Each card must test one meaningful target and stand alone. '
-            'Never mention the source, evidence, first-pass cards, card indexes, '
-            'or another card in the question or answer; card_indexes are metadata '
-            'only. Use at least two parent cards and return the indexes actually '
-            'used. Preserve relationship direction, assumptions, conditions, '
-            'qualifiers, formulas, units, and notation. Generate only connections '
-            'supported by the source or clearly defensible from it; do not invent '
-            'facts or unsupported mathematical consequences. Return [] when no '
-            'useful new card is warranted. Avoid duplicate retrieval targets. Use '
-            '$...$ and $$...$$ for LaTeX only; never use backslash-parenthesis or '
-            'backslash-bracket delimiters. This is the final generation pass; do '
-            'not expect another pass.'
+            'Inspect the original proposition evidence and the selected atomic '
+            'cards within one proposition hub. Generate an additional standalone '
+            'card only when combining distinct retrieval facets yields a useful '
+            'target that no selected parent already tests. Paraphrases or '
+            'equivalent formulations of one claim are not distinct facets and '
+            'are never a reason to manufacture another card. Do not infer '
+            'premise/conclusion structure or unsupported consequences. Original '
+            'target passages are authoritative; reference context only resolves '
+            'meanings. Preserve assumptions, conditions, exceptions, negation, '
+            'quantifiers, domains, formulas, and symbol roles. Use at least two '
+            'selected parent cards and return exactly their one-based indexes. '
+            'Do not refer to evidence, cards, indexes, or the source in the '
+            'question or answer. Return [] when no genuinely new useful target '
+            'exists. Avoid duplicate retrieval targets. Use $...$ and $$...$$ '
+            'for LaTeX only; never use backslash-parenthesis or backslash-bracket '
+            'delimiters.'
         )
     )
     cards: list[SourceCoherentFlashcardCandidate] = dspy.OutputField(

@@ -1,0 +1,204 @@
+"""LangGraph node for discovering shared source instructions."""
+
+import json
+
+from kms2.config.inference import ContextWindowSettings
+from kms2.config.source_pedagogical import InstructionFinderSettings
+from kms2.core.model.block import SourceBlock
+from kms2.core.model.source_pedagogical.instruction import (
+    Instruction,
+    InstructionClassificationInput,
+)
+from kms2.core.windowing import (
+    TextTokenCounter,
+    TokenBudget,
+    count_text_tokens,
+    pack_items,
+    select_window,
+)
+from kms2.langgraph.source_pedagogical.state import SourcePedagogicalState
+from kms2.module.source_pedagogical.instruction_finder import (
+    InstructionBoundaryRouterModule,
+    InstructionStartRouterModule,
+)
+
+
+def _serialized_item_token_count(
+    item: InstructionClassificationInput, counter: TextTokenCounter
+) -> int:
+    serialized = json.dumps(
+        {'items': [item.model_dump(mode='json')]},
+        ensure_ascii=False,
+        separators=(',', ':'),
+    )
+    return counter.count_texts([serialized])[0]
+
+
+class InstructionFinderNode:
+    """Find ordered instruction pointers without mutating source blocks."""
+
+    def __init__(
+        self,
+        start_router: InstructionStartRouterModule,
+        boundary_router: InstructionBoundaryRouterModule,
+        settings: InstructionFinderSettings,
+        *,
+        start_budget: TokenBudget,
+        boundary_budget: TokenBudget,
+        start_token_counters: tuple[TextTokenCounter, ...],
+        boundary_token_counters: tuple[TextTokenCounter, ...],
+    ) -> None:
+        self._start_router = start_router
+        self._boundary_router = boundary_router
+        self._settings = settings
+        self._start_budget = start_budget
+        self._boundary_budget = boundary_budget
+        self._start_token_counters = start_token_counters
+        self._boundary_token_counters = boundary_token_counters
+
+    async def run(
+        self, state: SourcePedagogicalState
+    ) -> dict[str, list[Instruction]]:
+        """Discover shared instructions across the final split source stream."""
+        blocks = [block for page in state.split_pages for block in page.blocks]
+        start_token_counts = count_text_tokens(
+            [block.content for block in blocks], self._start_token_counters
+        )
+        boundary_token_counts = count_text_tokens(
+            [block.content for block in blocks], self._boundary_token_counters
+        )
+        instructions: list[Instruction] = []
+        cursor = 0
+        while cursor < len(blocks):
+            candidates = self._classification_items(
+                blocks,
+                start_token_counts,
+                cursor,
+                min(cursor + self._settings.start_batch_size, len(blocks)),
+                self._settings.start_context_window,
+            )
+            batches = pack_items(
+                candidates,
+                token_counts=[
+                    _serialized_item_token_count(
+                        item, self._start_budget.counter
+                    )
+                    for item in candidates
+                ],
+                token_budget=self._start_budget.token_limit,
+                max_items=self._settings.start_batch_size,
+            )
+            batch = batches[0]
+            decisions = await self._start_router.acall(items=batch)
+            starts = [
+                cursor + decision.position
+                for decision in decisions
+                if decision.is_instruction_start
+            ]
+            if not starts:
+                cursor += len(batch)
+                continue
+
+            start_position = min(starts)
+            start_block = batch[start_position - cursor].target_block
+            candidate = start_position + 1
+            while candidate < len(blocks):
+                boundary_candidates = self._classification_items(
+                    blocks,
+                    boundary_token_counts,
+                    candidate,
+                    min(
+                        candidate + self._settings.boundary_batch_size,
+                        len(blocks),
+                    ),
+                    self._settings.boundary_context_window,
+                )
+                anchor_count = self._boundary_budget.counter.count_texts(
+                    [
+                        json.dumps(
+                            {
+                                'start_block': start_block.model_dump(
+                                    mode='json'
+                                )
+                            },
+                            ensure_ascii=False,
+                            separators=(',', ':'),
+                        )
+                    ]
+                )[0]
+                batches = pack_items(
+                    boundary_candidates,
+                    token_counts=[
+                        _serialized_item_token_count(
+                            item, self._boundary_budget.counter
+                        )
+                        for item in boundary_candidates
+                    ],
+                    token_budget=self._boundary_budget.token_limit
+                    - anchor_count,
+                    max_items=self._settings.boundary_batch_size,
+                )
+                batch = batches[0]
+                decisions = await self._boundary_router.acall(
+                    start_block=start_block,
+                    items=batch,
+                )
+                boundaries = [
+                    candidate + decision.position
+                    for decision in decisions
+                    if decision.is_instruction_boundary
+                ]
+                if boundaries:
+                    boundary = min(boundaries)
+                    instructions.append(
+                        Instruction(
+                            member_block_uuids=[
+                                blocks[position].uuid
+                                for position in range(start_position, boundary)
+                            ]
+                        )
+                    )
+                    cursor = boundary
+                    break
+                candidate += len(batch)
+            else:
+                instructions.append(
+                    Instruction(
+                        member_block_uuids=[
+                            blocks[position].uuid
+                            for position in range(start_position, len(blocks))
+                        ]
+                    )
+                )
+                cursor = len(blocks)
+
+        return {'instructions': instructions}
+
+    def _classification_items(
+        self,
+        blocks: list[SourceBlock],
+        token_counts: list[int],
+        first_position: int,
+        stop_position: int,
+        context_window: ContextWindowSettings,
+    ) -> list[InstructionClassificationInput]:
+        """Build bounded, independently windowed candidates for one batch."""
+        items: list[InstructionClassificationInput] = []
+        for position in range(first_position, stop_position):
+            window = select_window(
+                blocks,
+                [position],
+                token_counts=token_counts,
+                backward_budget=context_window.backward_budget,
+                forward_budget=context_window.forward_budget,
+                target_budget=context_window.target_budget,
+            )
+            items.append(
+                InstructionClassificationInput(
+                    position=position - first_position,
+                    context_before=window.context_before,
+                    target_block=window.target[0],
+                    context_after=window.context_after,
+                )
+            )
+        return items

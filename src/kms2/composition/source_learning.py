@@ -3,10 +3,11 @@
 from kms2.composition.predictors import PredictorFactory, build_token_budget
 from kms2.config.settings import Settings
 from kms2.database.client import DatabaseClient
+from kms2.database.source.source_block_repository import SourceBlockRepository
 from kms2.database.source_learning.repository import SourceLearningRepository
+from kms2.inference.token_counting import InferenceTokenizers
 from kms2.langgraph.source_learning.graph import SourceLearningGraph
 from kms2.local_models.runtime import LocalModelRuntime
-from kms2.local_models.token_counting import LocalTokenizers
 from kms2.module.source_learning.atomic import (
     SourceAtomicFlashcardModule,
     SourceAtomicFlashcardSignature,
@@ -31,13 +32,14 @@ def build_source_learning_graph(
     local_models: LocalModelRuntime,
     database: DatabaseClient,
     *,
-    tokenizers: LocalTokenizers,
+    tokenizers: InferenceTokenizers,
     recorder: Recorder | None = None,
 ) -> SourceLearningGraph:
     """Compose predictors, budgets, processing nodes, and persistence nodes."""
     learning = settings.source_learning
-    predictors = PredictorFactory(local_models, recorder)
+    predictors = PredictorFactory(settings, local_models, recorder)
     repository = SourceLearningRepository(database.session)
+    source_block_repository = SourceBlockRepository(database.session)
     atomic_module = SourceAtomicFlashcardModule(
         predictors.create(
             SourceAtomicFlashcardModule,
@@ -53,14 +55,14 @@ def build_source_learning_graph(
         )
     )
     atomic_budget = build_token_budget(
-        settings.local_models,
+        settings,
         tokenizers,
         learning.atomic_flashcards,
         input_token_budget=learning.input_token_budget,
         safety_margin_tokens=learning.safety_margin_tokens,
     )
     coherent_budget = build_token_budget(
-        settings.local_models,
+        settings,
         tokenizers,
         learning.coherent_flashcards,
         input_token_budget=learning.input_token_budget,
@@ -71,6 +73,8 @@ def build_source_learning_graph(
         SourceAtomicFlashcardNode(
             repository,
             atomic_module,
+            learning.context_window,
+            source_block_repository,
             budget=atomic_budget,
         ),
         SourceAtomicFlashcardPersistenceNode(repository),

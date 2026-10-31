@@ -2,20 +2,26 @@
 
 from pydantic import BaseModel, Field
 
-from kms2.config.inference import NoRetryTextInferenceSettings
+from kms2.config.inference import (
+    ContextWindowSettings,
+    NoRetryTextInferenceSettings,
+)
 
 
 def _default_flashcard_inference() -> NoRetryTextInferenceSettings:
-    """Use the local Gemma E4B profile for source-learning cards."""
-    return NoRetryTextInferenceSettings(
-        model_server_profile='gemma-text-32k',
-        max_tokens=2048,
-    )
+    """Use the selected text backend with a compact completion reserve."""
+    return NoRetryTextInferenceSettings(max_tokens=2048)
 
 
 class SourceLearningSettings(BaseModel):
     """Independent inference profiles and payload budgets for source learning."""
 
+    context_window: ContextWindowSettings = Field(
+        default_factory=lambda: ContextWindowSettings(
+            backward_budget=400,
+            forward_budget=400,
+        )
+    )
     atomic_flashcards: NoRetryTextInferenceSettings = Field(
         default_factory=_default_flashcard_inference
     )

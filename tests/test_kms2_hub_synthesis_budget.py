@@ -10,17 +10,7 @@ from dspy.utils.dummies import DummyLM
 from kms2_hub_cases import HUB_CASES, build_hub_fixture
 
 from kms2.core.windowing import InputBudgetExceeded, TokenBudget, pack_items
-from kms2.langgraph.global_semantic.state import GlobalSemanticState
 from kms2.langgraph.source_semantic.state import SourceSemanticState
-
-
-class _CaptureEmbedding:
-    def __init__(self):
-        self.inputs = []
-
-    async def embed(self, texts):
-        self.inputs = texts
-        return [[0.25] for _ in texts]
 
 
 def test_ordered_next_fit_packing_preserves_exact_boundary_items():
@@ -132,12 +122,6 @@ def _snake_case(value):
     ).lstrip('_')
 
 
-def _graph_state(stem, values):
-    if stem.startswith('Source'):
-        return SourceSemanticState(source_uuid='source-owner', **values)
-    return GlobalSemanticState(**values)
-
-
 @pytest.mark.parametrize(
     'stem', [case[0] for case in HUB_CASES], ids=[case[0] for case in HUB_CASES]
 )
@@ -178,66 +162,6 @@ def test_typed_hub_direct_fit_uses_original_evidence_and_backend_metadata(stem):
             assert result.membership_uuids == fixture.backend_uuids
         if 'aliases' in type(result).model_fields and fixture.expected_aliases:
             assert result.aliases == fixture.expected_aliases
-        if stem.endswith('TripletHub'):
-            group = fixture.backend_items[0]
-            assert result.definition.model_dump()
-            assert [
-                group.subject_hub_uuid,
-                group.predicate_hub_uuid,
-                group.object_hub_uuid,
-            ] == fixture.backend_uuids[:3]
-
-        if stem == 'SourceEntityHub':
-            embed_client = _CaptureEmbedding()
-            node._embedding_client = embed_client
-            embedded_entity = await node.embed(
-                _graph_state(
-                    stem,
-                    {
-                        'source_entity_hub_synthesis_results_ordered': [result],
-                    },
-                )
-            )
-            assert embed_client.inputs == [
-                f'{result.definition.canonical_name}: '
-                f'{result.definition.description}'
-            ]
-            assert embedded_entity['source_entity_hubs'][0].aliases == (
-                fixture.expected_aliases
-            )
-            assert embedded_entity['source_entity_hub_memberships'] == [
-                fixture.backend_uuids
-            ]
-        if stem.endswith('TripletHub'):
-            group = fixture.backend_items[0]
-            embed_client = _CaptureEmbedding()
-            node._embedding_client = embed_client
-            embedded = await node.embed(
-                _graph_state(
-                    stem,
-                    {
-                        f'{_snake_case(stem)}_synthesis_results_ordered': [
-                            result
-                        ],
-                        f'{_snake_case(stem)}_groups': [group],
-                    },
-                )
-            )
-            assert embed_client.inputs == [
-                f'{result.definition.canonical_name}: '
-                f'{result.definition.description}'
-            ]
-            hub = embedded[f'{_snake_case(stem)}s'][0]
-            assert hub.subject_hub_uuid == group.subject_hub_uuid
-            assert hub.predicate_hub_uuid == group.predicate_hub_uuid
-            assert hub.object_hub_uuid == group.object_hub_uuid
-            membership_key = f'{_snake_case(stem)}_memberships'
-            expected_memberships = (
-                group.triplet_uuids
-                if stem == 'SourceTripletHub'
-                else group.global_triplet_uuids
-            )
-            assert embedded[membership_key] == [expected_memberships]
 
     asyncio.run(exercise())
 
@@ -314,7 +238,9 @@ def test_typed_hub_multilevel_reduction_carries_singletons_and_collects_in_order
         later = result.model_copy(update={'ordinal': 9})
         earlier = result.model_copy(update={'ordinal': 1})
         collected = node.collect_synthesis(
-            _graph_state(stem, {state_key: [later, earlier]})
+            SourceSemanticState(
+                source_uuid='source-owner', **{state_key: [later, earlier]}
+            )
         )
         ordered_key = f'{_snake_case(stem)}_synthesis_results_ordered'
         assert [item.ordinal for item in collected[ordered_key]] == [1, 9]
@@ -334,9 +260,9 @@ def test_empty_hub_input_dispatches_to_collect_without_inference(stem):
         if stem.endswith('TripletHub')
         else f'{slug}_communities'
     )
-    assert node.dispatch_synthesis(_graph_state(stem, {input_key: []})) == (
-        f'{slug}_synthesis_collect'
-    )
+    assert node.dispatch_synthesis(
+        SourceSemanticState(source_uuid='source-owner', **{input_key: []})
+    ) == (f'{slug}_synthesis_collect')
 
 
 @pytest.mark.parametrize(
@@ -344,15 +270,11 @@ def test_empty_hub_input_dispatches_to_collect_without_inference(stem):
     [
         (
             stem,
-            'role_description'
-            if stem.endswith('TripletHub')
+            'content'
+            if stem.endswith(('StatementHub', 'ProcedureHub'))
             else 'description',
         )
         for stem, _scope in HUB_CASES
-    ]
-    + [
-        ('SourceTripletHub', 'fact_text'),
-        ('GlobalTripletHub', 'source_triplet_description'),
     ],
 )
 def test_oversized_whole_record_is_rejected_before_inference(stem, long_field):

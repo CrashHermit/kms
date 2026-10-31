@@ -91,6 +91,22 @@ def test_select_window_expands_targets_with_optional_target_budget():
     assert [item.content for item in window.context_after] == ['abc', 'abc']
 
 
+def test_select_window_caps_expansion_without_consuming_following_context():
+    blocks = [_block(index, str(index)) for index in range(6)]
+
+    window = select_window(
+        blocks,
+        [1],
+        token_counts=[1] * len(blocks),
+        target_budget=5,
+        forward_budget=3,
+        max_targets=2,
+    )
+
+    assert [item.content for item in window.target] == ['1', '2']
+    assert [item.content for item in window.context_after] == ['3', '4', '5']
+
+
 def test_select_window_disables_optional_context_sides():
     blocks = [_block(index, 'abc') for index in range(3)]
 

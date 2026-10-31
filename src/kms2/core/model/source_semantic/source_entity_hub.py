@@ -1,111 +1,66 @@
 """Source-local entity hub models."""
 
-from typing import Annotated
-
 from pydantic import BaseModel, Field
 
 from kms2.core.model.base import Vertex
-
-_NonEmptyString = Annotated[str, Field(min_length=1)]
+from kms2.core.model.source_extraction import SourceEvidenceInput
 
 
 class SourceEntityHubJudgeInput(BaseModel):
-    """One ordered entity pair supplied to the membership judge."""
+    """One ordered identity judgment with UUID-free occurrence evidence."""
 
     index: int = Field(default=0, ge=0)
     left_name: str = Field(min_length=1)
     left_description: str = Field(min_length=1)
+    left_evidence: SourceEvidenceInput
     right_name: str = Field(min_length=1)
     right_description: str = Field(min_length=1)
+    right_evidence: SourceEvidenceInput
 
 
 class SourceEntityHubJudgeDecision(BaseModel):
-    """One indexed entity membership judgment."""
+    """One indexed entity identity decision."""
 
     index: int = Field(ge=0)
     belongs_in_same_hub: bool
 
 
 class SourceEntityHubCandidate(BaseModel):
-    """One canonical entity pair returned by vector candidate discovery."""
+    """One occurrence pair proposed across two current groups."""
 
+    left_group_uuid: str = Field(min_length=1)
+    right_group_uuid: str = Field(min_length=1)
     left_uuid: str = Field(min_length=1)
     left_name: str = Field(min_length=1)
     left_description: str = Field(min_length=1)
+    left_evidence: SourceEvidenceInput
     right_uuid: str = Field(min_length=1)
     right_name: str = Field(min_length=1)
     right_description: str = Field(min_length=1)
+    right_evidence: SourceEvidenceInput
     score: float
 
 
 class SourceEntityHubMember(BaseModel):
-    """One entity occurrence returned by community detection."""
+    """An entity occurrence with its canonical owning block identity."""
 
     uuid: str = Field(min_length=1)
+    source_block_uuid: str = Field(min_length=1)
     name: str = Field(min_length=1)
     description: str = Field(min_length=1)
-
-
-class SourceEntityHubSynthesisMember(BaseModel):
-    """One entity occurrence supplied as synthesis evidence."""
-
-    name: str = Field(min_length=1)
-    description: str = Field(min_length=1)
-
-
-class SourceEntityHubSynthesisInput(BaseModel):
-    """Entity community evidence supplied to the synthesis model."""
-
-    members: list[SourceEntityHubSynthesisMember] = Field(min_length=1)
-
-
-class SourceEntityHubSummary(BaseModel):
-    """Temporary entity evidence summary, not a hub vertex."""
-
-    text: str = Field(min_length=1)
-
-
-class SourceEntityHubSummaryInput(BaseModel):
-    """Ordered source evidence to summarize."""
-
-    evidence: list[str] = Field(min_length=1)
-
-
-class SourceEntityHubSummaryMergeInput(BaseModel):
-    """Ordered entity summaries to consolidate."""
-
-    summaries: list[SourceEntityHubSummary] = Field(min_length=2)
-
-
-class SourceEntityHubSummarySynthesisInput(BaseModel):
-    """Reduced entity evidence supplied for final synthesis."""
-
-    summaries: list[SourceEntityHubSummary] = Field(min_length=1)
-
-
-class SourceEntityHubDefinition(BaseModel):
-    """Canonical definition synthesized for one entity community."""
-
-    canonical_name: str = Field(min_length=1)
-    description: str = Field(min_length=1)
+    evidence: SourceEvidenceInput
 
 
 class SourceEntityHub(Vertex):
-    """Durable source-local entity hub vertex."""
-
-    source_uuid: str = Field(min_length=1)
-    canonical_name: str = Field(min_length=1)
-    aliases: list[_NonEmptyString] = Field(default_factory=list)
-    description: str = Field(min_length=1)
-    embedding: list[float] = Field(min_length=1)
+    """Durable source-local entity hub identity."""
 
 
 class SourceEntityHubRerankResult(BaseModel):
     """One ordered entity reranker batch result."""
 
     ordinal: int = Field(ge=0)
-    direct: list[SourceEntityHubCandidate] = Field(default_factory=list)
-    borderline: list[SourceEntityHubCandidate] = Field(default_factory=list)
+    survivors: list[SourceEntityHubCandidate] = Field(default_factory=list)
+    rejected: list[SourceEntityHubCandidate] = Field(default_factory=list)
 
 
 class SourceEntityHubJudgeResult(BaseModel):
@@ -113,12 +68,4 @@ class SourceEntityHubJudgeResult(BaseModel):
 
     ordinal: int = Field(ge=0)
     accepted: list[SourceEntityHubCandidate] = Field(default_factory=list)
-
-
-class SourceEntityHubSynthesisResult(BaseModel):
-    """One ordered entity community synthesis result."""
-
-    ordinal: int = Field(ge=0)
-    definition: SourceEntityHubDefinition
-    membership_uuids: list[str] = Field(min_length=1)
-    aliases: list[str] = Field(min_length=1)
+    rejected: list[SourceEntityHubCandidate] = Field(default_factory=list)

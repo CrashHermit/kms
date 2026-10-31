@@ -13,19 +13,18 @@ from kms2.core.model.source_semantic.source_procedure_hub import (
 
 
 class SourceProcedureHubSignature(dspy.Signature):
-    r"""Synthesize one source-local procedure from fixed or summarized evidence.
-
-    Accept original procedure occurrences or ordered temporary summaries.
-    Return a concise canonical name and source-grounded description. Preserve
-    method order, steps, conditions, inputs, outputs, and termination. Final
-    naming occurs only here. Never decide membership or invent facts.
+    r"""Accept complete reconstructed source content for original procedure
+    occurrences or ordered temporary summaries. Return a concise canonical
+    name and source-grounded description. Preserve method order, steps,
+    conditions, inputs, outputs, and termination. Final naming occurs only
+    here. Never decide membership or invent facts.
     """
 
     request: (
         SourceProcedureHubSynthesisInput
         | SourceProcedureHubSummarySynthesisInput
     ) = dspy.InputField(
-        description='Fixed procedure evidence or ordered temporary summaries.'
+        description='Fixed complete reconstructed procedure source content or ordered temporary summaries.'
     )
     definition: SourceProcedureHubDefinition = dspy.OutputField(
         description='One canonical source-local procedure hub definition.'
@@ -60,15 +59,15 @@ class SourceProcedureHubModule(dspy.Module):
 
 class SourceProcedureHubSummarySignature(dspy.Signature):
     r"""Summarize only the ordered supplied procedure evidence.
-
     Preserve distinguishing content, step order, conditions, inputs, outputs,
     and termination; remove repetition without changing meaning. Keep the full
-    evidence for each member together. Do not choose a canonical name or change
-    membership. Emit a concise, self-contained summary.
+    complete reconstructed source content for each member together. Do not
+    choose a canonical name or change membership. Emit a concise,
+    self-contained summary.
     """
 
     request: SourceProcedureHubSummaryInput = dspy.InputField(
-        description='Ordered procedure evidence to summarize.'
+        description='Ordered complete reconstructed procedure source content to summarize.'
     )
     summary: SourceProcedureHubSummary = dspy.OutputField(
         description='One concise, self-contained temporary procedure evidence summary.'

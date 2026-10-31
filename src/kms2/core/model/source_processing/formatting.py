@@ -1,6 +1,22 @@
 """Source-content formatting transport models for KMS2."""
 
-from pydantic import BaseModel
+from typing import Annotated
+
+from pydantic import BaseModel, Field, StrictInt
+
+
+class FormattingInput(BaseModel):
+    """One independently formatted block with a batch-local position."""
+
+    position: Annotated[StrictInt, Field(ge=0)]
+    content: str
+
+
+class FormattingOutput(BaseModel):
+    """One formatted block identified by its batch-local position."""
+
+    position: Annotated[StrictInt, Field(ge=0)]
+    formatted_content: str
 
 
 class FormattingRequest(BaseModel):

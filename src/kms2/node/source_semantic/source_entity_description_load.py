@@ -11,8 +11,7 @@ from kms2.core.windowing import (
     count_text_tokens,
     select_window,
 )
-from kms2.database.source.source_block_repository import SourceBlockRepository
-from kms2.database.source_semantic.source_entity_repository import (
+from kms2.database.source.source_entity_repository import (
     SourceEntityRepository,
 )
 from kms2.langgraph.source_semantic.state import SourceSemanticState
@@ -23,33 +22,25 @@ class SourceEntityDescriptionLoadNode:
 
     def __init__(
         self,
-        source_repository: SourceBlockRepository,
         semantic_repository: SourceEntityRepository,
         context_window: ContextWindowSettings,
         *,
         token_counters: tuple[TextTokenCounter, ...],
     ) -> None:
-        self._source_repository = source_repository
         self._semantic_repository = semantic_repository
         self._context_window = context_window
         self._token_counters = token_counters
 
     async def run(self, state: SourceSemanticState) -> dict[str, object]:
         """Load one typed request for every persisted entity occurrence."""
-        blocks = await self._source_repository.load_blocks(state.source_uuid)
+        blocks = state.blocks
         positions = {
             block.uuid: position for position, block in enumerate(blocks)
         }
         occurrences = await self._semantic_repository.load_source_entities(
             state.source_uuid
         )
-        ordered = sorted(
-            occurrences,
-            key=lambda occurrence: (
-                positions[occurrence.source_block_uuid],
-                occurrence.uuid,
-            ),
-        )
+        ordered = occurrences
         token_counts = (
             count_text_tokens(
                 [block.content for block in blocks], self._token_counters
@@ -62,13 +53,17 @@ class SourceEntityDescriptionLoadNode:
             target = SourceEntityDescriptionTarget.model_validate(
                 occurrence.model_dump()
             )
+            target_positions = [
+                positions[block.uuid]
+                for block in occurrence.target.source_blocks
+            ]
             window = select_window(
                 blocks,
-                [positions[occurrence.source_block_uuid]],
+                target_positions,
                 token_counts=token_counts,
                 backward_budget=self._context_window.backward_budget,
                 forward_budget=self._context_window.forward_budget,
-                target_budget=self._context_window.target_budget,
+                target_budget=0,
             )
             requests.append(
                 SourceEntityDescriptionRequest(
@@ -76,12 +71,11 @@ class SourceEntityDescriptionLoadNode:
                     model_input=SourceEntityDescriptionInput(
                         term=target.name,
                         context_before=window.context_before,
-                        target_block=window.target[0],
+                        target_blocks=window.target,
                         context_after=window.context_after,
                     ),
                 )
             )
         return {
             'source_entity_description_requests': requests,
-            'blocks': blocks,
         }

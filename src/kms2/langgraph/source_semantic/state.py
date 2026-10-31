@@ -7,8 +7,12 @@ from pydantic import BaseModel, Field
 
 from kms2.core.model.block import SourceBlock
 from kms2.core.model.source_semantic.source_entity import (
+    SourceEntity,
     SourceEntityDescriptionRequest,
     SourceEntityDescriptionResult,
+)
+from kms2.core.model.source_semantic.source_entity_extraction import (
+    SourceEntityExtractionResult,
 )
 from kms2.core.model.source_semantic.source_entity_hub import (
     SourceEntityHub,
@@ -16,39 +20,6 @@ from kms2.core.model.source_semantic.source_entity_hub import (
     SourceEntityHubJudgeResult,
     SourceEntityHubMember,
     SourceEntityHubRerankResult,
-    SourceEntityHubSynthesisResult,
-)
-from kms2.core.model.source_semantic.source_event import (
-    SourceEventDescriptionRequest,
-    SourceEventDescriptionResult,
-)
-from kms2.core.model.source_semantic.source_event_hub import (
-    SourceEventHub,
-    SourceEventHubCandidate,
-    SourceEventHubJudgeResult,
-    SourceEventHubMember,
-    SourceEventHubRerankResult,
-    SourceEventHubSynthesisResult,
-)
-from kms2.core.model.source_semantic.source_fact_extraction import (
-    SourceFact,
-    SourceFactExtractionResult,
-)
-from kms2.core.model.source_semantic.source_predicate import (
-    SourcePredicateDescriptionRequest,
-    SourcePredicateDescriptionResult,
-)
-from kms2.core.model.source_semantic.source_predicate_hub import (
-    SourcePredicateHub,
-    SourcePredicateHubCandidate,
-    SourcePredicateHubJudgeResult,
-    SourcePredicateHubMember,
-    SourcePredicateHubRerankResult,
-    SourcePredicateHubSynthesisResult,
-)
-from kms2.core.model.source_semantic.source_procedure import (
-    SourceProcedureDescriptionRequest,
-    SourceProcedureDescriptionResult,
 )
 from kms2.core.model.source_semantic.source_procedure_hub import (
     SourceProcedureHub,
@@ -58,9 +29,18 @@ from kms2.core.model.source_semantic.source_procedure_hub import (
     SourceProcedureHubRerankResult,
     SourceProcedureHubSynthesisResult,
 )
-from kms2.core.model.source_semantic.source_statement import (
-    SourceStatementDescriptionRequest,
-    SourceStatementDescriptionResult,
+from kms2.core.model.source_semantic.source_proposition_extraction import (
+    SourceProposition,
+    SourcePropositionEmbeddingResult,
+    SourcePropositionExtractionResult,
+)
+from kms2.core.model.source_semantic.source_proposition_hub import (
+    SourcePropositionHub,
+    SourcePropositionHubCandidate,
+    SourcePropositionHubGroup,
+    SourcePropositionHubJudgeResult,
+    SourcePropositionHubMember,
+    SourcePropositionHubRerankResult,
 )
 from kms2.core.model.source_semantic.source_statement_hub import (
     SourceStatementHub,
@@ -70,50 +50,27 @@ from kms2.core.model.source_semantic.source_statement_hub import (
     SourceStatementHubRerankResult,
     SourceStatementHubSynthesisResult,
 )
-from kms2.core.model.source_semantic.source_triplet import (
-    SourceTripletOccurrence,
-)
-from kms2.core.model.source_semantic.source_triplet_decomposition import (
-    SourceTripletDecompositionResult,
-)
-from kms2.core.model.source_semantic.source_triplet_hub import (
-    SourceTripletHub,
-    SourceTripletHubGroup,
-    SourceTripletHubSynthesisResult,
-)
-
-
-def _keep_loaded_blocks(
-    current: list[SourceBlock], incoming: list[SourceBlock]
-) -> list[SourceBlock]:
-    """Keep one authoritative block snapshot when parallel loaders finish."""
-    return current or incoming
 
 
 class SourceSemanticState(BaseModel):
     """State shared by semantic loading, extraction, and persistence."""
 
     source_uuid: str
-    blocks: Annotated[list[SourceBlock], _keep_loaded_blocks] = Field(
-        default_factory=list
-    )
-    fact_results: Annotated[list[SourceFactExtractionResult], operator.add] = (
-        Field(default_factory=list)
-    )
-    triplet_results: Annotated[
-        list[SourceTripletDecompositionResult], operator.add
+    blocks: list[SourceBlock] = Field(default_factory=list)
+    source_entity_extraction_results: Annotated[
+        list[SourceEntityExtractionResult], operator.add
     ] = Field(default_factory=list)
-    source_facts: list[SourceFact] = Field(default_factory=list)
-
+    source_entities: list[SourceEntity] = Field(default_factory=list)
+    source_entity_persisted_count: int = 0
     source_entity_description_requests: list[SourceEntityDescriptionRequest] = (
         Field(default_factory=list)
     )
     source_entity_description_results: Annotated[
         list[SourceEntityDescriptionResult], operator.add
     ] = Field(default_factory=list)
-    source_entity_embedding_results: Annotated[
-        list[SourceEntityDescriptionResult], operator.add
-    ] = Field(default_factory=list)
+    source_entity_embedding_results: list[SourceEntityDescriptionResult] = (
+        Field(default_factory=list)
+    )
     source_entity_description_persisted_count: int = 0
     source_entity_hub_candidates: list[SourceEntityHubCandidate] = Field(
         default_factory=list
@@ -121,115 +78,57 @@ class SourceSemanticState(BaseModel):
     source_entity_hub_rerank_results: Annotated[
         list[SourceEntityHubRerankResult], operator.add
     ] = Field(default_factory=list)
-    source_entity_hub_direct_pairs: list[SourceEntityHubCandidate] = Field(
-        default_factory=list
-    )
-    source_entity_hub_borderline_pairs: list[SourceEntityHubCandidate] = Field(
-        default_factory=list
+    source_entity_hub_reranked_candidates: list[SourceEntityHubCandidate] = (
+        Field(default_factory=list)
     )
     source_entity_hub_judge_results: Annotated[
         list[SourceEntityHubJudgeResult], operator.add
     ] = Field(default_factory=list)
-    source_entity_hub_accepted_pairs: list[SourceEntityHubCandidate] = Field(
+    source_entity_hub_groups: list[list[SourceEntityHubMember]] = Field(
         default_factory=list
     )
-    source_entity_hub_communities: list[list[SourceEntityHubMember]] = Field(
+    source_entity_hub_members: list[SourceEntityHubMember] = Field(
         default_factory=list
     )
-    source_entity_hub_synthesis_results: Annotated[
-        list[SourceEntityHubSynthesisResult], operator.add
-    ] = Field(default_factory=list)
-    source_entity_hub_synthesis_results_ordered: list[
-        SourceEntityHubSynthesisResult
-    ] = Field(default_factory=list)
+    source_entity_hub_decision_cache: dict[str, bool] = Field(
+        default_factory=dict
+    )
+    source_entity_hubs: list[SourceEntityHub] = Field(default_factory=list)
+    source_entity_hub_memberships: list[list[str]] = Field(default_factory=list)
     source_entity_hub_count: int = 0
-    source_event_description_requests: list[SourceEventDescriptionRequest] = (
+    source_entity_hub_round_merged: bool = False
+    proposition_results: Annotated[
+        list[SourcePropositionExtractionResult], operator.add
+    ] = Field(default_factory=list)
+    source_propositions: list[SourceProposition] = Field(default_factory=list)
+    source_proposition_embedding_results: list[
+        SourcePropositionEmbeddingResult
+    ] = Field(default_factory=list)
+    source_proposition_hub_candidates: list[SourcePropositionHubCandidate] = (
         Field(default_factory=list)
     )
-    source_event_description_results: Annotated[
-        list[SourceEventDescriptionResult], operator.add
-    ] = Field(default_factory=list)
-    source_event_embedding_results: Annotated[
-        list[SourceEventDescriptionResult], operator.add
-    ] = Field(default_factory=list)
-    source_event_description_persisted_count: int = 0
-    source_event_hub_candidates: list[SourceEventHubCandidate] = Field(
+    source_proposition_hub_members: list[SourcePropositionHubMember] = Field(
         default_factory=list
     )
-    source_event_hub_rerank_results: Annotated[
-        list[SourceEventHubRerankResult], operator.add
+    source_proposition_hub_rerank_results: Annotated[
+        list[SourcePropositionHubRerankResult], operator.add
     ] = Field(default_factory=list)
-    source_event_hub_direct_pairs: list[SourceEventHubCandidate] = Field(
+    source_proposition_hub_reranked_candidates: list[
+        SourcePropositionHubCandidate
+    ] = Field(default_factory=list)
+    source_proposition_hub_judge_results: Annotated[
+        list[SourcePropositionHubJudgeResult], operator.add
+    ] = Field(default_factory=list)
+    source_proposition_hub_groups: list[SourcePropositionHubGroup] = Field(
         default_factory=list
     )
-    source_event_hub_borderline_pairs: list[SourceEventHubCandidate] = Field(
+    source_proposition_hubs: list[SourcePropositionHub] = Field(
         default_factory=list
     )
-    source_event_hub_judge_results: Annotated[
-        list[SourceEventHubJudgeResult], operator.add
-    ] = Field(default_factory=list)
-    source_event_hub_accepted_pairs: list[SourceEventHubCandidate] = Field(
+    source_proposition_hub_memberships: list[list[str]] = Field(
         default_factory=list
     )
-    source_event_hub_communities: list[list[SourceEventHubMember]] = Field(
-        default_factory=list
-    )
-    source_event_hub_synthesis_results: Annotated[
-        list[SourceEventHubSynthesisResult], operator.add
-    ] = Field(default_factory=list)
-    source_event_hub_synthesis_results_ordered: list[
-        SourceEventHubSynthesisResult
-    ] = Field(default_factory=list)
-    source_event_hub_count: int = 0
-    source_predicate_description_requests: list[
-        SourcePredicateDescriptionRequest
-    ] = Field(default_factory=list)
-    source_predicate_description_results: Annotated[
-        list[SourcePredicateDescriptionResult], operator.add
-    ] = Field(default_factory=list)
-    source_predicate_embedding_results: Annotated[
-        list[SourcePredicateDescriptionResult], operator.add
-    ] = Field(default_factory=list)
-    source_predicate_description_persisted_count: int = 0
-    source_predicate_hub_candidates: list[SourcePredicateHubCandidate] = Field(
-        default_factory=list
-    )
-    source_predicate_hub_rerank_results: Annotated[
-        list[SourcePredicateHubRerankResult], operator.add
-    ] = Field(default_factory=list)
-    source_predicate_hub_direct_pairs: list[SourcePredicateHubCandidate] = (
-        Field(default_factory=list)
-    )
-    source_predicate_hub_borderline_pairs: list[SourcePredicateHubCandidate] = (
-        Field(default_factory=list)
-    )
-    source_predicate_hub_judge_results: Annotated[
-        list[SourcePredicateHubJudgeResult], operator.add
-    ] = Field(default_factory=list)
-    source_predicate_hub_accepted_pairs: list[SourcePredicateHubCandidate] = (
-        Field(default_factory=list)
-    )
-    source_predicate_hub_communities: list[list[SourcePredicateHubMember]] = (
-        Field(default_factory=list)
-    )
-    source_predicate_hub_synthesis_results: Annotated[
-        list[SourcePredicateHubSynthesisResult], operator.add
-    ] = Field(default_factory=list)
-    source_predicate_hub_synthesis_results_ordered: list[
-        SourcePredicateHubSynthesisResult
-    ] = Field(default_factory=list)
-    source_predicate_description_persisted_count: int = 0
-    source_predicate_hub_count: int = 0
-    source_statement_description_requests: list[
-        SourceStatementDescriptionRequest
-    ] = Field(default_factory=list)
-    source_statement_description_results: Annotated[
-        list[SourceStatementDescriptionResult], operator.add
-    ] = Field(default_factory=list)
-    source_statement_embedding_results: Annotated[
-        list[SourceStatementDescriptionResult], operator.add
-    ] = Field(default_factory=list)
-    source_statement_description_persisted_count: int = 0
+    source_proposition_hub_count: int = 0
     source_statement_hub_candidates: list[SourceStatementHubCandidate] = Field(
         default_factory=list
     )
@@ -258,16 +157,6 @@ class SourceSemanticState(BaseModel):
         SourceStatementHubSynthesisResult
     ] = Field(default_factory=list)
     source_statement_hub_count: int = 0
-    source_procedure_description_requests: list[
-        SourceProcedureDescriptionRequest
-    ] = Field(default_factory=list)
-    source_procedure_description_results: Annotated[
-        list[SourceProcedureDescriptionResult], operator.add
-    ] = Field(default_factory=list)
-    source_procedure_embedding_results: Annotated[
-        list[SourceProcedureDescriptionResult], operator.add
-    ] = Field(default_factory=list)
-    source_procedure_description_persisted_count: int = 0
     source_procedure_hub_candidates: list[SourceProcedureHubCandidate] = Field(
         default_factory=list
     )
@@ -296,34 +185,6 @@ class SourceSemanticState(BaseModel):
         SourceProcedureHubSynthesisResult
     ] = Field(default_factory=list)
     source_procedure_hub_count: int = 0
-
-    triplet_occurrences: list[SourceTripletOccurrence] = Field(
-        default_factory=list
-    )
-    source_entity_hubs: list[SourceEntityHub] = Field(default_factory=list)
-    source_entity_hub_memberships: list[list[str]] = Field(default_factory=list)
-    source_event_hubs: list[SourceEventHub] = Field(default_factory=list)
-    source_event_hub_memberships: list[list[str]] = Field(default_factory=list)
-    source_predicate_hubs: list[SourcePredicateHub] = Field(
-        default_factory=list
-    )
-    source_predicate_hub_memberships: list[list[str]] = Field(
-        default_factory=list
-    )
-    source_triplet_hubs: list[SourceTripletHub] = Field(default_factory=list)
-    source_triplet_hub_memberships: list[list[str]] = Field(
-        default_factory=list
-    )
-    source_triplet_hub_count: int = 0
-    source_triplet_hub_groups: list[SourceTripletHubGroup] = Field(
-        default_factory=list
-    )
-    source_triplet_hub_synthesis_results: Annotated[
-        list[SourceTripletHubSynthesisResult], operator.add
-    ] = Field(default_factory=list)
-    source_triplet_hub_synthesis_results_ordered: list[
-        SourceTripletHubSynthesisResult
-    ] = Field(default_factory=list)
     source_statement_hubs: list[SourceStatementHub] = Field(
         default_factory=list
     )

@@ -2,100 +2,52 @@
 
 import dspy
 
-
-def _normalize_math_delimiters(content: str) -> str:
-    """Convert LaTeX bracket delimiters to the canonical Markdown form."""
-    return (
-        content.replace(r'\(', '$')
-        .replace(r'\)', '$')
-        .replace(r'\[', '$$')
-        .replace(r'\]', '$$')
-    )
+from kms2.core.model.source_processing.formatting import (
+    FormattingInput,
+    FormattingOutput,
+)
 
 
 class FormatterSignature(dspy.Signature):
-    r"""Normalize one complete Markdown source block in a single rewrite.
+    r"""Normalize each complete source block in a representation-only rewrite.
 
-    Change representation only. Preserve every word, number, identifier,
-    mathematical value, line order, and paragraph boundary. Never solve,
-    simplify, reorder, invent, or remove content. Every mathematical span
-    must be represented completely in LaTeX: variables, numeric literals,
+    Process indexed blocks independently. Return one complete formatted_content
+    for every input position, preserving its exact index. Never merge, split,
+    omit, or reorder blocks, or borrow content from another block.
+
+    Preserve all source wording, numbers, identifiers, mathematical values,
+    line order, paragraph boundaries, and intentional answer blanks. Do not
+    solve, simplify, infer answers, paraphrase, or complete truncated content.
+    Change only mathematical representation and clearly identified Markdown
+    structure. Preserve list numbering and subpart ownership.
+
+    Represent complete mathematical spans in LaTeX, including their variables,
     subscripts, superscripts, operators, relations, functions, and equations.
-    Use `\text{...}` for plain upright variables or symbols when that is the
-    source's notation. Do not change an expression's value or rewrite it into
-    an equivalent form.
+    Use dollar delimiters for inline mathematics and double-dollar delimiters
+    for display mathematics, converting LaTeX bracket delimiters only when
+    they delimit actual mathematics. Convert mathematical Unicode notation
+    to LaTeX without changing the expression's structure or value. Preserve
+    the source's upright versus italic symbol convention.
 
-    Convert `\(...\)` to `$...$`, `\[...\]` to `$$...$$`, and bare display
-    equations to `$$...$$`. Convert mathematical Unicode notation to LaTeX,
-    including superscripts, subscripts, operators, relations, radicals, and
-    Greek symbols. Wrap clearly mathematical bare expressions in `$...$`, but
-    leave page numbers, exercise numbers, years, labels, lone values, and
-    uncertain spans unchanged. A currency amount is not mathematics: write
-    `$15` as `\$15`, never as `$\$15$`.
+    Do not introduce fraction or number-set notation when the source uses
+    another representation. Leave page/exercise numbers, years, references,
+    proper names, standalone nonmathematical values, and uncertain spans
+    unchanged. Escape a currency dollar sign as a literal dollar, rather than
+    treating a price as mathematics.
 
-    Normalize only clearly identified Markdown structure: headings, list
-    markers, part-marker decoration, emphasis, and tables. Convert an
-    underlined heading into one `#`-marked line. Preserve figure placeholders
-    such as `![N]()`, fenced code, inline code, proper names, references, and
-    all content at the block boundaries.
-
-    POSITIVE EXAMPLES — APPLY ALL REQUIRED CHANGES:
-
-    Input:
-    Area
-    ====
-    Find where 2 ≤ x ≤ 5 and y = x².
-
-    Output:
-    # Area
-    Find where $2 \le x \le 5$ and $y = x^2$.
-
-    Input:
-    Given \(x^2 + 1 \le y\), compute 25 - 7.
-
-    Output:
-    Given $x^2 + 1 \le y$, compute $25 - 7$.
-
-    NEGATIVE EXAMPLES — PROTECT THESE BOUNDARIES:
-
-    Input:
-    ```
-    x² = 9
-    ![12]()
-    ```
-
-    Output:
-    ```
-    x² = 9
-    ![12]()
-    ```
-
-    Input:
-    The solution is \(x = (-b \pm \sqrt{b^2 - 4ac}) / 2a\).
-
-    Output:
-    The solution is $x = (-b \pm \sqrt{b^2 - 4ac}) / 2a$.
-
-    Input:
-    Theorem 2¹ was proved in 2024. The shirt costs $15.
-
-    Output:
-    Do not use `\frac` or `\mathbb` unless that notation is already present in
-    the source. Do not rewrite a mathematical expression into an equivalent
-    form. For example, every part of `x₁ + 2y₂ = 10` is mathematical, so it
-    should become `$\text{x}_1 + 2\text{y}_2 = 10$` when plain upright
-    variables are the source convention. Likewise, `R₁ × R₂` should become
-    `$\text{R}_1 \times \text{R}_2$`. Do not use line numbers, page numbers,
-    years, theorem numbers, or currency amounts as evidence that surrounding
-    text is mathematics. Return only the complete rewritten block.
-
+    Preserve fenced code, inline code, and image/link destinations verbatim,
+    including any literal delimiter characters. Normalize only clear Markdown
+    headings, list-marker decoration, emphasis, and tables. An underlined
+    heading becomes one hash-marked heading line without losing its title.
+    Keep prose punctuation outside math delimiters; punctuation that is
+    actually part of a mathematical expression remains inside it.
     """
 
-    content: str = dspy.InputField(
-        description='One canonical source-content block in Markdown.'
+    blocks: list[FormattingInput] = dspy.InputField(
+        description='Ordered complete source blocks with zero-based batch-local positions.'
     )
-    formatted_content: str = dspy.OutputField(
-        description='The complete block after representation-only formatting.'
+    formatted_blocks: list[FormattingOutput] = dspy.OutputField(
+        description='One representation-formatted complete block for every input position.'
     )
 
 
@@ -106,12 +58,42 @@ class FormatterModule(dspy.Module):
         super().__init__()
         self.predictor = predictor
 
-    def forward(self, *, content: str) -> str:
-        """Format one source-content block synchronously."""
-        prediction = self.predictor(content=content)
-        return _normalize_math_delimiters(prediction.formatted_content)
+    @staticmethod
+    def _validated_outputs(
+        blocks: list[FormattingInput],
+        formatted_blocks: list[FormattingOutput],
+    ) -> list[FormattingOutput]:
+        outputs = [
+            FormattingOutput.model_validate(block) for block in formatted_blocks
+        ]
+        input_positions = [block.position for block in blocks]
+        expected_positions = set(input_positions)
+        if len(input_positions) != len(expected_positions):
+            raise ValueError('formatter input positions must be unique')
+        positions = [block.position for block in outputs]
+        if (
+            len(positions) != len(expected_positions)
+            or set(positions) != expected_positions
+        ):
+            raise ValueError(
+                'formatter output positions must cover each input position exactly once'
+            )
+        outputs_by_position = {block.position: block for block in outputs}
+        return [
+            outputs_by_position[position]
+            for position in (block.position for block in blocks)
+        ]
 
-    async def aforward(self, *, content: str) -> str:
-        """Format one source-content block asynchronously."""
-        prediction = await self.predictor.acall(content=content)
-        return _normalize_math_delimiters(prediction.formatted_content)
+    def forward(
+        self, *, blocks: list[FormattingInput]
+    ) -> list[FormattingOutput]:
+        """Format a batch of independently indexed blocks synchronously."""
+        prediction = self.predictor(blocks=blocks)
+        return self._validated_outputs(blocks, prediction.formatted_blocks)
+
+    async def aforward(
+        self, *, blocks: list[FormattingInput]
+    ) -> list[FormattingOutput]:
+        """Format a batch of independently indexed blocks asynchronously."""
+        prediction = await self.predictor.acall(blocks=blocks)
+        return self._validated_outputs(blocks, prediction.formatted_blocks)

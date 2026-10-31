@@ -126,8 +126,8 @@ class SourceStatementHubNode:
             grouped.setdefault(candidate.left_uuid, []).append(candidate)
         for group in grouped.values():
             left = group[0]
-            left_text = left.left_description
-            right_texts = [candidate.right_description for candidate in group]
+            left_text = left.left_content
+            right_texts = [candidate.right_content for candidate in group]
             costs = self._reranker_token_counter.count_texts(
                 [left_text, *right_texts]
             )
@@ -181,7 +181,7 @@ class SourceStatementHubNode:
         batch = state['source_statement_hub_batch']
         results = await self._reranker.rerank(
             state['source_statement_hub_left_text'],
-            [candidate.right_description for candidate in batch],
+            [candidate.right_content for candidate in batch],
             top_n=None,
         )
         direct: list[SourceStatementHubCandidate] = []
@@ -330,7 +330,7 @@ class SourceStatementHubNode:
         """Synthesize one statement community using evidence reduction."""
         community = state['source_statement_hub_community']
         synthesis_members = [
-            SourceStatementHubSynthesisMember(description=member.description)
+            SourceStatementHubSynthesisMember(content=member.content)
             for member in community
         ]
         request = SourceStatementHubSynthesisInput(members=synthesis_members)
@@ -447,7 +447,6 @@ class SourceStatementHubNode:
         )
         hubs = [
             SourceStatementHub(
-                source_uuid=state.source_uuid,
                 canonical_name=definition.canonical_name,
                 description=definition.description,
                 embedding=vector,
@@ -468,6 +467,6 @@ def _statement_judge_input(
     """Build one indexed statement judge request."""
     return SourceStatementHubJudgeInput(
         index=index,
-        left_description=candidate.left_description,
-        right_description=candidate.right_description,
+        left_content=candidate.left_content,
+        right_content=candidate.right_content,
     )

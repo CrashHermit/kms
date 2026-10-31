@@ -6,12 +6,6 @@ from kms2.node.source_processing.embedding import EmbeddingNode
 
 
 def add_embedding_phase(graph: StateGraph, node: EmbeddingNode) -> None:
-    """Register embedding dispatch, worker, and collection."""
-    graph.add_node('embedding_worker', node.worker)
-    graph.add_node('embedding_collect', node.collect)
-    graph.add_conditional_edges(
-        'instruction_governance',
-        node.dispatch,
-        ['embedding_worker', 'embedding_collect'],
-    )
-    graph.add_edge('embedding_worker', 'embedding_collect')
+    """Register direct source-block embedding before persistence."""
+    graph.add_node('embedding', node.run)
+    graph.add_edge('image_description_collect', 'embedding')

@@ -1,6 +1,6 @@
 """Persist prepared source-local entity hubs."""
 
-from kms2.database.source_semantic.source_entity_repository import (
+from kms2.database.source.source_entity_repository import (
     SourceEntityRepository,
 )
 from kms2.langgraph.source_semantic.state import SourceSemanticState

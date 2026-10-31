@@ -1,60 +1,55 @@
-"""DSPy module for judging visual seams."""
+"""DSPy module for indexed native-image seam judgments."""
 
 import dspy
 
-from kms2.core.model.block import SourceBlock
+from kms2.core.model.source_processing.image_seam import (
+    ImageSeamDecision,
+    ImageSeamInput,
+)
 
 
 class ImageSeamSignature(dspy.Signature):
-    """
-    Decide whether two supplied images are one visual object split by a page
-    seam. Return TRUE only when the bottom of the first image continues into
-    the top of the second image. Return FALSE for two separate figures,
-    unrelated images, or images where continuation is uncertain. Do not
-    describe, transcribe, rewrite, stitch, or otherwise modify either image.
+    """Judge each independent top/bottom pair for one interrupted visual.
+
+    Each item addresses two images in seam_images using zero-based native-image
+    positions. True means the bottom of the top image continues into the top of
+    the bottom image as one visual object split by a page boundary. False means
+    separate figures, unrelated images, or uncertain continuation. Use only the
+    two addressed images; other items and pairs provide no reference context.
+
+    Return one decision per item, preserving its outer position. Do not describe,
+    transcribe, rewrite, stitch, or modify images, or supply stitching instructions.
     """
 
-    top_image: dspy.Image = dspy.InputField(
-        description='The visual asset at the bottom of the top page.'
+    items: list[ImageSeamInput] = dspy.InputField(
+        description='Independent pairs of zero-based top/bottom native-image references.'
     )
-    bottom_image: dspy.Image = dspy.InputField(
-        description='The visual asset at the top of the bottom page.'
+    seam_images: list[dspy.Image] = dspy.InputField(
+        description='Native images addressed by each pair in items.'
     )
-    is_continuation: bool = dspy.OutputField(
-        description='True only when both images are parts of one split visual object.'
+    decisions: list[ImageSeamDecision] = dspy.OutputField(
+        description='Indexed continuation judgments, one per pair.'
     )
 
 
 class ImageSeamJudgeModule(dspy.Module):
-    """Make one boolean judgment about whether two images form one visual."""
+    """Judge a packet of independent visual seam pairs."""
 
     def __init__(self, predictor: dspy.Module) -> None:
         super().__init__()
         self.predictor = predictor
 
-    @staticmethod
-    def _inputs(
-        *, top_block: SourceBlock, bottom_block: SourceBlock
-    ) -> dict[str, dspy.Image]:
-        return {
-            'top_image': dspy.Image(url=top_block.assets[0].path),
-            'bottom_image': dspy.Image(url=bottom_block.assets[0].path),
-        }
-
     def forward(
-        self, *, top_block: SourceBlock, bottom_block: SourceBlock
-    ) -> bool:
-        """Judge one adjacent image pair synchronously."""
-        prediction = self.predictor(
-            **self._inputs(top_block=top_block, bottom_block=bottom_block)
-        )
-        return prediction.is_continuation
+        self, *, items: list[ImageSeamInput], seam_images: list[dspy.Image]
+    ) -> list[ImageSeamDecision]:
+        """Judge a visual packet synchronously."""
+        return self.predictor(items=items, seam_images=seam_images).decisions
 
     async def aforward(
-        self, *, top_block: SourceBlock, bottom_block: SourceBlock
-    ) -> bool:
-        """Judge one adjacent image pair asynchronously."""
+        self, *, items: list[ImageSeamInput], seam_images: list[dspy.Image]
+    ) -> list[ImageSeamDecision]:
+        """Judge a visual packet asynchronously."""
         prediction = await self.predictor.acall(
-            **self._inputs(top_block=top_block, bottom_block=bottom_block)
+            items=items, seam_images=seam_images
         )
-        return prediction.is_continuation
+        return prediction.decisions

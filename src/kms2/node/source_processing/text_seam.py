@@ -1,6 +1,7 @@
 """LangGraph node for source-page text seam processing."""
 
-from typing import Literal, TypedDict
+import json
+from typing import Literal, TypedDict, cast
 
 from langgraph.types import Send
 
@@ -8,9 +9,11 @@ from kms2.core.model.block import SourceBlock
 from kms2.core.model.block_types import BlockType
 from kms2.core.model.page import SourcePage
 from kms2.core.model.source_processing.text_seam import (
+    TextSeamInput,
     TextSeamRequest,
     TextSeamResult,
 )
+from kms2.core.windowing import TokenBudget, pack_items, project_block
 from kms2.langgraph.source_processing.state import SourceProcessingState
 from kms2.module.source_processing.text_seam_judge import TextSeamJudgeModule
 from kms2.module.source_processing.text_seam_rewriter import (
@@ -21,14 +24,13 @@ from kms2.module.source_processing.text_seam_rewriter import (
 class TextSeamWorkerState(TypedDict):
     """State supplied to one dispatched seam worker."""
 
-    text_seam_request: TextSeamRequest
+    text_seam_requests: list[TextSeamRequest]
 
 
 def _skip_for_text(source_block: SourceBlock) -> bool:
     return bool(
-        source_block.block_type is BlockType.BIBLIOGRAPHIC
-        or source_block.block_type is BlockType.NOTE
-        or source_block.block_type is BlockType.IMAGE
+        source_block.block_type
+        in {BlockType.BIBLIOGRAPHIC, BlockType.NOTE, BlockType.IMAGE}
         or source_block.assets
     )
 
@@ -54,8 +56,33 @@ def _context_block(
         source_block = blocks[index]
         if _skip_for_text(source_block):
             continue
-        return source_block if _text_mergeable(source_block) else None
+        if source_block.content:
+            return source_block
     return None
+
+
+def _request_input(
+    request: TextSeamRequest, position: int
+) -> tuple[TextSeamInput, int, int]:
+    top_blocks = request.top_page.blocks
+    bottom_blocks = request.bottom_page.blocks
+    tail_index = cast(int, _edge_index(top_blocks, reverse=True))
+    head_index = cast(int, _edge_index(bottom_blocks, reverse=False))
+    top_context = _context_block(top_blocks, tail_index - 1, -1)
+    bottom_context = _context_block(bottom_blocks, head_index + 1, 1)
+    return (
+        TextSeamInput(
+            position=position,
+            tail=project_block(top_blocks[tail_index]),
+            head=project_block(bottom_blocks[head_index]),
+            top_context=project_block(top_context) if top_context else None,
+            bottom_context=(
+                project_block(bottom_context) if bottom_context else None
+            ),
+        ),
+        tail_index,
+        head_index,
+    )
 
 
 class TextSeamNode:
@@ -65,9 +92,18 @@ class TextSeamNode:
         self,
         judge: TextSeamJudgeModule,
         rewriter: TextSeamRewriterModule,
+        *,
+        judge_budget: TokenBudget,
+        rewrite_budget: TokenBudget,
+        judge_batch_size: int,
+        rewrite_batch_size: int,
     ) -> None:
         self._judge = judge
         self._rewriter = rewriter
+        self._judge_budget = judge_budget
+        self._rewrite_budget = rewrite_budget
+        self._judge_batch_size = judge_batch_size
+        self._rewrite_batch_size = rewrite_batch_size
 
     @staticmethod
     def _pairs(
@@ -76,31 +112,62 @@ class TextSeamNode:
         return [
             (pages[index], pages[index + 1])
             for index in range(len(pages) - 1)
-            if pages[index].index % 2 == parity
+            if pages[index + 1].index == pages[index].index + 1
+            and pages[index].index % 2 == parity
             and _edge_index(pages[index].blocks, reverse=True) is not None
             and _edge_index(pages[index + 1].blocks, reverse=False) is not None
         ]
 
     @staticmethod
+    def _envelope_cost(budget: TokenBudget) -> int:
+        return budget.counter.count_texts(['{"items":[]}'])[0]
+
+    @staticmethod
+    def _cost_items(
+        items: list[TextSeamInput], budget: TokenBudget
+    ) -> list[int]:
+        payloads = [
+            json.dumps(
+                item.model_dump(mode='json'),
+                ensure_ascii=False,
+                separators=(',', ':'),
+            )
+            for item in items
+        ]
+        counts = budget.counter.count_texts(payloads)
+        overhead = budget.counter.count_texts(['[,]'])[0]
+        return [count + overhead for count in counts]
+
+    def _judge_costs(self, requests: list[TextSeamRequest]) -> list[int]:
+        return self._cost_items(
+            [
+                _request_input(request, self._judge_batch_size - 1)[0]
+                for request in requests
+            ],
+            self._judge_budget,
+        )
+
     def _dispatch(
-        pages: list[SourcePage], parity: int, worker: str, collector: str
+        self, pages: list[SourcePage], parity: int, worker: str, collector: str
     ) -> (
         list[Send] | Literal['text_seam_even_collect', 'text_seam_odd_collect']
     ):
-        pairs = TextSeamNode._pairs(pages, parity)
-        sends = [
-            Send(
-                worker,
-                {
-                    'text_seam_request': TextSeamRequest(
-                        top_page=top_page,
-                        bottom_page=bottom_page,
-                    )
-                },
-            )
-            for top_page, bottom_page in pairs
+        requests = [
+            TextSeamRequest(top_page=top, bottom_page=bottom)
+            for top, bottom in self._pairs(pages, parity)
         ]
-        return sends or collector  # type: ignore[return-value]
+        if not requests:
+            return collector  # type: ignore[return-value]
+        batches = pack_items(
+            requests,
+            token_counts=self._judge_costs(requests),
+            token_budget=self._judge_budget.token_limit
+            - self._envelope_cost(self._judge_budget),
+            max_items=self._judge_batch_size,
+        )
+        return [
+            Send(worker, {'text_seam_requests': batch}) for batch in batches
+        ]
 
     def dispatch_even(
         self, state: SourceProcessingState
@@ -108,59 +175,76 @@ class TextSeamNode:
         """Dispatch adjacent pairs whose upper page index is even."""
         return self._dispatch(
             state.formatted_pages,
-            parity=0,
-            worker='text_seam_even_worker',
-            collector='text_seam_even_collect',
+            0,
+            'text_seam_even_worker',
+            'text_seam_even_collect',
         )
 
-    async def _merge_pair(self, request: TextSeamRequest) -> TextSeamResult:
-        top_blocks = list(request.top_page.blocks)
-        bottom_blocks = list(request.bottom_page.blocks)
-        tail_index = _edge_index(top_blocks, reverse=True)
-        head_index = _edge_index(bottom_blocks, reverse=False)
-        if tail_index is None or head_index is None:
-            return TextSeamResult(
-                top_page=request.top_page.model_copy(
-                    update={'blocks': top_blocks}
-                ),
-                bottom_page=request.bottom_page.model_copy(
-                    update={'blocks': bottom_blocks}
-                ),
+    async def _merge_requests(
+        self, requests: list[TextSeamRequest]
+    ) -> list[TextSeamResult]:
+        items = [
+            _request_input(request, position)[0]
+            for position, request in enumerate(requests)
+        ]
+        decisions = await self._judge.acall(items=items)
+        split_positions = {
+            decision.position for decision in decisions if decision.is_split
+        }
+        rewrites_by_position: dict[int, str] = {}
+        if split_positions:
+            positive_items = [
+                item for item in items if item.position in split_positions
+            ]
+            rewrite_costs = self._cost_items(
+                positive_items, self._rewrite_budget
             )
-
-        tail = top_blocks[tail_index]
-        head = bottom_blocks[head_index]
-        top_context = _context_block(top_blocks, tail_index - 1, -1)
-        bottom_context = _context_block(bottom_blocks, head_index + 1, 1)
-        is_split = await self._judge.aforward(
-            tail=tail,
-            head=head,
-            top_context=top_context,
-            bottom_context=bottom_context,
-        )
-        if is_split:
-            merged = await self._rewriter.aforward(
-                tail=tail,
-                head=head,
-                top_context=top_context,
-                bottom_context=bottom_context,
+            batches = pack_items(
+                positive_items,
+                token_counts=rewrite_costs,
+                token_budget=self._rewrite_budget.token_limit
+                - self._envelope_cost(self._rewrite_budget),
+                max_items=self._rewrite_batch_size,
             )
-            top_blocks[tail_index] = tail.model_copy(update={'content': merged})
-            del bottom_blocks[head_index]
-
-        return TextSeamResult(
-            top_page=request.top_page.model_copy(update={'blocks': top_blocks}),
-            bottom_page=request.bottom_page.model_copy(
-                update={'blocks': bottom_blocks}
-            ),
-        )
+            for batch in batches:
+                rewrites = await self._rewriter.acall(items=batch)
+                rewrites_by_position.update(
+                    (rewrite.position, rewrite.merged) for rewrite in rewrites
+                )
+        results = []
+        for position, request in enumerate(requests):
+            top_blocks = list(request.top_page.blocks)
+            bottom_blocks = list(request.bottom_page.blocks)
+            if position in split_positions:
+                _item, tail_index, head_index = _request_input(
+                    request, position
+                )
+                tail = top_blocks[tail_index]
+                top_blocks[tail_index] = tail.model_copy(
+                    update={'content': rewrites_by_position[position]}
+                )
+                del bottom_blocks[head_index]
+            results.append(
+                TextSeamResult(
+                    top_page=request.top_page.model_copy(
+                        update={'blocks': top_blocks}
+                    ),
+                    bottom_page=request.bottom_page.model_copy(
+                        update={'blocks': bottom_blocks}
+                    ),
+                )
+            )
+        return results
 
     async def even_worker(
         self, state: TextSeamWorkerState
     ) -> dict[str, list[TextSeamResult]]:
-        """Judge and optionally merge one even-pass page pair."""
-        result = await self._merge_pair(state['text_seam_request'])
-        return {'text_seam_even_results': [result]}
+        """Judge and rewrite one even-pass packet of page pairs."""
+        return {
+            'text_seam_even_results': await self._merge_requests(
+                state['text_seam_requests']
+            )
+        }
 
     @staticmethod
     def _collect_pages(
@@ -188,17 +272,20 @@ class TextSeamNode:
         """Dispatch adjacent pairs whose upper page index is odd."""
         return self._dispatch(
             state.text_seam_even_pages,
-            parity=1,
-            worker='text_seam_odd_worker',
-            collector='text_seam_odd_collect',
+            1,
+            'text_seam_odd_worker',
+            'text_seam_odd_collect',
         )
 
     async def odd_worker(
         self, state: TextSeamWorkerState
     ) -> dict[str, list[TextSeamResult]]:
-        """Judge and optionally merge one odd-pass page pair."""
-        result = await self._merge_pair(state['text_seam_request'])
-        return {'text_seam_odd_results': [result]}
+        """Judge and rewrite one odd-pass packet of page pairs."""
+        return {
+            'text_seam_odd_results': await self._merge_requests(
+                state['text_seam_requests']
+            )
+        }
 
     def odd_collect(
         self, state: SourceProcessingState

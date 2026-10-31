@@ -131,15 +131,10 @@ class SourceCoherentFlashcardNode:
                 selected = [
                     parents[index - 1] for index in candidate.card_indexes
                 ]
-                triplet_uuids = _unique_values(
-                    triplet_uuid
+                source_proposition_uuids = _unique_values(
+                    proposition_uuid
                     for parent in selected
-                    for triplet_uuid in parent.triplet_uuids
-                )
-                source_fact_uuids = _unique_values(
-                    source_fact_uuid
-                    for parent in selected
-                    for source_fact_uuid in parent.source_fact_uuids
+                    for proposition_uuid in parent.source_proposition_uuids
                 )
                 occurrences.append(
                     SourceFlashcardOccurrence(
@@ -147,9 +142,7 @@ class SourceCoherentFlashcardNode:
                             question=candidate.question,
                             answer=candidate.answer,
                         ),
-                        hub_uuid=request.hub_uuid,
-                        triplet_uuids=triplet_uuids,
-                        source_fact_uuids=source_fact_uuids,
+                        source_proposition_uuids=source_proposition_uuids,
                         derived_card_uuids=_unique_values(
                             parent.card.uuid for parent in selected
                         ),

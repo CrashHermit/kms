@@ -8,20 +8,11 @@ from kms2_token_helpers import direct_synthesis
 from langgraph.graph import END, START, StateGraph
 
 from kms2.core.windowing import InputBudgetExceeded, TokenBudget
-from kms2.langgraph.global_semantic.state import GlobalSemanticState
 from kms2.langgraph.source_semantic.state import SourceSemanticState
 
 CASES = [
-    ('source', 'Entity'),
-    ('source', 'Event'),
-    ('source', 'Predicate'),
     ('source', 'Statement'),
     ('source', 'Procedure'),
-    ('global', 'Entity'),
-    ('global', 'Event'),
-    ('global', 'Predicate'),
-    ('global', 'Statement'),
-    ('global', 'Procedure'),
 ]
 
 
@@ -84,7 +75,8 @@ def _fixture(scope, kind, *, threshold=8, batch_size=10):
         judge_token_budget=threshold,
         judge_batch_size=batch_size,
     )
-    node = getattr(nodes, f'{stem}Node')(
+    node_class = getattr(nodes, f'{stem}Node')
+    node = node_class(
         None,
         None,
         judge,
@@ -110,10 +102,7 @@ async def _exercise(scope, kind, batch_size):
     basename, node, candidates, reranker, judge, budget = _fixture(
         scope, kind, batch_size=batch_size
     )
-    state_type = (
-        SourceSemanticState if scope == 'source' else GlobalSemanticState
-    )
-    graph = StateGraph(state_type)
+    graph = StateGraph(SourceSemanticState)
     graph.add_node('route', lambda state: {})
     graph.add_node(f'{basename}_rerank_worker', node.rerank_worker)
     graph.add_node(f'{basename}_rerank_collect', node.collect_rerank)
@@ -129,8 +118,6 @@ async def _exercise(scope, kind, batch_size):
     graph.add_edge(f'{basename}_judge_collect', END)
     result = await graph.compile().ainvoke(
         {'source_uuid': 'source', f'{basename}_candidates': candidates}
-        if scope == 'source'
-        else {f'{basename}_candidates': candidates}
     )
     assert [len(documents) for documents in reranker.documents] == [2, 1]
     assert [len(requests) for requests in judge.requests] == (
@@ -152,13 +139,10 @@ def test_oversized_judge_singleton_is_not_dispatched(scope, kind):
         basename, node, candidates, _, judge, _ = _fixture(
             scope, kind, threshold=3
         )
-        state_type = (
-            SourceSemanticState if scope == 'source' else GlobalSemanticState
+        state = SourceSemanticState(
+            source_uuid='source',
+            **{f'{basename}_borderline_pairs': candidates},
         )
-        values = {f'{basename}_borderline_pairs': candidates}
-        if scope == 'source':
-            values['source_uuid'] = 'source'
-        state = state_type(**values)
         with pytest.raises(InputBudgetExceeded, match='singleton'):
             await node.dispatch_judge(state)
         assert judge.requests == []

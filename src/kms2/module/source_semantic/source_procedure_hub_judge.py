@@ -9,16 +9,17 @@ from kms2.core.model.source_semantic.source_procedure_hub import (
 
 
 class SourceProcedureHubJudgeSignature(dspy.Signature):
-    r"""Judge whether procedure occurrences express one canonical method.
+    r"""Judge whether procedure occurrences express one canonical method from
+    their complete reconstructed source content.
 
-    Return one boolean for each ordered pair. True means the two occurrences
-    may belong to the same final source-local procedure hub. False means do not
-    connect them. Preserve ordered steps, conditions, inputs, outputs, and
-    termination when comparing procedures.
+    Return one boolean for each ordered pair. True means the two occurrences may
+    belong to the same final source-local procedure hub. False means do not connect
+    them. Preserve ordered steps, conditions, inputs, outputs, and termination
+    when comparing procedures.
     """
 
     requests: list[SourceProcedureHubJudgeInput] = dspy.InputField(
-        description='Ordered procedure occurrence pairs to judge independently.'
+        description='Ordered pairs of complete reconstructed procedure content to judge independently.'
     )
     decisions: list[SourceProcedureHubJudgeDecision] = dspy.OutputField(
         description='One indexed procedure-equivalence decision per pair.'

@@ -13,8 +13,8 @@ class SourceStatementHubJudgeInput(BaseModel):
     """One ordered statement pair supplied to the membership judge."""
 
     index: int = Field(default=0, ge=0)
-    left_description: str = Field(min_length=1)
-    right_description: str = Field(min_length=1)
+    left_content: str = Field(min_length=1)
+    right_content: str = Field(min_length=1)
 
 
 class SourceStatementHubJudgeDecision(BaseModel):
@@ -28,9 +28,9 @@ class SourceStatementHubCandidate(BaseModel):
     """One canonical statement pair returned by vector candidate discovery."""
 
     left_uuid: str = Field(min_length=1)
-    left_description: str = Field(min_length=1)
     right_uuid: str = Field(min_length=1)
-    right_description: str = Field(min_length=1)
+    left_content: str = Field(min_length=1)
+    right_content: str = Field(min_length=1)
     score: float
 
 
@@ -38,13 +38,13 @@ class SourceStatementHubMember(BaseModel):
     """One statement occurrence returned by community detection."""
 
     uuid: str = Field(min_length=1)
-    description: str = Field(min_length=1)
+    content: str = Field(min_length=1)
 
 
 class SourceStatementHubSynthesisMember(BaseModel):
     """One statement occurrence supplied as synthesis evidence."""
 
-    description: str = Field(min_length=1)
+    content: str = Field(min_length=1)
 
 
 class SourceStatementHubSynthesisInput(BaseModel):
@@ -87,7 +87,6 @@ class SourceStatementHubDefinition(BaseModel):
 class SourceStatementHub(Vertex):
     """Durable source-local statement hub vertex."""
 
-    source_uuid: str = Field(min_length=1)
     canonical_name: str = Field(min_length=1)
     aliases: list[_NonEmptyString] = Field(default_factory=list)
     description: str = Field(min_length=1)

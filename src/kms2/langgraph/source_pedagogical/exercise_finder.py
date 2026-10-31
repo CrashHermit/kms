@@ -1,0 +1,13 @@
+"""LangGraph registration for exercise component discovery."""
+
+from langgraph.graph import StateGraph
+
+from kms2.node.source_pedagogical.exercise_finder import ExerciseFinderNode
+
+
+def add_exercise_finder_phase(
+    graph: StateGraph, node: ExerciseFinderNode
+) -> None:
+    """Register the sequential exercise component finder."""
+    graph.add_node('exercise_finder', node.run)
+    graph.add_edge('instruction_finder', 'exercise_finder')

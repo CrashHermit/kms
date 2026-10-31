@@ -5,8 +5,8 @@ import pytest
 from kms2.core.model.block import SourceBlock
 from kms2.core.model.page import SourcePage
 from kms2.core.model.source import Source
-from kms2.core.model.source_processing.instruction import Instruction
-from kms2.core.model.source_processing.pedagogical import (
+from kms2.core.model.source_pedagogical.instruction import Instruction
+from kms2.core.model.source_pedagogical.pedagogical import (
     ProcedureDraft,
     StatementDraft,
 )
@@ -20,14 +20,19 @@ from kms2.database.source.source_graph_repository import SourceGraphRepository
 
 
 class _RecordingResult:
-    def __init__(self, rows: list[dict[str, str]] | None = None) -> None:
+    def __init__(self, rows: list[dict[str, object]] | None = None) -> None:
         self._rows = rows or []
 
     async def consume(self) -> None:
         return None
 
-    async def data(self) -> list[dict[str, str]]:
+    async def data(self) -> list[dict[str, object]]:
         return self._rows
+
+    async def single(self, *, strict: bool = False) -> dict[str, object]:
+        if strict:
+            assert len(self._rows) == 1
+        return self._rows[0]
 
 
 class _RecordingSession:
@@ -51,7 +56,7 @@ class _SessionContext:
         return None
 
 
-def test_replace_source_projects_pointer_rows_and_governance_once():
+def test_replace_pedagogical_material_projects_pointer_rows_and_governance_once():
     first_asset = VisualAsset(uuid='asset-1', path='first.png')
     first_block = SourceBlock(
         uuid='block-1',
@@ -75,18 +80,27 @@ def test_replace_source_projects_pointer_rows_and_governance_once():
     statements = [
         StatementDraft(
             uuid='statement-1',
+            content='A reconstructed statement.',
+            embedding=[0.1, 0.2],
             member_block_uuids=['block-2'],
             is_exercise=True,
         )
     ]
     procedures = [
-        ProcedureDraft(uuid='procedure-1', member_block_uuids=['block-1'])
+        ProcedureDraft(
+            uuid='procedure-1',
+            content='A reconstructed procedure.',
+            embedding=[0.3, 0.4],
+            member_block_uuids=['block-1'],
+        )
     ]
     session = _RecordingSession()
 
     asyncio.run(
-        SourceGraphRepository(lambda: _SessionContext(session)).replace_source(
-            Source(uuid='source-1', key='book.pdf', metadata={'kind': 'book'}),
+        SourceGraphRepository(
+            lambda: _SessionContext(session)
+        ).replace_pedagogical_material(
+            'source-1',
             pages,
             instructions,
             statements,
@@ -95,16 +109,17 @@ def test_replace_source_projects_pointer_rows_and_governance_once():
     )
 
     parameters = session.calls[0][1]
-    assert parameters['statements'] == [
-        {
-            'uuid': 'statement-1',
-            'source_uuid': 'source-1',
-            'is_exercise': True,
-        }
-    ]
-    assert parameters['procedures'] == [
-        {'uuid': 'procedure-1', 'source_uuid': 'source-1'}
-    ]
+    assert parameters['statements'][0] == {
+        'uuid': 'statement-1',
+        'content': 'A reconstructed statement.',
+        'embedding': [0.1, 0.2],
+        'is_exercise': True,
+    }
+    assert parameters['procedures'][0] == {
+        'uuid': 'procedure-1',
+        'content': 'A reconstructed procedure.',
+        'embedding': [0.3, 0.4],
+    }
     assert parameters['statement_member_pairs'] == [
         {'block_uuid': 'block-2', 'statement_uuid': 'statement-1'}
     ]
@@ -114,6 +129,93 @@ def test_replace_source_projects_pointer_rows_and_governance_once():
     assert parameters['instruction_governance_pairs'] == [
         {'instruction_uuid': 'instruction-1', 'statement_uuid': 'statement-1'}
     ]
+
+
+def test_replace_source_writes_only_structural_source_data():
+    session = _RecordingSession()
+    source = Source(uuid='source-1', key='book.pdf', metadata={'kind': 'book'})
+    pages = [
+        SourcePage(
+            index=1,
+            blocks=[
+                SourceBlock(
+                    uuid='block-1',
+                    block_type='paragraph',
+                    content='source block',
+                )
+            ],
+        )
+    ]
+
+    asyncio.run(
+        SourceGraphRepository(lambda: _SessionContext(session)).replace_source(
+            source, pages
+        )
+    )
+
+    parameters = session.calls[0][1]
+    assert parameters['source'] == {
+        'uuid': 'source-1',
+        'key': 'book.pdf',
+        'metadata': '{"kind": "book"}',
+    }
+    assert parameters['pages'] == [{'index': 1, 'markdown': ''}]
+    assert parameters['blocks'][0]['uuid'] == 'block-1'
+    assert 'statements' not in parameters
+
+
+def test_load_pages_restores_page_block_and_asset_order():
+    rows = [
+        {
+            'pages': [
+                {
+                    'index': 0,
+                    'markdown': 'first page',
+                    'blocks': [
+                        {
+                            'uuid': 'block-1',
+                            'block_type': 'paragraph',
+                            'content': 'first block',
+                            'embedding': [0.1, 0.2],
+                            'crop_path': 'crop.png',
+                            'crop_bbox': [1.0, 2.0, 3.0, 4.0],
+                            'assets': [
+                                {'uuid': 'asset-1', 'path': 'first.png'},
+                                {'uuid': 'asset-2', 'path': 'second.png'},
+                            ],
+                        }
+                    ],
+                },
+                {'index': 1, 'markdown': 'empty page', 'blocks': []},
+            ]
+        }
+    ]
+    session = _RecordingSession(_RecordingResult(rows))
+
+    pages = asyncio.run(
+        SourceGraphRepository(lambda: _SessionContext(session)).load_pages(
+            'source-1'
+        )
+    )
+
+    assert [page.index for page in pages] == [0, 1]
+    assert [page.markdown for page in pages] == ['first page', 'empty page']
+    assert pages[0].blocks == [
+        SourceBlock(
+            uuid='block-1',
+            block_type='paragraph',
+            content='first block',
+            embedding=[0.1, 0.2],
+            crop_path='crop.png',
+            crop_bbox=(1.0, 2.0, 3.0, 4.0),
+            assets=[
+                VisualAsset(uuid='asset-1', path='first.png'),
+                VisualAsset(uuid='asset-2', path='second.png'),
+            ],
+        )
+    ]
+    assert pages[1].blocks == []
+    assert session.calls[0][1] == {'source_uuid': 'source-1'}
 
 
 def test_list_sources_returns_stable_user_source_summaries():

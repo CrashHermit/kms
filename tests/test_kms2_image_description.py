@@ -1,23 +1,21 @@
 import asyncio
 
 import dspy
+from PIL import Image
 
 from kms2.config.inference import ContextWindowSettings
 from kms2.core.model.block import SourceBlock
 from kms2.core.model.block_types import BlockType
-from kms2.core.model.context import (
-    SourceBlockContext,
-    SourceContextWindow,
-)
 from kms2.core.model.page import SourcePage
 from kms2.core.model.source import Source
 from kms2.core.model.source_processing.image_description import (
-    ImageDescriptionRequest,
+    ImageDescriptionInput,
+    ImageDescriptionOutput,
     ImageDescriptionResult,
 )
 from kms2.core.model.visual_asset import VisualAsset
+from kms2.core.windowing import TokenBudget
 from kms2.langgraph.source_processing.state import SourceProcessingState
-from kms2.module.source_processing import image_description
 from kms2.node.source_processing.image_description import ImageDescriptionNode
 
 
@@ -30,17 +28,24 @@ class _Counter:
         return [1 for _ in texts]
 
 
-class _Predictor:
+class _Describer:
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
-    def __call__(self, **kwargs: object) -> dspy.Prediction:
-        self.calls.append(kwargs)
-        return dspy.Prediction(description='described image')
-
-    async def acall(self, **kwargs: object) -> dspy.Prediction:
-        self.calls.append(kwargs)
-        return dspy.Prediction(description='described image')
+    async def acall(
+        self,
+        *,
+        items: list[ImageDescriptionInput],
+        target_images: list[dspy.Image],
+    ) -> list[ImageDescriptionOutput]:
+        self.calls.append({'items': items, 'target_images': target_images})
+        return [
+            ImageDescriptionOutput(
+                position=item.position,
+                description=f'description {item.position}',
+            )
+            for item in reversed(items)
+        ]
 
 
 def _block(
@@ -64,93 +69,77 @@ def _state(pages: list[SourcePage]) -> SourceProcessingState:
     )
 
 
-def _context_window() -> ContextWindowSettings:
-    return ContextWindowSettings(backward_budget=200, forward_budget=200)
+def _node(
+    describer: object,
+    *,
+    counter: _Counter | None = None,
+    batch_size: int = 4,
+) -> ImageDescriptionNode:
+    token_counter = counter or _Counter()
+    return ImageDescriptionNode(
+        describer,
+        ContextWindowSettings(backward_budget=200, forward_budget=200),
+        budget=TokenBudget(token_counter, 10_000),
+        batch_size=batch_size,
+        token_counters=(token_counter,),
+    )
 
 
-def test_signature_exposes_image_description_contract() -> None:
-    assert set(image_description.ImageDescriptionSignature.input_fields) == {
-        'target_images',
-        'context_before',
-        'context_after',
-    }
-    assert set(image_description.ImageDescriptionSignature.output_fields) == {
-        'description'
-    }
-
-
-def test_module_preserves_ordered_target_images_sync_and_async():
-    predictor = _Predictor()
-    module = image_description.ImageDescriptionModule(predictor)
-    source_block = _block(
+def test_worker_batches_logical_images_and_preserves_ordered_asset_groups(
+    tmp_path,
+):
+    paths = [tmp_path / f'image-{index}.png' for index in range(3)]
+    for index, path in enumerate(paths):
+        Image.new('RGB', (3, 3), color=(index * 40, 10, 20)).save(path)
+    first = _block(
         block_type=BlockType.IMAGE,
-        assets=[
-            'data:image/png;base64,AAAA',
-            'data:image/png;base64,BBBB',
-        ],
+        assets=[str(paths[0]), str(paths[1])],
     )
-    before = [
-        SourceBlockContext(block_type=BlockType.PARAGRAPH, content='before')
+    second = _block(block_type=BlockType.IMAGE, assets=[str(paths[2])])
+    before = _block(block_type=BlockType.PARAGRAPH, content='before target one')
+    after = _block(block_type=BlockType.PARAGRAPH, content='after target two')
+    pages = [
+        SourcePage(index=0, blocks=[before, first]),
+        SourcePage(index=1, blocks=[second, after]),
     ]
-    after = [
-        SourceBlockContext(block_type=BlockType.PARAGRAPH, content='after')
-    ]
+    describer = _Describer()
+    node = _node(describer)
 
-    assert (
-        module(
-            source_block=source_block,
-            context_before=before,
-            context_after=after,
-        )
-        == 'described image'
+    sends = asyncio.run(node.dispatch(_state(pages)))
+    assert isinstance(sends, list)
+    assert len(sends) == 1
+    requests = sends[0].arg['image_description_requests']
+    assert [request.flat_position for request in requests] == [1, 2]
+    assert [item.content for item in requests[0].window.context_before] == [
+        'before target one'
+    ]
+    assert [item.content for item in requests[1].window.context_after] == [
+        'after target two'
+    ]
+    results = asyncio.run(node.worker({'image_description_requests': requests}))
+    singleton_sends = asyncio.run(
+        _node(object(), batch_size=1).dispatch(_state(pages))
     )
-    assert (
-        asyncio.run(
-            module.aforward(
-                source_block=source_block,
-                context_before=before,
-                context_after=after,
-            )
-        )
-        == 'described image'
-    )
+    assert isinstance(singleton_sends, list)
+    assert len(singleton_sends) == 2
+    assert [
+        len(send.arg['image_description_requests']) for send in singleton_sends
+    ] == [1, 1]
 
-    assert [image.url for image in predictor.calls[0]['target_images']] == [
-        'data:image/png;base64,AAAA',
-        'data:image/png;base64,BBBB',
-    ]
-    assert [image.url for image in predictor.calls[1]['target_images']] == [
-        'data:image/png;base64,AAAA',
-        'data:image/png;base64,BBBB',
+    call = describer.calls[0]
+    assert [item.image_positions for item in call['items']] == [[0, 1], [2]]
+    assert [item.position for item in call['items']] == [0, 1]
+    assert len(call['target_images']) == 3
+    assert all(isinstance(image, dspy.Image) for image in call['target_images'])
+    assert [
+        result.description for result in results['image_description_results']
+    ] == [
+        'description 0',
+        'description 1',
     ]
 
 
-def test_dspy_formats_ordered_image_list_as_native_image_blocks():
-    messages = dspy.ChatAdapter().format(
-        image_description.ImageDescriptionSignature,
-        demos=[],
-        inputs={
-            'target_images': [
-                dspy.Image(url='data:image/png;base64,AAAA'),
-                dspy.Image(url='data:image/png;base64,BBBB'),
-            ],
-            'context_before': [
-                SourceBlockContext(
-                    block_type=BlockType.PARAGRAPH, content='before'
-                )
-            ],
-            'context_after': [
-                SourceBlockContext(
-                    block_type=BlockType.PARAGRAPH, content='after'
-                )
-            ],
-        },
-    )
-    blocks = messages[1]['content']
-    assert sum(block['type'] == 'image_url' for block in blocks) == 2
-
-
-def test_dispatch_targets_only_images_but_keeps_generic_neighbor_context():
+def test_dispatch_targets_images_keeps_neighbor_context_and_dispatches_empty_assets():
     pages = [
         SourcePage(
             index=0,
@@ -158,71 +147,33 @@ def test_dispatch_targets_only_images_but_keeps_generic_neighbor_context():
                 _block(block_type=BlockType.PARAGRAPH, content='before'),
                 _block(block_type=BlockType.IMAGE, assets=['target.png']),
                 _block(block_type=BlockType.IMAGE, content='nearby image'),
+                _block(block_type=BlockType.IMAGE),
                 _block(block_type=BlockType.PARAGRAPH, content='after'),
             ],
         )
     ]
-    node = ImageDescriptionNode(
-        object(),
-        _context_window(),
-        token_counters=(_Counter(),),
-    )
-
+    node = _node(object())
     sends = asyncio.run(node.dispatch(_state(pages)))
-
     assert isinstance(sends, list)
-    assert len(sends) == 2
-    first = sends[0].arg['image_description_request']
-    assert first.flat_position == 1
+    requests = [
+        request
+        for send in sends
+        for request in send.arg['image_description_requests']
+    ]
+    assert [request.flat_position for request in requests] == [1, 2, 3]
+    first = requests[0]
     assert [item.content for item in first.window.context_before] == ['before']
     assert [item.content for item in first.window.context_after] == [
         'nearby image',
+        None,
         'after',
     ]
-    assert first.window.context_after[0].block_type is BlockType.IMAGE
+    assert requests[-1].source_block.assets == []
 
 
-def test_worker_passes_merged_assets_as_one_ordered_target():
-    predictor = _Predictor()
-    module = image_description.ImageDescriptionModule(predictor)
-    node = ImageDescriptionNode(
-        module,
-        _context_window(),
-        token_counters=(_Counter(),),
-    )
-    source_block = _block(
-        block_type=BlockType.IMAGE,
-        assets=[
-            'data:image/png;base64,AAAA',
-            'data:image/png;base64,BBBB',
-        ],
-    )
-    request = {
-        'image_description_request': ImageDescriptionRequest(
-            flat_position=3,
-            source_block=source_block,
-            window=SourceContextWindow(),
-        )
-    }
-
-    result = asyncio.run(node.worker(request))
-
-    assert [image.url for image in predictor.calls[0]['target_images']] == [
-        'data:image/png;base64,AAAA',
-        'data:image/png;base64,BBBB',
-    ]
-    assert result['image_description_results'] == [
-        ImageDescriptionResult(flat_position=3, description='described image')
-    ]
-
-
-def test_no_images_route_directly_to_collect():
+def test_no_images_route_directly_to_collect_without_token_counting():
     counter = _Counter()
-    node = ImageDescriptionNode(
-        object(),
-        _context_window(),
-        token_counters=(counter,),
-    )
+    node = _node(object(), counter=counter)
     state = _state(
         [
             SourcePage(
@@ -236,12 +187,9 @@ def test_no_images_route_directly_to_collect():
     assert counter.calls == []
 
 
-def test_collect_applies_out_of_order_results_without_losing_metadata():
+def test_collect_applies_results_without_losing_asset_or_page_metadata():
     first = _block(block_type=BlockType.PARAGRAPH, content='first')
-    image = _block(
-        block_type=BlockType.IMAGE,
-        assets=['target.png'],
-    )
+    image = _block(block_type=BlockType.IMAGE, assets=['target.png'])
     second = _block(block_type=BlockType.PARAGRAPH, content='second')
     pages = [
         SourcePage(index=0, blocks=[first, image]),
@@ -257,16 +205,10 @@ def test_collect_applies_out_of_order_results_without_losing_metadata():
         }
     )
 
-    result = ImageDescriptionNode(
-        object(),
-        _context_window(),
-        token_counters=(_Counter(),),
-    ).collect(state)
-    described_pages = result['image_described_pages']
-
+    described_pages = _node(object()).collect(state)['image_described_pages']
     assert [page.index for page in described_pages] == [0, 1]
     assert described_pages[0].blocks[0] is first
     assert described_pages[0].blocks[1].content == 'description'
-    assert described_pages[0].blocks[1].block_type is BlockType.IMAGE
+    assert described_pages[0].blocks[1].uuid == image.uuid
     assert described_pages[0].blocks[1].assets == image.assets
     assert described_pages[1].blocks[0] is second

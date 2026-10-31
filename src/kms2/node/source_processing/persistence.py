@@ -18,8 +18,5 @@ class SourcePersistenceNode:
         await self._repository.replace_source(
             state.source,
             state.embedded_pages,
-            state.instructions,
-            state.statements,
-            state.procedures,
         )
         return {}

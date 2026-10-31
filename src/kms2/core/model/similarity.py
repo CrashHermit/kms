@@ -19,29 +19,30 @@ class SourceEntitySimilarityMatch(BaseModel):
 
     uuid: str
     source_uuid: str
-    source_block_uuid: str
+    target_block_uuids: list[str]
     name: str
     description: str
     score: float
 
 
-class SourceEventSimilarityMatch(BaseModel):
-    """Nearest source-event metadata without the indexed embedding."""
+class SourceEntityHubSearchMatch(BaseModel):
+    """Best source-local entity occurrence matched through its hub."""
 
     uuid: str
     source_uuid: str
-    source_block_uuid: str
+    member_uuid: str
+    target_block_uuids: list[str]
     name: str
     description: str
     score: float
 
 
-class SourcePredicateSimilarityMatch(BaseModel):
-    """Nearest source-predicate metadata without the indexed embedding."""
+class SourcePropositionHubSearchMatch(BaseModel):
+    """Best source-local proposition occurrence matched through its hub."""
 
     uuid: str
     source_uuid: str
-    source_block_uuid: str
-    predicate: str
-    description: str
+    member_uuid: str
+    target_block_uuids: list[str]
+    text: str
     score: float

@@ -2,23 +2,36 @@
 
 from pydantic import BaseModel, Field
 
-from kms2.core.model.context import SourceBlockContext
-from kms2.core.model.source_semantic.base import _SemanticOccurrence
+from kms2.core.model.source_extraction import (
+    SourceEvidenceInput,
+    SourceExtractionOccurrence,
+)
 
 
-class SourceEntity(_SemanticOccurrence):
-    """Source-scoped entity occurrence attached to one triplet."""
+class SourceEntity(SourceExtractionOccurrence):
+    """Block-owned entity occurrence."""
 
     name: str = Field(min_length=1)
 
 
-class SourceEntityDescriptionInput(BaseModel):
-    """Entity occurrence and its source-local model context."""
+class SourceEntityDescriptionInput(SourceEvidenceInput):
+    """Entity term and source-local description evidence."""
 
     term: str = Field(min_length=1)
-    context_before: list[SourceBlockContext] = Field(default_factory=list)
-    target_block: SourceBlockContext
-    context_after: list[SourceBlockContext] = Field(default_factory=list)
+
+
+class SourceEntityDescriptionItem(BaseModel):
+    """One packet-local entity request with its own complete evidence."""
+
+    position: int = Field(ge=0, strict=True)
+    request: SourceEntityDescriptionInput
+
+
+class SourceEntityDescriptionOutput(BaseModel):
+    """Indexed description without source identities or evidence pointers."""
+
+    position: int = Field(ge=0, strict=True)
+    description: str
 
 
 class SourceEntityDescriptionTarget(SourceEntity):

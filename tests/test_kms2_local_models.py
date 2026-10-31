@@ -317,6 +317,80 @@ def test_runtime_exports_single_public_resource():
     assert LocalModelRuntime.__name__ == 'LocalModelRuntime'
 
 
+def test_runtime_defers_router_start_until_local_llm_use(monkeypatch):
+    asyncio.run(
+        _test_runtime_defers_router_start_until_local_llm_use(monkeypatch)
+    )
+
+
+async def _test_runtime_defers_router_start_until_local_llm_use(monkeypatch):
+    routers = []
+
+    class FakeRouter:
+        endpoint = 'http://router'
+
+        def __init__(self, *args):
+            self.start_count = 0
+            routers.append(self)
+
+        async def start(self):
+            self.start_count += 1
+
+        async def ensure_model_server(self, profile):
+            self.profile = profile
+
+        async def release_model_server(self):
+            return None
+
+        async def close(self):
+            return None
+
+    class FakeServer:
+        def __init__(self, command, endpoint, *args):
+            self.endpoint = endpoint
+
+        async def start(self):
+            return None
+
+        async def stop(self):
+            return None
+
+    monkeypatch.setattr('kms2.local_models.runtime.RouterServer', FakeRouter)
+    monkeypatch.setattr(
+        'kms2.local_models.runtime.ManagedLlamaServer', FakeServer
+    )
+
+    runtime = LocalModelRuntime(
+        LocalModelRuntimeSettings(),
+        embedding_token_counter=_EmbeddingCounter(),
+    )
+    await runtime.start()
+    assert routers[0].start_count == 0
+    await runtime.close()
+    assert routers[0].start_count == 0
+
+    runtime = LocalModelRuntime(
+        LocalModelRuntimeSettings(),
+        embedding_token_counter=_EmbeddingCounter(),
+    )
+    await runtime.start()
+
+    async def operation():
+        return 'local'
+
+    assert (
+        await runtime._execute(
+            ResidentRole.LLM,
+            'gemma-text-32k',
+            operation,
+        )
+        == 'local'
+    )
+    assert routers[1].start_count == 1
+    assert routers[1].profile == 'gemma-text-32k'
+    await runtime.close()
+
+
 def test_runtime_serializes_role_transitions_and_cleans_failed_activation(
     monkeypatch,
 ):

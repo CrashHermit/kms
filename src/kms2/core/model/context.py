@@ -12,6 +12,13 @@ class SourceBlockContext(BaseModel):
     content: str | None = None
 
 
+class PositionedSourceBlock(BaseModel):
+    """One source block with a zero-based position in a request target."""
+
+    position: int = Field(ge=0, strict=True)
+    source_block: SourceBlockContext
+
+
 class SourceContextWindow(BaseModel):
     """Ordered source context split around a target span."""
 

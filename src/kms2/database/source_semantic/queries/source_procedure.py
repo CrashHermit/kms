@@ -1,94 +1,104 @@
 """Cypher statements for source procedure."""
 
 READ_SOURCE_PROCEDURES = """
-MATCH (procedure:SourceProcedure {source_uuid: $source_uuid})
+MATCH (source:Source {uuid: $source_uuid})-[:HAS_PAGE]->(:SourcePage)
+      -[:CONTAINS_BLOCK]->(source_block:SourceBlock)-[:MEMBER_OF]->(
+          procedure:SourceProcedure
+      )
+MATCH (source)-[:FIRST_BLOCK]->(first_block:SourceBlock)
+MATCH block_path = (first_block)-[:NEXT_BLOCK*0..]->(source_block)
+WITH procedure, source_block, length(block_path) AS block_order
+ORDER BY procedure.uuid, block_order
+WITH procedure, collect(source_block.uuid) AS member_block_uuids
 RETURN procedure.uuid AS uuid,
-       procedure.source_uuid AS source_uuid,
-       [(block:SourceBlock)-[:MEMBER_OF]->(procedure) | block.uuid] AS member_block_uuids
+       member_block_uuids,
+       procedure.content AS content,
+       procedure.embedding AS embedding
 ORDER BY uuid
 """
-
-UPDATE_SOURCE_PROCEDURE_DESCRIPTION = """
-UNWIND $rows AS row
-MATCH (procedure:SourceProcedure {
-    uuid: row.uuid,
-    source_uuid: $source_uuid
-})
-SET procedure.description = row.description,
-    procedure.embedding = row.embedding
-RETURN count(procedure) AS updated
-"""
-
 READ_SOURCE_PROCEDURE_HUB_CANDIDATES = """
-MATCH (query:SourceProcedure {source_uuid: $source_uuid})
+MATCH (source:Source {uuid: $source_uuid})-[:HAS_PAGE]->(:SourcePage)
+      -[:CONTAINS_BLOCK]->(:SourceBlock)-[:MEMBER_OF]->(
+          query:SourceProcedure
+      )
 WHERE query.embedding IS NOT NULL
+WITH DISTINCT source, query
 CALL db.index.vector.queryNodes(
     'source_procedure_embedding',
     $candidate_limit,
     query.embedding
 )
 YIELD node AS candidate, score
-WHERE candidate.source_uuid = $source_uuid AND candidate.uuid <> query.uuid AND score >= $minimum_similarity
+WHERE candidate.uuid <> query.uuid AND score >= $minimum_similarity
+  AND (source)-[:HAS_PAGE]->(:SourcePage)-[:CONTAINS_BLOCK]->(
+      :SourceBlock
+  )-[:MEMBER_OF]->(candidate)
 WITH CASE WHEN query.uuid < candidate.uuid THEN query ELSE candidate END AS left,
      CASE WHEN query.uuid < candidate.uuid THEN candidate ELSE query END AS right,
      score
-WITH left,
-     right,
-     max(score) AS score
+WITH left, right, max(score) AS score
 RETURN left.uuid AS left_uuid,
-       left.description AS left_description,
+       left.content AS left_content,
        right.uuid AS right_uuid,
-       right.description AS right_description,
+       right.content AS right_content,
        score
 ORDER BY left_uuid, right_uuid
 """
-
 REPLACE_SOURCE_PROCEDURE_ACCEPTED_EDGES = """
-MATCH (left:SourceProcedure {
-    source_uuid: $source_uuid
-})-[old_similarity:SIMILAR_TO]-(right:SourceProcedure {
-    source_uuid: $source_uuid
-})
-WHERE left.uuid < right.uuid
-DELETE old_similarity
-WITH count(*) AS deleted
-UNWIND $pairs AS pair
-MATCH (left:SourceProcedure {
-    uuid: pair.left_uuid,
-    source_uuid: $source_uuid
-})
-MATCH (right:SourceProcedure {
-    uuid: pair.right_uuid,
-    source_uuid: $source_uuid
-})
-MERGE (left)-[similarity:SIMILAR_TO]->(right)
-SET similarity.score = pair.score
-RETURN count(*) AS materialized
+MATCH (source:Source {uuid: $source_uuid})
+CALL (source) {
+    MATCH (source)-[:HAS_PAGE]->(:SourcePage)-[:CONTAINS_BLOCK]->(
+        :SourceBlock
+    )-[:MEMBER_OF]->(left:SourceProcedure)
+    MATCH (left)-[old_similarity:SIMILAR_TO]->(right:SourceProcedure)
+    WHERE (source)-[:HAS_PAGE]->(:SourcePage)-[:CONTAINS_BLOCK]->(
+        :SourceBlock
+    )-[:MEMBER_OF]->(right)
+    WITH DISTINCT old_similarity
+    DELETE old_similarity
+    RETURN count(*) AS deleted
+}
+CALL (source) {
+    UNWIND $pairs AS pair
+    MATCH (source)-[:HAS_PAGE]->(:SourcePage)-[:CONTAINS_BLOCK]->(
+        :SourceBlock
+    )-[:MEMBER_OF]->(left:SourceProcedure {uuid: pair.left_uuid})
+    MATCH (source)-[:HAS_PAGE]->(:SourcePage)-[:CONTAINS_BLOCK]->(
+        :SourceBlock
+    )-[:MEMBER_OF]->(right:SourceProcedure {uuid: pair.right_uuid})
+    WITH DISTINCT pair, left, right
+    MERGE (left)-[similarity:SIMILAR_TO]->(right)
+    SET similarity.score = pair.score
+    RETURN count(*) AS materialized
+}
+RETURN materialized
 """
-
-DROP_SOURCE_PROCEDURE_HUB_GRAPH = """
-CALL gds.graph.drop(
-    $graph_name,
-    false
-)
-YIELD graphName
-RETURN graphName
-"""
-
 DETECT_SOURCE_PROCEDURE_COMMUNITIES = """
-CALL gds.graph.project(
+MATCH (source:Source {uuid: $source_uuid})-[:HAS_PAGE]->(:SourcePage)
+      -[:CONTAINS_BLOCK]->(:SourceBlock)-[:MEMBER_OF]->(
+          node:SourceProcedure
+      )
+WITH DISTINCT source, node
+OPTIONAL MATCH (node)-[similarity:SIMILAR_TO]->(target:SourceProcedure)
+WHERE (source)-[:HAS_PAGE]->(:SourcePage)-[:CONTAINS_BLOCK]->(
+    :SourceBlock
+)-[:MEMBER_OF]->(target)
+WITH node, target, similarity
+WITH gds.graph.project(
     $graph_name,
-    'SourceProcedure',
+    node,
+    target,
     {
-        SIMILAR_TO: {
-            orientation: 'UNDIRECTED',
-            properties: 'score'
-        }
-    }
-)
-YIELD graphName
+        sourceNodeLabels: 'SourceProcedure',
+        targetNodeLabels: 'SourceProcedure',
+        relationshipType: 'SIMILAR_TO',
+        relationshipProperties: {score: similarity.score}
+    },
+    {undirectedRelationshipTypes: ['*']}
+) AS graph
+WITH graph.graphName AS projected_graph_name
 CALL gds.sllpa.stream(
-    $graph_name,
+    projected_graph_name,
     {
         relationshipWeightProperty: 'score',
         maxIterations: $max_iterations,
@@ -99,35 +109,44 @@ YIELD nodeId, values
 WITH gds.util.asNode(nodeId) AS node,
      values.communityIds AS communityIds
 UNWIND communityIds AS community_id
-MATCH (node:SourceProcedure {source_uuid: $source_uuid})
 RETURN community_id,
        node.uuid AS uuid,
-       node.description AS description
-ORDER BY community_id, uuid
+       node.content AS content
 """
-
 REPLACE_SOURCE_PROCEDURE_HUBS = """
-CALL () {
-    MATCH (old_hub:SourceProcedureHub {source_uuid: $source_uuid})
-    DETACH DELETE old_hub
+MATCH (source:Source {uuid: $source_uuid})
+CALL (source) {
+    OPTIONAL MATCH (source)-[:HAS_PAGE]->(:SourcePage)
+        -[:CONTAINS_BLOCK]->(:SourceBlock)-[:MEMBER_OF]->(
+            :SourceProcedure
+        )-[:IN_SOURCE_HUB]->(old_hub:SourceProcedureHub)
+    WITH collect(DISTINCT old_hub) AS old_hubs
+    FOREACH (hub IN old_hubs | DETACH DELETE hub)
     RETURN count(*) AS deleted
 }
 UNWIND $hubs AS hub_data
 CREATE (hub:SourceProcedureHub {
     uuid: hub_data.uuid,
-    source_uuid: $source_uuid,
     canonical_name: hub_data.canonical_name,
     aliases: hub_data.aliases,
     description: hub_data.description,
     embedding: hub_data.embedding
 })
-WITH hub,
-     hub_data
+WITH source, hub, hub_data
 UNWIND hub_data.member_uuids AS member_uuid
-MATCH (member:SourceProcedure {
-    uuid: member_uuid,
-    source_uuid: $source_uuid
-})
+MATCH (source)-[:HAS_PAGE]->(:SourcePage)-[:CONTAINS_BLOCK]->(
+    :SourceBlock
+)-[:MEMBER_OF]->(member:SourceProcedure {uuid: member_uuid})
+WITH DISTINCT member, hub
 CREATE (member)-[:IN_SOURCE_HUB]->(hub)
 RETURN count(DISTINCT hub) AS persisted
+"""
+
+DROP_SOURCE_PROCEDURE_HUB_GRAPH = """
+CALL gds.graph.drop(
+    $graph_name,
+    false
+)
+YIELD graphName
+RETURN graphName
 """

@@ -20,7 +20,8 @@ def add_source_entity_description_phase(
     graph.add_node('source_entity_description_worker', description.worker)
     graph.add_node('source_entity_description_collect', description.collect)
     graph.add_edge(
-        'source_triplet_persistence', 'source_entity_description_load'
+        'source_entity_extraction_persistence',
+        'source_entity_description_load',
     )
     graph.add_conditional_edges(
         'source_entity_description_load',

@@ -1,5 +1,6 @@
 """Interactive terminal entry point for KMS2 source processing."""
 
+import argparse
 import asyncio
 import logging
 import signal
@@ -25,10 +26,11 @@ from kms2.application import (
     list_sources,
     list_unowned_sources,
     list_users,
+    login_chatgpt,
     remove_card_from_deck,
     review_card,
-    run_global_semantic_stage,
     run_source_learning_stage,
+    run_source_pedagogical_stage,
     run_source_semantic_stage,
 )
 from kms2.config.settings import Settings
@@ -38,15 +40,16 @@ from kms2.core.model.user import Deck, User
 
 PDF_DIRECTORY = Path('pdfs')
 NEW_SOURCE_OPTION = 'Run Source Processing for a new PDF'
+SOURCE_PEDAGOGICAL_OPTION = 'Run Source Pedagogical for an existing source'
 EXISTING_SOURCE_OPTION = 'Run Source Semantic for an existing source'
 SOURCE_LEARNING_OPTION = 'Run Source Learning for an existing source'
 ADOPT_SOURCE_OPTION = 'Adopt existing source'
-GLOBAL_SEMANTIC_OPTION = 'Run Global Semantic'
 CREATE_DECK_OPTION = 'Create deck'
 ADD_CARD_OPTION = 'Add source card to deck'
 REMOVE_CARD_OPTION = 'Remove card from deck'
 REVIEW_CARDS_OPTION = 'Review due cards'
 REVIEW_HISTORY_OPTION = 'Display card review history'
+SELECT_LLM_PROFILE_OPTION = 'Select text inference profile'
 CREATE_USER_OPTION = 'Create user'
 
 logger = logging.getLogger(__name__)
@@ -60,18 +63,37 @@ def _pdf_directory() -> Path:
 
 
 def run() -> None:
-    """Run the KMS2 TUI, exiting cleanly on Ctrl-C."""
+    """Run the KMS2 TUI or an explicit authentication/profile command."""
     logging.basicConfig(level=logging.INFO, format='%(message)s')
+    parser = argparse.ArgumentParser(prog='kms2')
+    parser.add_argument(
+        '--login-chatgpt',
+        action='store_true',
+        help='Authenticate LiteLLM with your ChatGPT subscription, then exit.',
+    )
+    parser.add_argument(
+        '--llm-profile',
+        help='Select a configured default text inference profile.',
+    )
+    arguments = parser.parse_args()
     try:
-        _run_tui()
+        if arguments.login_chatgpt:
+            login_chatgpt()
+            return
+        settings = Settings()
+        if arguments.llm_profile is not None:
+            if arguments.llm_profile not in settings.llm.profiles:
+                parser.error(f'Unknown LLM profile: {arguments.llm_profile}')
+            settings.llm.default_text_profile = arguments.llm_profile
+        _run_tui(settings)
     except KeyboardInterrupt, asyncio.CancelledError:
         logger.info('Cancelled.')
         sys.exit(0)
 
 
-def _run_tui() -> None:
+def _run_tui(settings: Settings | None = None) -> None:
     """Resolve a user, then prompt for one user-scoped operation."""
-    settings = Settings()
+    settings = Settings() if settings is None else settings
     user = _select_user(settings)
     sources = _run_async(list_sources(settings, user.uuid))
     unowned_sources = _run_async(list_unowned_sources(settings))
@@ -82,24 +104,36 @@ def _run_tui() -> None:
         REMOVE_CARD_OPTION,
         REVIEW_CARDS_OPTION,
         REVIEW_HISTORY_OPTION,
+        SELECT_LLM_PROFILE_OPTION,
     ]
     if sources:
-        choices.extend([EXISTING_SOURCE_OPTION, SOURCE_LEARNING_OPTION])
+        choices.extend(
+            [
+                SOURCE_PEDAGOGICAL_OPTION,
+                EXISTING_SOURCE_OPTION,
+                SOURCE_LEARNING_OPTION,
+            ]
+        )
     if unowned_sources:
         choices.append(ADOPT_SOURCE_OPTION)
-    choices.append(GLOBAL_SEMANTIC_OPTION)
     action = inquirer.select(
         message='What would you like to do?',
         choices=choices,
     ).execute()
-    if action == EXISTING_SOURCE_OPTION:
+    while action == SELECT_LLM_PROFILE_OPTION:
+        _select_llm_profile(settings)
+        action = inquirer.select(
+            message='What would you like to do?',
+            choices=choices,
+        ).execute()
+    if action == SOURCE_PEDAGOGICAL_OPTION:
+        _run_existing_source_pedagogical(settings, user, sources)
+    elif action == EXISTING_SOURCE_OPTION:
         _run_existing_source(settings, user, sources)
     elif action == SOURCE_LEARNING_OPTION:
         _run_existing_source_learning(settings, user, sources)
     elif action == ADOPT_SOURCE_OPTION:
         _adopt_existing_source(settings, user, unowned_sources)
-    elif action == GLOBAL_SEMANTIC_OPTION:
-        _run_global_semantic(settings)
     elif action == CREATE_DECK_OPTION:
         _create_user_deck(settings, user)
     elif action == ADD_CARD_OPTION:
@@ -112,6 +146,16 @@ def _run_tui() -> None:
         _display_review_history(settings, user)
     else:
         _run_new_source(settings, user)
+
+
+def _select_llm_profile(settings: Settings) -> None:
+    """Choose a default text profile for the current TUI invocation."""
+    profile = inquirer.select(
+        message='Select the default text inference profile:',
+        choices=list(settings.llm.profiles),
+        default=settings.llm.default_text_profile,
+    ).execute()
+    settings.llm.default_text_profile = profile
 
 
 def _select_user(settings: Settings) -> User:
@@ -275,23 +319,17 @@ def _display_review_history(settings: Settings, user: User) -> None:
 def _log_source_semantic_completion(source: Source, semantic) -> None:
     """Log all counts persisted by one source semantic stage."""
     logger.info(
-        'Done: source %s (%s), Source Semantic persisted %d source fact(s), '
-        '%d triplet(s); descriptions: %d entity, %d event, %d predicate, '
-        '%d statement, %d procedure; hubs: %d entity, %d event, %d predicate, '
-        '%d triplet, %d statement, %d procedure.',
+        'Done: source %s (%s), Source Semantic extracted %d proposition(s) '
+        'and %d entity occurrence(s), described %d entity occurrence(s), '
+        'and %d entity hub(s), plus %d proposition, %d statement, and %d '
+        'procedure hub(s).',
         source.uuid,
         source.key,
-        semantic.source_fact_count,
-        semantic.triplet_count,
+        semantic.source_proposition_count,
+        semantic.source_entity_count,
         semantic.source_entity_description_count,
-        semantic.source_event_description_count,
-        semantic.source_predicate_description_count,
-        semantic.source_statement_description_count,
-        semantic.source_procedure_description_count,
         semantic.source_entity_hub_count,
-        semantic.source_event_hub_count,
-        semantic.source_predicate_hub_count,
-        semantic.source_triplet_hub_count,
+        semantic.source_proposition_hub_count,
         semantic.source_statement_hub_count,
         semantic.source_procedure_hub_count,
     )
@@ -317,10 +355,10 @@ def _run_new_source(settings: Settings, user: User) -> None:
     )
     result = _run_async(ingest_source(settings, user.uuid, pdf_path, pages))
     logger.info(
-        'Done: source %s (%s), Source Processing ingested %d page(s).',
+        'Done: source %s (%s), Source Processing embedded %d page(s).',
         result.source.uuid,
         result.source.key,
-        result.split_page_count,
+        result.embedded_page_count,
     )
 
 
@@ -353,6 +391,51 @@ def _run_existing_source(
         run_source_semantic_stage(settings, user.uuid, source.uuid)
     )
     _log_source_semantic_completion(source, semantic)
+
+
+def _run_existing_source_pedagogical(
+    settings: Settings,
+    user: User,
+    sources: list[Source],
+) -> None:
+    """Run Source Pedagogical for an owned source."""
+    source = inquirer.select(
+        message='Select the source for Source Pedagogical:',
+        choices=[
+            Choice(
+                value=source,
+                name=f'{source.key} ({source.uuid})',
+            )
+            for source in sources
+        ],
+    ).execute()
+    proceed = inquirer.confirm(
+        message='Run Source Pedagogical on the selected source?',
+        default=True,
+    ).execute()
+
+    if not proceed:
+        logger.info('Cancelled.')
+        return
+
+    pedagogical = _run_async(
+        run_source_pedagogical_stage(settings, user.uuid, source.uuid)
+    )
+    logger.info(
+        'Done: source %s (%s), Source Pedagogical split %d page(s), found '
+        '%d instruction(s), %d exercise and %d pedagogical component(s), '
+        'reconstructed and embedded %d statement(s) and %d procedure(s), and '
+        'embedded %d pedagogical block(s).',
+        source.uuid,
+        source.key,
+        pedagogical.split_page_count,
+        pedagogical.instruction_count,
+        pedagogical.exercise_component_count,
+        pedagogical.pedagogical_component_count,
+        pedagogical.statement_count,
+        pedagogical.procedure_count,
+        pedagogical.reembedded_block_count,
+    )
 
 
 def _log_source_learning_completion(source: Source, learning) -> None:
@@ -420,29 +503,6 @@ def _adopt_existing_source(
         logger.info('Adopted source %s (%s).', source.key, source.uuid)
     else:
         logger.info('Cancelled.')
-
-
-def _run_global_semantic(settings: Settings) -> None:
-    """Run Global Semantic over all persisted source hubs."""
-    proceed = inquirer.confirm(
-        message='Run Global Semantic over all persisted source hubs?',
-        default=True,
-    ).execute()
-    if not proceed:
-        logger.info('Cancelled.')
-        return
-    result = _run_async(run_global_semantic_stage(settings))
-    logger.info(
-        (
-            'Done: Global Semantic persisted %d entity, %d event, %d predicate, '
-            '%d statement, and %d procedure global hub(s).'
-        ),
-        result.global_entity_hub_count,
-        result.global_event_hub_count,
-        result.global_predicate_hub_count,
-        result.global_statement_hub_count,
-        result.global_procedure_hub_count,
-    )
 
 
 if __name__ == '__main__':

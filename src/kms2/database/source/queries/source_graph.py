@@ -20,33 +20,47 @@ CALL (source) {
 }
 WITH source
 CALL (source) {
-    OPTIONAL MATCH (source)-[:FIRST_BLOCK]->(first:SourceBlock)
-    OPTIONAL MATCH (first)-[:NEXT_BLOCK*0..]->(source_block:SourceBlock)
-    OPTIONAL MATCH (source_block)<-[:HAS_SOURCE_BLOCK]-(:SourceFactTarget)
-        <-[:HAS_TARGET]-(old_fact:SourceFact)
-    OPTIONAL MATCH (old_fact)-[:HAS_TARGET|HAS_CONTEXT_BEFORE|HAS_CONTEXT_AFTER]->(
-        old_pointer
-    )
-    OPTIONAL MATCH (old_fact)-[:HAS_TRIPLET]->(old_triplet:SourceTriplet)
-    OPTIONAL MATCH (old_triplet)-[:HAS_SUBJECT|HAS_OBJECT]->(old_endpoint)
-    OPTIONAL MATCH (old_triplet)-[:HAS_PREDICATE]->(
-        old_predicate:SourcePredicate
-    )
-    OPTIONAL MATCH (old_triplet)-[
-        :HAS_QUALIFIER|HAS_INTERPRETIVE_BINDING
-    ]->(old_attachment)
-    WITH collect(DISTINCT old_fact) AS facts,
-         collect(DISTINCT old_pointer) AS pointers,
-         collect(DISTINCT old_triplet) AS triplets,
-         collect(DISTINCT old_endpoint) AS endpoints,
-         collect(DISTINCT old_predicate) AS predicates,
-         collect(DISTINCT old_attachment) AS attachments
-    FOREACH (attachment IN attachments | DETACH DELETE attachment)
-    FOREACH (triplet IN triplets | DETACH DELETE triplet)
-    FOREACH (fact IN facts | DETACH DELETE fact)
-    FOREACH (pointer IN pointers | DETACH DELETE pointer)
-    FOREACH (endpoint IN endpoints | DETACH DELETE endpoint)
-    FOREACH (predicate IN predicates | DETACH DELETE predicate)
+    OPTIONAL MATCH (source)-[:HAS_PAGE]->(:SourcePage)
+        -[:CONTAINS_BLOCK]->(:SourceBlock)-[:MEMBER_OF]->(
+            :SourceProposition
+        )-[:IN_SOURCE_HUB]->(proposition_hub:SourcePropositionHub)
+    OPTIONAL MATCH (source)-[:HAS_PAGE]->(:SourcePage)
+        -[:CONTAINS_BLOCK]->(:SourceBlock)-[:MEMBER_OF]->(
+            :SourceEntity
+        )-[:IN_SOURCE_HUB]->(entity_hub:SourceEntityHub)
+    WITH collect(DISTINCT proposition_hub) + collect(DISTINCT entity_hub) AS hubs
+    FOREACH (hub IN hubs | DETACH DELETE hub)
+    RETURN count(*) AS identity_hubs_deleted
+}
+WITH source
+CALL (source) {
+    OPTIONAL MATCH (source)-[:HAS_PAGE]->(:SourcePage)
+        -[:CONTAINS_BLOCK]->(:SourceBlock)-[:MEMBER_OF]->(
+            proposition:SourceProposition
+        )
+    OPTIONAL MATCH (source)-[:HAS_PAGE]->(:SourcePage)
+        -[:CONTAINS_BLOCK]->(:SourceBlock)-[:MEMBER_OF]->(
+            entity:SourceEntity
+        )
+    WITH collect(DISTINCT proposition) AS propositions,
+         collect(DISTINCT entity) AS entities
+    FOREACH (proposition IN propositions | DETACH DELETE proposition)
+    FOREACH (entity IN entities | DETACH DELETE entity)
+    RETURN count(*) AS _
+}
+WITH source
+CALL (source) {
+    OPTIONAL MATCH (source)-[:HAS_PAGE]->(:SourcePage)
+        -[:CONTAINS_BLOCK]->(:SourceBlock)-[:MEMBER_OF]->(
+            :SourceStatement
+        )-[:IN_SOURCE_HUB]->(statement_hub:SourceStatementHub)
+    OPTIONAL MATCH (source)-[:HAS_PAGE]->(:SourcePage)
+        -[:CONTAINS_BLOCK]->(:SourceBlock)-[:MEMBER_OF]->(
+            :SourceProcedure
+        )-[:IN_SOURCE_HUB]->(procedure_hub:SourceProcedureHub)
+    WITH collect(DISTINCT statement_hub)
+         + collect(DISTINCT procedure_hub) AS hubs
+    FOREACH (hub IN hubs | DETACH DELETE hub)
     RETURN count(*) AS _
 }
 WITH source
@@ -149,63 +163,6 @@ CALL (source) {
     MATCH (from_block:SourceBlock {uuid: row.from_uuid})
     MATCH (to_block:SourceBlock {uuid: row.to_uuid})
     CREATE (from_block)-[:NEXT_BLOCK]->(to_block)
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    UNWIND $instructions AS row
-    CREATE (instruction:Instruction {uuid: row.uuid})
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    UNWIND $instruction_member_pairs AS row
-    MATCH (block:SourceBlock {uuid: row.block_uuid})
-    MATCH (instruction:Instruction {uuid: row.instruction_uuid})
-    CREATE (block)-[:MEMBER_OF]->(instruction)
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    UNWIND $statements AS row
-    CREATE (statement:SourceStatement {
-        uuid: row.uuid,
-        source_uuid: row.source_uuid,
-        is_exercise: row.is_exercise
-    })
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    UNWIND $procedures AS row
-    CREATE (procedure:SourceProcedure {
-        uuid: row.uuid,
-        source_uuid: row.source_uuid
-    })
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    UNWIND $statement_member_pairs AS row
-    MATCH (block:SourceBlock {uuid: row.block_uuid})
-    MATCH (statement:SourceStatement {uuid: row.statement_uuid})
-    CREATE (block)-[:MEMBER_OF]->(statement)
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    UNWIND $procedure_member_pairs AS row
-    MATCH (block:SourceBlock {uuid: row.block_uuid})
-    MATCH (procedure:SourceProcedure {uuid: row.procedure_uuid})
-    CREATE (block)-[:MEMBER_OF]->(procedure)
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    UNWIND $instruction_governance_pairs AS row
-    MATCH (instruction:Instruction {uuid: row.instruction_uuid})
-    MATCH (statement:SourceStatement {uuid: row.statement_uuid})
-    CREATE (instruction)-[:GOVERNS]->(statement)
     RETURN count(*) AS _
 }
 WITH source

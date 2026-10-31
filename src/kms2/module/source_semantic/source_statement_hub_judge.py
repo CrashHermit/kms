@@ -9,15 +9,16 @@ from kms2.core.model.source_semantic.source_statement_hub import (
 
 
 class SourceStatementHubJudgeSignature(dspy.Signature):
-    r"""Judge whether statement occurrences express one canonical statement.
+    r"""Judge whether statement occurrences express one canonical statement from
+    their complete reconstructed source content.
 
-    Return one boolean for each ordered pair. True means the two occurrences
-    may belong to the same final source-local statement hub. False means do not
-    connect them. Reject topical relatedness and merely similar wording.
+    Return one boolean for each ordered pair. True means the two occurrences may
+    belong to the same final source-local statement hub. False means do not connect
+    them. Reject topical relatedness and merely similar wording.
     """
 
     requests: list[SourceStatementHubJudgeInput] = dspy.InputField(
-        description='Ordered statement occurrence pairs to judge independently.'
+        description='Ordered pairs of complete reconstructed statement content to judge independently.'
     )
     decisions: list[SourceStatementHubJudgeDecision] = dspy.OutputField(
         description='One indexed statement-equivalence decision per pair.'

@@ -1,20 +1,10 @@
 """Embed source-local entity descriptions in a LangGraph phase."""
 
-from typing import Literal, TypedDict
-
-from langgraph.types import Send
-
 from kms2.core.embedding import EmbeddingClient
 from kms2.core.model.source_semantic.source_entity import (
     SourceEntityDescriptionResult,
 )
 from kms2.langgraph.source_semantic.state import SourceSemanticState
-
-
-class SourceEntityEmbeddingWorkerState(TypedDict):
-    """State supplied to the entity embedding worker."""
-
-    source_entity_description_results: list[SourceEntityDescriptionResult]
 
 
 class SourceEntityEmbeddingNode:
@@ -23,26 +13,13 @@ class SourceEntityEmbeddingNode:
     def __init__(self, client: EmbeddingClient) -> None:
         self._client = client
 
-    def dispatch(
+    async def run(
         self, state: SourceSemanticState
-    ) -> list[Send] | Literal['source_entity_embedding_collect']:
-        """Dispatch all entity descriptions as one ordered embedding batch."""
-        if not state.source_entity_description_results:
-            return 'source_entity_embedding_collect'
-        return [
-            Send(
-                'source_entity_embedding_worker',
-                {
-                    'source_entity_description_results': state.source_entity_description_results,
-                },
-            )
-        ]
-
-    async def worker(
-        self, state: SourceEntityEmbeddingWorkerState
     ) -> dict[str, list[SourceEntityDescriptionResult]]:
         """Embed entity term-description pairs in input order."""
-        results = state['source_entity_description_results']
+        results = state.source_entity_description_results
+        if not results:
+            return {'source_entity_embedding_results': []}
         vectors = await self._client.embed(
             [f'{result.name} : {result.description}' for result in results]
         )
@@ -52,7 +29,3 @@ class SourceEntityEmbeddingNode:
                 for result, vector in zip(results, vectors, strict=True)
             ]
         }
-
-    def collect(self, state: SourceSemanticState) -> dict[str, object]:
-        """Finish embedding fan-in before persistence."""
-        return {}

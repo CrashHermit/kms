@@ -1,8 +1,8 @@
 """Content-only two-pass contracts for source-local flashcard generation.
 
 Atomic and coherent inference receives semantic content without backend UUIDs.
-Transient packets retain provenance for collection; every durable result is a
-generic source flashcard with direct triplet, fact, hub, and parent-card edges.
+Transient packets retain proposition provenance and hub grouping; durable cards
+remain source-owned with proposition and selected-parent provenance.
 Regeneration clears generated cards and their review history for one source.
 """
 

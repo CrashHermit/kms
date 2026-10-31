@@ -9,6 +9,28 @@ from kms2.config.inference import (
 )
 
 
+class ContentCorrectionSettings(BaseModel):
+    """Inference and whole-block text batching budgets for visual OCR correction."""
+
+    inference: VisionInferenceSettings = Field(
+        default_factory=VisionInferenceSettings
+    )
+    input_token_budget: int = Field(default=2048, gt=0)
+    batch_size: int = Field(default=4, gt=0)
+    safety_margin_tokens: int = Field(default=256, ge=0)
+
+
+class FormattingSettings(BaseModel):
+    """Inference and whole-block batching budgets for source formatting."""
+
+    inference: TextInferenceSettings = Field(
+        default_factory=TextInferenceSettings
+    )
+    input_token_budget: int = Field(default=2048, gt=0)
+    batch_size: int = Field(default=32, gt=0)
+    safety_margin_tokens: int = Field(default=256, ge=0)
+
+
 class ImageDescriptionSettings(BaseModel):
     """Language model and context-window settings for image descriptions."""
 
@@ -21,115 +43,9 @@ class ImageDescriptionSettings(BaseModel):
             forward_budget=200,
         )
     )
-
-
-class ExerciseSplitterSettings(BaseModel):
-    """Language model and context-window settings for exercise splitting."""
-
-    router: TextInferenceSettings = Field(default_factory=TextInferenceSettings)
-    splitter: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
-    )
-    context_window: ContextWindowSettings = Field(
-        default_factory=ContextWindowSettings
-    )
-
-
-class InstructionFinderSettings(BaseModel):
-    """Language model and context-window settings for instruction discovery."""
-
-    start_router: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
-    )
-    boundary_router: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
-    )
-    start_context_window: ContextWindowSettings = Field(
-        default_factory=lambda: ContextWindowSettings(
-            backward_budget=0,
-            forward_budget=0,
-        )
-    )
-    boundary_context_window: ContextWindowSettings = Field(
-        default_factory=lambda: ContextWindowSettings(
-            backward_budget=300,
-            forward_budget=0,
-        )
-    )
-
-
-class PedagogicalFinderSettings(BaseModel):
-    """Language model and context-window settings for pedagogical discovery."""
-
-    start_router: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
-    )
-    boundary_router: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
-    )
-    start_context_window: ContextWindowSettings = Field(
-        default_factory=lambda: ContextWindowSettings(
-            backward_budget=300,
-            forward_budget=300,
-        )
-    )
-    boundary_context_window: ContextWindowSettings = Field(
-        default_factory=lambda: ContextWindowSettings(
-            backward_budget=300,
-            forward_budget=300,
-        )
-    )
-
-
-class StatementProcedureSettings(BaseModel):
-    """Language model settings for statement and procedure construction."""
-
-    role_typer: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
-    )
-    statement_partitioner: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
-    )
-    procedure_partitioner: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
-    )
-
-
-class ExerciseFinderSettings(BaseModel):
-    """Language model and context-window settings for exercise discovery."""
-
-    start_router: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
-    )
-    boundary_router: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
-    )
-    start_context_window: ContextWindowSettings = Field(
-        default_factory=lambda: ContextWindowSettings(
-            backward_budget=0,
-            forward_budget=0,
-        )
-    )
-    boundary_context_window: ContextWindowSettings = Field(
-        default_factory=lambda: ContextWindowSettings(
-            backward_budget=0,
-            forward_budget=0,
-        )
-    )
-
-
-class InstructionGovernanceSettings(BaseModel):
-    """Language model and context-window settings for instruction governance."""
-
-    inference: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
-    )
-    context_window: ContextWindowSettings = Field(
-        default_factory=lambda: ContextWindowSettings(
-            backward_budget=200,
-            forward_budget=500,
-        )
-    )
+    batch_size: int = Field(default=4, gt=0)
+    input_token_budget: int = Field(default=2048, gt=0)
+    safety_margin_tokens: int = Field(default=256, ge=0)
 
 
 class TextSeamSettings(BaseModel):
@@ -139,39 +55,33 @@ class TextSeamSettings(BaseModel):
     rewriter: TextInferenceSettings = Field(
         default_factory=TextInferenceSettings
     )
+    judge_batch_size: int = Field(default=16, gt=0)
+    rewrite_batch_size: int = Field(default=16, gt=0)
+    judge_input_token_budget: int = Field(default=4096, gt=0)
+    rewrite_input_token_budget: int = Field(default=4096, gt=0)
+    safety_margin_tokens: int = Field(default=256, ge=0)
+
+
+class ImageSeamSettings(BaseModel):
+    """Vision inference and text-metadata batching for image seams."""
+
+    inference: VisionInferenceSettings = Field(
+        default_factory=VisionInferenceSettings
+    )
+    batch_size: int = Field(default=4, gt=0)
+    input_token_budget: int = Field(default=2048, gt=0)
+    safety_margin_tokens: int = Field(default=256, ge=0)
 
 
 class SourceProcessingSettings(BaseModel):
     """Settings for the KMS2 source-processing pipeline."""
 
-    content_correction: VisionInferenceSettings = Field(
-        default_factory=VisionInferenceSettings
+    content_correction: ContentCorrectionSettings = Field(
+        default_factory=ContentCorrectionSettings
     )
-    formatting: TextInferenceSettings = Field(
-        default_factory=TextInferenceSettings
-    )
+    formatting: FormattingSettings = Field(default_factory=FormattingSettings)
     text_seam: TextSeamSettings = Field(default_factory=TextSeamSettings)
-    image_seam: VisionInferenceSettings = Field(
-        default_factory=VisionInferenceSettings
-    )
+    image_seam: ImageSeamSettings = Field(default_factory=ImageSeamSettings)
     image_description: ImageDescriptionSettings = Field(
         default_factory=ImageDescriptionSettings
-    )
-    exercise_splitter: ExerciseSplitterSettings = Field(
-        default_factory=ExerciseSplitterSettings
-    )
-    instruction_finder: InstructionFinderSettings = Field(
-        default_factory=InstructionFinderSettings
-    )
-    pedagogical_finder: PedagogicalFinderSettings = Field(
-        default_factory=PedagogicalFinderSettings
-    )
-    statement_procedure: StatementProcedureSettings = Field(
-        default_factory=StatementProcedureSettings
-    )
-    exercise_finder: ExerciseFinderSettings = Field(
-        default_factory=ExerciseFinderSettings
-    )
-    instruction_governance: InstructionGovernanceSettings = Field(
-        default_factory=InstructionGovernanceSettings
     )

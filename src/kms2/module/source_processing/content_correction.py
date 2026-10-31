@@ -2,21 +2,55 @@
 
 import dspy
 
+from kms2.core.model.source_processing.content_correction import (
+    ContentCorrectionInput,
+    ContentCorrectionOutput,
+)
+
 
 class ContentCorrectorSignature(dspy.Signature):
-    """Restore OCR content so it matches the supplied source image."""
+    r"""Transcribe each indexed source crop faithfully, correcting OCR errors only.
 
-    block_crop: dspy.Image = dspy.InputField(
-        description='The cropped source image for this content block.'
+    Each block is independent. Its zero-based position identifies exactly one
+    crop at the same ordinal in block_crops. Use only that crop as evidence
+    for its corrected_content; do not borrow text or answers from other blocks.
+    Return one complete corrected transcription for every input position.
+
+    Read the crop before consulting the OCR text. OCR is a potentially faulty
+    aid, not a draft to copy: the crop is authoritative even when the OCR is
+    mathematically plausible. Check every visible numeral, sign, superscript,
+    and subscript against its own crop. Restore misread or missing visible
+    characters, mathematical signs, labels, and text. Preserve wording, numbers,
+    mathematical values, subparts, line order, and intentional answer spaces.
+    Never fill in a blank, solve a problem, simplify an expression, infer
+    missing answers, complete a cut-off sentence, or add explanatory text.
+    Preserve a blank with its underline or placeholder, not a guessed value.
+
+    Transcribe visible text even when the OCR content is absent. A crop that
+    contains only a non-text figure has corrected_content null; do not describe
+    or interpret the figure, and do not return OCR image-link placeholders as
+    transcribed text. An empty crop likewise has no transcription. Mathematical
+    notation may be represented in LaTeX without changing its content. This
+    stage corrects transcription; representation formatting is a separate task.
+    """
+
+    blocks: list[ContentCorrectionInput] = dspy.InputField(
+        description=(
+            'Ordered source blocks with contiguous local positions, block types, '
+            'and complete OCR transcriptions when available.'
+        )
     )
-    block_type: str = dspy.InputField(
-        description='The source block type, such as text or equation.'
+    block_crops: list[dspy.Image] = dspy.InputField(
+        description=(
+            'Native source crop images, with crop ordinal matching each block '
+            'position.'
+        )
     )
-    content: str = dspy.InputField(
-        description='The complete OCR transcription of the block.'
-    )
-    corrected_content: str = dspy.OutputField(
-        description='The complete corrected block transcription.'
+    corrected_blocks: list[ContentCorrectionOutput] = dspy.OutputField(
+        description=(
+            'Complete corrected transcription for every input block, preserving '
+            'its local position. Do not invent content.'
+        )
     )
 
 
@@ -30,29 +64,25 @@ class ContentCorrectorModule(dspy.Module):
     def forward(
         self,
         *,
-        block_crop: dspy.Image,
-        block_type: str,
-        content: str,
-    ) -> str:
-        """Correct one OCR block synchronously."""
+        blocks: list[ContentCorrectionInput],
+        block_crops: list[dspy.Image],
+    ) -> list[ContentCorrectionOutput]:
+        """Correct a batch synchronously."""
         prediction = self.predictor(
-            block_crop=block_crop,
-            block_type=block_type,
-            content=content,
+            blocks=blocks,
+            block_crops=block_crops,
         )
-        return prediction.corrected_content
+        return prediction.corrected_blocks
 
     async def aforward(
         self,
         *,
-        block_crop: dspy.Image,
-        block_type: str,
-        content: str,
-    ) -> str:
-        """Correct one OCR block asynchronously."""
+        blocks: list[ContentCorrectionInput],
+        block_crops: list[dspy.Image],
+    ) -> list[ContentCorrectionOutput]:
+        """Correct a batch asynchronously."""
         prediction = await self.predictor.acall(
-            block_crop=block_crop,
-            block_type=block_type,
-            content=content,
+            blocks=blocks,
+            block_crops=block_crops,
         )
-        return prediction.corrected_content
+        return prediction.corrected_blocks

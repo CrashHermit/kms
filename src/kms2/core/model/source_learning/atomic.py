@@ -19,9 +19,9 @@ class SourceAtomicFlashcardInput(BaseModel):
 class SourceAtomicFlashcardRequest(BaseModel):
     """Backend request retaining provenance for one atomic inference call."""
 
+    source_block_uuid: str = Field(min_length=1)
     hub_uuid: str = Field(min_length=1)
-    triplet_uuid: str = Field(min_length=1)
-    source_fact_uuid: str = Field(min_length=1)
+    source_proposition_uuid: str = Field(min_length=1)
     input: SourceAtomicFlashcardInput
 
     def model_input(self) -> SourceAtomicFlashcardInput:

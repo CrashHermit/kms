@@ -10,20 +10,11 @@ from kms2.core.model.source import Source
 from kms2.core.model.source_processing.content_correction import (
     ContentCorrectionResult,
 )
-from kms2.core.model.source_processing.embedding import EmbeddingResult
-from kms2.core.model.source_processing.exercise_splitter import SplitResult
 from kms2.core.model.source_processing.formatting import FormattingResult
 from kms2.core.model.source_processing.image_description import (
     ImageDescriptionResult,
 )
 from kms2.core.model.source_processing.image_seam import ImageSeamResult
-from kms2.core.model.source_processing.instruction import Instruction
-from kms2.core.model.source_processing.pedagogical import (
-    ExerciseComponent,
-    PedagogicalComponent,
-    ProcedureDraft,
-    StatementDraft,
-)
 from kms2.core.model.source_processing.text_seam import TextSeamResult
 
 
@@ -33,6 +24,12 @@ class SourceProcessingState(BaseModel):
     pdf_path: str
     pages: list[int] | None = Field(default=None)
     source: Source
+
+    @property
+    def source_uuid(self) -> str:
+        """Return the UUID of the source being processed."""
+        return self.source.uuid
+
     ocr_pages: list[SourcePage] = Field(default_factory=list)
 
     correction_results: Annotated[
@@ -67,20 +64,4 @@ class SourceProcessingState(BaseModel):
         list[ImageDescriptionResult], operator.add
     ] = Field(default_factory=list)
     image_described_pages: list[SourcePage] = Field(default_factory=list)
-    split_pages: list[SourcePage] = Field(default_factory=list)
-    instructions: list[Instruction] = Field(default_factory=list)
-    exercise_components: list[ExerciseComponent] = Field(default_factory=list)
-    pedagogical_components: list[PedagogicalComponent] = Field(
-        default_factory=list
-    )
-    statements: list[StatementDraft] = Field(default_factory=list)
-    procedures: list[ProcedureDraft] = Field(default_factory=list)
     embedded_pages: list[SourcePage] = Field(default_factory=list)
-
-    embedding_results: Annotated[list[EmbeddingResult], operator.add] = Field(
-        default_factory=list
-    )
-
-    split_results: Annotated[list[SplitResult], operator.add] = Field(
-        default_factory=list
-    )

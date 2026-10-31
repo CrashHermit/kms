@@ -4,13 +4,21 @@ from typing import Literal, TypedDict
 
 from langgraph.types import Send
 
+from kms2.config.inference import ContextWindowSettings
+from kms2.core.model.source_extraction import SourceEvidenceInput
 from kms2.core.model.source_learning.atomic import SourceAtomicFlashcardRequest
 from kms2.core.model.source_learning.coherent import SourceAtomicFlashcardPacket
 from kms2.core.model.source_learning.flashcard import (
     SourceFlashcard,
     SourceFlashcardOccurrence,
 )
-from kms2.core.windowing import TokenBudget, pack_items
+from kms2.core.windowing import (
+    TokenBudget,
+    count_text_tokens,
+    pack_items,
+    select_window,
+)
+from kms2.database.source.source_block_repository import SourceBlockRepository
 from kms2.database.source_learning.repository import SourceLearningRepository
 from kms2.langgraph.source_learning.state import (
     SourceAtomicFlashcardWorkerResult,
@@ -27,26 +35,55 @@ class SourceAtomicFlashcardWorkerState(TypedDict):
 
 
 class SourceAtomicFlashcardNode:
-    """Generate ordered atomic cards from exact source-semantic requests."""
+    """Generate ordered atomic cards from exact proposition requests."""
 
     def __init__(
         self,
         repository: SourceLearningRepository,
         module: SourceAtomicFlashcardModule,
+        context_window: ContextWindowSettings,
+        source_block_repository: SourceBlockRepository,
         *,
         budget: TokenBudget,
     ) -> None:
         self._repository = repository
         self._module = module
+        self._context_window = context_window
+        self._source_block_repository = source_block_repository
         self._budget = budget
 
     async def load(self, state: SourceLearningState) -> dict[str, object]:
-        """Load ordered atomic requests for the source."""
-        return {
-            'atomic_requests': await self._repository.load_atomic_flashcard_requests(
-                state.source_uuid
-            )
+        """Load atomic requests and assemble transient source context."""
+        requests = await self._repository.load_atomic_flashcard_requests(
+            state.source_uuid
+        )
+        if not requests:
+            return {'atomic_requests': requests}
+        blocks = await self._source_block_repository.load_blocks(
+            state.source_uuid
+        )
+        token_counts = count_text_tokens(
+            [block.content for block in blocks], (self._budget.counter,)
+        )
+        positions = {
+            block.uuid: position for position, block in enumerate(blocks)
         }
+        for request in requests:
+            position = positions[request.source_block_uuid]
+            window = select_window(
+                blocks,
+                [position],
+                token_counts=token_counts,
+                backward_budget=self._context_window.backward_budget,
+                forward_budget=self._context_window.forward_budget,
+                target_budget=0,
+            )
+            request.input.evidence.source_context = SourceEvidenceInput(
+                context_before=window.context_before,
+                target_blocks=window.target,
+                context_after=window.context_after,
+            )
+        return {'atomic_requests': requests}
 
     def dispatch(
         self, state: SourceLearningState
@@ -104,9 +141,7 @@ class SourceAtomicFlashcardNode:
                         question=candidate.question,
                         answer=candidate.answer,
                     ),
-                    hub_uuid=request.hub_uuid,
-                    triplet_uuids=[request.triplet_uuid],
-                    source_fact_uuids=[request.source_fact_uuid],
+                    source_proposition_uuids=[request.source_proposition_uuid],
                 )
                 for candidate in result.cards
             ]

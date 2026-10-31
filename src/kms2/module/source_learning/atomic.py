@@ -7,27 +7,24 @@ from kms2.core.model.source_learning.flashcard import SourceFlashcardCandidate
 
 
 class SourceAtomicFlashcardSignature(dspy.Signature):
-    """Generate focused retrieval cards from one exact source claim."""
+    """Generate focused retrieval cards grounded in one source proposition."""
 
     request: SourceAtomicFlashcardInput = dspy.InputField(
         description=(
             'Generate zero or more distinct question-and-answer cards from the '
-            'supplied directed relationship. Each card must test one meaningful '
-            'retrieval target: a definition, condition, distinction, explanation, '
-            'application, calculation, or other source-supported objective. A card '
-            'may test a relationship; atomic and coherent describe generation '
-            'stages, not mutually exclusive card types. The exact triplet and '
-            'source fact are authoritative evidence. Hub descriptions explain '
-            'concepts and notation but do not authorize unrelated claims. Make '
-            'each question and answer standalone: never mention the source, '
-            'evidence packet, or another card. Use the smallest complete answer. '
-            'Preserve direction, negation, conditions, quantification, formulas, '
-            'units, and source-supported symbol meanings. Accept equivalent '
-            'wording when it expresses the same intended meaning. Return [] when '
-            'no useful card is warranted. Do not force a card, reverse the '
-            'relation exhaustively, or emit duplicate retrieval targets. Use '
-            '$...$ and $$...$$ for LaTeX only; never use backslash-parenthesis or '
-            'backslash-bracket delimiters.'
+            'complete proposition and its exact source evidence. The proposition '
+            'occurrence and target blocks are authoritative; before/after blocks '
+            'may resolve references but cannot add independent claims. Test a '
+            'useful definition, condition, distinction, explanation, or '
+            'application without exceeding the supported claim. Make every '
+            'question and answer standalone. Preserve conditions, exceptions, '
+            'negation, quantifiers, formulas, domains, defining objects, units, '
+            'and notation. Do not omit a material qualification. Equivalent '
+            'wording is acceptable only when it preserves the same meaning. '
+            'Return [] when no useful nonduplicate card is warranted; do not '
+            'manufacture an exhaustive inverse or a card merely to paraphrase '
+            'the proposition. Use $...$ and $$...$$ for LaTeX only; never use '
+            'backslash-parenthesis or backslash-bracket delimiters.'
         )
     )
     cards: list[SourceFlashcardCandidate] = dspy.OutputField(
@@ -36,7 +33,7 @@ class SourceAtomicFlashcardSignature(dspy.Signature):
 
 
 class SourceAtomicFlashcardModule(dspy.Module):
-    """Generate atomic flashcards from one exact triplet/fact input."""
+    """Generate atomic flashcards from one exact proposition/evidence input."""
 
     def __init__(self, predictor: dspy.Module) -> None:
         super().__init__()

@@ -121,7 +121,7 @@ def test_recorder_stores_images_as_run_sidecars(
         {
             'images': [
                 dspy.Image(url=data_url),
-                dspy.Image(url=str(image_path)),
+                dspy.Image.from_path(str(image_path)),
             ]
         },
         dspy.Prediction(result=dspy.Image(url=data_url)),

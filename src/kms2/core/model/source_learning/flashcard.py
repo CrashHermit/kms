@@ -23,7 +23,5 @@ class SourceFlashcardOccurrence(BaseModel):
     """Persistable card with selected source-semantic provenance."""
 
     card: SourceFlashcard
-    hub_uuid: str = Field(min_length=1)
-    triplet_uuids: list[str] = Field(min_length=1)
-    source_fact_uuids: list[str] = Field(min_length=1)
+    source_proposition_uuids: list[str] = Field(min_length=1)
     derived_card_uuids: list[str] = Field(default_factory=list)

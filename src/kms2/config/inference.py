@@ -2,7 +2,7 @@
 
 from enum import StrEnum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class PredictorStrategy(StrEnum):
@@ -13,9 +13,11 @@ class PredictorStrategy(StrEnum):
 
 
 class StageInferenceSettings(BaseModel):
-    """Request-time inference settings for one source stage."""
+    """Request-time settings and an optional named inference profile."""
 
-    model_server_profile: str
+    model_config = ConfigDict(extra='forbid')
+
+    profile: str | None = Field(default=None, min_length=1)
     strategy: PredictorStrategy = PredictorStrategy.PREDICT
     temperature: float = 1.0
     top_p: float = 0.95
@@ -27,7 +29,6 @@ class StageInferenceSettings(BaseModel):
 class TextInferenceSettings(StageInferenceSettings):
     """Request-time inference settings for text model-server stages."""
 
-    model_server_profile: str = 'qwen3.8-9b-distill-text'
     temperature: float = 0.6
     top_k: int = 20
     max_tokens: int = 16384
@@ -36,7 +37,7 @@ class TextInferenceSettings(StageInferenceSettings):
 class VisionInferenceSettings(StageInferenceSettings):
     """Request-time inference settings for vision model-server stages."""
 
-    model_server_profile: str = 'gemma-vision-8k'
+    profile: str | None = Field(default='chatgpt-luna', min_length=1)
 
 
 class NoRetryTextInferenceSettings(TextInferenceSettings):
@@ -73,3 +74,20 @@ class ContextWindowSettings(BaseModel):
     backward_budget: int | None = None
     forward_budget: int | None = None
     target_budget: int = 0
+
+
+class TermDescriptionSettings(BaseModel):
+    """Language model and context-window settings for typed descriptions."""
+
+    inference: NoRetryTextInferenceSettings = Field(
+        default_factory=NoRetryTextInferenceSettings
+    )
+    context_window: ContextWindowSettings = Field(
+        default_factory=lambda: ContextWindowSettings(
+            backward_budget=400,
+            forward_budget=400,
+        )
+    )
+    batch_size: int = Field(default=16, gt=0)
+    input_token_budget: int = Field(default=4096, gt=0)
+    safety_margin_tokens: int = Field(default=256, ge=0)

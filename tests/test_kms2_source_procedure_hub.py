@@ -62,10 +62,8 @@ def test_procedure_worker_keeps_original_membership_outside_synthesis():
         **direct_synthesis(),
     )
     community = [
-        SourceProcedureHubMember(uuid='procedure-1', description='First step.'),
-        SourceProcedureHubMember(
-            uuid='procedure-2', description='Then finish.'
-        ),
+        SourceProcedureHubMember(uuid='procedure-1', content='First step.'),
+        SourceProcedureHubMember(uuid='procedure-2', content='Then finish.'),
     ]
 
     result = asyncio.run(
@@ -77,7 +75,7 @@ def test_procedure_worker_keeps_original_membership_outside_synthesis():
         )
     )
 
-    assert [member.description for member in module.requests[0].members] == [
+    assert [member.content for member in module.requests[0].members] == [
         'First step.',
         'Then finish.',
     ]
@@ -120,15 +118,16 @@ def test_procedure_hub_empty_source_is_independent():
     }
 
 
-def test_procedure_hub_candidate_preserves_ordered_description_evidence():
+def test_procedure_hub_candidate_preserves_pair_ids_and_reconstructed_content():
     candidate = SourceProcedureHubCandidate(
         left_uuid='a',
-        left_description='step one then step two',
+        left_content='step one then step two',
         right_uuid='b',
-        right_description='step one then step two',
+        right_content='step one then step two',
         score=0.9,
     )
-    assert candidate.left_description == candidate.right_description
+    assert (candidate.left_uuid, candidate.right_uuid) == ('a', 'b')
+    assert candidate.left_content == candidate.right_content
 
 
 def test_procedure_synthesis_result_contains_only_embedding_inputs():

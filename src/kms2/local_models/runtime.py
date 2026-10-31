@@ -2,7 +2,7 @@
 
 import asyncio
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from enum import StrEnum
 from pathlib import Path
 from types import TracebackType
@@ -132,6 +132,7 @@ class LocalModelRuntime:
         self._settings = settings
         self._embedding_token_counter = embedding_token_counter
         self._lock = asyncio.Lock()
+        self._router_started = False
         self._state = 'stopped'
         self._active_role: tuple[ResidentRole, str | None] | None = None
         self._process_owner: ProcessOwner = create_process_owner()
@@ -142,7 +143,7 @@ class LocalModelRuntime:
         self._reranker_client: httpx.AsyncClient | None = None
 
     async def start(self) -> None:
-        """Start the owned router and prepare lazy retrieval resources."""
+        """Prepare the router and lazy retrieval resources without starting processes."""
         async with self._lock:
             if self._state != 'stopped':
                 raise RuntimeError('local model runtime is already started')
@@ -177,14 +178,6 @@ class LocalModelRuntime:
                 base_url=self._reranker_server.endpoint,
                 timeout=self._settings.reranker.timeout_seconds,
             )
-            try:
-                await self._router.start()
-            except BaseException:
-                try:
-                    await self._close_resources()
-                finally:
-                    self._state = 'stopped'
-                raise
             self._state = 'started'
 
     async def close(self) -> None:
@@ -264,14 +257,16 @@ class LocalModelRuntime:
         inference: StageInferenceSettings,
         signature: type[dspy.Signature],
         *,
+        model_server_profile: str,
         adapter: dspy.Adapter | None = None,
+        examples: Sequence[dspy.Example] | None = None,
     ) -> RuntimePredictor:
-        """Build a DSPy predictor controlled by this runtime."""
+        """Build a predictor with explicit examples before the residency wrapper."""
         router = self._router
         if router is None:
             raise RuntimeError('local model runtime has not started')
         lm = dspy.LM(
-            inference.model_server_profile,
+            model_server_profile,
             api_base=f'{router.endpoint}/v1',
             api_key='not-needed',
             custom_llm_provider='openai',
@@ -282,14 +277,16 @@ class LocalModelRuntime:
             num_retries=inference.num_retries,
             cache=True,
         )
-        predictor: dspy.Module
         if inference.strategy is PredictorStrategy.PREDICT:
             predictor = dspy.Predict(signature)
         else:
             predictor = dspy.ChainOfThought(signature)
+        if examples is not None:
+            for parameter in predictor.predictors():
+                parameter.demos = list(examples)
         predictor.set_lm(lm)
         return RuntimePredictor(
-            self, inference.model_server_profile, predictor, adapter=adapter
+            self, model_server_profile, predictor, adapter=adapter
         )
 
     async def _execute(
@@ -335,6 +332,9 @@ class LocalModelRuntime:
         if role is ResidentRole.LLM:
             assert model_server_profile is not None
             assert self._router is not None
+            if not self._router_started:
+                await self._router.start()
+                self._router_started = True
             await self._router.ensure_model_server(model_server_profile)
         elif role is ResidentRole.EMBEDDING:
             assert self._embedding_server is not None
@@ -348,8 +348,9 @@ class LocalModelRuntime:
             return
         role, _ = self._active_role
         if role is ResidentRole.LLM:
-            assert self._router is not None
-            await self._router.release_model_server()
+            if self._router_started:
+                assert self._router is not None
+                await self._router.release_model_server()
         elif role is ResidentRole.EMBEDDING:
             assert self._embedding_server is not None
             await self._embedding_server.stop()
@@ -381,8 +382,7 @@ class LocalModelRuntime:
                 errors.append(error)
         self._embedding_server = None
         self._reranker_server = None
-        self._embedding_client = None
-        self._reranker_client = None
+        self._router_started = False
         self._router = None
         if errors:
             raise errors[0]

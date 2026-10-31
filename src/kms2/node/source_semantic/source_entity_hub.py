@@ -1,11 +1,11 @@
-"""Dispatch and collect source-local entity hub phases."""
+"""Dispatch and collect iterative source-local entity hub reconciliation."""
 
 from typing import Literal, TypedDict
 
-from langgraph.types import Send
+from langgraph.types import Overwrite, Send
 
 from kms2.config.source_semantic import SourceEntityHubSettings
-from kms2.core.embedding import EmbeddingClient
+from kms2.core.model.source_extraction import SourceEvidenceInput
 from kms2.core.model.source_semantic.source_entity_hub import (
     SourceEntityHub,
     SourceEntityHubCandidate,
@@ -13,30 +13,19 @@ from kms2.core.model.source_semantic.source_entity_hub import (
     SourceEntityHubJudgeResult,
     SourceEntityHubMember,
     SourceEntityHubRerankResult,
-    SourceEntityHubSummary,
-    SourceEntityHubSummaryInput,
-    SourceEntityHubSummaryMergeInput,
-    SourceEntityHubSummarySynthesisInput,
-    SourceEntityHubSynthesisInput,
-    SourceEntityHubSynthesisMember,
-    SourceEntityHubSynthesisResult,
 )
 from kms2.core.reranking import RerankerClient
 from kms2.core.windowing import (
     TextTokenCounter,
     TokenBudget,
-    fits_token_budget,
+    count_text_tokens,
     pack_items,
+    select_window,
 )
-from kms2.database.source_semantic.source_entity_repository import (
+from kms2.database.source.source_entity_repository import (
     SourceEntityRepository,
 )
 from kms2.langgraph.source_semantic.state import SourceSemanticState
-from kms2.module.source_semantic.source_entity_hub import (
-    SourceEntityHubModule,
-    SourceEntityHubSummaryMergeModule,
-    SourceEntityHubSummaryModule,
-)
 from kms2.module.source_semantic.source_entity_hub_judge import (
     SourceEntityHubJudgeModule,
 )
@@ -57,78 +46,116 @@ class SourceEntityHubJudgeWorkerState(TypedDict):
     source_entity_hub_batch: list[SourceEntityHubCandidate]
 
 
-class SourceEntityHubSynthesisWorkerState(TypedDict):
-    """State supplied to one entity synthesis worker."""
+class SourceEntityHubInitialState(TypedDict):
+    """Required minimal entity state used to start reconciliation."""
 
-    source_entity_hub_synthesis_ordinal: int
-    source_entity_hub_community: list[SourceEntityHubMember]
+    source_entity_hub_members: list[SourceEntityHubMember]
+    source_entity_hub_groups: list[list[SourceEntityHubMember]]
+    source_entity_hub_decision_cache: dict[str, bool]
 
 
 class SourceEntityHubNode:
-    """Run entity hub discovery as ordered LangGraph phases."""
+    """Reconcile existing entity occurrences within one source semantic stage."""
 
     def __init__(
         self,
         repository: SourceEntityRepository,
-        module: SourceEntityHubModule,
         judge_module: SourceEntityHubJudgeModule,
         reranker: RerankerClient,
-        embedding_client: EmbeddingClient,
         settings: SourceEntityHubSettings,
         *,
         reranker_token_counter: TextTokenCounter,
         reranker_overhead_tokens: int,
         judge_budget: TokenBudget,
-        summary_module: SourceEntityHubSummaryModule,
-        merge_module: SourceEntityHubSummaryMergeModule,
-        final_budget: TokenBudget,
-        summary_budget: TokenBudget,
-        merge_budget: TokenBudget,
     ) -> None:
         self._repository = repository
-        self._module = module
         self._judge_module = judge_module
         self._reranker = reranker
-        self._embedding_client = embedding_client
         self._settings = settings
         self._reranker_token_counter = reranker_token_counter
         self._reranker_overhead_tokens = reranker_overhead_tokens
         self._judge_budget = judge_budget
-        self._summary_module = summary_module
-        self._merge_module = merge_module
-        self._final_budget = final_budget
-        self._summary_budget = summary_budget
-        self._merge_budget = merge_budget
+
+    async def initialize(
+        self, state: SourceSemanticState
+    ) -> SourceEntityHubInitialState:
+        """Load members and attach judge-bounded transient context."""
+        members = await self._repository.read_source_entity_hub_members(
+            state.source_uuid
+        )
+        if members:
+            token_counts = count_text_tokens(
+                [block.content for block in state.blocks],
+                (self._judge_budget.counter,),
+            )
+            positions = {
+                block.uuid: position
+                for position, block in enumerate(state.blocks)
+            }
+            for member in members:
+                window = select_window(
+                    state.blocks,
+                    [positions[member.source_block_uuid]],
+                    token_counts=token_counts,
+                    backward_budget=self._settings.context_window.backward_budget,
+                    forward_budget=self._settings.context_window.forward_budget,
+                    target_budget=0,
+                )
+                member.evidence = SourceEvidenceInput(
+                    context_before=window.context_before,
+                    target_blocks=window.target,
+                    context_after=window.context_after,
+                )
+        return {
+            'source_entity_hub_members': members,
+            'source_entity_hub_groups': [[member] for member in members],
+            'source_entity_hub_decision_cache': {},
+        }
 
     async def load_candidates(
         self, state: SourceSemanticState
     ) -> dict[str, object]:
-        """Read entity vector candidates for this source."""
-        candidates = await self._repository.read_source_entity_hub_candidates(
+        """Retrieve current group proposals and expand them to all cross-pairs."""
+        groups = state.source_entity_hub_groups
+        proposals = await self._repository.read_source_entity_hub_candidates(
             state.source_uuid,
+            groups,
             candidate_limit=self._settings.candidate_limit,
             minimum_similarity=self._settings.minimum_similarity,
         )
-        return {'source_entity_hub_candidates': candidates}
+        groups_by_id = {
+            min(member.uuid for member in group): group for group in groups
+        }
+        candidates = []
+        for proposal in proposals:
+            left_group = groups_by_id[proposal.left_group_uuid]
+            right_group = groups_by_id[proposal.right_group_uuid]
+            for left in left_group:
+                for right in right_group:
+                    candidates.append(_candidate(proposal, left, right))
+        return {
+            'source_entity_hub_candidates': candidates,
+            'source_entity_hub_reranked_candidates': [],
+        }
 
-    async def dispatch_rerank(
+    def dispatch_rerank(
         self, state: SourceSemanticState
     ) -> list[Send] | Literal['source_entity_hub_rerank_collect']:
-        """Partition entity candidates into ordered reranker batches."""
-        if not state.source_entity_hub_candidates:
-            return 'source_entity_hub_rerank_collect'
-        sends: list[Send] = []
-        ordinal = 0
+        """Pack unknown name-description pairs by left occurrence."""
         grouped: dict[str, list[SourceEntityHubCandidate]] = {}
         for candidate in state.source_entity_hub_candidates:
-            grouped.setdefault(candidate.left_uuid, []).append(candidate)
-        for group in grouped.values():
-            left = group[0]
-            left_text = _entity_text(left.left_name, left.left_description)
-            right_texts = [
-                _entity_text(candidate.right_name, candidate.right_description)
-                for candidate in group
-            ]
+            if (
+                _pair_key(candidate.left_uuid, candidate.right_uuid)
+                not in state.source_entity_hub_decision_cache
+            ):
+                grouped.setdefault(candidate.left_uuid, []).append(candidate)
+        if not grouped:
+            return 'source_entity_hub_rerank_collect'
+        sends = []
+        ordinal = 0
+        for candidates in grouped.values():
+            left_text = _left_text(candidates[0])
+            right_texts = [_right_text(candidate) for candidate in candidates]
             costs = self._reranker_token_counter.count_texts(
                 [left_text, *right_texts]
             )
@@ -138,7 +165,7 @@ class SourceEntityHubNode:
                 for right_cost in right_costs
             ]
             for batch in pack_items(
-                group,
+                candidates,
                 token_counts=candidate_costs,
                 token_budget=self._settings.reranker_token_budget,
             ):
@@ -158,62 +185,61 @@ class SourceEntityHubNode:
     async def rerank_worker(
         self, state: SourceEntityHubRerankWorkerState
     ) -> dict[str, list[SourceEntityHubRerankResult]]:
-        """Rerank one entity candidate batch."""
+        """Reject weak candidates without approving any identity pair."""
         batch = state['source_entity_hub_batch']
         results = await self._reranker.rerank(
             state['source_entity_hub_left_text'],
-            [
-                _entity_text(candidate.right_name, candidate.right_description)
-                for candidate in batch
-            ],
+            [_right_text(candidate) for candidate in batch],
             top_n=None,
         )
-        direct: list[SourceEntityHubCandidate] = []
-        borderline: list[SourceEntityHubCandidate] = []
-        for result in sorted(results, key=lambda item: item['index']):
-            candidate = batch[result['index']]
-            score = result['relevance_score']
-            if score >= self._settings.reranker_acceptance_threshold:
-                direct.append(candidate)
-            elif score >= self._settings.reranker_rejection_threshold:
-                borderline.append(candidate)
+        survivors = [
+            batch[result['index']]
+            for result in sorted(results, key=lambda item: item['index'])
+            if result['relevance_score']
+            >= self._settings.reranker_rejection_threshold
+        ]
+        rejected = [
+            candidate for candidate in batch if candidate not in survivors
+        ]
         return {
             'source_entity_hub_rerank_results': [
                 SourceEntityHubRerankResult(
                     ordinal=state['source_entity_hub_rerank_ordinal'],
-                    direct=direct,
-                    borderline=borderline,
+                    survivors=survivors,
+                    rejected=rejected,
                 )
             ]
         }
 
     def collect_rerank(self, state: SourceSemanticState) -> dict[str, object]:
-        """Collect reranker results in source order."""
+        """Cache reranker rejections and clear reducer-backed round outputs."""
         results = sorted(
             state.source_entity_hub_rerank_results,
             key=lambda item: item.ordinal,
         )
-        direct = [
-            candidate for result in results for candidate in result.direct
-        ]
-        borderline = [
-            candidate for result in results for candidate in result.borderline
-        ]
+        cache = dict(state.source_entity_hub_decision_cache)
+        survivors = []
+        for result in results:
+            survivors.extend(result.survivors)
+            for candidate in result.rejected:
+                cache[_pair_key(candidate.left_uuid, candidate.right_uuid)] = (
+                    False
+                )
         return {
-            'source_entity_hub_direct_pairs': direct,
-            'source_entity_hub_borderline_pairs': borderline,
+            'source_entity_hub_reranked_candidates': survivors,
+            'source_entity_hub_decision_cache': cache,
+            'source_entity_hub_rerank_results': Overwrite([]),
         }
 
-    async def dispatch_judge(
+    def dispatch_judge(
         self, state: SourceSemanticState
     ) -> list[Send] | Literal['source_entity_hub_judge_collect']:
-        """Partition borderline entity pairs into ordered judge batches."""
-        if not state.source_entity_hub_borderline_pairs:
+        """Pack reranker survivors into bounded explicit identity judgments."""
+        items = state.source_entity_hub_reranked_candidates
+        if not items:
             return 'source_entity_hub_judge_collect'
-        items = state.source_entity_hub_borderline_pairs
         requests = [
-            _entity_judge_input(index, candidate)
-            for index, candidate in enumerate(items)
+            _judge_input(index, item) for index, item in enumerate(items)
         ]
         costs = self._judge_budget.counter.count_texts(
             [request.model_dump_json(exclude={'index'}) for request in requests]
@@ -238,232 +264,170 @@ class SourceEntityHubNode:
     async def judge_worker(
         self, state: SourceEntityHubJudgeWorkerState
     ) -> dict[str, list[SourceEntityHubJudgeResult]]:
-        """Judge one entity borderline batch."""
+        """Judge a bounded batch and retain explicit positive and negative results."""
         batch = state['source_entity_hub_batch']
         decisions = await self._judge_module.acall(
             requests=[
-                _entity_judge_input(index, item)
-                for index, item in enumerate(batch)
+                _judge_input(index, item) for index, item in enumerate(batch)
             ]
         )
         accepted = [
-            batch[decision.index]
-            for decision in decisions
-            if decision.belongs_in_same_hub
+            batch[item.index] for item in decisions if item.belongs_in_same_hub
+        ]
+        rejected = [
+            batch[item.index]
+            for item in decisions
+            if not item.belongs_in_same_hub
         ]
         return {
             'source_entity_hub_judge_results': [
                 SourceEntityHubJudgeResult(
                     ordinal=state['source_entity_hub_judge_ordinal'],
                     accepted=accepted,
+                    rejected=rejected,
                 )
             ]
         }
 
     def collect_judge(self, state: SourceSemanticState) -> dict[str, object]:
-        """Merge direct and judged entity pairs in stable order."""
-        accepted = list(state.source_entity_hub_direct_pairs)
-        for result in sorted(
+        """Cache only explicit identity decisions and clear round worker outputs."""
+        results = sorted(
             state.source_entity_hub_judge_results,
             key=lambda item: item.ordinal,
-        ):
-            accepted.extend(result.accepted)
-        unique: dict[tuple[str, str], SourceEntityHubCandidate] = {}
-        for candidate in accepted:
-            unique.setdefault(
-                (candidate.left_uuid, candidate.right_uuid), candidate
-            )
-        return {'source_entity_hub_accepted_pairs': list(unique.values())}
-
-    async def detect_communities(
-        self, state: SourceSemanticState
-    ) -> dict[str, object]:
-        """Replace accepted edges and detect entity communities."""
-        await self._repository.replace_source_entity_accepted_edges(
-            state.source_uuid,
-            state.source_entity_hub_accepted_pairs,
         )
-        communities = await self._repository.detect_source_entity_communities(
-            state.source_uuid,
-            max_iterations=self._settings.max_iterations,
-            min_association_strength=self._settings.min_association_strength,
-            minimum_community_size=self._settings.minimum_community_size,
-        )
-        return {'source_entity_hub_communities': communities}
-
-    def dispatch_synthesis(
-        self, state: SourceSemanticState
-    ) -> list[Send] | Literal['source_entity_hub_synthesis_collect']:
-        """Dispatch one synthesis worker per ordered entity community."""
-        if not state.source_entity_hub_communities:
-            return 'source_entity_hub_synthesis_collect'
-        sends = [
-            Send(
-                'source_entity_hub_synthesis_worker',
-                {
-                    'source_entity_hub_synthesis_ordinal': ordinal,
-                    'source_entity_hub_community': community,
-                },
-            )
-            for ordinal, community in enumerate(
-                state.source_entity_hub_communities
-            )
-        ]
-        return sends
-
-    async def synthesis_worker(
-        self, state: SourceEntityHubSynthesisWorkerState
-    ) -> dict[str, list[SourceEntityHubSynthesisResult]]:
-        """Synthesize one entity community using evidence reduction."""
-        community = state['source_entity_hub_community']
-        original_request = SourceEntityHubSynthesisInput(
-            members=[
-                SourceEntityHubSynthesisMember(
-                    name=member.name,
-                    description=member.description,
+        cache = dict(state.source_entity_hub_decision_cache)
+        for result in results:
+            for candidate in result.accepted:
+                cache[_pair_key(candidate.left_uuid, candidate.right_uuid)] = (
+                    True
                 )
-                for member in community
-            ]
+            for candidate in result.rejected:
+                cache[_pair_key(candidate.left_uuid, candidate.right_uuid)] = (
+                    False
+                )
+        return {
+            'source_entity_hub_decision_cache': cache,
+            'source_entity_hub_judge_results': Overwrite([]),
+        }
+
+    def merge_groups(self, state: SourceSemanticState) -> dict[str, object]:
+        """Apply deterministic disjoint merges requiring every cross-pair positive."""
+        groups = sorted(
+            state.source_entity_hub_groups,
+            key=lambda group: min(member.uuid for member in group),
         )
-        original_cost = self._final_budget.counter.count_texts(
-            [original_request.model_dump_json()]
-        )[0]
-        if fits_token_budget(
-            token_count=original_cost,
-            threshold=self._final_budget.token_limit,
-        ):
-            definition = await self._module.acall(request=original_request)
-        else:
-            records = [
-                member.model_dump_json() for member in original_request.members
-            ]
-            record_costs = self._summary_budget.counter.count_texts(records)
-            current: list[SourceEntityHubSummary] = []
-            for batch in pack_items(
-                records,
-                token_counts=record_costs,
-                token_budget=self._summary_budget.token_limit,
+        group_by_id = {
+            min(member.uuid for member in group): group for group in groups
+        }
+        proposals = sorted(
+            state.source_entity_hub_candidates,
+            key=lambda item: (
+                -item.score,
+                item.left_group_uuid,
+                item.right_group_uuid,
+            ),
+        )
+        consumed: set[str] = set()
+        merged = []
+        for proposal in proposals:
+            left_id, right_id = (
+                proposal.left_group_uuid,
+                proposal.right_group_uuid,
+            )
+            if left_id in consumed or right_id in consumed:
+                continue
+            left, right = group_by_id[left_id], group_by_id[right_id]
+            if all(
+                state.source_entity_hub_decision_cache.get(
+                    _pair_key(left_member.uuid, right_member.uuid)
+                )
+                is True
+                for left_member in left
+                for right_member in right
             ):
-                current.append(
-                    await self._summary_module.acall(
-                        request=SourceEntityHubSummaryInput(
-                            evidence=batch,
-                        )
-                    )
-                )
-
-            while True:
-                reduced_request = SourceEntityHubSummarySynthesisInput(
-                    summaries=current
-                )
-                reduced_cost = self._final_budget.counter.count_texts(
-                    [reduced_request.model_dump_json()]
-                )[0]
-                if fits_token_budget(
-                    token_count=reduced_cost,
-                    threshold=self._final_budget.token_limit,
-                ):
-                    definition = await self._module.acall(
-                        request=reduced_request
-                    )
-                    break
-                current = await self._merge_summary_level(current)
-
-        return {
-            'source_entity_hub_synthesis_results': [
-                SourceEntityHubSynthesisResult(
-                    ordinal=state['source_entity_hub_synthesis_ordinal'],
-                    definition=definition,
-                    membership_uuids=[member.uuid for member in community],
-                    aliases=[member.name for member in community],
-                )
-            ]
-        }
-
-    async def _merge_summary_level(
-        self, summaries: list[SourceEntityHubSummary]
-    ) -> list[SourceEntityHubSummary]:
-        """Merge one level while carrying a trailing singleton."""
-        summary_costs = self._merge_budget.counter.count_texts(
-            [summary.model_dump_json() for summary in summaries]
-        )
-        merged: list[SourceEntityHubSummary] = []
-        for batch in pack_items(
-            summaries,
-            token_counts=summary_costs,
-            token_budget=self._merge_budget.token_limit,
-        ):
-            if len(batch) == 1:
-                merged.append(batch[0])
-            else:
+                consumed.update((left_id, right_id))
                 merged.append(
-                    await self._merge_module.acall(
-                        request=SourceEntityHubSummaryMergeInput(
-                            summaries=batch,
-                        )
-                    )
+                    sorted([*left, *right], key=lambda member: member.uuid)
                 )
-        return merged
-
-    def collect_synthesis(
-        self, state: SourceSemanticState
-    ) -> dict[str, object]:
-        """Collect entity definitions in community order."""
+        next_groups = [
+            group
+            for group in groups
+            if min(member.uuid for member in group) not in consumed
+        ] + merged
+        next_groups.sort(key=lambda group: min(member.uuid for member in group))
         return {
-            'source_entity_hub_synthesis_results_ordered': sorted(
-                state.source_entity_hub_synthesis_results,
-                key=lambda item: item.ordinal,
-            )
+            'source_entity_hub_groups': next_groups,
+            'source_entity_hub_round_merged': len(next_groups) < len(groups),
         }
 
-    async def embed(self, state: SourceSemanticState) -> dict[str, object]:
-        """Embed ordered entity definitions and construct typed hubs."""
-        results = state.source_entity_hub_synthesis_results_ordered
-        definitions = [result.definition for result in results]
-        if not definitions:
-            return {
-                'source_entity_hubs': [],
-                'source_entity_hub_memberships': [],
-            }
-        vectors = await self._embedding_client.embed(
-            [
-                f'{definition.canonical_name}: {definition.description}'
-                for definition in definitions
-            ]
+    def repeat_round(self, state: SourceSemanticState) -> str:
+        """Continue discovery only after at least one deterministic merge."""
+        return (
+            'source_entity_hub_load'
+            if state.source_entity_hub_round_merged
+            else 'source_entity_hub_prepare'
         )
-        hubs = [
-            SourceEntityHub(
-                source_uuid=state.source_uuid,
-                canonical_name=definition.canonical_name,
-                aliases=result.aliases,
-                description=definition.description,
-                embedding=vector,
-            )
-            for result, definition, vector in zip(
-                results, definitions, vectors, strict=True
-            )
-        ]
+
+    def prepare_hubs(self, state: SourceSemanticState) -> dict[str, object]:
+        """Prepare identity-only hubs and stable, disjoint memberships."""
+        groups = sorted(
+            state.source_entity_hub_groups,
+            key=lambda group: min(member.uuid for member in group),
+        )
         return {
-            'source_entity_hubs': hubs,
+            'source_entity_hubs': [SourceEntityHub() for _ in groups],
             'source_entity_hub_memberships': [
-                result.membership_uuids for result in results
+                sorted(member.uuid for member in group) for group in groups
             ],
         }
 
 
-def _entity_text(name: str, description: str) -> str:
-    """Render one entity occurrence for reranking."""
-    return f'{name}: {description}'
+def _candidate(
+    proposal: SourceEntityHubCandidate,
+    left: SourceEntityHubMember,
+    right: SourceEntityHubMember,
+) -> SourceEntityHubCandidate:
+    return SourceEntityHubCandidate(
+        left_group_uuid=proposal.left_group_uuid,
+        right_group_uuid=proposal.right_group_uuid,
+        left_uuid=left.uuid,
+        left_name=left.name,
+        left_description=left.description,
+        left_evidence=left.evidence,
+        right_uuid=right.uuid,
+        right_name=right.name,
+        right_description=right.description,
+        right_evidence=right.evidence,
+        score=proposal.score,
+    )
 
 
-def _entity_judge_input(
+def _pair_key(left_uuid: str, right_uuid: str) -> str:
+    """Return a stable unordered occurrence-pair key."""
+    left, right = sorted((left_uuid, right_uuid))
+    return f'{left}:{right}'
+
+
+def _left_text(candidate: SourceEntityHubCandidate) -> str:
+    """Render the rerank query using the established name-description evidence."""
+    return f'{candidate.left_name}: {candidate.left_description}'
+
+
+def _right_text(candidate: SourceEntityHubCandidate) -> str:
+    """Render a rerank document using the established name-description evidence."""
+    return f'{candidate.right_name}: {candidate.right_description}'
+
+
+def _judge_input(
     index: int, candidate: SourceEntityHubCandidate
 ) -> SourceEntityHubJudgeInput:
-    """Build one indexed entity judge request."""
+    """Build a UUID-free judge request with occurrence-specific evidence."""
     return SourceEntityHubJudgeInput(
         index=index,
         left_name=candidate.left_name,
         left_description=candidate.left_description,
+        left_evidence=candidate.left_evidence,
         right_name=candidate.right_name,
         right_description=candidate.right_description,
+        right_evidence=candidate.right_evidence,
     )

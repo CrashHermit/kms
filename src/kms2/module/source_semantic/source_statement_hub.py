@@ -13,14 +13,14 @@ from kms2.core.model.source_semantic.source_statement_hub import (
 
 
 class SourceStatementHubSummarySignature(dspy.Signature):
-    r"""Summarize ordered source evidence for a statement hub.
-
-    Preserve statement claim, theorem, question, and exercise qualifications.
-    Emit a concise, self-contained summary of the supplied evidence.
+    r"""Preserve statement claim, theorem, question, and exercise qualifications.
+    Evidence is complete reconstructed source content, not a concise
+    description. Emit a concise, self-contained summary of the supplied
+    evidence.
     """
 
     request: SourceStatementHubSummaryInput = dspy.InputField(
-        description='Ordered statement evidence to summarize.'
+        description='Ordered complete reconstructed statement source content to summarize.'
     )
     summary: SourceStatementHubSummary = dspy.OutputField(
         description='One concise, self-contained temporary statement-hub evidence summary.'
@@ -86,15 +86,16 @@ class SourceStatementHubSignature(dspy.Signature):
     r"""Synthesize one source-local statement from fixed evidence.
 
     Return a concise canonical name and source-grounded description. Preserve
-    claim, theorem, question, and exercise qualifiers. The evidence is fixed;
-    never decide membership or invent facts.
+    claim, theorem, question, and exercise qualifiers. Occurrence evidence is
+    complete reconstructed source content, not concise descriptions. The
+    evidence is fixed; never decide membership or invent facts.
     """
 
     request: (
         SourceStatementHubSynthesisInput
         | SourceStatementHubSummarySynthesisInput
     ) = dspy.InputField(
-        description='Fixed statement evidence or ordered partial summaries.'
+        description='Fixed complete reconstructed statement source content or ordered partial summaries.'
     )
     definition: SourceStatementHubDefinition = dspy.OutputField(
         description='One canonical source-local statement hub definition.'

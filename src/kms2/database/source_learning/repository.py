@@ -4,28 +4,28 @@ from collections.abc import Callable, Sequence
 
 from neo4j import AsyncSession
 
+from kms2.core.model.source_extraction import (
+    SourceEvidenceInput,
+)
 from kms2.core.model.source_learning.atomic import SourceAtomicFlashcardRequest
 from kms2.core.model.source_learning.context import (
     SourceLearningEvidence,
     SourceLearningHubContext,
 )
 from kms2.core.model.source_learning.flashcard import SourceFlashcardOccurrence
-from kms2.core.model.source_semantic.source_triplet_hub import (
-    SourceTripletHubRole,
-)
 from kms2.database.source_learning.queries.source_flashcard import (
     CREATE_SOURCE_FLASHCARDS,
 )
 from kms2.database.source_learning.queries.source_learning import (
     CLEAR_SOURCE_LEARNING,
 )
-from kms2.database.source_learning.queries.source_triplet import (
+from kms2.database.source_learning.queries.source_proposition import (
     READ_SOURCE_ATOMIC_FLASHCARD_REQUESTS,
 )
 
 
 class SourceLearningRepository:
-    """Read exact source-semantic context and persist generic cards."""
+    """Load source-learning requests and persist generic cards."""
 
     def __init__(self, session_factory: Callable[[], AsyncSession]) -> None:
         self._session_factory = session_factory
@@ -42,7 +42,7 @@ class SourceLearningRepository:
     async def load_atomic_flashcard_requests(
         self, source_uuid: str
     ) -> list[SourceAtomicFlashcardRequest]:
-        """Load ordered exact triplet/fact requests with shared hub context."""
+        """Load ordered proposition requests with owning-block evidence."""
         async with self._session_factory() as session:
             result = await session.run(
                 READ_SOURCE_ATOMIC_FLASHCARD_REQUESTS,
@@ -56,36 +56,27 @@ class SourceLearningRepository:
             context = contexts.setdefault(
                 row['hub_uuid'],
                 SourceLearningHubContext(
-                    triplet_hub=SourceTripletHubRole(
-                        name=row['triplet_hub_name'],
-                        description=row['triplet_hub_description'],
-                    ),
-                    subject_hub=SourceTripletHubRole(
-                        name=row['subject_hub_name'],
-                        description=row['subject_hub_description'],
-                    ),
-                    predicate_hub=SourceTripletHubRole(
-                        name=row['predicate_hub_name'],
-                        description=row['predicate_hub_description'],
-                    ),
-                    object_hub=SourceTripletHubRole(
-                        name=row['object_hub_name'],
-                        description=row['object_hub_description'],
-                    ),
+                    proposition_statement=row['proposition_statement'],
                 ),
+            )
+            source_context = SourceEvidenceInput(
+                target_blocks=[
+                    {
+                        'block_type': row['block_type'],
+                        'content': row['content'],
+                    }
+                ],
             )
             requests.append(
                 SourceAtomicFlashcardRequest(
+                    source_block_uuid=row['source_block_uuid'],
                     hub_uuid=row['hub_uuid'],
-                    triplet_uuid=row['triplet_uuid'],
-                    source_fact_uuid=row['source_fact_uuid'],
+                    source_proposition_uuid=row['source_proposition_uuid'],
                     input={
                         'context': context,
                         'evidence': SourceLearningEvidence(
-                            subject=row['subject'],
-                            predicate=row['predicate'],
-                            object=row['object'],
-                            source_fact_text=row['source_fact_text'],
+                            proposition_text=row['proposition_text'],
+                            source_context=source_context,
                         ),
                     },
                 )
@@ -103,9 +94,7 @@ class SourceLearningRepository:
                 'uuid': occurrence.card.uuid,
                 'question': occurrence.card.question,
                 'answer': occurrence.card.answer,
-                'hub_uuid': occurrence.hub_uuid,
-                'triplet_uuids': occurrence.triplet_uuids,
-                'source_fact_uuids': occurrence.source_fact_uuids,
+                'source_proposition_uuids': occurrence.source_proposition_uuids,
                 'derived_card_uuids': occurrence.derived_card_uuids,
             }
             for occurrence in occurrences

@@ -6,7 +6,6 @@ from neo4j import AsyncSession
 
 from kms2.core.model.source_semantic.source_procedure import (
     SourceProcedure,
-    SourceProcedureDescriptionResult,
 )
 from kms2.core.model.source_semantic.source_procedure_hub import (
     SourceProcedureHub,
@@ -20,7 +19,6 @@ from kms2.database.source_semantic.queries.source_procedure import (
     READ_SOURCE_PROCEDURES,
     REPLACE_SOURCE_PROCEDURE_ACCEPTED_EDGES,
     REPLACE_SOURCE_PROCEDURE_HUBS,
-    UPDATE_SOURCE_PROCEDURE_DESCRIPTION,
 )
 
 
@@ -33,7 +31,7 @@ class SourceProcedureRepository:
     async def load_source_procedures(
         self, source_uuid: str
     ) -> list[SourceProcedure]:
-        """Load source-scoped procedure pointers for semantic description."""
+        """Load persisted procedures for source-local hub processing."""
         async with self._session_factory() as session:
             result = await session.run(
                 READ_SOURCE_PROCEDURES,
@@ -43,35 +41,12 @@ class SourceProcedureRepository:
         return [
             SourceProcedure(
                 uuid=row['uuid'],
-                source_uuid=row['source_uuid'],
                 member_block_uuids=row['member_block_uuids'],
+                content=row['content'],
+                embedding=row['embedding'],
             )
             for row in rows
         ]
-
-    async def update_source_procedure_description(
-        self,
-        source_uuid: str,
-        results: list[SourceProcedureDescriptionResult],
-    ) -> None:
-        """Update descriptions and embeddings on source procedure nodes."""
-        if not results:
-            return
-        rows = [
-            {
-                'uuid': result.uuid,
-                'description': result.description,
-                'embedding': result.embedding,
-            }
-            for result in results
-        ]
-        async with self._session_factory() as session:
-            response = await session.run(
-                UPDATE_SOURCE_PROCEDURE_DESCRIPTION,
-                source_uuid=source_uuid,
-                rows=rows,
-            )
-            await response.consume()
 
     async def read_source_procedure_hub_candidates(
         self,
@@ -111,6 +86,8 @@ class SourceProcedureRepository:
         min_association_strength: float,
         minimum_community_size: int,
     ) -> list[list[SourceProcedureHubMember]]:
+        if not await self.load_source_procedures(source_uuid):
+            return []
         return await self._detect_statement_or_procedure_communities(
             source_uuid,
             max_iterations=max_iterations,

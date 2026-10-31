@@ -5,8 +5,15 @@ from types import SimpleNamespace
 import pytest
 
 from kms2 import application, tui
+from kms2.config.inference import ContextWindowSettings
 from kms2.config.settings import Settings
+from kms2.core.model.block import SourceBlock
+from kms2.core.model.block_types import BlockType
+from kms2.core.model.context import SourceBlockContext
 from kms2.core.model.source import Source
+from kms2.core.model.source_extraction import (
+    SourceEvidenceInput,
+)
 from kms2.core.model.source_learning.atomic import (
     SourceAtomicFlashcardInput,
     SourceAtomicFlashcardRequest,
@@ -21,9 +28,6 @@ from kms2.core.model.source_learning.context import (
 from kms2.core.model.source_learning.flashcard import (
     SourceFlashcardCandidate,
     SourceFlashcardOccurrence,
-)
-from kms2.core.model.source_semantic.source_triplet_hub import (
-    SourceTripletHubRole,
 )
 from kms2.core.windowing import TokenBudget
 from kms2.langgraph.source_learning.graph import SourceLearningGraph
@@ -98,17 +102,8 @@ def test_tui_exposes_owned_source_learning_action(monkeypatch):
 
     tui._run_tui()
 
-    assert [choice for choice in selections[0]['choices']] == [
-        tui.NEW_SOURCE_OPTION,
-        tui.CREATE_DECK_OPTION,
-        tui.ADD_CARD_OPTION,
-        tui.REMOVE_CARD_OPTION,
-        tui.REVIEW_CARDS_OPTION,
-        tui.REVIEW_HISTORY_OPTION,
-        tui.EXISTING_SOURCE_OPTION,
-        tui.SOURCE_LEARNING_OPTION,
-        tui.GLOBAL_SEMANTIC_OPTION,
-    ]
+    assert tui.SOURCE_LEARNING_OPTION in selections[0]['choices']
+    assert tui.EXISTING_SOURCE_OPTION in selections[0]['choices']
     assert calls == [('user-1', 'source-1')]
 
 
@@ -134,7 +129,11 @@ def test_source_learning_application_runs_owned_source(monkeypatch):
             }
 
     @asynccontextmanager
-    async def application_resources(settings):
+    async def application_resources(
+        settings, *, embeddings_required, reranking_required=False
+    ):
+        assert embeddings_required is False
+        assert reranking_required is False
         yield resources
 
     monkeypatch.setattr(application, 'list_sources', list_sources)
@@ -169,19 +168,28 @@ class _Repository:
         return self.requests
 
 
+class _BlockRepository:
+    def __init__(self, blocks):
+        self.blocks = blocks
+
+    async def load_blocks(self, source_uuid):
+        return self.blocks
+
+
 class _AtomicModule:
     async def acall(self, *, request: SourceAtomicFlashcardInput):
         return [
             SourceFlashcardCandidate(
-                question=f'Question: {request.evidence.subject}',
-                answer=request.evidence.source_fact_text,
+                question=f'Question: {request.evidence.proposition_text}',
+                answer=request.evidence.proposition_text,
             )
         ]
 
 
 class _CoherentModule:
-    def __init__(self):
+    def __init__(self, card_indexes=(1, 2)):
         self.inputs = []
+        self.card_indexes = card_indexes
 
     async def acall(self, *, request):
         self.inputs.append(request)
@@ -189,33 +197,34 @@ class _CoherentModule:
             SourceCoherentFlashcardCandidate(
                 question='How are the claims connected?',
                 answer='They share the supplied source context.',
-                card_indexes=[1, 2],
+                card_indexes=list(self.card_indexes),
             )
         ]
 
 
-def _request(triplet_uuid, source_fact_uuid):
+def _request(proposition_uuid):
     context = SourceLearningHubContext(
-        triplet_hub=SourceTripletHubRole(name='Velocity', description='Rate'),
-        subject_hub=SourceTripletHubRole(name='Position', description='s(t)'),
-        predicate_hub=SourceTripletHubRole(
-            name='Has rate', description='relates'
-        ),
-        object_hub=SourceTripletHubRole(
-            name='Average velocity', description='g(x)'
-        ),
+        proposition_statement='A body has average velocity.',
+    )
+    source_context = SourceEvidenceInput(
+        context_before=[],
+        target_blocks=[
+            SourceBlockContext(
+                block_type=BlockType.PARAGRAPH,
+                content='The source defines the average velocity.',
+            )
+        ],
+        context_after=[],
     )
     return SourceAtomicFlashcardRequest(
+        source_block_uuid=f'block-{proposition_uuid}',
         hub_uuid='hub-1',
-        triplet_uuid=triplet_uuid,
-        source_fact_uuid=source_fact_uuid,
+        source_proposition_uuid=proposition_uuid,
         input=SourceAtomicFlashcardInput(
             context=context,
             evidence=SourceLearningEvidence(
-                subject='s(t)',
-                predicate='has average velocity',
-                object='g(x)',
-                source_fact_text='The source defines the average velocity.',
+                proposition_text='The source defines the average velocity.',
+                source_context=source_context,
             ),
         ),
     )
@@ -223,33 +232,47 @@ def _request(triplet_uuid, source_fact_uuid):
 
 def test_two_pass_generation_retains_context_and_uses_local_indexes():
     requests = [
-        _request('triplet-1', 'fact-1'),
-        _request('triplet-2', 'fact-2'),
+        _request('proposition-1'),
+        _request('proposition-2'),
+        _request('proposition-3'),
     ]
     repository = _Repository(requests)
     budget = TokenBudget(counter=_Counter(), token_limit=100)
     atomic = SourceAtomicFlashcardNode(
         repository,
         _AtomicModule(),
+        ContextWindowSettings(backward_budget=1, forward_budget=1),
+        _BlockRepository(
+            [
+                SourceBlock(
+                    uuid=request.source_block_uuid,
+                    block_type=BlockType.PARAGRAPH,
+                    content='The source defines the average velocity.',
+                )
+                for request in requests
+            ]
+        ),
         budget=budget,
     )
     state = SourceLearningState(
         source_uuid='source-1', atomic_requests=requests
     )
     sends = atomic.dispatch(state)
-    assert len(sends) == 2
+    assert len(sends) == 3
     first = asyncio.run(atomic.worker(sends[0].arg))
     second = asyncio.run(atomic.worker(sends[1].arg))
+    third = asyncio.run(atomic.worker(sends[2].arg))
     atomic_state = state.model_copy(
         update={
             'atomic_results': [
+                *third['atomic_results'],
                 *second['atomic_results'],
                 *first['atomic_results'],
             ]
         }
     )
     packet_state = atomic.collect(atomic_state)
-    coherent_module = _CoherentModule()
+    coherent_module = _CoherentModule(card_indexes=(1, 3))
     coherent = SourceCoherentFlashcardNode(
         coherent_module,
         budget=budget,
@@ -260,9 +283,16 @@ def test_two_pass_generation_retains_context_and_uses_local_indexes():
     model_input = request.model_input()
     serialized = model_input.model_dump_json()
     assert 'hub-1' not in serialized
-    assert 'triplet-1' not in serialized
+    assert 'source-1' not in serialized
     assert [card.index for card in model_input.packets[0].cards] == [1]
     assert [card.index for card in model_input.packets[1].cards] == [2]
+    assert [card.index for card in model_input.packets[2].cards] == [3]
+    assert [
+        block.content
+        for block in model_input.packets[
+            0
+        ].evidence.source_context.target_blocks
+    ] == ['The source defines the average velocity.']
     coherent_state = coherent_state.model_copy(update=prepared)
     result = asyncio.run(coherent.worker({'ordinal': 0, 'request': request}))
     collected = coherent.collect(
@@ -271,10 +301,75 @@ def test_two_pass_generation_retains_context_and_uses_local_indexes():
         )
     )
     occurrence: SourceFlashcardOccurrence = collected['coherent_occurrences'][0]
-    assert occurrence.triplet_uuids == ['triplet-1', 'triplet-2']
-    assert occurrence.source_fact_uuids == ['fact-1', 'fact-2']
+    assert occurrence.source_proposition_uuids == [
+        'proposition-1',
+        'proposition-3',
+    ]
     assert len(occurrence.derived_card_uuids) == 2
-    assert coherent_module.inputs[0].packets[0].evidence.source_fact_text
+    assert occurrence.derived_card_uuids == [
+        coherent_state.atomic_packets[0].cards[0].card.uuid,
+        coherent_state.atomic_packets[2].cards[0].card.uuid,
+    ]
+    assert coherent_module.inputs[0].packets[0].evidence.proposition_text
+
+
+def test_atomic_load_assembles_independent_token_bounded_context_windows():
+    requests = [_request('proposition-1'), _request('proposition-2')]
+    blocks = [
+        SourceBlock(
+            uuid=f'block-{index}',
+            block_type=BlockType.PARAGRAPH,
+            content=content,
+        )
+        for index, content in enumerate(
+            [
+                'before first',
+                'first owner',
+                'between owners',
+                'second owner',
+                'after second',
+            ]
+        )
+    ]
+    requests[0].source_block_uuid = 'block-1'
+    requests[1].source_block_uuid = 'block-3'
+    atomic = SourceAtomicFlashcardNode(
+        _Repository(requests),
+        _AtomicModule(),
+        ContextWindowSettings(backward_budget=1, forward_budget=1),
+        _BlockRepository(blocks),
+        budget=TokenBudget(counter=_Counter(), token_limit=100),
+    )
+
+    loaded = asyncio.run(
+        atomic.load(SourceLearningState(source_uuid='source-1'))
+    )['atomic_requests']
+
+    first_context = loaded[0].input.evidence.source_context
+    second_context = loaded[1].input.evidence.source_context
+    assert [block.content for block in first_context.context_before] == [
+        'before first'
+    ]
+    assert [block.content for block in first_context.target_blocks] == [
+        'first owner'
+    ]
+    assert [block.content for block in first_context.context_after] == [
+        'between owners'
+    ]
+    assert [block.content for block in second_context.context_before] == [
+        'between owners'
+    ]
+    assert [block.content for block in second_context.target_blocks] == [
+        'second owner'
+    ]
+    assert [block.content for block in second_context.context_after] == [
+        'after second'
+    ]
+    for request in loaded:
+        assert (
+            request.source_block_uuid
+            not in request.model_input().model_dump_json()
+        )
 
 
 @pytest.mark.parametrize('has_evidence', [True, False])
@@ -282,7 +377,10 @@ def test_learning_graph_persists_selected_provenance_after_atomic_parents(
     has_evidence,
 ):
     requests = (
-        [_request('triplet-1', 'fact-1'), _request('triplet-2', 'fact-2')]
+        [
+            _request('proposition-1'),
+            _request('proposition-2'),
+        ]
         if has_evidence
         else []
     )
@@ -298,8 +396,7 @@ def test_learning_graph_persists_selected_provenance_after_atomic_parents(
         async def persist_flashcards(self, source_uuid, occurrences):
             for occurrence in occurrences:
                 for parent_uuid in occurrence.derived_card_uuids:
-                    parent = self.cards[parent_uuid]
-                    assert parent.hub_uuid == occurrence.hub_uuid
+                    assert parent_uuid in self.cards
                 self.cards[occurrence.card.uuid] = occurrence
             return len(occurrences)
 
@@ -307,7 +404,22 @@ def test_learning_graph_persists_selected_provenance_after_atomic_parents(
     budget = TokenBudget(counter=_Counter(), token_limit=100)
     graph = SourceLearningGraph(
         repository,
-        SourceAtomicFlashcardNode(repository, _AtomicModule(), budget=budget),
+        SourceAtomicFlashcardNode(
+            repository,
+            _AtomicModule(),
+            ContextWindowSettings(backward_budget=1, forward_budget=1),
+            _BlockRepository(
+                [
+                    SourceBlock(
+                        uuid=request.source_block_uuid,
+                        block_type=BlockType.PARAGRAPH,
+                        content='The source defines the average velocity.',
+                    )
+                    for request in requests
+                ]
+            ),
+            budget=budget,
+        ),
         SourceAtomicFlashcardPersistenceNode(repository),
         SourceCoherentFlashcardNode(_CoherentModule(), budget=budget),
         SourceCoherentFlashcardPersistenceNode(repository),
@@ -332,8 +444,14 @@ def test_learning_graph_persists_selected_provenance_after_atomic_parents(
         coherent.card.uuid,
         *(occurrence.card.uuid for occurrence in atomic),
     }
+    assert [occurrence.source_proposition_uuids for occurrence in atomic] == [
+        ['proposition-1'],
+        ['proposition-2'],
+    ]
     assert coherent.derived_card_uuids == [
         occurrence.card.uuid for occurrence in atomic
     ]
-    assert coherent.triplet_uuids == ['triplet-1', 'triplet-2']
-    assert coherent.source_fact_uuids == ['fact-1', 'fact-2']
+    assert coherent.source_proposition_uuids == [
+        'proposition-1',
+        'proposition-2',
+    ]

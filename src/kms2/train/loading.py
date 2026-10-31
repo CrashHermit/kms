@@ -95,11 +95,13 @@ def _to_example(
 def _hydrate(value: object, annotation: object, run_directory: Path) -> object:
     """Reconstruct one declared field according to its annotation."""
     if annotation is dspy.Image:
-        return dspy.Image(url=str(run_directory / value))
+        return dspy.Image.from_path(str(run_directory / value))
 
     origin = get_origin(annotation)
     args = get_args(annotation)
     if origin is list and args and args[0] is dspy.Image:
-        return [dspy.Image(url=str(run_directory / item)) for item in value]
+        return [
+            dspy.Image.from_path(str(run_directory / item)) for item in value
+        ]
 
     return TypeAdapter(annotation).validate_python(value)
