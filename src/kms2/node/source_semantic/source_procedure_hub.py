@@ -23,7 +23,6 @@ from kms2.core.model.source_semantic.source_procedure_hub import (
 )
 from kms2.core.reranking import RerankerClient
 from kms2.core.windowing import (
-    TextTokenCounter,
     TokenBudget,
     fits_token_budget,
     pack_items,
@@ -47,7 +46,7 @@ class SourceProcedureHubRerankWorkerState(TypedDict):
 
     source_procedure_hub_rerank_ordinal: int
     source_procedure_hub_left_text: str
-    source_procedure_hub_batch: list[SourceProcedureHubCandidate]
+    source_procedure_hub_candidates: list[SourceProcedureHubCandidate]
 
 
 class SourceProcedureHubJudgeWorkerState(TypedDict):
@@ -76,8 +75,6 @@ class SourceProcedureHubNode:
         embedding_client: EmbeddingClient,
         settings: SourceProcedureHubSettings,
         *,
-        reranker_token_counter: TextTokenCounter,
-        reranker_overhead_tokens: int,
         judge_budget: TokenBudget,
         summary_module: SourceProcedureHubSummaryModule,
         merge_module: SourceProcedureHubSummaryMergeModule,
@@ -91,8 +88,6 @@ class SourceProcedureHubNode:
         self._reranker = reranker
         self._embedding_client = embedding_client
         self._settings = settings
-        self._reranker_token_counter = reranker_token_counter
-        self._reranker_overhead_tokens = reranker_overhead_tokens
         self._judge_budget = judge_budget
         self._summary_module = summary_module
         self._merge_module = merge_module
@@ -116,78 +111,41 @@ class SourceProcedureHubNode:
     async def dispatch_rerank(
         self, state: SourceSemanticState
     ) -> list[Send] | Literal['source_procedure_hub_rerank_collect']:
-        """Partition procedure candidates into ordered reranker batches."""
-        if not state.source_procedure_hub_candidates:
-            return 'source_procedure_hub_rerank_collect'
-        sends: list[Send] = []
-        ordinal = 0
+        """Dispatch per left item; scores from separate requests are
+        incomparable."""
         grouped: dict[str, list[SourceProcedureHubCandidate]] = {}
         for candidate in state.source_procedure_hub_candidates:
             grouped.setdefault(candidate.left_uuid, []).append(candidate)
-        for group in grouped.values():
-            left = group[0]
-            left_text = left.left_content
-            right_texts = [candidate.right_content for candidate in group]
-            costs = self._reranker_token_counter.count_texts(
-                [left_text, *right_texts]
+        if not grouped:
+            return 'source_procedure_hub_rerank_collect'
+        return [
+            Send(
+                'source_procedure_hub_rerank_worker',
+                {
+                    'source_procedure_hub_rerank_ordinal': ordinal,
+                    'source_procedure_hub_left_text': candidates[
+                        0
+                    ].left_content,
+                    'source_procedure_hub_candidates': candidates,
+                },
             )
-            left_cost, *right_costs = costs
-            batch: list[SourceProcedureHubCandidate] = []
-            batch_cost = 0
-            for candidate, right_cost in zip(group, right_costs, strict=True):
-                if (
-                    batch
-                    and batch_cost
-                    + left_cost
-                    + right_cost
-                    + self._reranker_overhead_tokens
-                    > self._settings.reranker_token_budget
-                ):
-                    sends.append(
-                        Send(
-                            'source_procedure_hub_rerank_worker',
-                            {
-                                'source_procedure_hub_rerank_ordinal': ordinal,
-                                'source_procedure_hub_left_text': left_text,
-                                'source_procedure_hub_batch': batch,
-                            },
-                        )
-                    )
-                    ordinal += 1
-                    batch = []
-                    batch_cost = 0
-                batch.append(candidate)
-                batch_cost += (
-                    left_cost + right_cost + self._reranker_overhead_tokens
-                )
-            if batch:
-                sends.append(
-                    Send(
-                        'source_procedure_hub_rerank_worker',
-                        {
-                            'source_procedure_hub_rerank_ordinal': ordinal,
-                            'source_procedure_hub_left_text': left_text,
-                            'source_procedure_hub_batch': batch,
-                        },
-                    )
-                )
-                ordinal += 1
-        return sends
+            for ordinal, candidates in enumerate(grouped.values())
+        ]
 
     async def rerank_worker(
         self, state: SourceProcedureHubRerankWorkerState
     ) -> dict[str, list[SourceProcedureHubRerankResult]]:
-        """Rerank one procedure candidate batch."""
-        batch = state['source_procedure_hub_batch']
+        """Rerank all procedure candidates for one left item."""
+        candidates = state['source_procedure_hub_candidates']
         results = await self._reranker.rerank(
             state['source_procedure_hub_left_text'],
-            [candidate.right_content for candidate in batch],
+            [candidate.right_content for candidate in candidates],
             top_n=None,
         )
         direct: list[SourceProcedureHubCandidate] = []
         borderline: list[SourceProcedureHubCandidate] = []
         for result in sorted(results, key=lambda item: item['index']):
-            candidate = batch[result['index']]
+            candidate = candidates[result['index']]
             score = result['relevance_score']
             if score >= self._settings.reranker_acceptance_threshold:
                 direct.append(candidate)

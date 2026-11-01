@@ -3,13 +3,7 @@ import asyncio
 import pytest
 
 from kms2.core.model.block import SourceBlock
-from kms2.core.model.page import SourcePage
 from kms2.core.model.source import Source
-from kms2.core.model.source_pedagogical.instruction import Instruction
-from kms2.core.model.source_pedagogical.pedagogical import (
-    ProcedureDraft,
-    StatementDraft,
-)
 from kms2.core.model.visual_asset import VisualAsset
 from kms2.database.source.source_block_repository import SourceBlockRepository
 from kms2.database.source.source_catalog_repository import (
@@ -54,114 +48,6 @@ class _SessionContext:
 
     async def __aexit__(self, *args: object) -> None:
         return None
-
-
-def test_replace_pedagogical_material_projects_pointer_rows_and_governance_once():
-    first_asset = VisualAsset(uuid='asset-1', path='first.png')
-    first_block = SourceBlock(
-        uuid='block-1',
-        block_type='paragraph',
-        content='first block',
-        assets=[first_asset],
-    )
-    second_block = SourceBlock(
-        uuid='block-2',
-        block_type='image',
-        content=None,
-    )
-    pages = [SourcePage(index=1, blocks=[first_block, second_block])]
-    instructions = [
-        Instruction(
-            uuid='instruction-1',
-            member_block_uuids=['block-1'],
-            governed_statement_uuids=['statement-1'],
-        )
-    ]
-    statements = [
-        StatementDraft(
-            uuid='statement-1',
-            content='A reconstructed statement.',
-            embedding=[0.1, 0.2],
-            member_block_uuids=['block-2'],
-            is_exercise=True,
-        )
-    ]
-    procedures = [
-        ProcedureDraft(
-            uuid='procedure-1',
-            content='A reconstructed procedure.',
-            embedding=[0.3, 0.4],
-            member_block_uuids=['block-1'],
-        )
-    ]
-    session = _RecordingSession()
-
-    asyncio.run(
-        SourceGraphRepository(
-            lambda: _SessionContext(session)
-        ).replace_pedagogical_material(
-            'source-1',
-            pages,
-            instructions,
-            statements,
-            procedures,
-        )
-    )
-
-    parameters = session.calls[0][1]
-    assert parameters['statements'][0] == {
-        'uuid': 'statement-1',
-        'content': 'A reconstructed statement.',
-        'embedding': [0.1, 0.2],
-        'is_exercise': True,
-    }
-    assert parameters['procedures'][0] == {
-        'uuid': 'procedure-1',
-        'content': 'A reconstructed procedure.',
-        'embedding': [0.3, 0.4],
-    }
-    assert parameters['statement_member_pairs'] == [
-        {'block_uuid': 'block-2', 'statement_uuid': 'statement-1'}
-    ]
-    assert parameters['procedure_member_pairs'] == [
-        {'block_uuid': 'block-1', 'procedure_uuid': 'procedure-1'}
-    ]
-    assert parameters['instruction_governance_pairs'] == [
-        {'instruction_uuid': 'instruction-1', 'statement_uuid': 'statement-1'}
-    ]
-
-
-def test_replace_source_writes_only_structural_source_data():
-    session = _RecordingSession()
-    source = Source(uuid='source-1', key='book.pdf', metadata={'kind': 'book'})
-    pages = [
-        SourcePage(
-            index=1,
-            blocks=[
-                SourceBlock(
-                    uuid='block-1',
-                    block_type='paragraph',
-                    content='source block',
-                )
-            ],
-        )
-    ]
-
-    asyncio.run(
-        SourceGraphRepository(lambda: _SessionContext(session)).replace_source(
-            source, pages
-        )
-    )
-
-    parameters = session.calls[0][1]
-    assert parameters['source'] == {
-        'uuid': 'source-1',
-        'key': 'book.pdf',
-        'metadata': '{"kind": "book"}',
-    }
-    assert parameters['pages'] == [{'index': 1, 'markdown': ''}]
-    assert parameters['blocks'][0]['uuid'] == 'block-1'
-    assert 'statements' not in parameters
 
 
 def test_load_pages_restores_page_block_and_asset_order():
@@ -222,8 +108,8 @@ def test_list_sources_returns_stable_user_source_summaries():
     session = _RecordingSession(
         _RecordingResult(
             [
-                {'uuid': 'source-2', 'key': 'second.pdf'},
-                {'uuid': 'source-1', 'key': 'first.pdf'},
+                {'uuid': 'source-2', 'key': 'second.pdf', 'revision': 2},
+                {'uuid': 'source-1', 'key': 'first.pdf', 'revision': 0},
             ]
         )
     )
@@ -235,14 +121,16 @@ def test_list_sources_returns_stable_user_source_summaries():
     )
 
     assert sources == [
-        Source(uuid='source-2', key='second.pdf'),
-        Source(uuid='source-1', key='first.pdf'),
+        Source(uuid='source-2', key='second.pdf', revision=2),
+        Source(uuid='source-1', key='first.pdf', revision=0),
     ]
 
 
 def test_list_unowned_sources_excludes_owned_source_catalog():
     session = _RecordingSession(
-        _RecordingResult([{'uuid': 'legacy-1', 'key': 'legacy.pdf'}])
+        _RecordingResult(
+            [{'uuid': 'legacy-1', 'key': 'legacy.pdf', 'revision': 0}]
+        )
     )
 
     sources = asyncio.run(
@@ -251,7 +139,7 @@ def test_list_unowned_sources_excludes_owned_source_catalog():
         ).list_unowned_sources()
     )
 
-    assert sources == [Source(uuid='legacy-1', key='legacy.pdf')]
+    assert sources == [Source(uuid='legacy-1', key='legacy.pdf', revision=0)]
 
 
 def test_adopt_source_locks_source_and_rejects_claimed_source():

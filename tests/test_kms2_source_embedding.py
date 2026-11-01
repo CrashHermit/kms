@@ -49,7 +49,7 @@ def test_embedding_preserves_final_block_order_and_provenance():
     client = _RecordingEmbeddingClient()
     node = EmbeddingNode(client)
     state = SourceProcessingState(
-        pdf_path='book.pdf',
+        input={'kind': 'pdf', 'pdf_path': 'book.pdf'},
         source=Source(uuid='source-1', key='book.pdf'),
         image_described_pages=pages,
     )
@@ -75,7 +75,7 @@ def test_embedding_preserves_empty_pages_without_provider_call():
     client = _RecordingEmbeddingClient()
     node = EmbeddingNode(client)
     state = SourceProcessingState(
-        pdf_path='book.pdf',
+        input={'kind': 'pdf', 'pdf_path': 'book.pdf'},
         source=Source(uuid='source-1', key='book.pdf'),
         image_described_pages=pages,
     )

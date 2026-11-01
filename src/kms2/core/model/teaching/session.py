@@ -3,9 +3,19 @@
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from kms2.core.model.base import Vertex
+from kms2.core.model.knowledge.admission import KnowledgeAdmission
+from kms2.core.model.knowledge.proposition import KnowledgeAssertionRecord
+from kms2.core.model.source import SourceRevisionReference
+from kms2.core.model.source_processing.admission import StagedSourceSnapshot
+from kms2.core.model.teaching.evidence import TeachingEvidenceReference
+from kms2.core.model.teaching.observation import (
+    LearnerObservationRecord,
+    LearnerObservationView,
+    LearnerObservationWrite,
+)
 from kms2.core.model.teaching.plan import (
     TeachingPlan,
     TeachingPlanAcceptance,
@@ -57,6 +67,13 @@ class TeachingTurnRecord(BaseModel):
     responds_to_question_uuid: str | None
     presented_plan_uuid: str | None
     accepted_plan_uuid: str | None
+    citations: list[TeachingEvidenceReference] = Field(default_factory=list)
+    knowledge_assertions: list[KnowledgeAssertionRecord] = Field(
+        default_factory=list
+    )
+    learner_observations: list[LearnerObservationRecord] = Field(
+        default_factory=list
+    )
 
 
 class TeachingSessionSnapshot(BaseModel):
@@ -71,6 +88,7 @@ class TeachingSessionSnapshot(BaseModel):
     current_plan_acceptance: TeachingPlanAcceptance | None
     current_step_uuid: str | None
     pending_question_uuid: str | None
+    workspace_json: str | None = None
 
 
 class TeachingTurnView(BaseModel):
@@ -84,6 +102,13 @@ class TeachingTurnView(BaseModel):
     responds_to_question_uuid: str | None
     presented_plan_uuid: str | None
     accepted_plan_uuid: str | None
+    citations: list[TeachingEvidenceReference] = Field(default_factory=list)
+    knowledge_assertions: list[KnowledgeAssertionRecord] = Field(
+        default_factory=list
+    )
+    learner_observations: list[LearnerObservationView] = Field(
+        default_factory=list
+    )
 
 
 class TeachingSessionView(BaseModel):
@@ -110,8 +135,16 @@ class TeachingTurnCommit(BaseModel):
     current_plan_uuid: str | None
     current_step_uuid: str | None
     pending_question_uuid: str | None
+    source_revisions: list[SourceRevisionReference]
+    knowledge: KnowledgeAdmission | None = None
     new_assessment: ProbeAssessment | None = None
     new_plan: TeachingPlan | None = None
     new_question: TeachingQuestion | None = None
     new_question_step_uuid: str | None = None
     plan_acceptance: TeachingPlanAcceptance | None = None
+    citations: list[TeachingEvidenceReference] = Field(default_factory=list)
+    learner_observations: list[LearnerObservationWrite] = Field(
+        default_factory=list
+    )
+    staged_sources: list[StagedSourceSnapshot] = Field(default_factory=list)
+    workspace_json: str | None = None

@@ -1,11 +1,9 @@
 """Dependency composition for the KMS2 semantic graph."""
 
 from kms2.composition.predictors import PredictorFactory, build_token_budget
-from kms2.composition.reranking import reranker_overhead_tokens
 from kms2.config.settings import Settings
 from kms2.core.embedding import EmbeddingClient
 from kms2.core.reranking import RerankerClient
-from kms2.core.windowing import TokenBudget
 from kms2.database.client import DatabaseClient
 from kms2.database.source.source_block_repository import SourceBlockRepository
 from kms2.database.source.source_entity_repository import (
@@ -13,9 +11,6 @@ from kms2.database.source.source_entity_repository import (
 )
 from kms2.database.source_semantic.source_procedure_repository import (
     SourceProcedureRepository,
-)
-from kms2.database.source_semantic.source_proposition_repository import (
-    SourcePropositionRepository,
 )
 from kms2.database.source_semantic.source_statement_repository import (
     SourceStatementRepository,
@@ -28,9 +23,6 @@ from kms2.module.source_semantic.examples.source_entity_description import (
 )
 from kms2.module.source_semantic.examples.source_entity_hub_judge import (
     source_entity_hub_judge_examples,
-)
-from kms2.module.source_semantic.examples.source_proposition_extraction import (
-    source_proposition_extraction_examples,
 )
 from kms2.module.source_semantic.source_entity_description import (
     SourceEntityDescriptionModule,
@@ -55,14 +47,6 @@ from kms2.module.source_semantic.source_procedure_hub import (
 from kms2.module.source_semantic.source_procedure_hub_judge import (
     SourceProcedureHubJudgeModule,
     SourceProcedureHubJudgeSignature,
-)
-from kms2.module.source_semantic.source_proposition_extraction import (
-    SourcePropositionExtractionSignature,
-    SourcePropositionExtractorModule,
-)
-from kms2.module.source_semantic.source_proposition_hub_judge import (
-    SourcePropositionHubJudgeModule,
-    SourcePropositionHubJudgeSignature,
 )
 from kms2.module.source_semantic.source_statement_hub import (
     SourceStatementHubModule,
@@ -105,24 +89,6 @@ from kms2.node.source_semantic.source_procedure_hub import (
 from kms2.node.source_semantic.source_procedure_hub_persistence import (
     SourceProcedureHubPersistenceNode,
 )
-from kms2.node.source_semantic.source_proposition_embedding import (
-    SourcePropositionEmbeddingNode,
-)
-from kms2.node.source_semantic.source_proposition_embedding_persistence import (
-    SourcePropositionEmbeddingPersistenceNode,
-)
-from kms2.node.source_semantic.source_proposition_extraction import (
-    SourcePropositionExtractionNode,
-)
-from kms2.node.source_semantic.source_proposition_hub import (
-    SourcePropositionHubNode,
-)
-from kms2.node.source_semantic.source_proposition_hub_persistence import (
-    SourcePropositionHubPersistenceNode,
-)
-from kms2.node.source_semantic.source_proposition_persistence import (
-    SourcePropositionPersistenceNode,
-)
 from kms2.node.source_semantic.source_statement_hub import (
     SourceStatementHubNode,
 )
@@ -145,12 +111,7 @@ def build_source_semantic_graph(
     """Compose the semantic graph from shared runtime resources."""
     semantic = settings.source_semantic
     predictors = PredictorFactory(settings, local_models, recorder)
-    reranker_token_counter = tokenizers.reranker
-    reranker_overhead = reranker_overhead_tokens(settings)
     source_block_repository = SourceBlockRepository(database.session)
-    source_proposition_repository = SourcePropositionRepository(
-        database.session
-    )
     source_procedure_repository = SourceProcedureRepository(database.session)
     source_statement_repository = SourceStatementRepository(database.session)
     source_entity_repository = SourceEntityRepository(database.session)
@@ -185,14 +146,6 @@ def build_source_semantic_graph(
         entity_hub_settings.judge,
         input_token_budget=entity_hub_settings.judge_token_budget,
         safety_margin_tokens=entity_hub_settings.safety_margin_tokens,
-    )
-    proposition_extractor = SourcePropositionExtractorModule(
-        predictors.create(
-            SourcePropositionExtractorModule,
-            semantic.source_proposition_extraction,
-            SourcePropositionExtractionSignature,
-            examples=source_proposition_extraction_examples(),
-        )
     )
     source_statement_hub_budget_settings = (
         semantic.source_statement_hubs.synthesis_budget
@@ -394,8 +347,6 @@ def build_source_semantic_graph(
             entity_hub_judge,
             reranker_client,
             entity_hub_settings,
-            reranker_token_counter=reranker_token_counter,
-            reranker_overhead_tokens=reranker_overhead,
             judge_budget=entity_hub_judge_budget,
         ),
         source_entity_hub_persistence=SourceEntityHubPersistenceNode(
@@ -404,49 +355,6 @@ def build_source_semantic_graph(
         source_semantic_load=SourceSemanticSourceLoadNode(
             source_block_repository
         ),
-        source_proposition_extraction=SourcePropositionExtractionNode(
-            proposition_extractor,
-            semantic.context_window,
-            token_counters=tokenizers.text_counters(
-                semantic.source_proposition_extraction
-            ),
-        ),
-        source_proposition_persistence=SourcePropositionPersistenceNode(
-            source_proposition_repository
-        ),
-        source_proposition_embedding=SourcePropositionEmbeddingNode(
-            embedding_client
-        ),
-        source_proposition_embedding_persistence=SourcePropositionEmbeddingPersistenceNode(
-            source_proposition_repository
-        ),
-        source_proposition_hub=SourcePropositionHubNode(
-            source_proposition_repository,
-            SourcePropositionHubJudgeModule(
-                predictors.create(
-                    SourcePropositionHubJudgeModule,
-                    semantic.source_proposition_hubs.judge,
-                    SourcePropositionHubJudgeSignature,
-                )
-            ),
-            reranker_client,
-            semantic.source_proposition_hubs,
-            reranker_budget=TokenBudget(
-                tokenizers.reranker,
-                semantic.source_proposition_hubs.reranker_token_budget
-                - reranker_overhead,
-            ),
-            judge_budget=build_token_budget(
-                settings,
-                tokenizers,
-                semantic.source_proposition_hubs.judge,
-                input_token_budget=semantic.source_proposition_hubs.judge_token_budget,
-                safety_margin_tokens=semantic.source_proposition_hubs.safety_margin_tokens,
-            ),
-        ),
-        source_proposition_hub_persistence=SourcePropositionHubPersistenceNode(
-            source_proposition_repository
-        ),
         source_statement_hub=SourceStatementHubNode(
             source_statement_repository,
             source_statement_hub_module,
@@ -454,8 +362,6 @@ def build_source_semantic_graph(
             reranker_client,
             embedding_client,
             semantic.source_statement_hubs,
-            reranker_token_counter=reranker_token_counter,
-            reranker_overhead_tokens=reranker_overhead,
             judge_budget=source_statement_hub_judge_budget,
             summary_module=source_statement_hub_summary_module,
             merge_module=source_statement_hub_merge_module,
@@ -470,8 +376,6 @@ def build_source_semantic_graph(
             reranker_client,
             embedding_client,
             semantic.source_procedure_hubs,
-            reranker_token_counter=reranker_token_counter,
-            reranker_overhead_tokens=reranker_overhead,
             judge_budget=source_procedure_hub_judge_budget,
             summary_module=source_procedure_hub_summary_module,
             merge_module=source_procedure_hub_merge_module,

@@ -57,6 +57,8 @@ RETURN [page IN raw_pages WHERE page IS NOT NULL] AS pages
 
 REPLACE_SOURCE_PEDAGOGICAL_MATERIAL = """
 MATCH (source:Source {uuid: $source_uuid})
+SET source.revision = coalesce(source.revision, 0) + 1
+WITH source
 CALL (source) {
     OPTIONAL MATCH (source)-[:HAS_PAGE]->(:SourcePage)
         -[:CONTAINS_BLOCK]->(:SourceBlock)-[:MEMBER_OF]->(old:Instruction)

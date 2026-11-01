@@ -15,14 +15,14 @@ from kms2.core.model.source_processing.image_description import (
     ImageDescriptionResult,
 )
 from kms2.core.model.source_processing.image_seam import ImageSeamResult
+from kms2.core.model.source_processing.input import SourceProcessingInput
 from kms2.core.model.source_processing.text_seam import TextSeamResult
 
 
 class SourceProcessingState(BaseModel):
     """State shared by the nodes that process one source."""
 
-    pdf_path: str
-    pages: list[int] | None = Field(default=None)
+    input: SourceProcessingInput
     source: Source
 
     @property

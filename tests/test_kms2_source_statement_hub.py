@@ -1,10 +1,6 @@
 import asyncio
 
-from kms2_token_helpers import (
-    JUDGE_BUDGET,
-    RERANKER_COUNTER,
-    direct_synthesis,
-)
+from kms2_token_helpers import JUDGE_BUDGET, direct_synthesis
 
 from kms2.config.source_semantic import SourceStatementHubSettings
 from kms2.core.model.source_semantic.source_statement_hub import (
@@ -69,7 +65,6 @@ def test_statement_hub_empty_source_is_independent_and_has_no_exercise_input():
         None,
         _Embedding(),
         SourceStatementHubSettings(),
-        reranker_token_counter=RERANKER_COUNTER,
         judge_budget=JUDGE_BUDGET,
         **direct_synthesis(),
     )
@@ -108,7 +103,6 @@ def test_statement_synthesis_keeps_model_evidence_and_membership_separate():
         None,
         _Embedding(),
         SourceStatementHubSettings(),
-        reranker_token_counter=RERANKER_COUNTER,
         judge_budget=JUDGE_BUDGET,
         **direct_synthesis(),
     )

@@ -1,15 +1,18 @@
 # Teaching, knowledge, and practice roadmap
 
-Status: roadmap step 1 is implemented; later teaching, retrieval, knowledge, and
-practice workflows remain design. Existing source pipelines and card review remain
-unchanged until their explicit cutovers.
+Status: durable teaching sessions, local-first evidence retrieval, staged source
+publication, append-only learner observations, bounded teaching graphs, and
+per-response knowledge admission are implemented. Practice, a verified
+interactive UI, and live provider-quality evaluation remain. External research
+is disabled by default.
 
 ## Direction
 
 Start a teaching session from a learning goal, not from a source. A source,
 exercise, paper, URL, or selected passage may be supplied, but is not required.
-The teacher can retrieve local or external material whenever the interaction
-needs evidence; retrieval is not a compulsory pre-teaching pass.
+When evidence is needed, the teacher searches owned sources and canonical
+propositions first, then can explicitly expand a local outcome through external
+research. Retrieval is never a compulsory pre-teaching pass.
 
 Keep three responsibilities separate:
 
@@ -29,89 +32,118 @@ services continue to own decks, cards, and FSRS review.
 
 ### 1. Durable teaching sessions
 
-Define typed session, turn, assessment, plan, and question contracts; persist
-history and current session state; expose database-only application operations.
+Implemented. Typed session, turn, assessment, plan, and question contracts persist
+history and current session state through database-only application operations.
 Sessions start with a goal and no required source relationship. Waiting for a
-learner must not retain an invocation, database session, or model resource.
+learner does not retain an invocation, database session, or model resource.
+Detailed design: [Teaching sessions and bounded teaching workflows](TEACHING_SESSIONS.md).
 
-Detailed design: [Teaching session foundation](TEACHING_SESSIONS.md).
-
-Completion evidence: an actual application/database exercise can start, persist,
-reload, respond to, and end a session without starting inference resources. The
-full teacher is not claimed to work at this checkpoint.
+Step-1 completion evidence: an actual application/database exercise can start,
+persist, reload, respond to, and end a session without inference resources. This
+criterion covers the persistence foundation; teacher behavior is tracked under
+step 4.
 
 ### 2. Local retrieval and evidence reading
 
-Add user-scoped natural-language search across eligible source material, using
-existing embedding and reranking clients. Search must work from a query string,
-not require an existing block as the query. Provide separate reading operations
-for full passages, neighboring blocks, and original image assets.
+Implemented. User-scoped natural-language retrieval uses existing embedding and
+reranking clients. Separate operations search and read source blocks/images,
+propositions/reasoning steps, and source statements/procedures. Session-workspace
+positions are kept separate from durable UUIDs. Discovery previews are not
+inspection receipts: only read, active evidence can be cited or used as direct
+source support.
 
-Selecting material can prioritize or explicitly constrain a session's evidence;
-it is not an implicit requirement or a mandatory restriction to one source.
-Preserve that distinction in the retrieval contracts.
+In the single-user deployment, unfiltered source-block, statement, procedure,
+and proposition retrieval uses Neo4j vector indexes for approximate candidates,
+then applies ownership checks and reranking. Searches restricted by source or
+exercise type use exact owner-scoped cosine ranking before limiting candidates,
+so post-filtering an approximate index cannot discard the best eligible hits.
+Indexed retrieval may return fewer candidates when other users' records share
+the same database; it does not provide equivalent multi-user recall.
 
-Completion evidence: retrieve and inspect relevant text and image evidence for a
-learning goal, with no proposition admission and no access to another user's
-sources.
+Local retrieval APIs are available independently and in the bounded teaching
+interaction. A local acquisition produces ranked source-block and proposition
+candidates separately. The teaching phase may inspect those results and then
+respond, or explicitly expand that same outcome through external research.
 
-### 3. External discovery, reading, and evidence retention
+Completion evidence: retrieve and inspect each material type for a learning goal,
+with no access to another user's sources and only inspected items cited.
 
-Provide web search and page/document reading. Search snippets are discovery
-material, not automatically sufficient support for an explanation. Retain the
-URL, retrieval time, and relevant content actually used so citations can be
-inspected later. Do not require full-site ingestion merely to use one passage.
+### 3. External discovery and source admission
 
-Connect teaching turns to the evidence they use. Local references reuse existing
-blocks/assets; external evidence is retained without pretending it was already
-processed through the source pipeline. Retrieval alone writes no propositions.
+Implemented. Optional Tavily-backed research discovers and reads web pages,
+images, and selected PDF pages. The shared `SourceProcessingGraph` finalizes
+stable processed identities and durable file paths, then `SourceAdmissionGraph`
+returns newly captured material as a staged snapshot rather than publishing it
+immediately. The interaction can inspect staged blocks/images before commit.
 
-Completion evidence: discover external material, read it, retain the used
-passage, and reload a turn's citations after restarting the application.
+At the end of a successful teacher turn, the session transaction publishes
+staged sources cited by the response or used as direct knowledge support.
+Inspected but unused captures remain private in the durable session workspace.
+Failed or stale commits do not overwrite the prior workspace or publish the
+source or turn. No new `ExternalEvidence` nodes or citation relationships are
+created.
+
+Legacy `CITES_EXTERNAL` records are still migrated explicitly per user with
+`migrate_research_sources`. After every owner is migrated, the separate
+`finalize_research_source_migration` operation verifies that no legacy citation
+remains, removes orphan legacy evidence, and drops the old uniqueness constraint.
+
+Completion evidence: retrieve and inspect a research source, reload its local
+source-block citations, and prove global finalization refuses while legacy
+citations remain.
 
 ### 4. Teaching inference, tool orchestration, and interactive UI
 
-Add probing, planning, and teaching modules with explicit demonstrations. Follow
-predict, explain, check, and repair where appropriate; do not force artificial
-prediction questions or add a separate boolean gate for every decision.
+The provider-neutral DSPy prober, planner, and teacher use typed instructional
+operations in a bounded interaction subgraph. A fixed, acyclic parent graph
+retrieves learner history once, runs the interaction once, prepares observations
+and knowledge, and commits one teacher response. Each tool action invokes a
+one-action evidence graph; research and source preparation retain independent
+bounded graphs. No outer restart/while loop or persistent graph process is used.
 
-A bounded orchestration loop executes typed library/web search and reading
-requests and supplies results back to inference. Modules remain provider-neutral;
-nodes coordinate tools and graph phases. Plan and assessment can change as new
-learner evidence arrives. A pending learner interaction ends the current graph
-invocation; the next message starts another invocation from persisted state.
+The workspace distinguishes local discovery from inspected receipts and active
+evidence. Each successful turn atomically saves the workspace, including
+unpublished staged captures, for the next invocation. Original image bytes
+remain in source files. Historical learner observations remain private to their
+owner and are separate from canonical subject knowledge.
 
-Provide UI operations to start from a goal, read cited explanations, answer,
-resume, and end a session. The teacher need not search on every turn, but must not
-present model recall as if it were inspected source evidence.
+Still to implement: a verified interactive UI calling the existing start, load,
+submit, teacher-turn, citation-read, and end operations. Inspect actual
+citations, images, explanations, and identity decisions with configured providers
+before claiming teaching quality.
 
-Completion evidence: a real source-grounded session exercises both library and
-external retrieval paths, survives a stop/resume while awaiting an answer, and
-continues appropriately from that answer. Inspect actual citations, images, and
-explanations; deterministic tests alone cannot establish teaching quality.
+Completion evidence: a source-grounded session survives stop/resume while
+awaiting an answer, continues appropriately from that answer, and leaves
+reusable proposition and evidence provenance. Deterministic tests do not
+establish provider quality.
 
 ### 5. Canonical knowledge admission
 
-Extract substantive propositions and joint-premise reasoning chains from
-learner-facing teaching explanations or explicitly selected material. Do not
-admit learner mistakes, search results, or private model thinking as subject
-facts. This operation is distinct from importing a document into the library.
+Implemented at the teaching boundary. After a final response is selected, any
+response marked `instruction` can be converted into self-contained propositions
+and joint-premise reasoning steps, regardless of whether the persisted phase was
+probing, planning, or teaching. A `coordination` response skips extraction.
+Support is selected only from the final active inspected source/image packet and
+explicitly read propositions.
 
-Resolve proposition identity against the user's existing knowledge space before
-creating new canonical nodes. Equivalent claims reuse identity and accumulate
-provenance; related claims with different conditions, quantifiers, or domains
-remain distinct. Alternative arguments for one conclusion remain separate chains.
-Identity matching is not truth verification.
+Identity resolution searches the user's existing propositions, then resolves
+equivalent current-draft claims before persistence. It reuses one canonical
+proposition while preserving per-turn assertions and alternative reasoning
+chains. Extraction does not run once per probe/tool and does not create a
+session-wide synthetic source.
 
-Keep original evidence intact. Distinguish explicit source claims, explanations,
-and derived conclusions. Link provenance structurally rather than copying
-`source_uuid` onto every object. Serialize identity resolution plus admission
-where necessary to prevent competing duplicate creation, without serializing all
-independent extraction work.
+Assertions link the teaching turn, proposition, direct source-block support, and
+derived reasoning steps. Reasoning steps link premise propositions, conclusion
+propositions, and direct source-block support. Source and knowledge revisions,
+staged source publication, learner observations, and the teacher turn share the
+same transaction. Identity matching is not truth verification; original source
+evidence remains unchanged, and importing a source does not exhaustively extract
+propositions.
 
-Completion evidence: two independent materials can support one proposition
-without destroying either evidence record; genuinely different technical claims
-remain separate; joint premises and alternative arguments survive admission.
+Completion evidence: separate materials support one canonical claim without
+destroying either evidence record; distinct technical claims remain distinct;
+joint premises, alternative arguments, source ownership, and atomic stale-write
+rejection survive real-driver verification.
 
 ### 6. Adaptive practice
 
@@ -129,22 +161,24 @@ Completion evidence: a learner can attempt, request hints, conclude, resume, and
 receive a fresh-surface retest while the original committed solution and attempt
 history remain unchanged.
 
-### 7. Retire source proposition extraction cleanly
+### 7. Retire exhaustive source proposition extraction
 
-The intended destination removes `SourceProposition` extraction, embeddings,
-hubs, and associated source-stage machinery. Canonical knowledge admission
-becomes the proposition-producing boundary instead of exhaustive ingestion.
+Completed. Source ingestion no longer creates source propositions, proposition
+embeddings, proposition hubs, or proposition-specific semantic-stage machinery.
+Source Semantic retains source blocks, entities, statements, procedures, and
+their supported local indexes. Canonical proposition admission remains a
+teaching/knowledge-boundary responsibility rather than exhaustive ingestion.
 
-Current source card generation consumes source proposition evidence. Migrate
-that consumer and every affected caller, result contract, setting, test, and
-document before deleting the old paths. Preserve existing cards and review
-history; do not reuse the source-card regeneration cleanup for teaching sessions
-or canonical knowledge. This dependency prevents deleting the extractor first.
+Source-learning cards now consume source-block material directly. Atomic requests
+retain exact owning block provenance, coherent requests group material by source
+page only for bounded inference, and persisted cards use direct
+`SUPPORTED_BY` edges to `SourceBlock`. Existing card and review workflows remain
+separate from canonical knowledge admission; no incidental user-graph migration
+was performed.
 
-Completion evidence: source ingestion works without proposition generation, card
-workflows retain their supported behavior, and no obsolete proposition-stage
-consumer or compatibility shim remains. Do not clear or migrate the user's
-Neo4j data as an incidental part of this work.
+Completion evidence: source ingestion works without source proposition
+generation, source-learning cards retain direct source evidence, and no obsolete
+source-claim consumer or compatibility shim remains.
 
 ## Architecture constraints
 

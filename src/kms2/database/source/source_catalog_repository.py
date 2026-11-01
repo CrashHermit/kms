@@ -27,14 +27,28 @@ class SourceCatalogRepository:
         async with self._session_factory() as session:
             result = await session.run(READ_SOURCES, user_uuid=user_uuid)
             rows = await result.data()
-        return [Source(uuid=row['uuid'], key=row['key']) for row in rows]
+        return [
+            Source(
+                uuid=row['uuid'],
+                key=row['key'],
+                revision=row['revision'],
+            )
+            for row in rows
+        ]
 
     async def list_unowned_sources(self) -> list[Source]:
         """Load sources that have no user owner."""
         async with self._session_factory() as session:
             result = await session.run(READ_UNOWNED_SOURCES)
             rows = await result.data()
-        return [Source(uuid=row['uuid'], key=row['key']) for row in rows]
+        return [
+            Source(
+                uuid=row['uuid'],
+                key=row['key'],
+                revision=row['revision'],
+            )
+            for row in rows
+        ]
 
     async def adopt_source(self, user_uuid: str, source_uuid: str) -> None:
         """Claim an unowned source, rejecting a concurrent or prior claim."""

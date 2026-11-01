@@ -36,6 +36,33 @@ SET session._teaching_write_lock = randomUUID()
 REMOVE session._teaching_write_lock
 RETURN session.uuid AS uuid
 """
+LOCK_TEACHING_USER_KNOWLEDGE = """
+MATCH (user:User {uuid: $user_uuid})
+SET user._knowledge_write_lock = randomUUID()
+REMOVE user._knowledge_write_lock
+RETURN user.uuid AS uuid
+"""
+
+READ_TEACHING_USER_KNOWLEDGE_REVISION = """
+MATCH (user:User {uuid: $user_uuid})
+WHERE coalesce(user.knowledge_revision, 0) = $expected_revision
+RETURN user.uuid AS uuid
+"""
+
+LOCK_OWNED_SOURCE = """
+MATCH (:User {uuid: $user_uuid})-[:OWNS_SOURCE]->
+      (source:Source {uuid: $source_uuid})
+SET source._source_write_lock = randomUUID()
+REMOVE source._source_write_lock
+RETURN source.uuid AS uuid
+"""
+
+CHECK_OWNED_SOURCE_REVISION = """
+MATCH (:User {uuid: $user_uuid})-[:OWNS_SOURCE]->
+      (source:Source {uuid: $source_uuid})
+WHERE coalesce(source.revision, 0) = $revision
+RETURN source.uuid AS uuid
+"""
 
 READ_TEACHING_SESSION_REVISION = """
 MATCH (:User {uuid: $user_uuid})-[:HAS_TEACHING_SESSION]->
@@ -46,9 +73,9 @@ RETURN session.uuid AS uuid
 """
 
 LOAD_TEACHING_SESSION = """
-MATCH (:User {uuid: $user_uuid})-[:HAS_TEACHING_SESSION]->
+MATCH (user:User {uuid: $user_uuid})-[:HAS_TEACHING_SESSION]->
       (session:TeachingSession {uuid: $session_uuid})
-CALL (session) {
+CALL (session, user) {
     OPTIONAL MATCH (session)-[:FIRST_TURN]->(first:TeachingTurn)
     OPTIONAL MATCH turn_path=(first)-[:NEXT_TURN*0..]->(turn:TeachingTurn)
     WITH turn_path, turn
@@ -66,6 +93,133 @@ CALL (session) {
     OPTIONAL MATCH (ordered_turn)-[:RESPONDS_TO]->(responded_question:TeachingQuestion)
     OPTIONAL MATCH (ordered_turn)-[:PRESENTS_PLAN]->(presented_plan:TeachingPlan)
     OPTIONAL MATCH (ordered_turn)-[:ACCEPTS_PLAN]->(accepted_plan:TeachingPlan)
+    CALL (ordered_turn) {
+        OPTIONAL MATCH (ordered_turn)-[:CITES_BLOCK]->(
+            block:SourceBlock
+        )
+        WHERE EXISTS {
+            MATCH (:User {uuid: $user_uuid})-[:OWNS_SOURCE]->(
+                :Source
+            )-[:HAS_PAGE]->(:SourcePage)-[:CONTAINS_BLOCK]->(block)
+        }
+        RETURN collect(DISTINCT CASE WHEN block IS NULL THEN null ELSE {
+            kind: 'block',
+            uuid: block.uuid
+        } END) AS block_citations
+    }
+    CALL (ordered_turn) {
+        OPTIONAL MATCH (ordered_turn)-[:CITES_IMAGE]->(
+            image:VisualAsset
+        )
+        WHERE EXISTS {
+            MATCH (:User {uuid: $user_uuid})-[:OWNS_SOURCE]->(
+                :Source
+            )-[:HAS_PAGE]->(:SourcePage)-[:CONTAINS_BLOCK]->(
+                :SourceBlock
+            )-[:CONTAINS_VISUAL_ASSET]->(image)
+        }
+        RETURN collect(DISTINCT CASE WHEN image IS NULL THEN null ELSE {
+            kind: 'image',
+            uuid: image.uuid
+        } END) AS image_citations
+    }
+    CALL (ordered_turn) {
+        OPTIONAL MATCH (ordered_turn)-[:CITES_PROPOSITION]->(
+            proposition:Proposition
+        )
+        WHERE EXISTS {
+            MATCH (:User {uuid: $user_uuid})-[:HAS_PROPOSITION]->(proposition)
+        }
+        RETURN collect(DISTINCT CASE WHEN proposition IS NULL THEN null ELSE {
+            kind: 'proposition',
+            uuid: proposition.uuid
+        } END) AS proposition_citations
+    }
+    CALL (ordered_turn) {
+        OPTIONAL MATCH (ordered_turn)-[:HAS_KNOWLEDGE_ASSERTION]->
+            (assertion:KnowledgeAssertion)-[:ASSERTS]->(
+                asserted:Proposition
+            )
+        WITH assertion, asserted
+        ORDER BY assertion.uuid
+        CALL (assertion) {
+            OPTIONAL MATCH (assertion)-[:SUPPORTED_BY]->(
+                support:SourceBlock
+            )
+            WITH DISTINCT support.uuid AS uuid
+            WHERE uuid IS NOT NULL
+            ORDER BY uuid
+            RETURN collect(uuid) AS support_uuids
+        }
+        CALL (assertion) {
+            OPTIONAL MATCH (assertion)-[:DERIVED_BY]->(
+                reasoning:ReasoningStep
+            )
+            WITH DISTINCT reasoning.uuid AS uuid
+            WHERE uuid IS NOT NULL
+            ORDER BY uuid
+            RETURN collect(uuid) AS reasoning_uuids
+        }
+        WITH assertion, asserted, support_uuids, reasoning_uuids
+        ORDER BY assertion.uuid
+        RETURN collect(CASE WHEN assertion IS NULL THEN null ELSE {
+            uuid: assertion.uuid,
+            created_at: assertion.created_at,
+            proposition_uuid: asserted.uuid,
+            supporting_block_uuids: support_uuids,
+            reasoning_step_uuids: reasoning_uuids,
+            teaching_turn_uuid: ordered_turn.uuid
+        } END) AS assertion_rows
+    }
+    CALL (user, ordered_turn) {
+        OPTIONAL MATCH (ordered_turn)-[:RECORDED_OBSERVATION]->
+            (observation:LearnerObservation)
+        WITH user, observation
+        ORDER BY observation.created_at ASC, observation.uuid ASC
+        CALL (user, observation) {
+            OPTIONAL MATCH (observation)-[:EVIDENCED_BY]->
+                (learner:TeachingTurn {role: 'learner'})
+            OPTIONAL MATCH (user)-[:HAS_TEACHING_SESSION]->
+                (evidence_session:TeachingSession)-[:HAS_TURN]->(learner)
+            CALL (learner) {
+                OPTIONAL MATCH (learner)-[:RESPONDS_TO]->
+                    (question:TeachingQuestion)
+                RETURN CASE WHEN question IS NULL THEN NULL ELSE {
+                    uuid: question.uuid,
+                    kind: question.kind,
+                    prompt: question.prompt,
+                    response_json: question.response_json,
+                    created_at: question.created_at
+                } END AS question
+            }
+            WITH evidence_session, learner, question
+            ORDER BY learner.created_at ASC, learner.uuid ASC
+            RETURN collect({
+                turn_uuid: learner.uuid,
+                session_uuid: evidence_session.uuid,
+                content: learner.content,
+                created_at: learner.created_at,
+                question: question
+            }) AS evidence
+        }
+        RETURN collect(CASE WHEN observation IS NULL THEN NULL ELSE {
+            observation: {
+                uuid: observation.uuid,
+                kind: observation.kind,
+                topic: observation.topic,
+                description: observation.description,
+                embedding: observation.embedding,
+                created_at: observation.created_at
+            },
+            evidence: evidence
+        } END) AS raw_observations
+    }
+    WITH ordered_turn, asked_question, asked_step, responded_question,
+         presented_plan, accepted_plan, block_citations, image_citations,
+         proposition_citations,
+         [item IN raw_observations WHERE item IS NOT NULL]
+             AS learner_observations,
+         [item IN assertion_rows WHERE item IS NOT NULL] AS assertions
     WITH collect(
         CASE WHEN ordered_turn IS NULL THEN NULL ELSE {
             turn: {
@@ -84,7 +238,11 @@ CALL (session) {
             question_step_uuid: asked_step.uuid,
             responds_to_question_uuid: responded_question.uuid,
             presented_plan_uuid: presented_plan.uuid,
-            accepted_plan_uuid: accepted_plan.uuid
+            accepted_plan_uuid: accepted_plan.uuid,
+            citations: block_citations + image_citations +
+                proposition_citations,
+            knowledge_assertions: assertions,
+            learner_observations: learner_observations
         } END
     ) AS raw_turns
     RETURN [turn_row IN raw_turns WHERE turn_row IS NOT NULL] AS turns
@@ -92,10 +250,16 @@ CALL (session) {
 CALL (session) {
     OPTIONAL MATCH (session)-[:CURRENT_ASSESSMENT]->
         (assessment:ProbeAssessment)
+    CALL (assessment) {
+        OPTIONAL MATCH (assessment)-[:BASED_ON]->
+            (observation:LearnerObservation)
+        RETURN collect(DISTINCT observation.uuid) AS observation_uuids
+    }
     RETURN CASE WHEN assessment IS NULL THEN NULL ELSE {
         uuid: assessment.uuid,
         summary: assessment.summary,
         strands_json: assessment.strands_json,
+        observation_uuids: observation_uuids,
         created_at: assessment.created_at
     } END AS current_assessment
 }
@@ -164,6 +328,7 @@ RETURN session.uuid AS uuid,
        session.created_at AS created_at,
        session.updated_at AS updated_at,
        session.ended_at AS ended_at,
+       session.workspace_json AS workspace_json,
        turns,
        current_assessment,
        current_plan,
@@ -171,6 +336,7 @@ RETURN session.uuid AS uuid,
        current_step_uuid,
        pending_question_uuid
 """
+
 
 END_TEACHING_SESSION = """
 MATCH (:User {uuid: $user_uuid})-[:HAS_TEACHING_SESSION]->

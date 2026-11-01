@@ -3,10 +3,7 @@
 from pydantic import BaseModel, Field
 
 from kms2.core.model.source_learning.atomic import SourceAtomicFlashcardRequest
-from kms2.core.model.source_learning.context import (
-    SourceLearningEvidence,
-    SourceLearningHubContext,
-)
+from kms2.core.model.source_learning.context import SourceLearningEvidence
 from kms2.core.model.source_learning.flashcard import (
     SourceFlashcardCandidate,
     SourceFlashcardOccurrence,
@@ -36,17 +33,15 @@ class SourceCoherentFlashcardPacketInput(BaseModel):
 
 
 class SourceCoherentFlashcardInput(BaseModel):
-    """Content-only input for one same-hub coherent generation call."""
+    """Content-only input for one source-material group."""
 
-    context: SourceLearningHubContext
     packets: list[SourceCoherentFlashcardPacketInput] = Field(min_length=1)
 
 
 class SourceCoherentFlashcardRequest(BaseModel):
     """Backend request retaining atomic packets for one coherent call."""
 
-    hub_uuid: str = Field(min_length=1)
-    context: SourceLearningHubContext
+    source_page_index: int = Field(ge=0)
     packets: list[SourceAtomicFlashcardPacket] = Field(min_length=1)
 
     def model_input(self) -> SourceCoherentFlashcardInput:
@@ -70,10 +65,7 @@ class SourceCoherentFlashcardRequest(BaseModel):
                     cards=indexed_cards,
                 )
             )
-        return SourceCoherentFlashcardInput(
-            context=self.context,
-            packets=packet_inputs,
-        )
+        return SourceCoherentFlashcardInput(packets=packet_inputs)
 
 
 class SourceCoherentFlashcardCandidate(SourceFlashcardCandidate):

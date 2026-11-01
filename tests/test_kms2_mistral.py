@@ -1,4 +1,5 @@
 import base64
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -233,7 +234,9 @@ def test_mistral_provider_materializes_ordered_artifacts(monkeypatch, tmp_path):
         lambda data, settings, pages=None: response,
     )
 
-    artifacts = mistral.MistralOCRProvider(ocr_settings).extract(pdf_path)
+    artifacts = mistral.MistralOCRProvider(ocr_settings).extract(
+        pdf_path, source_uuid='source-1'
+    )
 
     assert [page.page_index for page in artifacts] == [2, 0]
     assert [page.markdown for page in artifacts] == ['## Second', '## First']
@@ -253,15 +256,6 @@ def test_mistral_provider_materializes_ordered_artifacts(monkeypatch, tmp_path):
     assert artifacts[0].blocks[0].crop_bbox == (2, 12, 58, 108)
     assert artifacts[0].blocks[1].crop_bbox == (52, 112, 98, 188)
     assert artifacts[1].blocks[0].crop_bbox == (2, 12, 58, 108)
-    assert artifacts[0].blocks[0].crop_path == str(
-        tmp_path / 'output/Documents/Document_0002/Blocks/Block_0000.png'
-    )
-    assert artifacts[0].blocks[1].crop_path == str(
-        tmp_path / 'output/Documents/Document_0002/Blocks/Block_0001.png'
-    )
-    assert artifacts[1].blocks[0].crop_path == str(
-        tmp_path / 'output/Documents/Document_0000/Blocks/Block_0000.png'
-    )
     assert [image.image_id for image in artifacts[0].blocks[0].images] == [
         'image-1'
     ]
@@ -271,11 +265,50 @@ def test_mistral_provider_materializes_ordered_artifacts(monkeypatch, tmp_path):
     assert artifacts[1].blocks[0].images == []
     assert artifacts[0].blocks[0].images[0].bbox == (0.2, 0.15, 0.4, 0.3)
     assert (
-        tmp_path / 'output/Documents/Document_0002/Images/Image_000.png'
-    ).read_bytes() == b'first-image'
+        Path(artifacts[0].blocks[0].images[0].path).read_bytes()
+        == b'first-image'
+    )
     assert (
-        tmp_path / 'output/Documents/Document_0002/Images/Image_001.png'
-    ).read_bytes() == b'second-image'
+        Path(artifacts[0].blocks[1].images[0].path).read_bytes()
+        == b'second-image'
+    )
+
+
+def test_ocr_runs_preserve_prior_images_and_crops(monkeypatch, tmp_path):
+    settings = _configure_materialization(monkeypatch, tmp_path)
+    pdf_path = tmp_path / 'book.pdf'
+    pdf_path.write_bytes(b'%PDF')
+    payloads = iter([b'first image', b'second image', b'reprocessed image'])
+    colors = iter(['red', 'green', 'blue'])
+
+    def ocr_pdf(_data, _settings, pages=None):
+        image = base64.b64encode(next(payloads)).decode('ascii')
+        return mistral.OCRResponse.from_raw(
+            {'pages': [_page_payload(images=[_image_payload(image)])]}
+        )
+
+    monkeypatch.setattr(mistral, 'ocr_pdf', ocr_pdf)
+    monkeypatch.setattr(
+        _RenderedPage,
+        'to_pil',
+        lambda self: Image.new('RGB', (100, 200), next(colors)),
+    )
+    provider = mistral.MistralOCRProvider(settings)
+    blocks = [
+        provider.extract(pdf_path, source_uuid=source_uuid)[0].blocks[0]
+        for source_uuid in ('source-1', 'source-2', 'source-1')
+    ]
+
+    assert [Path(block.images[0].path).read_bytes() for block in blocks] == [
+        b'first image',
+        b'second image',
+        b'reprocessed image',
+    ]
+    for block, expected in zip(
+        blocks, [(255, 0, 0), (0, 128, 0), (0, 0, 255)], strict=True
+    ):
+        with Image.open(block.crop_path) as crop:
+            assert crop.getpixel((0, 0)) == expected
 
 
 @pytest.mark.parametrize(

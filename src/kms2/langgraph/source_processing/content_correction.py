@@ -12,11 +12,12 @@ def add_content_correction_phase(
     """Register correction fan-out, worker, and collector."""
     graph.add_node('content_correction_worker', node.worker)
     graph.add_node('content_correction_collect', node.collect)
-    graph.add_conditional_edges(
-        'ocr',
-        node.dispatch,
-        ['content_correction_worker', 'content_correction_collect'],
-    )
+    for source in ('ocr', 'prepared_ocr'):
+        graph.add_conditional_edges(
+            source,
+            node.dispatch,
+            ['content_correction_worker', 'content_correction_collect'],
+        )
     graph.add_edge(
         'content_correction_worker',
         'content_correction_collect',

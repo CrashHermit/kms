@@ -3,7 +3,8 @@
 READ_SOURCES = """
 MATCH (:User {uuid: $user_uuid})-[:OWNS_SOURCE]->(source:Source)
 RETURN source.uuid AS uuid,
-       source.key AS key
+       source.key AS key,
+       coalesce(source.revision, 0) AS revision
 ORDER BY source.key, source.uuid
 """
 
@@ -13,7 +14,8 @@ WHERE NOT EXISTS {
     MATCH (:User)-[:OWNS_SOURCE]->(source)
 }
 RETURN source.uuid AS uuid,
-       source.key AS key
+       source.key AS key,
+       coalesce(source.revision, 0) AS revision
 ORDER BY source.key, source.uuid
 """
 

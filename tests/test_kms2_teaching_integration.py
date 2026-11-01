@@ -1,14 +1,19 @@
 import asyncio
 import os
 from datetime import UTC, datetime
+from io import BytesIO
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 from neo4j.exceptions import ResultNotSingleError
+from PIL import Image
 
 from kms2 import application
 from kms2.config.services import DatabaseSettings
 from kms2.config.settings import Settings
+from kms2.core.model.source import SourceRevisionReference
+from kms2.core.model.teaching.evidence import TeachingEvidenceReference
 from kms2.core.model.teaching.plan import (
     TeachingPlan,
     TeachingPlanAcceptance,
@@ -104,6 +109,7 @@ def _commit(
     question: TeachingQuestion | None = None,
     question_step_uuid: str | None = None,
     acceptance: TeachingPlanAcceptance | None = None,
+    source_revisions: list[SourceRevisionReference] | None = None,
 ) -> TeachingTurnCommit:
     return TeachingTurnCommit(
         phase=phase,
@@ -113,6 +119,7 @@ def _commit(
         current_plan_uuid=current_plan_uuid or (plan.uuid if plan else None),
         current_step_uuid=current_step_uuid,
         pending_question_uuid=pending_question_uuid,
+        source_revisions=source_revisions or [],
         new_assessment=assessment,
         new_plan=plan,
         new_question=question,
@@ -352,6 +359,7 @@ def test_teaching_sessions_persist_and_preserve_history():
                         current_plan_uuid=None,
                         current_step_uuid=None,
                         pending_question_uuid=None,
+                        source_revisions=[],
                     ),
                 )
             with pytest.raises(ResultNotSingleError):
@@ -657,6 +665,7 @@ def test_teaching_sessions_persist_and_preserve_history():
                     current_plan_uuid=None,
                     current_step_uuid=None,
                     pending_question_uuid=None,
+                    source_revisions=[],
                 ),
                 expected_revision=0,
             )
@@ -779,6 +788,7 @@ def test_teaching_session_revision_conflict_and_rollback():
                 current_plan_uuid=None,
                 current_step_uuid=None,
                 pending_question_uuid=None,
+                source_revisions=[],
             )
             results = await asyncio.gather(
                 service.record_teaching_turn(
@@ -918,6 +928,326 @@ def test_teaching_session_revision_conflict_and_rollback():
                     if uuid is not None
                 ],
                 list(set(teaching_uuids)),
+            )
+            await database.close()
+
+    asyncio.run(exercise())
+
+
+def test_teaching_turn_citations_are_owned_atomic_and_live(tmp_path: Path):
+    async def exercise() -> None:
+        settings = _settings()
+        suffix = uuid4().hex
+        database = DatabaseClient(settings.database)
+        owner = None
+        foreign_owner = None
+        session_uuids: list[str] = []
+        source_uuids: list[str] = []
+        evidence_uuids: list[str] = []
+        try:
+            await schema.ensure_structural_schema(database.session)
+            owner = await _owned_user_fixture(settings, suffix + '-owner')
+            foreign_owner = await _owned_user_fixture(
+                settings,
+                suffix + '-foreign',
+            )
+            owner_source_uuid = f'{suffix}-owner-source'
+            owner_block_uuid = f'{suffix}-owner-block'
+            owner_image_uuid = f'{suffix}-owner-image'
+            foreign_source_uuid = f'{suffix}-foreign-source'
+            foreign_block_uuid = f'{suffix}-foreign-block'
+            foreign_image_uuid = f'{suffix}-foreign-image'
+            source_uuids.extend([owner_source_uuid, foreign_source_uuid])
+            evidence_uuids.extend(
+                [
+                    owner_block_uuid,
+                    owner_image_uuid,
+                    foreign_block_uuid,
+                    foreign_image_uuid,
+                ]
+            )
+            image_buffer = BytesIO()
+            image = Image.new('RGB', (2, 2), 'navy')
+            image.save(image_buffer, format='PNG')
+            image.close()
+            image_data = image_buffer.getvalue()
+            image_path = tmp_path / 'teaching-citation.png'
+            image_path.write_bytes(image_data)
+            async with database.session() as session:
+                for user_uuid, source_uuid, block_uuid, image_uuid in (
+                    (
+                        owner.uuid,
+                        owner_source_uuid,
+                        owner_block_uuid,
+                        owner_image_uuid,
+                    ),
+                    (
+                        foreign_owner.uuid,
+                        foreign_source_uuid,
+                        foreign_block_uuid,
+                        foreign_image_uuid,
+                    ),
+                ):
+                    result = await session.run(
+                        """
+                        MATCH (user:User {uuid: $user_uuid})
+                        CREATE (source:Source {
+                            uuid: $source_uuid,
+                            key: $source_key,
+                            metadata: '{}'
+                        })
+                        CREATE (user)-[:OWNS_SOURCE]->(source)
+                        CREATE (page:SourcePage {index: 0})
+                        CREATE (source)-[:HAS_PAGE]->(page)
+                        CREATE (block:SourceBlock {
+                            uuid: $block_uuid,
+                            block_type: 'text',
+                            content: $content
+                        })
+                        CREATE (page)-[:CONTAINS_BLOCK]->(block)
+                        CREATE (another_page:SourcePage {index: 1})
+                        CREATE (source)-[:HAS_PAGE]->(another_page)
+                        CREATE (another_page)-[:CONTAINS_BLOCK]->(block)
+                        CREATE (image:VisualAsset {
+                            uuid: $image_uuid,
+                            path: $image_path
+                        })
+                        CREATE (block)-[:CONTAINS_VISUAL_ASSET]->(image)
+                        RETURN source.uuid AS uuid
+                        """,
+                        user_uuid=user_uuid,
+                        source_uuid=source_uuid,
+                        source_key=f'{source_uuid}.pdf',
+                        block_uuid=block_uuid,
+                        content=None,
+                        image_uuid=image_uuid,
+                        image_path=str(image_path),
+                    )
+                    await result.single(strict=True)
+
+            service = TeachingService(TeachingRepository(database.session))
+            started = await service.start_session(
+                owner.uuid, 'Use local evidence'
+            )
+            session_uuid = started.session.uuid
+            session_uuids.append(session_uuid)
+            commit = TeachingTurnCommit(
+                phase=TeachingPhase.PROBING,
+                current_assessment_uuid=None,
+                current_plan_uuid=None,
+                current_step_uuid=None,
+                pending_question_uuid=None,
+                source_revisions=[
+                    SourceRevisionReference(
+                        source_uuid=owner_source_uuid,
+                        revision=0,
+                    )
+                ],
+                citations=[
+                    TeachingEvidenceReference(
+                        kind='image',
+                        uuid=owner_image_uuid,
+                    ),
+                    TeachingEvidenceReference(
+                        kind='block',
+                        uuid=owner_block_uuid,
+                    ),
+                    TeachingEvidenceReference(
+                        kind='block',
+                        uuid=owner_block_uuid,
+                    ),
+                ],
+            )
+            recorded = await service.record_result(
+                owner.uuid,
+                session_uuid,
+                'This explanation uses the inspected source.',
+                commit,
+                expected_revision=0,
+            )
+            assert {
+                (reference.kind, reference.uuid)
+                for reference in recorded.turns[-1].citations
+            } == {
+                ('block', owner_block_uuid),
+                ('image', owner_image_uuid),
+            }
+            citation_views = await service.read_teaching_citations(
+                owner.uuid,
+                session_uuid,
+                [
+                    TeachingEvidenceReference(
+                        kind='block',
+                        uuid=owner_block_uuid,
+                    ),
+                    TeachingEvidenceReference(
+                        kind='image',
+                        uuid=owner_image_uuid,
+                    ),
+                ],
+            )
+            assert [view.kind for view in citation_views] == ['block', 'image']
+            assert citation_views[0].page_indexes == [0, 1]
+            assert citation_views[0].image_uuids == [owner_image_uuid]
+            assert citation_views[0].content is None
+            assert citation_views[0].source_uuid == owner_source_uuid
+            assert 'path' not in citation_views[0].model_dump()
+            media = await service.read_teaching_citation_media(
+                owner.uuid,
+                session_uuid,
+                owner_image_uuid,
+            )
+            assert media.media_type == 'image/png'
+            assert media.data == image_data
+            teacher_turn_uuid = recorded.turns[-1].turn.uuid
+
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (turn:TeachingTurn {uuid: $turn_uuid})
+                    OPTIONAL MATCH (turn)-[block_citation:CITES_BLOCK]->()
+                    OPTIONAL MATCH (turn)-[image_citation:CITES_IMAGE]->()
+                    RETURN count(DISTINCT block_citation) AS blocks,
+                           count(DISTINCT image_citation) AS images
+                    """,
+                    turn_uuid=teacher_turn_uuid,
+                )
+                citation_edges = await result.single(strict=True)
+            assert citation_edges['blocks'] == 1
+            assert citation_edges['images'] == 1
+
+            uncited_start = await service.start_session(
+                owner.uuid,
+                'No source citation required',
+            )
+            uncited_uuid = uncited_start.session.uuid
+            session_uuids.append(uncited_uuid)
+            uncited = await service.record_result(
+                owner.uuid,
+                uncited_uuid,
+                'A direct probing question.',
+                TeachingTurnCommit(
+                    phase=TeachingPhase.PROBING,
+                    current_assessment_uuid=None,
+                    current_plan_uuid=None,
+                    current_step_uuid=None,
+                    pending_question_uuid=None,
+                    source_revisions=[],
+                ),
+                expected_revision=0,
+            )
+            assert uncited.turns[-1].citations == []
+            with pytest.raises(ResultNotSingleError):
+                await service.read_teaching_citations(
+                    owner.uuid,
+                    uncited_uuid,
+                    [
+                        TeachingEvidenceReference(
+                            kind='block',
+                            uuid=owner_block_uuid,
+                        )
+                    ],
+                )
+
+            assert (
+                await service.read_teaching_citations(
+                    owner.uuid,
+                    session_uuid,
+                    [],
+                )
+                == []
+            )
+            foreign_start = await service.start_session(
+                owner.uuid,
+                'Reject foreign evidence',
+            )
+            foreign_session_uuid = foreign_start.session.uuid
+            session_uuids.append(foreign_session_uuid)
+            for reference in (
+                TeachingEvidenceReference(
+                    kind='block',
+                    uuid=foreign_block_uuid,
+                ),
+                TeachingEvidenceReference(
+                    kind='image',
+                    uuid=foreign_image_uuid,
+                ),
+            ):
+                with pytest.raises(ResultNotSingleError):
+                    await service.record_teaching_turn(
+                        owner.uuid,
+                        foreign_session_uuid,
+                        'This must not be persisted.',
+                        TeachingTurnCommit(
+                            phase=TeachingPhase.PROBING,
+                            current_assessment_uuid=None,
+                            current_plan_uuid=None,
+                            current_step_uuid=None,
+                            pending_question_uuid=None,
+                            source_revisions=[],
+                            citations=[reference],
+                        ),
+                        expected_revision=0,
+                    )
+            foreign_state = await service.load_session(
+                owner.uuid,
+                foreign_session_uuid,
+            )
+            assert foreign_state.session.revision == 0
+            assert foreign_state.turns == []
+
+            with pytest.raises(ResultNotSingleError):
+                await service.record_teaching_turn(
+                    owner.uuid,
+                    session_uuid,
+                    'A stale citation attempt.',
+                    commit,
+                    expected_revision=0,
+                )
+            before_delete = await service.load_session(owner.uuid, session_uuid)
+            assert before_delete.session.revision == 1
+            assert len(before_delete.turns) == 1
+            assert len(before_delete.turns[0].citations) == 2
+
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (evidence)
+                    WHERE evidence.uuid IN $evidence_uuids
+                    DETACH DELETE evidence
+                    """,
+                    evidence_uuids=[owner_block_uuid, owner_image_uuid],
+                )
+                await result.consume()
+            after_delete = await service.load_session(owner.uuid, session_uuid)
+            assert after_delete.session.revision == 1
+            assert len(after_delete.turns) == 1
+            assert after_delete.turns[0].citations == []
+        finally:
+            async with database.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (source:Source)
+                    WHERE source.uuid IN $source_uuids
+                    OPTIONAL MATCH (source)-[:HAS_PAGE]->(page:SourcePage)
+                    WITH collect(DISTINCT source)
+                         + collect(DISTINCT page) AS nodes
+                    UNWIND nodes AS node
+                    WITH node WHERE node IS NOT NULL
+                    DETACH DELETE node
+                    """,
+                    source_uuids=source_uuids,
+                )
+                await result.consume()
+            await _delete_fixture(
+                database,
+                [
+                    user.uuid
+                    for user in (owner, foreign_owner)
+                    if user is not None
+                ],
+                session_uuids,
+                source_uuids + evidence_uuids,
             )
             await database.close()
 

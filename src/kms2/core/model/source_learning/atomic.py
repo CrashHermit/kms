@@ -2,17 +2,13 @@
 
 from pydantic import BaseModel, Field
 
-from kms2.core.model.source_learning.context import (
-    SourceLearningEvidence,
-    SourceLearningHubContext,
-)
+from kms2.core.model.source_learning.context import SourceLearningEvidence
 from kms2.core.model.source_learning.flashcard import SourceFlashcardCandidate
 
 
 class SourceAtomicFlashcardInput(BaseModel):
     """Content supplied to one atomic flashcard inference request."""
 
-    context: SourceLearningHubContext
     evidence: SourceLearningEvidence
 
 
@@ -20,8 +16,7 @@ class SourceAtomicFlashcardRequest(BaseModel):
     """Backend request retaining provenance for one atomic inference call."""
 
     source_block_uuid: str = Field(min_length=1)
-    hub_uuid: str = Field(min_length=1)
-    source_proposition_uuid: str = Field(min_length=1)
+    source_page_index: int = Field(ge=0)
     input: SourceAtomicFlashcardInput
 
     def model_input(self) -> SourceAtomicFlashcardInput:

@@ -319,17 +319,14 @@ def _display_review_history(settings: Settings, user: User) -> None:
 def _log_source_semantic_completion(source: Source, semantic) -> None:
     """Log all counts persisted by one source semantic stage."""
     logger.info(
-        'Done: source %s (%s), Source Semantic extracted %d proposition(s) '
-        'and %d entity occurrence(s), described %d entity occurrence(s), '
-        'and %d entity hub(s), plus %d proposition, %d statement, and %d '
-        'procedure hub(s).',
+        'Done: source %s (%s), Source Semantic extracted %d entity '
+        'occurrence(s), described %d entity occurrence(s), and %d entity '
+        'hub(s), plus %d statement and %d procedure hub(s).',
         source.uuid,
         source.key,
-        semantic.source_proposition_count,
         semantic.source_entity_count,
         semantic.source_entity_description_count,
         semantic.source_entity_hub_count,
-        semantic.source_proposition_hub_count,
         semantic.source_statement_hub_count,
         semantic.source_procedure_hub_count,
     )

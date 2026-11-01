@@ -35,14 +35,3 @@ class SourceEntityHubSearchMatch(BaseModel):
     name: str
     description: str
     score: float
-
-
-class SourcePropositionHubSearchMatch(BaseModel):
-    """Best source-local proposition occurrence matched through its hub."""
-
-    uuid: str
-    source_uuid: str
-    member_uuid: str
-    target_block_uuids: list[str]
-    text: str
-    score: float

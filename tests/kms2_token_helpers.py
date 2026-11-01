@@ -13,7 +13,6 @@ class FixedCounter:
         return [self.cost] * len(texts)
 
 
-RERANKER_COUNTER = FixedCounter()
 JUDGE_BUDGET = TokenBudget(FixedCounter(), 100000)
 
 
@@ -24,15 +23,12 @@ class UnexpectedSummary:
         raise AssertionError('Direct-fit evidence must not be summarized')
 
 
-def direct_synthesis(*, include_reranker: bool = True) -> dict[str, object]:
+def direct_synthesis() -> dict[str, object]:
     """Provide isolated synthesis dependencies for direct-fit node fixtures."""
-    dependencies: dict[str, object] = {
+    return {
         'summary_module': UnexpectedSummary(),
         'merge_module': UnexpectedSummary(),
         'final_budget': TokenBudget(FixedCounter(), 100000),
         'summary_budget': TokenBudget(FixedCounter(), 100000),
         'merge_budget': TokenBudget(FixedCounter(), 100000),
     }
-    if include_reranker:
-        dependencies['reranker_overhead_tokens'] = 0
-    return dependencies

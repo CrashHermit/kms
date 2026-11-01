@@ -1,4 +1,4 @@
-"""Bounded same-hub coherent flashcard generation."""
+"""Bounded source-material coherent flashcard generation."""
 
 from collections import defaultdict
 from collections.abc import Iterable
@@ -30,7 +30,7 @@ class SourceCoherentFlashcardWorkerState(TypedDict):
 
 
 class SourceCoherentFlashcardNode:
-    """Generate additional cards from retained atomic packets within each hub."""
+    """Generate additional cards from retained source-material packets."""
 
     def __init__(
         self,
@@ -42,47 +42,40 @@ class SourceCoherentFlashcardNode:
         self._budget = budget
 
     def prepare(self, state: SourceLearningState) -> dict[str, object]:
-        """Pack whole atomic packets into same-hub coherent requests."""
-        packets_by_hub: dict[str, list[SourceAtomicFlashcardPacket]] = (
+        """Pack whole atomic packets by source page into coherent requests."""
+        packets_by_page: dict[int, list[SourceAtomicFlashcardPacket]] = (
             defaultdict(list)
         )
         for packet in state.atomic_packets:
             if packet.cards:
-                packets_by_hub[packet.request.hub_uuid].append(packet)
+                packets_by_page[packet.request.source_page_index].append(packet)
 
         requests: list[SourceCoherentFlashcardRequest] = []
-        for hub_uuid, packets in packets_by_hub.items():
-            context = packets[0].request.input.context
+        for source_page_index, packets in packets_by_page.items():
             whole_request = SourceCoherentFlashcardRequest(
-                hub_uuid=hub_uuid,
-                context=context,
+                source_page_index=source_page_index,
                 packets=packets,
             )
             whole_input = whole_request.model_input()
-            costs = self._budget.counter.count_texts(
+            packet_costs = self._budget.counter.count_texts(
                 [
-                    whole_input.context.model_dump_json(),
-                    *[
-                        packet.model_dump_json(
-                            exclude={'cards': {'__all__': {'index'}}}
-                        )
-                        for packet in whole_input.packets
-                    ],
+                    packet.model_dump_json(
+                        exclude={'cards': {'__all__': {'index'}}}
+                    )
+                    for packet in whole_input.packets
                 ]
             )
-            context_cost, *packet_costs = costs
             batches = pack_items(
                 packets,
                 token_counts=packet_costs,
-                token_budget=self._budget.token_limit - context_cost,
+                token_budget=self._budget.token_limit,
             )
             for batch in batches:
                 if sum(len(packet.cards) for packet in batch) < 2:
                     continue
                 requests.append(
                     SourceCoherentFlashcardRequest(
-                        hub_uuid=hub_uuid,
-                        context=context,
+                        source_page_index=source_page_index,
                         packets=batch,
                     )
                 )
@@ -131,10 +124,10 @@ class SourceCoherentFlashcardNode:
                 selected = [
                     parents[index - 1] for index in candidate.card_indexes
                 ]
-                source_proposition_uuids = _unique_values(
-                    proposition_uuid
+                source_block_uuids = _unique_values(
+                    block_uuid
                     for parent in selected
-                    for proposition_uuid in parent.source_proposition_uuids
+                    for block_uuid in parent.source_block_uuids
                 )
                 occurrences.append(
                     SourceFlashcardOccurrence(
@@ -142,7 +135,7 @@ class SourceCoherentFlashcardNode:
                             question=candidate.question,
                             answer=candidate.answer,
                         ),
-                        source_proposition_uuids=source_proposition_uuids,
+                        source_block_uuids=source_block_uuids,
                         derived_card_uuids=_unique_values(
                             parent.card.uuid for parent in selected
                         ),

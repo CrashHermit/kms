@@ -60,9 +60,7 @@ def test_chatgpt_preflight_resolves_only_relevant_stage_settings(
     monkeypatch,
 ):
     settings = Settings(llm={'default_text_profile': 'qwen3.8-9b-distill-text'})
-    settings.source_semantic.source_proposition_extraction.profile = (
-        'chatgpt-luna'
-    )
+    settings.source_semantic.source_entity_extraction.profile = 'chatgpt-luna'
     settings.source_pedagogical.statement_procedure.role_typer.profile = (
         'chatgpt-luna'
     )
@@ -112,9 +110,7 @@ def test_chatgpt_auth_failure_stops_before_semantic_graph_build(
     monkeypatch,
 ):
     settings = Settings()
-    settings.source_semantic.source_proposition_extraction.profile = (
-        'chatgpt-luna'
-    )
+    settings.source_semantic.source_entity_extraction.profile = 'chatgpt-luna'
 
     async def fail_authentication():
         raise RuntimeError('ChatGPT auth unavailable')
@@ -480,8 +476,6 @@ def test_combined_ingestion_runs_pedagogy_between_processing_and_semantics(
     semantic_graph = _StageGraph(
         'semantic',
         {
-            'source_propositions': [],
-            'source_proposition_hub_count': 0,
             'source_statement_hub_count': 0,
             'source_procedure_hub_count': 0,
             'source_entities': [],
@@ -920,6 +914,7 @@ def test_teaching_application_uses_database_only_resources_and_closes_them(
             TeachingTurnCommit(
                 phase='probing',
                 current_assessment_uuid=None,
+                source_revisions=[],
                 current_plan_uuid=None,
                 current_step_uuid=None,
                 pending_question_uuid=None,
@@ -984,3 +979,159 @@ def test_teaching_application_uses_database_only_resources_and_closes_them(
             )
         )
     assert failure_database.closed is True
+
+
+def test_search_sources_with_empty_allowlist_skips_application_resources(
+    monkeypatch,
+) -> None:
+    settings = Settings(_env_file=None)
+
+    def fail_resources(*_args, **_kwargs):
+        pytest.fail('empty source scope must not acquire resources')
+
+    monkeypatch.setattr(application, '_application_resources', fail_resources)
+
+    assert (
+        asyncio.run(
+            application.search_sources(
+                settings,
+                'user-1',
+                'query',
+                source_uuids=[],
+            )
+        )
+        == []
+    )
+
+
+@pytest.mark.parametrize(
+    ('status', 'expected_revision'),
+    [
+        (TeachingStatus.AWAITING_LEARNER, 0),
+        (TeachingStatus.AWAITING_TEACHER, 1),
+    ],
+)
+def test_run_teaching_turn_rejects_invalid_state_before_inference_resources(
+    monkeypatch,
+    status,
+    expected_revision,
+):
+    settings = Settings(_env_file=None)
+    database = _Database(settings.database)
+    repository = _ApplicationTeachingRepository()
+    service = TeachingService(repository)
+    asyncio.run(service.start_session('user-1', 'Understand derivatives'))
+    repository.snapshot.session.status = status
+
+    async def ensure_structural_schema(session_factory):
+        assert session_factory.__self__ is database
+
+    async def fail_preflight(*_args):
+        pytest.fail('invalid session state must be rejected before inference')
+
+    def fail_resources(*_args, **_kwargs):
+        pytest.fail(
+            'invalid session state must not acquire inference resources'
+        )
+
+    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
+    monkeypatch.setattr(
+        application.schema,
+        'ensure_structural_schema',
+        ensure_structural_schema,
+    )
+    monkeypatch.setattr(
+        application,
+        'build_teaching_service',
+        lambda _: service,
+    )
+    monkeypatch.setattr(application, '_preflight_chatgpt', fail_preflight)
+    monkeypatch.setattr(application, '_application_resources', fail_resources)
+
+    with pytest.raises(
+        ValueError,
+        match='Teaching session is not awaiting teacher at expected revision',
+    ):
+        asyncio.run(
+            application.run_teaching_turn(
+                settings,
+                'user-1',
+                repository.snapshot.session.uuid,
+                expected_revision=expected_revision,
+            )
+        )
+
+    assert database.closed is True
+
+
+def test_run_teaching_turn_preflights_knowledge_before_inference_resources(
+    monkeypatch,
+):
+    settings = Settings(_env_file=None)
+    database = _Database(settings.database)
+    repository = _ApplicationTeachingRepository()
+    service = TeachingService(repository)
+    started = asyncio.run(
+        service.start_session('user-1', 'Understand eigenvalues')
+    )
+    preflight_calls = []
+    resource_lifecycle = []
+
+    async def ensure_structural_schema(session_factory):
+        assert session_factory.__self__ is database
+
+    async def preflight(*args):
+        assert database.closed is True
+        preflight_calls.append(args)
+
+    @asynccontextmanager
+    async def application_resources(*_args, **_kwargs):
+        assert database.closed is True
+        resource_lifecycle.append('entered')
+        yield SimpleNamespace(
+            local_models=object(),
+            embedding_client=object(),
+            reranker_client=object(),
+            tokenizers=object(),
+            recorder=None,
+            database=database,
+        )
+        resource_lifecycle.append('closed')
+
+    class _Graph:
+        async def run(self, _request):
+            resource_lifecycle.append('graph')
+            return await service.load_session('user-1', started.session.uuid)
+
+    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
+    monkeypatch.setattr(
+        application.schema,
+        'ensure_structural_schema',
+        ensure_structural_schema,
+    )
+    monkeypatch.setattr(
+        application, 'build_teaching_service', lambda _: service
+    )
+    monkeypatch.setattr(application, '_preflight_chatgpt', preflight)
+    monkeypatch.setattr(
+        application, '_application_resources', application_resources
+    )
+    monkeypatch.setattr(
+        application, 'build_teaching_graph', lambda *_args, **_kwargs: _Graph()
+    )
+
+    asyncio.run(
+        application.run_teaching_turn(
+            settings,
+            'user-1',
+            started.session.uuid,
+            expected_revision=started.session.revision,
+            source_uuids=['source-allowed'],
+        )
+    )
+
+    assert preflight_calls == [
+        (settings, settings.knowledge.extraction, settings.knowledge.identity)
+    ]
+    assert resource_lifecycle == ['entered', 'graph', 'closed']
+    assert database.closed is True

@@ -16,7 +16,6 @@ from kms2.core.model.source_semantic.source_entity_hub import (
 )
 from kms2.core.reranking import RerankerClient
 from kms2.core.windowing import (
-    TextTokenCounter,
     TokenBudget,
     count_text_tokens,
     pack_items,
@@ -36,7 +35,7 @@ class SourceEntityHubRerankWorkerState(TypedDict):
 
     source_entity_hub_rerank_ordinal: int
     source_entity_hub_left_text: str
-    source_entity_hub_batch: list[SourceEntityHubCandidate]
+    source_entity_hub_candidates: list[SourceEntityHubCandidate]
 
 
 class SourceEntityHubJudgeWorkerState(TypedDict):
@@ -64,16 +63,12 @@ class SourceEntityHubNode:
         reranker: RerankerClient,
         settings: SourceEntityHubSettings,
         *,
-        reranker_token_counter: TextTokenCounter,
-        reranker_overhead_tokens: int,
         judge_budget: TokenBudget,
     ) -> None:
         self._repository = repository
         self._judge_module = judge_module
         self._reranker = reranker
         self._settings = settings
-        self._reranker_token_counter = reranker_token_counter
-        self._reranker_overhead_tokens = reranker_overhead_tokens
         self._judge_budget = judge_budget
 
     async def initialize(
@@ -141,7 +136,8 @@ class SourceEntityHubNode:
     def dispatch_rerank(
         self, state: SourceSemanticState
     ) -> list[Send] | Literal['source_entity_hub_rerank_collect']:
-        """Pack unknown name-description pairs by left occurrence."""
+        """Dispatch per left item; scores from separate requests are
+        incomparable."""
         grouped: dict[str, list[SourceEntityHubCandidate]] = {}
         for candidate in state.source_entity_hub_candidates:
             if (
@@ -151,55 +147,36 @@ class SourceEntityHubNode:
                 grouped.setdefault(candidate.left_uuid, []).append(candidate)
         if not grouped:
             return 'source_entity_hub_rerank_collect'
-        sends = []
-        ordinal = 0
-        for candidates in grouped.values():
-            left_text = _left_text(candidates[0])
-            right_texts = [_right_text(candidate) for candidate in candidates]
-            costs = self._reranker_token_counter.count_texts(
-                [left_text, *right_texts]
+        return [
+            Send(
+                'source_entity_hub_rerank_worker',
+                {
+                    'source_entity_hub_rerank_ordinal': ordinal,
+                    'source_entity_hub_left_text': _left_text(candidates[0]),
+                    'source_entity_hub_candidates': candidates,
+                },
             )
-            left_cost, *right_costs = costs
-            candidate_costs = [
-                left_cost + right_cost + self._reranker_overhead_tokens
-                for right_cost in right_costs
-            ]
-            for batch in pack_items(
-                candidates,
-                token_counts=candidate_costs,
-                token_budget=self._settings.reranker_token_budget,
-            ):
-                sends.append(
-                    Send(
-                        'source_entity_hub_rerank_worker',
-                        {
-                            'source_entity_hub_rerank_ordinal': ordinal,
-                            'source_entity_hub_left_text': left_text,
-                            'source_entity_hub_batch': batch,
-                        },
-                    )
-                )
-                ordinal += 1
-        return sends
+            for ordinal, candidates in enumerate(grouped.values())
+        ]
 
     async def rerank_worker(
         self, state: SourceEntityHubRerankWorkerState
     ) -> dict[str, list[SourceEntityHubRerankResult]]:
         """Reject weak candidates without approving any identity pair."""
-        batch = state['source_entity_hub_batch']
+        candidates = state['source_entity_hub_candidates']
         results = await self._reranker.rerank(
             state['source_entity_hub_left_text'],
-            [_right_text(candidate) for candidate in batch],
+            [_right_text(candidate) for candidate in candidates],
             top_n=None,
         )
         survivors = [
-            batch[result['index']]
+            candidates[result['index']]
             for result in sorted(results, key=lambda item: item['index'])
             if result['relevance_score']
             >= self._settings.reranker_rejection_threshold
         ]
         rejected = [
-            candidate for candidate in batch if candidate not in survivors
+            candidate for candidate in candidates if candidate not in survivors
         ]
         return {
             'source_entity_hub_rerank_results': [

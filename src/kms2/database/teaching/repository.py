@@ -7,8 +7,17 @@ from graphlib import TopologicalSorter
 from typing import Any
 
 from neo4j import AsyncSession, AsyncTransaction, Record
-from neo4j.time import DateTime
 
+from kms2.core.model.knowledge.proposition import (
+    KnowledgeAssertion,
+    KnowledgeAssertionRecord,
+)
+from kms2.core.model.source import SourceRevisionReference
+from kms2.core.model.source_processing.admission import StagedSourceSnapshot
+from kms2.core.model.teaching.evidence import (
+    TeachingCitationView,
+    TeachingEvidenceReference,
+)
 from kms2.core.model.teaching.plan import (
     TeachingPlan,
     TeachingPlanAcceptance,
@@ -16,10 +25,6 @@ from kms2.core.model.teaching.plan import (
     TeachingPlanStep,
 )
 from kms2.core.model.teaching.probe import ProbeAssessment, ProbeStrand
-from kms2.core.model.teaching.question import (
-    TeachingQuestion,
-    TeachingQuestionKind,
-)
 from kms2.core.model.teaching.session import (
     TeachingSession,
     TeachingSessionSnapshot,
@@ -28,17 +33,45 @@ from kms2.core.model.teaching.session import (
     TeachingTurnRecord,
 )
 from kms2.core.model.teaching.turn import TeachingRole, TeachingTurn
+from kms2.core.source_snapshot import assert_matching_snapshot
+from kms2.database.knowledge.repository import write_knowledge_admission
+from kms2.database.source.queries.source_snapshot import LOCK_SNAPSHOT_OWNER
+from kms2.database.source.source_snapshot_repository import (
+    create_owned_snapshot_in_transaction,
+    read_owned_snapshot_in_transaction,
+)
+from kms2.database.teaching.observation_repository import (
+    write_learner_observations,
+)
+from kms2.database.teaching.queries.evidence import (
+    READ_TEACHING_CITATION_MEDIA,
+    READ_TEACHING_CITATIONS,
+)
+from kms2.database.teaching.queries.observation import (
+    AUTHORIZE_OWNED_LEARNER_OBSERVATIONS,
+    LINK_ASSESSMENT_OBSERVATIONS,
+)
 from kms2.database.teaching.queries.session import (
+    CHECK_OWNED_SOURCE_REVISION,
     CREATE_TEACHING_SESSION,
     END_TEACHING_SESSION,
     LOAD_TEACHING_SESSION,
+    LOCK_OWNED_SOURCE,
     LOCK_TEACHING_SESSION,
+    LOCK_TEACHING_USER_KNOWLEDGE,
     READ_TEACHING_SESSION_REVISION,
     READ_TEACHING_SESSIONS,
+    READ_TEACHING_USER_KNOWLEDGE_REVISION,
 )
 from kms2.database.teaching.queries.turn import (
     APPEND_TEACHING_RESPONSE,
+    CHECK_TEACHING_CITATIONS,
     RECORD_TEACHING_TURN,
+)
+from kms2.database.teaching.records import (
+    learner_observation_from_record,
+    native_datetime,
+    question_from_record,
 )
 
 
@@ -98,6 +131,53 @@ class TeachingRepository:
             row = await result.single(strict=True)
         return _parse_snapshot(row)
 
+    async def read_teaching_citations(
+        self,
+        user_uuid: str,
+        session_uuid: str,
+        references: list[TeachingEvidenceReference],
+    ) -> list[TeachingCitationView]:
+        """Read only distinct evidence cited in the owned session."""
+        unique = list(
+            {
+                (reference.kind, reference.uuid): reference
+                for reference in references
+            }.values()
+        )
+        async with self._session_factory() as database_session:
+            result = await database_session.run(
+                READ_TEACHING_CITATIONS,
+                user_uuid=user_uuid,
+                session_uuid=session_uuid,
+                references=[
+                    {'kind': reference.kind, 'uuid': reference.uuid}
+                    for reference in unique
+                ],
+            )
+            row = await result.single(strict=True)
+        by_key = {
+            (citation['kind'], citation['uuid']): _parse_citation(citation)
+            for citation in row['citations']
+        }
+        return [by_key[(item.kind, item.uuid)] for item in unique]
+
+    async def read_teaching_citation_media_path(
+        self,
+        user_uuid: str,
+        session_uuid: str,
+        asset_uuid: str,
+    ) -> str:
+        """Authorize an image citation and return its private storage path."""
+        async with self._session_factory() as database_session:
+            result = await database_session.run(
+                READ_TEACHING_CITATION_MEDIA,
+                user_uuid=user_uuid,
+                session_uuid=session_uuid,
+                asset_uuid=asset_uuid,
+            )
+            row = await result.single(strict=True)
+        return row['path']
+
     async def append_response(
         self,
         user_uuid: str,
@@ -142,6 +222,125 @@ class TeachingRepository:
             async with (
                 await database_session.begin_transaction() as transaction
             ):
+                if commit.staged_sources:
+                    await self._single(
+                        transaction,
+                        LOCK_SNAPSHOT_OWNER,
+                        user_uuid=user_uuid,
+                    )
+                if commit.knowledge is not None:
+                    await self._single(
+                        transaction,
+                        LOCK_TEACHING_USER_KNOWLEDGE,
+                        user_uuid=user_uuid,
+                    )
+                    await self._single(
+                        transaction,
+                        READ_TEACHING_USER_KNOWLEDGE_REVISION,
+                        user_uuid=user_uuid,
+                        expected_revision=commit.knowledge.expected_revision,
+                    )
+
+                staged_by_uuid: dict[str, StagedSourceSnapshot] = {}
+                for candidate in commit.staged_sources:
+                    previous = staged_by_uuid.get(candidate.source.uuid)
+                    if previous is not None:
+                        assert_matching_snapshot(candidate, previous)
+                    else:
+                        staged_by_uuid[candidate.source.uuid] = candidate
+                source_revisions = [
+                    *commit.source_revisions,
+                    *(
+                        commit.knowledge.source_revisions
+                        if commit.knowledge is not None
+                        else []
+                    ),
+                ]
+                source_revisions.extend(
+                    SourceRevisionReference(
+                        source_uuid=candidate.source.uuid,
+                        revision=candidate.source.revision,
+                    )
+                    for candidate in staged_by_uuid.values()
+                )
+                requested_revisions = {
+                    (item.source_uuid, item.revision): item
+                    for item in source_revisions
+                }
+                source_uuids = sorted(
+                    {source_uuid for source_uuid, _ in requested_revisions}
+                    | set(staged_by_uuid)
+                )
+                for source_uuid in source_uuids:
+                    candidate = staged_by_uuid.get(source_uuid)
+                    if candidate is not None:
+                        await create_owned_snapshot_in_transaction(
+                            transaction,
+                            user_uuid,
+                            candidate.source,
+                            candidate.pages,
+                        )
+                    await self._single(
+                        transaction,
+                        LOCK_OWNED_SOURCE,
+                        user_uuid=user_uuid,
+                        source_uuid=source_uuid,
+                    )
+                    if candidate is not None:
+                        persisted = await read_owned_snapshot_in_transaction(
+                            transaction,
+                            user_uuid,
+                            source_uuid,
+                        )
+                        assert_matching_snapshot(candidate, persisted)
+                for reference in sorted(
+                    requested_revisions.values(),
+                    key=lambda item: (item.source_uuid, item.revision),
+                ):
+                    await self._single(
+                        transaction,
+                        CHECK_OWNED_SOURCE_REVISION,
+                        user_uuid=user_uuid,
+                        source_uuid=reference.source_uuid,
+                        revision=reference.revision,
+                    )
+                parameters = _record_parameters(
+                    user_uuid=user_uuid,
+                    session_uuid=session_uuid,
+                    expected_revision=expected_revision,
+                    turn=turn,
+                    commit=commit,
+                )
+                await self._single(
+                    transaction,
+                    CHECK_TEACHING_CITATIONS,
+                    user_uuid=user_uuid,
+                    citation_block_uuids=parameters['citation_block_uuids'],
+                    citation_image_uuids=parameters['citation_image_uuids'],
+                    citation_proposition_uuids=parameters[
+                        'citation_proposition_uuids'
+                    ],
+                    supporting_block_uuids=parameters['supporting_block_uuids'],
+                    source_revisions=parameters['source_revisions'],
+                )
+                existing_observation_uuids = sorted(
+                    set(
+                        commit.new_assessment.observation_uuids
+                        if commit.new_assessment is not None
+                        else []
+                    )
+                    - {
+                        item.observation.uuid
+                        for item in commit.learner_observations
+                    }
+                )
+                if existing_observation_uuids:
+                    await self._single(
+                        transaction,
+                        AUTHORIZE_OWNED_LEARNER_OBSERVATIONS,
+                        user_uuid=user_uuid,
+                        observation_uuids=existing_observation_uuids,
+                    )
                 await self._lock_and_check(
                     transaction,
                     user_uuid,
@@ -152,14 +351,34 @@ class TeachingRepository:
                 await self._single(
                     transaction,
                     RECORD_TEACHING_TURN,
-                    **_record_parameters(
-                        user_uuid=user_uuid,
-                        session_uuid=session_uuid,
-                        expected_revision=expected_revision,
-                        turn=turn,
-                        commit=commit,
-                    ),
+                    **parameters,
                 )
+                await write_learner_observations(
+                    transaction,
+                    user_uuid,
+                    turn.uuid,
+                    commit.learner_observations,
+                )
+                if commit.new_assessment is not None:
+                    observation_uuids = sorted(
+                        set(commit.new_assessment.observation_uuids)
+                    )
+                    if observation_uuids:
+                        await self._single(
+                            transaction,
+                            LINK_ASSESSMENT_OBSERVATIONS,
+                            user_uuid=user_uuid,
+                            session_uuid=session_uuid,
+                            assessment_uuid=commit.new_assessment.uuid,
+                            observation_uuids=observation_uuids,
+                        )
+                if commit.knowledge is not None:
+                    await write_knowledge_admission(
+                        transaction,
+                        user_uuid,
+                        turn.uuid,
+                        commit.knowledge,
+                    )
                 return await self._load(transaction, user_uuid, session_uuid)
 
     async def end_session(
@@ -253,6 +472,32 @@ def _record_parameters(
     plan = commit.new_plan
     question = commit.new_question
     acceptance = commit.plan_acceptance
+    citation_pairs = sorted(
+        {(reference.kind, reference.uuid) for reference in commit.citations}
+    )
+    supporting_block_uuids = sorted(
+        {
+            block_uuid
+            for assertion in commit.knowledge.assertions
+            for block_uuid in assertion.supporting_block_uuids
+        }
+        | {
+            block_uuid
+            for step in commit.knowledge.new_reasoning_steps
+            for block_uuid in step.supporting_block_uuids
+        }
+        if commit.knowledge is not None
+        else set()
+    )
+    citation_block_uuids = sorted(
+        {uuid for kind, uuid in citation_pairs if kind == 'block'}
+    )
+    citation_image_uuids = [
+        uuid for kind, uuid in citation_pairs if kind == 'image'
+    ]
+    citation_proposition_uuids = [
+        uuid for kind, uuid in citation_pairs if kind == 'proposition'
+    ]
     return {
         'user_uuid': user_uuid,
         'session_uuid': session_uuid,
@@ -303,10 +548,32 @@ def _record_parameters(
         'current_plan_uuid': commit.current_plan_uuid,
         'current_step_uuid': commit.current_step_uuid,
         'pending_question_uuid': commit.pending_question_uuid,
+        'workspace_json': commit.workspace_json,
         'acceptance_plan_uuid': acceptance.plan_uuid if acceptance else None,
         'acceptance_learner_turn_uuid': (
             acceptance.learner_turn_uuid if acceptance else None
         ),
+        'citation_block_uuids': citation_block_uuids,
+        'supporting_block_uuids': supporting_block_uuids,
+        'citation_image_uuids': citation_image_uuids,
+        'source_revisions': [
+            {'source_uuid': item.source_uuid, 'revision': item.revision}
+            for item in sorted(
+                {
+                    (item.source_uuid, item.revision): item
+                    for item in (
+                        commit.source_revisions
+                        + (
+                            commit.knowledge.source_revisions
+                            if commit.knowledge is not None
+                            else []
+                        )
+                    )
+                }.values(),
+                key=lambda item: (item.source_uuid, item.revision),
+            )
+        ],
+        'citation_proposition_uuids': citation_proposition_uuids,
     }
 
 
@@ -334,6 +601,7 @@ def _parse_snapshot(row: Mapping[str, Any]) -> TeachingSessionSnapshot:
         ),
         current_step_uuid=row['current_step_uuid'],
         pending_question_uuid=row['pending_question_uuid'],
+        workspace_json=row['workspace_json'],
     )
 
 
@@ -345,10 +613,10 @@ def _parse_session(row: Mapping[str, Any]) -> TeachingSession:
         status=TeachingStatus(row['status']),
         phase=row['phase'],
         revision=row['revision'],
-        created_at=_native_datetime(row['created_at']),
-        updated_at=_native_datetime(row['updated_at']),
+        created_at=native_datetime(row['created_at']),
+        updated_at=native_datetime(row['updated_at']),
         ended_at=(
-            _native_datetime(row['ended_at'])
+            native_datetime(row['ended_at'])
             if row['ended_at'] is not None
             else None
         ),
@@ -363,13 +631,74 @@ def _parse_turn_record(row: Mapping[str, Any]) -> TeachingTurnRecord:
             uuid=row['turn']['uuid'],
             role=TeachingRole(row['turn']['role']),
             content=row['turn']['content'],
-            created_at=_native_datetime(row['turn']['created_at']),
+            created_at=native_datetime(row['turn']['created_at']),
         ),
-        question=_parse_question(question) if question is not None else None,
+        question=question_from_record(question)
+        if question is not None
+        else None,
         question_step_uuid=row['question_step_uuid'],
         responds_to_question_uuid=row['responds_to_question_uuid'],
         presented_plan_uuid=row['presented_plan_uuid'],
         accepted_plan_uuid=row['accepted_plan_uuid'],
+        citations=[
+            TeachingEvidenceReference(kind=kind, uuid=uuid)
+            for kind, uuid in sorted(
+                {
+                    (reference['kind'], reference['uuid'])
+                    for reference in row['citations']
+                }
+            )
+        ],
+        knowledge_assertions=[
+            _parse_knowledge_assertion(item)
+            for item in row['knowledge_assertions']
+        ],
+        learner_observations=[
+            learner_observation_from_record(item)
+            for item in row['learner_observations']
+        ],
+    )
+
+
+def _parse_knowledge_assertion(
+    row: Mapping[str, Any],
+) -> KnowledgeAssertionRecord:
+    """Convert one per-turn assertion and its one-hop references."""
+    return KnowledgeAssertionRecord(
+        assertion=KnowledgeAssertion(
+            uuid=row['uuid'],
+            created_at=native_datetime(row['created_at']),
+        ),
+        proposition_uuid=row['proposition_uuid'],
+        supporting_block_uuids=sorted(row['supporting_block_uuids']),
+        reasoning_step_uuids=sorted(row['reasoning_step_uuids']),
+        teaching_turn_uuid=row['teaching_turn_uuid'],
+    )
+
+
+def _parse_citation(row: Mapping[str, Any]) -> TeachingCitationView:
+    """Convert a session-authorized citation projection."""
+    metadata = json.loads(row['metadata']) if row.get('metadata') else {}
+    retrieved_at = metadata.get('retrieved_at')
+    if isinstance(retrieved_at, str):
+        retrieved_at = datetime.fromisoformat(retrieved_at)
+    return TeachingCitationView(
+        kind=row['kind'],
+        uuid=row['uuid'],
+        content=row['content'],
+        source_uuid=row.get('source_uuid'),
+        source_key=row.get('source_key'),
+        url=metadata.get('url'),
+        title=metadata.get('title'),
+        retrieved_at=(
+            native_datetime(retrieved_at) if retrieved_at is not None else None
+        ),
+        page_indexes=sorted(
+            index for index in row.get('page_indexes', []) if index is not None
+        ),
+        image_uuids=sorted(
+            uuid for uuid in row.get('image_uuids', []) if uuid is not None
+        ),
     )
 
 
@@ -380,7 +709,8 @@ def _parse_assessment(row: Mapping[str, Any]) -> ProbeAssessment:
         uuid=row['uuid'],
         summary=row['summary'],
         strands=[ProbeStrand.model_validate(strand) for strand in strands],
-        created_at=_native_datetime(row['created_at']),
+        observation_uuids=sorted(row['observation_uuids']),
+        created_at=native_datetime(row['created_at']),
     )
 
 
@@ -405,7 +735,7 @@ def _parse_plan(row: Mapping[str, Any]) -> TeachingPlan:
     return TeachingPlan(
         uuid=row['uuid'],
         summary=row['summary'],
-        created_at=_native_datetime(row['created_at']),
+        created_at=native_datetime(row['created_at']),
         steps=ordered_steps,
         dependencies=sorted(
             dependencies,
@@ -415,19 +745,3 @@ def _parse_plan(row: Mapping[str, Any]) -> TeachingPlan:
             ),
         ),
     )
-
-
-def _parse_question(row: Mapping[str, Any]) -> TeachingQuestion:
-    """Convert one private persisted question specification."""
-    return TeachingQuestion(
-        uuid=row['uuid'],
-        kind=TeachingQuestionKind(row['kind']),
-        prompt=row['prompt'],
-        response=json.loads(row['response_json']),
-        created_at=_native_datetime(row['created_at']),
-    )
-
-
-def _native_datetime(value: datetime | DateTime) -> datetime:
-    """Convert a Neo4j temporal value to the domain datetime type."""
-    return value.to_native() if isinstance(value, DateTime) else value

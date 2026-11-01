@@ -95,3 +95,19 @@ class TeachingQuestionView(BaseModel):
     prompt: str
     response: TeachingResponseView
     created_at: datetime
+
+
+def question_view(question: TeachingQuestion) -> TeachingQuestionView:
+    """Project a typed question response without its private answer."""
+    response = question.response
+    if isinstance(response, FreeResponseSpecification):
+        response_view = FreeResponseView()
+    else:
+        response_view = MultipleChoiceView(options=response.options)
+    return TeachingQuestionView(
+        uuid=question.uuid,
+        kind=question.kind,
+        prompt=question.prompt,
+        response=response_view,
+        created_at=question.created_at,
+    )

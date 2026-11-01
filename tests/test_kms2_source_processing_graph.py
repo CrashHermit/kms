@@ -40,6 +40,7 @@ from kms2.node.source_processing.embedding import EmbeddingNode
 from kms2.node.source_processing.formatting import FormattingNode
 from kms2.node.source_processing.image_description import ImageDescriptionNode
 from kms2.node.source_processing.image_seam import ImageSeamNode
+from kms2.node.source_processing.input import SourceInputNode
 from kms2.node.source_processing.ocr import OCRNode
 from kms2.node.source_processing.text_seam import TextSeamNode
 from kms2.ocr.provider import OCRProvider
@@ -149,20 +150,23 @@ def test_ocr_node_delegates_once_to_injected_provider():
 
     class FakeProvider:
         def extract(
-            self, pdf_path: str, *, pages: list[int] | None = None
+            self,
+            pdf_path: str,
+            *,
+            source_uuid: str,
+            pages: list[int] | None = None,
         ) -> list[OCRPageArtifact]:
-            calls.append((pdf_path, pages))
+            calls.append((pdf_path, source_uuid, pages))
             return artifacts
 
     provider: OCRProvider = FakeProvider()
     state = SourceProcessingState(
-        pdf_path='book.pdf',
-        pages=[2],
+        input={'kind': 'pdf', 'pdf_path': 'book.pdf', 'pages': [2]},
         source=Source(uuid='source-1', key='book.pdf'),
     )
     result = OCRNode(provider).run(state)
 
-    assert calls == [('book.pdf', [2])]
+    assert calls == [('book.pdf', 'source-1', [2])]
     assert list(result) == ['ocr_pages']
     assert result['ocr_pages'][0].index == 2
     assert [block.content for block in result['ocr_pages'][0].blocks] == [
@@ -175,7 +179,7 @@ def test_ocr_node_delegates_once_to_injected_provider():
 def test_content_correction_dispatch_routes_empty_ocr_to_collect():
     node = _content_correction_node(object())
     state = SourceProcessingState(
-        pdf_path='book.pdf',
+        input={'kind': 'pdf', 'pdf_path': 'book.pdf'},
         source=Source(uuid='source-1', key='book.pdf'),
     )
 
@@ -188,7 +192,7 @@ def test_content_correction_collects_results_by_page_and_block_position():
         uuid='second', block_type='paragraph', content='second'
     )
     state = SourceProcessingState(
-        pdf_path='book.pdf',
+        input={'kind': 'pdf', 'pdf_path': 'book.pdf'},
         ocr_pages=[SourcePage(index=4, blocks=[first, second])],
         source=Source(uuid='source-1', key='book.pdf'),
     )
@@ -239,7 +243,11 @@ def test_source_graph_runs_correction_formatting_and_text_seams(tmp_path):
 
     class FakeProvider:
         def extract(
-            self, pdf_path: str, *, pages: list[int] | None = None
+            self,
+            pdf_path: str,
+            *,
+            source_uuid: str,
+            pages: list[int] | None = None,
         ) -> list[OCRPageArtifact]:
             return artifacts
 
@@ -306,6 +314,7 @@ def test_source_graph_runs_correction_formatting_and_text_seams(tmp_path):
 
     persistence = _RecordingPersistence()
     source_graph = SourceProcessingGraph(
+        SourceInputNode(),
         OCRNode(FakeProvider()),
         _content_correction_node(FakeCorrector()),
         _formatting_node(FakeFormatter()),
@@ -319,7 +328,7 @@ def test_source_graph_runs_correction_formatting_and_text_seams(tmp_path):
     result = asyncio.run(
         source_graph.ainvoke(
             {
-                'pdf_path': 'book.pdf',
+                'input': {'kind': 'pdf', 'pdf_path': 'book.pdf'},
                 'source': Source(uuid='source-1', key='book.pdf'),
             }
         )
@@ -388,7 +397,11 @@ def test_source_graph_merges_adjacent_image_artifacts_after_text_seams(
 
     class FakeProvider:
         def extract(
-            self, pdf_path: str, *, pages: list[int] | None = None
+            self,
+            pdf_path: str,
+            *,
+            source_uuid: str,
+            pages: list[int] | None = None,
         ) -> list[OCRPageArtifact]:
             return artifacts
 
@@ -455,6 +468,7 @@ def test_source_graph_merges_adjacent_image_artifacts_after_text_seams(
 
     persistence = _RecordingPersistence()
     source_graph = SourceProcessingGraph(
+        SourceInputNode(),
         OCRNode(FakeProvider()),
         _content_correction_node(FakeCorrector()),
         _formatting_node(FakeFormatter()),
@@ -474,7 +488,7 @@ def test_source_graph_merges_adjacent_image_artifacts_after_text_seams(
     result = asyncio.run(
         source_graph.ainvoke(
             {
-                'pdf_path': 'book.pdf',
+                'input': {'kind': 'pdf', 'pdf_path': 'book.pdf'},
                 'source': Source(uuid='source-1', key='book.pdf'),
             }
         )

@@ -182,14 +182,12 @@ def test_kms2_source_hub_settings_are_independent(monkeypatch):
     names = (
         'KMS2_SOURCE_SEMANTIC__SOURCE_ENTITY_HUBS__JUDGE__PROFILE',
         'KMS2_SOURCE_SEMANTIC__SOURCE_STATEMENT_HUBS__CANDIDATE_LIMIT',
-        'KMS2_SOURCE_SEMANTIC__SOURCE_PROPOSITION_HUBS__MINIMUM_SIMILARITY',
     )
     for name in names:
         monkeypatch.delenv(name, raising=False)
 
     monkeypatch.setenv(names[0], 'entity-hub-profile')
     monkeypatch.setenv(names[1], '17')
-    monkeypatch.setenv(names[2], '0.91')
     settings = Settings()
 
     assert (
@@ -197,10 +195,6 @@ def test_kms2_source_hub_settings_are_independent(monkeypatch):
         == 'entity-hub-profile'
     )
     assert settings.source_semantic.source_statement_hubs.candidate_limit == 17
-    assert (
-        settings.source_semantic.source_proposition_hubs.minimum_similarity
-        == 0.91
-    )
 
 
 def test_kms2_source_hub_filtering_settings_are_independent(monkeypatch):
@@ -209,11 +203,11 @@ def test_kms2_source_hub_filtering_settings_are_independent(monkeypatch):
         'entity-judge',
     )
     monkeypatch.setenv(
-        'KMS2_SOURCE_SEMANTIC__SOURCE_PROPOSITION_HUBS__RERANKER_TOKEN_BUDGET',
+        'KMS2_RERANKER__BATCH_TOKEN_BUDGET',
         '2048',
     )
     monkeypatch.setenv(
-        'KMS2_SOURCE_SEMANTIC__SOURCE_PROPOSITION_HUBS__JUDGE_TOKEN_BUDGET',
+        'KMS2_SOURCE_SEMANTIC__SOURCE_STATEMENT_HUBS__JUDGE_TOKEN_BUDGET',
         '16384',
     )
 
@@ -224,12 +218,9 @@ def test_kms2_source_hub_filtering_settings_are_independent(monkeypatch):
         == 'entity-judge'
     )
     assert settings.source_semantic.source_entity_hubs.judge.num_retries == 0
+    assert settings.reranker.batch_token_budget == 2048
     assert (
-        settings.source_semantic.source_proposition_hubs.reranker_token_budget
-        == 2048
-    )
-    assert (
-        settings.source_semantic.source_proposition_hubs.judge_token_budget
+        settings.source_semantic.source_statement_hubs.judge_token_budget
         == 16384
     )
 
@@ -260,42 +251,28 @@ def test_kms2_entity_processing_defaults_survive_nested_environment(
     monkeypatch,
 ):
     monkeypatch.setenv(
-        'KMS2_SOURCE_SEMANTIC__SOURCE_PROPOSITION_EXTRACTION__MAX_TOKENS',
-        '4096',
-    )
-    monkeypatch.setenv(
         'KMS2_SOURCE_SEMANTIC__SOURCE_ENTITY_EXTRACTION__MAX_TOKENS',
         '2048',
     )
 
     settings = Settings()
 
-    assert (
-        settings.source_semantic.source_proposition_extraction.max_tokens
-        == 4096
-    )
     assert settings.source_semantic.source_entity_extraction.max_tokens == 2048
-    assert (
-        settings.source_semantic.source_proposition_extraction.num_retries == 0
-    )
+    assert settings.source_semantic.source_entity_extraction.num_retries == 0
 
 
 def test_explicit_stage_selection_overrides_subscription_default(monkeypatch):
     monkeypatch.setenv('KMS2_LLM__DEFAULT_TEXT_PROFILE', 'chatgpt-luna')
     monkeypatch.setenv(
-        'KMS2_SOURCE_SEMANTIC__SOURCE_PROPOSITION_EXTRACTION__PROFILE',
+        'KMS2_SOURCE_SEMANTIC__SOURCE_ENTITY_EXTRACTION__PROFILE',
         'gemma-text-32k',
     )
     settings = Settings(_env_file=None)
-    proposition = settings.llm.resolve(
-        settings.source_semantic.source_proposition_extraction
+    entity = settings.llm.resolve(
+        settings.source_semantic.source_entity_extraction
     )
-    assert isinstance(proposition, LocalLLMProfile)
-    assert proposition.model_server_profile == 'gemma-text-32k'
-    assert isinstance(
-        settings.llm.resolve(settings.source_semantic.source_entity_extraction),
-        ChatGPTLLMProfile,
-    )
+    assert isinstance(entity, LocalLLMProfile)
+    assert entity.model_server_profile == 'gemma-text-32k'
 
 
 def test_subscription_profile_uses_typed_nested_environment(monkeypatch):
@@ -329,3 +306,99 @@ def test_old_stage_selection_and_mixed_provider_options_are_rejected():
             profiles={'unsupported': {'backend': 'unknown'}},
             default_text_profile='unsupported',
         )
+
+
+def test_kms2_source_search_limits_use_nested_environment(monkeypatch):
+    monkeypatch.setenv('KMS2_SOURCE_SEARCH__CANDIDATE_LIMIT', '41')
+    monkeypatch.setenv('KMS2_SOURCE_SEARCH__RESULT_LIMIT', '6')
+
+    settings = Settings(_env_file=None)
+
+    assert settings.source_search.candidate_limit == 41
+    assert settings.source_search.result_limit == 6
+
+
+def test_kms2_source_search_limits_have_defaults(monkeypatch):
+    monkeypatch.delenv('KMS2_SOURCE_SEARCH__CANDIDATE_LIMIT', raising=False)
+    monkeypatch.delenv('KMS2_SOURCE_SEARCH__RESULT_LIMIT', raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.source_search.candidate_limit == 32
+    assert settings.source_search.result_limit == 8
+
+
+def test_teaching_settings_use_nested_environment_and_safe_defaults(
+    monkeypatch,
+):
+    for name in (
+        'KMS2_TEACHING__INFERENCE__PROFILE',
+        'KMS2_TEACHING__INPUT_TOKEN_BUDGET',
+        'KMS2_TEACHING__SAFETY_MARGIN_TOKENS',
+        'KMS2_TEACHING__MAX_TOOL_CALLS',
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    defaults = Settings(_env_file=None).teaching
+    assert defaults.inference.profile == 'chatgpt-luna'
+    assert defaults.inference.num_retries == 0
+    assert defaults.input_token_budget == 16384
+    assert defaults.safety_margin_tokens == 256
+    assert defaults.max_tool_calls == 8
+
+    monkeypatch.setenv('KMS2_TEACHING__INFERENCE__PROFILE', 'custom-teacher')
+    monkeypatch.setenv('KMS2_TEACHING__INPUT_TOKEN_BUDGET', '12000')
+    monkeypatch.setenv('KMS2_TEACHING__SAFETY_MARGIN_TOKENS', '128')
+    monkeypatch.setenv('KMS2_TEACHING__MAX_TOOL_CALLS', '3')
+
+    configured = Settings(_env_file=None).teaching
+    assert configured.inference.profile == 'custom-teacher'
+    assert configured.input_token_budget == 12000
+    assert configured.safety_margin_tokens == 128
+    assert configured.max_tool_calls == 3
+
+
+def test_research_settings_are_opt_in_and_environment_configurable(monkeypatch):
+    for name in (
+        'KMS2_RESEARCH__ENABLED',
+        'KMS2_RESEARCH__TAVILY__API_KEY',
+        'KMS2_RESEARCH__INFERENCE__PROFILE',
+        'KMS2_RESEARCH__MAX_CONCURRENCY',
+        'KMS2_RESEARCH__SOURCE_DIRECTORY',
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    defaults = Settings(_env_file=None).research
+    assert not defaults.enabled
+    assert defaults.tavily.api_key is None
+    assert defaults.inference.num_retries == 0
+    assert defaults.formatting.inference.num_retries == 0
+    assert defaults.max_concurrency == 4
+    assert defaults.max_tool_calls == 12
+    assert defaults.source_directory.as_posix() == 'output/research/sources'
+
+    monkeypatch.setenv('KMS2_RESEARCH__ENABLED', 'true')
+    monkeypatch.setenv('KMS2_RESEARCH__TAVILY__API_KEY', 'test-secret')
+    monkeypatch.setenv(
+        'KMS2_RESEARCH__INFERENCE__PROFILE',
+        'vision-research',
+    )
+    monkeypatch.setenv('KMS2_RESEARCH__MAX_CONCURRENCY', '2')
+    monkeypatch.setenv(
+        'KMS2_RESEARCH__SOURCE_DIRECTORY',
+        '/tmp/kms2-research-sources',
+    )
+
+    configured = Settings(_env_file=None).research
+    assert configured.enabled
+    assert configured.tavily.api_key.get_secret_value() == 'test-secret'
+    assert configured.inference.profile == 'vision-research'
+    assert configured.max_concurrency == 2
+    assert (
+        configured.source_directory.as_posix() == '/tmp/kms2-research-sources'
+    )
+
+
+def test_research_settings_reject_unknown_fields():
+    with pytest.raises(ValidationError, match='extra_forbidden'):
+        Settings.model_validate({'research': {'unknown': True}})

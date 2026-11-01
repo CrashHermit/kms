@@ -19,18 +19,11 @@ from kms2.core.model.source_semantic.source_entity_extraction import (
     SourceEntityCandidate,
     SourceEntityExtractionResult,
 )
-from kms2.core.model.source_semantic.source_proposition_extraction import (
-    SourcePropositionCandidate,
-    SourcePropositionExtractionResult,
-)
 from kms2.node.source_extraction import (
     build_source_extraction_requests,
 )
 from kms2.node.source_semantic.source_entity_extraction import (
     SourceEntityExtractionNode,
-)
-from kms2.node.source_semantic.source_proposition_extraction import (
-    SourcePropositionExtractionNode,
 )
 
 
@@ -81,7 +74,7 @@ def test_empty_source_builds_no_extraction_requests():
     )
 
 
-def test_entity_and_proposition_collectors_are_independent_and_ordered():
+def test_entity_collector_is_ordered_by_owning_block():
     blocks = [_block('b0', 'first'), _block('b1', 'second')]
     requests = build_source_extraction_requests(
         blocks,
@@ -89,33 +82,6 @@ def test_entity_and_proposition_collectors_are_independent_and_ordered():
         context_window=_WINDOW,
         token_counters=_TOKEN_COUNTERS,
     )
-    proposition_node = SourcePropositionExtractionNode(
-        extractor=None, context_window=_WINDOW, token_counters=_TOKEN_COUNTERS
-    )
-    proposition_state = SimpleNamespace(
-        blocks=blocks,
-        proposition_results=[
-            SourcePropositionExtractionResult(
-                request=requests[1],
-                propositions=[
-                    SourcePropositionCandidate(
-                        text='second claim', source_position=0
-                    )
-                ],
-            ),
-            SourcePropositionExtractionResult(
-                request=requests[0],
-                propositions=[
-                    SourcePropositionCandidate(
-                        text='first claim', source_position=0
-                    )
-                ],
-            ),
-        ],
-    )
-    propositions = proposition_node.collect(proposition_state)[
-        'source_propositions'
-    ]
     entity_node = SourceEntityExtractionNode(
         extractor=None,
         context_window=_WINDOW,
@@ -144,17 +110,13 @@ def test_entity_and_proposition_collectors_are_independent_and_ordered():
     )
     entities = entity_node.collect(entity_state)['source_entities']
 
-    assert [item.text for item in propositions] == [
-        'first claim',
-        'second claim',
-    ]
     assert [item.name for item in entities] == [
         'First concept',
         'Second concept',
     ]
 
 
-def test_empty_output_on_one_stream_does_not_change_other_stream_results():
+def test_empty_entity_output_does_not_change_entity_stream_results():
     block = _block('block', 'substantive heading')
     request = build_source_extraction_requests(
         [block],
@@ -162,40 +124,19 @@ def test_empty_output_on_one_stream_does_not_change_other_stream_results():
         context_window=_WINDOW,
         token_counters=_TOKEN_COUNTERS,
     )[0]
-    proposition_node = SourcePropositionExtractionNode(
-        extractor=None, context_window=_WINDOW, token_counters=_TOKEN_COUNTERS
-    )
     entity_node = SourceEntityExtractionNode(
         extractor=None,
         context_window=_WINDOW,
         token_counters=_TOKEN_COUNTERS,
     )
-    proposition_state = SimpleNamespace(
-        blocks=[block],
-        proposition_results=[
-            SourcePropositionExtractionResult(request=request, propositions=[])
-        ],
-    )
     entity_state = SimpleNamespace(
         blocks=[block],
         source_entity_extraction_results=[
-            SourceEntityExtractionResult(
-                request=request,
-                entities=[
-                    SourceEntityCandidate(
-                        name='Named inequality', source_position=0
-                    )
-                ],
-            )
+            SourceEntityExtractionResult(request=request, entities=[])
         ],
     )
 
-    assert (
-        proposition_node.collect(proposition_state)['source_propositions'] == []
-    )
-    assert entity_node.collect(entity_state)['source_entities'][0].name == (
-        'Named inequality'
-    )
+    assert entity_node.collect(entity_state)['source_entities'] == []
 
 
 def test_each_extracted_occurrence_retains_its_owning_block():
@@ -231,30 +172,9 @@ def test_each_extracted_occurrence_retains_its_owning_block():
     assert entities[1].target.source_blocks[0].uuid == 'block'
 
 
-@pytest.mark.parametrize(
-    ('node_type', 'candidate', 'request_key', 'result_key', 'output_field'),
-    [
-        (
-            SourcePropositionExtractionNode,
-            SourcePropositionCandidate(
-                text='A complete claim', source_position=0
-            ),
-            'proposition_extraction_request',
-            'proposition_results',
-            'propositions',
-        ),
-        (
-            SourceEntityExtractionNode,
-            SourceEntityCandidate(name='Target concept', source_position=0),
-            'entity_extraction_request',
-            'source_entity_extraction_results',
-            'entities',
-        ),
-    ],
-)
-def test_worker_uses_only_uuid_free_model_projection(
-    node_type, candidate, request_key, result_key, output_field
-):
+def test_entity_worker_uses_only_uuid_free_model_projection():
+    candidate = SourceEntityCandidate(name='Target concept', source_position=0)
+
     class Extractor:
         async def acall(self, *, request):
             assert (
@@ -270,25 +190,21 @@ def test_worker_uses_only_uuid_free_model_projection(
         context_window=_WINDOW,
         token_counters=_TOKEN_COUNTERS,
     )[0]
-    node = node_type(Extractor(), _WINDOW, token_counters=_TOKEN_COUNTERS)
-    output = asyncio.run(node.worker({request_key: request}))
-    result = output[result_key][0]
-    assert result.request.target.source_blocks == [block]
-    assert getattr(result, output_field) == [candidate]
-
-
-def test_each_extraction_stream_has_an_independent_empty_route():
-    state = SimpleNamespace(source_uuid='source', blocks=[])
-    proposition_node = SourcePropositionExtractionNode(
-        extractor=None, context_window=_WINDOW, token_counters=_TOKEN_COUNTERS
+    node = SourceEntityExtractionNode(
+        Extractor(), _WINDOW, token_counters=_TOKEN_COUNTERS
     )
+    output = asyncio.run(node.worker({'entity_extraction_request': request}))
+    result = output['source_entity_extraction_results'][0]
+    assert result.request.target.source_blocks == [block]
+    assert result.entities == [candidate]
+
+
+def test_entity_extraction_has_an_independent_empty_route():
+    state = SimpleNamespace(source_uuid='source', blocks=[])
     entity_node = SourceEntityExtractionNode(
         extractor=None,
         context_window=_WINDOW,
         token_counters=_TOKEN_COUNTERS,
-    )
-    assert proposition_node.dispatch_propositions(state) == (
-        'source_proposition_collect'
     )
     assert entity_node.dispatch_entities(state) == (
         'source_entity_extraction_collect'
@@ -341,7 +257,7 @@ def test_chunk_requests_cover_source_once_and_reset_target_positions():
         )
 
 
-def test_collectors_order_by_owner_without_persisting_sibling_context():
+def test_entity_collector_orders_by_owner_without_persisting_sibling_context():
     before = _block('before', 'before')
     a = _block('a', 'a')
     b = _block('b', 'b')
@@ -390,29 +306,6 @@ def test_collectors_order_by_owner_without_persisting_sibling_context():
         )
     )['source_entities']
 
-    proposition_node = SourcePropositionExtractionNode(
-        extractor=None, context_window=_WINDOW, token_counters=_TOKEN_COUNTERS
-    )
-    proposition_results = [
-        SourcePropositionExtractionResult(
-            request=second_request,
-            propositions=[
-                SourcePropositionCandidate(text='same', source_position=1),
-                SourcePropositionCandidate(text='same', source_position=0),
-            ],
-        ),
-        SourcePropositionExtractionResult(
-            request=first_request,
-            propositions=[
-                SourcePropositionCandidate(text='same', source_position=1),
-                SourcePropositionCandidate(text='same', source_position=0),
-            ],
-        ),
-    ]
-    propositions = proposition_node.collect(
-        SimpleNamespace(blocks=blocks, proposition_results=proposition_results)
-    )['source_propositions']
-
     assert [item.name for item in entities] == [
         'A first',
         'A second',
@@ -420,15 +313,8 @@ def test_collectors_order_by_owner_without_persisting_sibling_context():
         'Same',
         'D',
     ]
-    assert [item.text for item in propositions] == ['same'] * 4
     assert [item.target.source_blocks[0].uuid for item in entities] == [
         'a',
-        'a',
-        'b',
-        'c',
-        'd',
-    ]
-    assert [item.target.source_blocks[0].uuid for item in propositions] == [
         'a',
         'b',
         'c',
@@ -437,7 +323,7 @@ def test_collectors_order_by_owner_without_persisting_sibling_context():
     assert all(
         'context_before' not in item.model_dump()
         and 'context_after' not in item.model_dump()
-        for item in [*entities, *propositions]
+        for item in entities
     )
 
 
@@ -468,15 +354,11 @@ def test_extraction_input_rejects_noncontiguous_local_positions(positions):
         SourceExtractionInput(target_blocks=target_blocks)
 
 
-def test_candidates_require_nonnegative_source_positions_and_result_bounds():
+def test_entity_candidates_require_nonnegative_source_positions_and_bounds():
     with pytest.raises(ValidationError):
         SourceEntityCandidate(name='Missing position')
     with pytest.raises(ValidationError):
-        SourcePropositionCandidate(text='Missing position')
-    with pytest.raises(ValidationError):
         SourceEntityCandidate(name='Negative position', source_position=-1)
-    with pytest.raises(ValidationError):
-        SourcePropositionCandidate(text='Negative position', source_position=-1)
 
     block = _block('only', 'one target')
     request = SourceExtractionRequest(
@@ -489,13 +371,6 @@ def test_candidates_require_nonnegative_source_positions_and_result_bounds():
         SourceEntityExtractionResult(
             request=request,
             entities=[SourceEntityCandidate(name='Outside', source_position=1)],
-        )
-    with pytest.raises(ValidationError):
-        SourcePropositionExtractionResult(
-            request=request,
-            propositions=[
-                SourcePropositionCandidate(text='Outside', source_position=1)
-            ],
         )
 
 

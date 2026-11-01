@@ -20,8 +20,8 @@ class SourceFlashcardCandidate(BaseModel):
 
 
 class SourceFlashcardOccurrence(BaseModel):
-    """Persistable card with selected source-semantic provenance."""
+    """Persistable card with selected source-block provenance."""
 
     card: SourceFlashcard
-    source_proposition_uuids: list[str] = Field(min_length=1)
+    source_block_uuids: list[str] = Field(min_length=1)
     derived_card_uuids: list[str] = Field(default_factory=list)

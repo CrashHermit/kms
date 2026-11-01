@@ -1,4 +1,4 @@
-"""Create generic source flashcards with direct semantic provenance."""
+"""Create generic source flashcards with direct block provenance."""
 
 CREATE_SOURCE_FLASHCARDS = """
 UNWIND $rows AS row
@@ -10,11 +10,12 @@ CREATE (source)-[:HAS_FLASHCARD]->(card:SourceFlashcard {
 })
 WITH source, card, row
 CALL (source, card, row) {
-    UNWIND row.source_proposition_uuids AS proposition_uuid
-    MATCH (source)-[:HAS_PAGE]->(:SourcePage)-[:CONTAINS_BLOCK]->(:SourceBlock)
-          -[:MEMBER_OF]->(proposition:SourceProposition {uuid: proposition_uuid})
-    CREATE (card)-[:SUPPORTED_BY]->(proposition)
-    RETURN count(DISTINCT proposition) AS propositions_linked
+    UNWIND row.source_block_uuids AS block_uuid
+    MATCH (source)-[:HAS_PAGE]->(:SourcePage)-[:CONTAINS_BLOCK]->(
+        block:SourceBlock {uuid: block_uuid}
+    )
+    CREATE (card)-[:SUPPORTED_BY]->(block)
+    RETURN count(DISTINCT block) AS blocks_linked
 }
 CALL (source, card, row) {
     UNWIND row.derived_card_uuids AS parent_uuid

@@ -25,7 +25,6 @@ class _SourceHubSettings(BaseModel):
     )
     candidate_limit: int = 32
     minimum_similarity: float = 0.86
-    reranker_token_budget: int = 4096
     judge_token_budget: int = 8192
     judge_batch_size: int = 16
     reranker_acceptance_threshold: float = 0.90
@@ -33,21 +32,6 @@ class _SourceHubSettings(BaseModel):
     max_iterations: int = 100
     min_association_strength: float = 0.2
     minimum_community_size: int = 2
-
-
-class SourcePropositionHubSettings(BaseModel):
-    """Similarity filtering and strict judgment settings for propositions."""
-
-    judge: NoRetryTextInferenceSettings = Field(
-        default_factory=NoRetryTextInferenceSettings
-    )
-    candidate_limit: int = 32
-    minimum_similarity: float = 0.86
-    reranker_token_budget: int = 4096
-    reranker_rejection_threshold: float = 0.60
-    judge_token_budget: int = 8192
-    judge_batch_size: int = 16
-    safety_margin_tokens: int = 256
 
 
 class SourceStatementHubSettings(_SourceHubSettings):
@@ -72,7 +56,6 @@ class SourceEntityHubSettings(BaseModel):
     )
     candidate_limit: int = 32
     minimum_similarity: float = 0.86
-    reranker_token_budget: int = 4096
     reranker_rejection_threshold: float = 0.60
     judge_token_budget: int = 8192
     judge_batch_size: int = 16
@@ -80,18 +63,8 @@ class SourceEntityHubSettings(BaseModel):
 
 
 class SourceSemanticSettings(BaseModel):
-    """Language model and context-window settings for semantic extraction."""
+    """Language model settings for source semantic indexing."""
 
-    source_proposition_extraction: NoRetryTextInferenceSettings = Field(
-        default_factory=NoRetryTextInferenceSettings
-    )
-    context_window: ContextWindowSettings = Field(
-        default_factory=lambda: ContextWindowSettings(
-            backward_budget=1024,
-            forward_budget=1024,
-            target_budget=2048,
-        )
-    )
     source_entity_extraction: NoRetryTextInferenceSettings = Field(
         default_factory=NoRetryTextInferenceSettings
     )
@@ -107,9 +80,6 @@ class SourceSemanticSettings(BaseModel):
     )
     source_entity_hubs: SourceEntityHubSettings = Field(
         default_factory=SourceEntityHubSettings
-    )
-    source_proposition_hubs: SourcePropositionHubSettings = Field(
-        default_factory=SourcePropositionHubSettings
     )
     source_statement_hubs: SourceStatementHubSettings = Field(
         default_factory=SourceStatementHubSettings

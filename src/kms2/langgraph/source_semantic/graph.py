@@ -18,15 +18,6 @@ from kms2.langgraph.source_semantic.source_entity_hub import (
 from kms2.langgraph.source_semantic.source_procedure_hub import (
     add_source_procedure_hub_phase,
 )
-from kms2.langgraph.source_semantic.source_proposition_embedding import (
-    add_source_proposition_embedding_phase,
-)
-from kms2.langgraph.source_semantic.source_proposition_extraction import (
-    add_source_proposition_extraction_phase,
-)
-from kms2.langgraph.source_semantic.source_proposition_hub import (
-    add_source_proposition_hub_phase,
-)
 from kms2.langgraph.source_semantic.source_statement_hub import (
     add_source_statement_hub_phase,
 )
@@ -60,24 +51,6 @@ from kms2.node.source_semantic.source_procedure_hub import (
 from kms2.node.source_semantic.source_procedure_hub_persistence import (
     SourceProcedureHubPersistenceNode,
 )
-from kms2.node.source_semantic.source_proposition_embedding import (
-    SourcePropositionEmbeddingNode,
-)
-from kms2.node.source_semantic.source_proposition_embedding_persistence import (
-    SourcePropositionEmbeddingPersistenceNode,
-)
-from kms2.node.source_semantic.source_proposition_extraction import (
-    SourcePropositionExtractionNode,
-)
-from kms2.node.source_semantic.source_proposition_hub import (
-    SourcePropositionHubNode,
-)
-from kms2.node.source_semantic.source_proposition_hub_persistence import (
-    SourcePropositionHubPersistenceNode,
-)
-from kms2.node.source_semantic.source_proposition_persistence import (
-    SourcePropositionPersistenceNode,
-)
 from kms2.node.source_semantic.source_statement_hub import (
     SourceStatementHubNode,
 )
@@ -92,10 +65,6 @@ class SourceSemanticGraph:
     def __init__(
         self,
         source_semantic_load: SourceSemanticSourceLoadNode,
-        source_proposition_extraction: SourcePropositionExtractionNode,
-        source_proposition_persistence: SourcePropositionPersistenceNode,
-        source_proposition_embedding: SourcePropositionEmbeddingNode,
-        source_proposition_embedding_persistence: SourcePropositionEmbeddingPersistenceNode,
         source_entity_extraction: SourceEntityExtractionNode,
         source_entity_extraction_persistence: SourceEntityExtractionPersistenceNode,
         source_entity_description_load: SourceEntityDescriptionLoadNode,
@@ -104,10 +73,8 @@ class SourceSemanticGraph:
         source_entity_persistence: SourceEntityPersistenceNode,
         source_entity_hub: SourceEntityHubNode,
         source_entity_hub_persistence: SourceEntityHubPersistenceNode,
-        source_proposition_hub: SourcePropositionHubNode,
         source_statement_hub: SourceStatementHubNode,
         source_procedure_hub: SourceProcedureHubNode,
-        source_proposition_hub_persistence: SourcePropositionHubPersistenceNode,
         source_statement_hub_persistence: SourceStatementHubPersistenceNode,
         source_procedure_hub_persistence: SourceProcedureHubPersistenceNode,
     ) -> None:
@@ -115,12 +82,6 @@ class SourceSemanticGraph:
         self.source_entity_hub_persistence = source_entity_hub_persistence
         self.graph = StateGraph(SourceSemanticState)
         self.source_semantic_load = source_semantic_load
-        self.source_proposition_extraction = source_proposition_extraction
-        self.source_proposition_persistence = source_proposition_persistence
-        self.source_proposition_embedding = source_proposition_embedding
-        self.source_proposition_embedding_persistence = (
-            source_proposition_embedding_persistence
-        )
         self.source_entity_extraction = source_entity_extraction
         self.source_entity_extraction_persistence = (
             source_entity_extraction_persistence
@@ -129,12 +90,8 @@ class SourceSemanticGraph:
         self.source_entity_description = source_entity_description
         self.source_entity_embedding = source_entity_embedding
         self.source_entity_persistence = source_entity_persistence
-        self.source_proposition_hub = source_proposition_hub
         self.source_statement_hub = source_statement_hub
         self.source_procedure_hub = source_procedure_hub
-        self.source_proposition_hub_persistence = (
-            source_proposition_hub_persistence
-        )
         self.source_statement_hub_persistence = source_statement_hub_persistence
         self.source_procedure_hub_persistence = source_procedure_hub_persistence
 
@@ -153,16 +110,6 @@ class SourceSemanticGraph:
             self.source_entity_description_load,
             self.source_entity_description,
         )
-        add_source_proposition_extraction_phase(
-            graph,
-            self.source_proposition_extraction,
-            self.source_proposition_persistence,
-        )
-        add_source_proposition_embedding_phase(
-            graph,
-            self.source_proposition_embedding,
-            self.source_proposition_embedding_persistence,
-        )
         add_source_entity_phase(
             graph,
             self.source_entity_embedding,
@@ -170,11 +117,6 @@ class SourceSemanticGraph:
         )
         add_source_entity_hub_phase(
             graph, self.source_entity_hub, self.source_entity_hub_persistence
-        )
-        add_source_proposition_hub_phase(
-            graph,
-            self.source_proposition_hub,
-            self.source_proposition_hub_persistence,
         )
         add_source_statement_hub_phase(
             graph,
@@ -187,17 +129,7 @@ class SourceSemanticGraph:
             self.source_procedure_hub_persistence,
         )
         graph.add_edge(
-            [
-                'source_proposition_embedding_persistence',
-                'source_entity_persistence',
-            ],
-            'source_entity_hub_load',
-        )
-        graph.add_edge(
-            'source_entity_hub_persistence', 'source_proposition_hub_load'
-        )
-        graph.add_edge(
-            'source_proposition_hub_persistence', 'source_statement_hub_load'
+            'source_entity_hub_persistence', 'source_statement_hub_load'
         )
         graph.add_edge(
             'source_statement_hub_persistence', 'source_procedure_hub_load'

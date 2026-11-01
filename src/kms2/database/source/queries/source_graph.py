@@ -1,9 +1,14 @@
 """Cypher statements for replacing the source structural graph."""
 
+from kms2.database.source.queries.source_graph_create import (
+    CREATE_SOURCE_STRUCTURE,
+)
+
 REPLACE_SOURCE = """
 MERGE (source:Source {uuid: $source.uuid})
 SET source.key = $source.key,
-    source.metadata = $source.metadata
+    source.metadata = $source.metadata,
+    source.revision = coalesce(source.revision, 0) + 1
 WITH source
 CALL (source) {
     OPTIONAL MATCH (source)-[:HAS_FLASHCARD]->(card:SourceFlashcard)
@@ -22,13 +27,9 @@ WITH source
 CALL (source) {
     OPTIONAL MATCH (source)-[:HAS_PAGE]->(:SourcePage)
         -[:CONTAINS_BLOCK]->(:SourceBlock)-[:MEMBER_OF]->(
-            :SourceProposition
-        )-[:IN_SOURCE_HUB]->(proposition_hub:SourcePropositionHub)
-    OPTIONAL MATCH (source)-[:HAS_PAGE]->(:SourcePage)
-        -[:CONTAINS_BLOCK]->(:SourceBlock)-[:MEMBER_OF]->(
             :SourceEntity
         )-[:IN_SOURCE_HUB]->(entity_hub:SourceEntityHub)
-    WITH collect(DISTINCT proposition_hub) + collect(DISTINCT entity_hub) AS hubs
+    WITH collect(DISTINCT entity_hub) AS hubs
     FOREACH (hub IN hubs | DETACH DELETE hub)
     RETURN count(*) AS identity_hubs_deleted
 }
@@ -36,15 +37,9 @@ WITH source
 CALL (source) {
     OPTIONAL MATCH (source)-[:HAS_PAGE]->(:SourcePage)
         -[:CONTAINS_BLOCK]->(:SourceBlock)-[:MEMBER_OF]->(
-            proposition:SourceProposition
-        )
-    OPTIONAL MATCH (source)-[:HAS_PAGE]->(:SourcePage)
-        -[:CONTAINS_BLOCK]->(:SourceBlock)-[:MEMBER_OF]->(
             entity:SourceEntity
         )
-    WITH collect(DISTINCT proposition) AS propositions,
-         collect(DISTINCT entity) AS entities
-    FOREACH (proposition IN propositions | DETACH DELETE proposition)
+    WITH collect(DISTINCT entity) AS entities
     FOREACH (entity IN entities | DETACH DELETE entity)
     RETURN count(*) AS _
 }
@@ -84,117 +79,65 @@ FOREACH (procedure IN old_procedures | DETACH DELETE procedure)
 FOREACH (asset IN old_assets | DETACH DELETE asset)
 FOREACH (instruction IN old_instructions | DETACH DELETE instruction)
 WITH source
-CALL (source) {
-    UNWIND $pages AS row
-    CREATE (page:SourcePage {
-        index: row.index,
-        markdown: row.markdown
-    })
-    CREATE (source)-[:HAS_PAGE]->(page)
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    UNWIND $blocks AS row
-    CREATE (block:SourceBlock {
-        uuid: row.uuid,
-        block_type: row.block_type,
-        content: row.content,
-        embedding: row.embedding,
-        crop_path: row.crop_path,
-        crop_bbox: row.crop_bbox
-    })
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    UNWIND $assets AS row
-    CREATE (asset:VisualAsset {
-        uuid: row.uuid,
-        path: row.path
-    })
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    UNWIND $block_asset_pairs AS row
-    MATCH (block:SourceBlock {uuid: row.block_uuid})
-    MATCH (asset:VisualAsset {uuid: row.asset_uuid})
-    CREATE (block)-[:CONTAINS_VISUAL_ASSET]->(asset)
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    UNWIND $asset_pairs AS row
-    MATCH (from_asset:VisualAsset {uuid: row.from_uuid})
-    MATCH (to_asset:VisualAsset {uuid: row.to_uuid})
-    CREATE (from_asset)-[:NEXT_VISUAL_ASSET]->(to_asset)
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    UNWIND $asset_bounds AS row
-    MATCH (block:SourceBlock {uuid: row.block_uuid})
-    MATCH (first_asset:VisualAsset {uuid: row.first_asset_uuid})
-    MATCH (last_asset:VisualAsset {uuid: row.last_asset_uuid})
-    CREATE (block)-[:FIRST_VISUAL_ASSET]->(first_asset)
-    CREATE (block)-[:LAST_VISUAL_ASSET]->(last_asset)
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    UNWIND $page_block_pairs AS row
-    MATCH (source)-[:HAS_PAGE]->(page:SourcePage {index: row.page_index})
-    MATCH (block:SourceBlock {uuid: row.block_uuid})
-    CREATE (page)-[:CONTAINS_BLOCK]->(block)
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    UNWIND $page_pairs AS row
-    MATCH (source)-[:HAS_PAGE]->(from_page:SourcePage {index: row.from_index})
-    MATCH (source)-[:HAS_PAGE]->(to_page:SourcePage {index: row.to_index})
-    CREATE (from_page)-[:NEXT_PAGE]->(to_page)
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    UNWIND $block_pairs AS row
-    MATCH (from_block:SourceBlock {uuid: row.from_uuid})
-    MATCH (to_block:SourceBlock {uuid: row.to_uuid})
-    CREATE (from_block)-[:NEXT_BLOCK]->(to_block)
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    UNWIND $page_bounds AS row
-    MATCH (source)-[:HAS_PAGE]->(page:SourcePage {index: row.page_index})
-    MATCH (first_block:SourceBlock {uuid: row.first_block_uuid})
-    MATCH (last_block:SourceBlock {uuid: row.last_block_uuid})
-    CREATE (page)-[:FIRST_BLOCK]->(first_block)
-    CREATE (page)-[:LAST_BLOCK]->(last_block)
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    WITH source WHERE $first_page_index IS NOT NULL
-    MATCH (source)-[:HAS_PAGE]->(page:SourcePage {index: $first_page_index})
-    CREATE (source)-[:FIRST_PAGE]->(page)
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    WITH source WHERE $first_block_uuid IS NOT NULL
-    MATCH (first_block:SourceBlock {uuid: $first_block_uuid})
-    CREATE (source)-[:FIRST_BLOCK]->(first_block)
-    RETURN count(*) AS _
-}
-WITH source
-CALL (source) {
-    WITH source WHERE $last_block_uuid IS NOT NULL
-    MATCH (last_block:SourceBlock {uuid: $last_block_uuid})
-    CREATE (source)-[:LAST_BLOCK]->(last_block)
-    RETURN count(*) AS _
-}
+__CREATE_SOURCE_STRUCTURE__
+RETURN source.uuid AS uuid, source.revision AS revision
+"""
+
+REPLACE_SOURCE = REPLACE_SOURCE.replace(
+    '__CREATE_SOURCE_STRUCTURE__', CREATE_SOURCE_STRUCTURE
+)
+
+LOCK_SOURCE_WRITE = """
+MERGE (source:Source {uuid: $source_uuid})
+SET source._source_write_lock = randomUUID()
+REMOVE source._source_write_lock
 RETURN source.uuid AS uuid
+"""
+
+LOCK_EXISTING_SOURCE_WRITE = """
+MATCH (source:Source {uuid: $source_uuid})
+SET source._source_write_lock = randomUUID()
+REMOVE source._source_write_lock
+RETURN source.uuid AS uuid
+"""
+
+SOURCE_EVIDENCE_REFERENCED = """
+MATCH (source:Source {uuid: $source_uuid})
+RETURN
+    EXISTS {
+        MATCH (source)-[:HAS_PAGE]->(:SourcePage)
+            -[:CONTAINS_BLOCK]->(block:SourceBlock)
+            <-[:CITES_BLOCK]-(:TeachingTurn)
+    }
+    OR EXISTS {
+        MATCH (source)-[:HAS_PAGE]->(:SourcePage)
+            -[:CONTAINS_BLOCK]->(:SourceBlock)
+            -[:CONTAINS_VISUAL_ASSET]->(:VisualAsset)
+            <-[:CITES_IMAGE]-(:TeachingTurn)
+    }
+    OR EXISTS {
+        MATCH (source)-[:HAS_PAGE]->(:SourcePage)
+            -[:CONTAINS_BLOCK]->(block:SourceBlock)
+            <-[:SUPPORTED_BY]-(:KnowledgeAssertion)
+    }
+    OR EXISTS {
+        MATCH (source)-[:HAS_PAGE]->(:SourcePage)
+            -[:CONTAINS_BLOCK]->(block:SourceBlock)
+            <-[:SUPPORTED_BY]-(:ReasoningStep)
+    } AS referenced
+"""
+
+SOURCE_HAS_CAPTURE_DIGEST = """
+MATCH (source:Source {uuid: $source_uuid})
+RETURN source.metadata CONTAINS '\"snapshot_digest\"' AS captured
+"""
+
+READ_SOURCE_CAPTURE_PAGES = """
+MATCH (source:Source {uuid: $source_uuid})
+OPTIONAL MATCH (source)-[:HAS_PAGE]->(page:SourcePage)
+WITH page ORDER BY page.index
+RETURN collect(
+    CASE WHEN page IS NULL THEN NULL
+    ELSE {index: page.index, markdown: page.markdown} END
+) AS pages
 """

@@ -53,6 +53,7 @@ from kms2.node.source_processing.embedding import EmbeddingNode
 from kms2.node.source_processing.formatting import FormattingNode
 from kms2.node.source_processing.image_description import ImageDescriptionNode
 from kms2.node.source_processing.image_seam import ImageSeamNode
+from kms2.node.source_processing.input import SourceInputNode
 from kms2.node.source_processing.ocr import OCRNode
 from kms2.node.source_processing.persistence import SourcePersistenceNode
 from kms2.node.source_processing.text_seam import TextSeamNode
@@ -68,12 +69,15 @@ def build_source_processing_graph(
     embedding_client: EmbeddingClient,
     tokenizers: InferenceTokenizers,
     recorder: Recorder | None = None,
+    predictors: PredictorFactory | None = None,
 ) -> SourceProcessingGraph:
     """Compose the source graph from settings and started runtime resources."""
     source = settings.source_processing
-    predictors = PredictorFactory(settings, local_models, recorder)
+    predictor_factory = predictors or PredictorFactory(
+        settings, local_models, recorder
+    )
     content_corrector = ContentCorrectorModule(
-        predictors.create(
+        predictor_factory.create(
             ContentCorrectorModule,
             source.content_correction.inference,
             ContentCorrectorSignature,
@@ -81,7 +85,7 @@ def build_source_processing_graph(
         )
     )
     formatter = FormatterModule(
-        predictors.create(
+        predictor_factory.create(
             FormatterModule,
             source.formatting.inference,
             FormatterSignature,
@@ -89,7 +93,7 @@ def build_source_processing_graph(
         )
     )
     text_seam_judge = TextSeamJudgeModule(
-        predictors.create(
+        predictor_factory.create(
             TextSeamJudgeModule,
             source.text_seam.judge,
             TextSeamSignature,
@@ -97,7 +101,7 @@ def build_source_processing_graph(
         )
     )
     text_seam_rewriter = TextSeamRewriterModule(
-        predictors.create(
+        predictor_factory.create(
             TextSeamRewriterModule,
             source.text_seam.rewriter,
             TextSeamRewriteSignature,
@@ -105,7 +109,7 @@ def build_source_processing_graph(
         )
     )
     image_seam_judge = ImageSeamJudgeModule(
-        predictors.create(
+        predictor_factory.create(
             ImageSeamJudgeModule,
             source.image_seam.inference,
             ImageSeamSignature,
@@ -113,7 +117,7 @@ def build_source_processing_graph(
         )
     )
     image_describer = ImageDescriptionModule(
-        predictors.create(
+        predictor_factory.create(
             ImageDescriptionModule,
             source.image_description.inference,
             ImageDescriptionSignature,
@@ -122,6 +126,7 @@ def build_source_processing_graph(
     )
 
     return SourceProcessingGraph(
+        source_input=SourceInputNode(),
         ocr=OCRNode(MistralOCRProvider(settings.ocr)),
         content_correction=ContentCorrectionNode(
             content_corrector,

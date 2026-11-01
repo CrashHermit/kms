@@ -15,4 +15,5 @@ class RerankerProviderSettings(BaseModel):
     api_key: SecretStr | None = None
     max_concurrency: int = Field(default=4, gt=0)
     timeout_seconds: float = Field(default=120.0, gt=0)
+    batch_token_budget: int = Field(default=4096, gt=0)
     tokenizer_path: str | None = None

@@ -2,6 +2,7 @@ import asyncio
 from copy import deepcopy
 from datetime import UTC, datetime
 
+from kms2.core.model.teaching.evidence import TeachingEvidenceReference
 from kms2.core.model.teaching.plan import (
     TeachingPlan,
     TeachingPlanAcceptance,
@@ -91,6 +92,7 @@ class _MemoryTeachingRepository:
                     else None
                 ),
                 accepted_plan_uuid=None,
+                citations=deepcopy(commit.citations),
             )
         )
         if commit.plan_acceptance is not None:
@@ -140,6 +142,7 @@ def _commit(
     phase=TeachingPhase.PROBING,
     current_step_uuid=None,
     pending_question_uuid=None,
+    citations: list[TeachingEvidenceReference] | None = None,
 ):
     return TeachingTurnCommit(
         phase=phase,
@@ -147,10 +150,12 @@ def _commit(
         current_plan_uuid=plan.uuid if plan is not None else None,
         current_step_uuid=current_step_uuid,
         pending_question_uuid=pending_question_uuid,
+        source_revisions=[],
         new_plan=plan,
         new_question=question,
         new_question_step_uuid=current_step_uuid,
         plan_acceptance=plan_acceptance,
+        citations=citations or [],
     )
 
 
@@ -159,6 +164,11 @@ def test_service_transitions_preserve_pending_questions_and_plan_acceptance():
         repository = _MemoryTeachingRepository()
         service = TeachingService(repository)
         started = await service.start_session('user-1', 'Understand slope')
+        snapshot = await service.load_snapshot(
+            'user-1',
+            started.session.uuid,
+        )
+        assert snapshot.session.uuid == started.session.uuid
         question = TeachingQuestion(
             kind=TeachingQuestionKind.PROBE,
             prompt='What is slope?',
@@ -168,7 +178,7 @@ def test_service_transitions_preserve_pending_questions_and_plan_acceptance():
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
         plan = _plan('plan-1', 'step-1')
-        first = await service.record_teaching_turn(
+        first = await service.record_result(
             'user-1',
             started.session.uuid,
             'Let us probe your understanding.',
@@ -177,10 +187,16 @@ def test_service_transitions_preserve_pending_questions_and_plan_acceptance():
                 question=question,
                 current_step_uuid='step-1',
                 pending_question_uuid=question.uuid,
+                citations=[
+                    TeachingEvidenceReference(kind='block', uuid='block-1')
+                ],
             ),
             expected_revision=0,
         )
         assert first.turns[-1].turn.role is TeachingRole.TEACHER
+        assert first.turns[-1].citations == [
+            TeachingEvidenceReference(kind='block', uuid='block-1')
+        ]
         after_response = await service.submit_response(
             'user-1',
             started.session.uuid,

@@ -14,9 +14,9 @@ class SourcePersistenceNode:
         self._repository = repository
 
     async def run(self, state: SourceProcessingState) -> dict[str, object]:
-        """Replace the final embedded source graph."""
-        await self._repository.replace_source(
+        """Replace the final embedded source graph and expose its revision."""
+        source = await self._repository.replace_source(
             state.source,
             state.embedded_pages,
         )
-        return {}
+        return {'source': source}

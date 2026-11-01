@@ -30,7 +30,6 @@ class _Reranker:
 
     async def rerank(self, query, documents, top_n=None):
         self.documents.append(documents)
-        await asyncio.sleep(0.01 if len(documents) == 2 else 0)
         return [
             {'index': index, 'relevance_score': 0.7}
             for index in range(len(documents))
@@ -71,7 +70,6 @@ def _fixture(scope, kind, *, threshold=8, batch_size=10):
     judge = _Judge(getattr(models, f'{stem}JudgeDecision'))
     budget = TokenBudget(_Counter(4), threshold)
     settings = getattr(config, f'{stem}Settings')(
-        reranker_token_budget=8,
         judge_token_budget=threshold,
         judge_batch_size=batch_size,
     )
@@ -83,11 +81,35 @@ def _fixture(scope, kind, *, threshold=8, batch_size=10):
         reranker,
         None,
         settings,
-        reranker_token_counter=_Counter(2),
         judge_budget=budget,
         **direct_synthesis(),
     )
     return basename, node, candidates, reranker, judge, budget
+
+
+@pytest.mark.parametrize(('scope', 'kind'), CASES)
+def test_rerank_dispatches_one_worker_per_left_item(scope, kind):
+    basename, node, candidates, _, _, _ = _fixture(scope, kind)
+    grouped_candidates = [
+        candidate.model_copy(update={'left_uuid': 'left-1'})
+        for candidate in candidates[:2]
+    ] + [candidates[2].model_copy(update={'left_uuid': 'left-2'})]
+    state = SourceSemanticState(
+        source_uuid='source',
+        **{f'{basename}_candidates': grouped_candidates},
+    )
+
+    sends = asyncio.run(node.dispatch_rerank(state))
+
+    assert len(sends) == 2
+    assert [send.arg[f'{basename}_rerank_ordinal'] for send in sends] == [0, 1]
+    assert [
+        [
+            candidate.right_uuid
+            for candidate in send.arg[f'{basename}_candidates']
+        ]
+        for send in sends
+    ] == [['right-0', 'right-1'], ['right-2']]
 
 
 @pytest.mark.parametrize(('scope', 'kind'), CASES)
@@ -119,7 +141,9 @@ async def _exercise(scope, kind, batch_size):
     result = await graph.compile().ainvoke(
         {'source_uuid': 'source', f'{basename}_candidates': candidates}
     )
-    assert [len(documents) for documents in reranker.documents] == [2, 1]
+    assert reranker.documents == [
+        [f'right_content-{index}' for index in range(3)]
+    ]
     assert [len(requests) for requests in judge.requests] == (
         [1, 1, 1] if batch_size == 1 else [2, 1]
     )

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from kms2.core.model.base import Vertex
 
@@ -24,4 +24,5 @@ class ProbeAssessment(Vertex):
 
     summary: str
     strands: list[ProbeStrand]
+    observation_uuids: list[str] = Field(default_factory=list)
     created_at: datetime

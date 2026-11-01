@@ -225,31 +225,24 @@ def test_generic_learning_cards_are_user_scoped_and_reset_per_source():
     or not all(os.getenv(name) for name in _REQUIRED_ENVIRONMENT),
     reason='KMS2 Neo4j integration environment is not enabled',
 )
-def test_proposition_learning_round_trips_evidence_without_entity_links():
+def test_block_learning_round_trips_evidence_without_entity_links():
     async def exercise() -> None:
         database = DatabaseClient(Settings().database)
         suffix = uuid.uuid4().hex
-        source_uuid = f'kms2-proposition-learning-source-{suffix}'
+        source_uuid = f'kms2-block-learning-source-{suffix}'
         block_uuids = [
-            f'kms2-proposition-learning-block-{suffix}-{position}'
+            f'kms2-block-learning-block-{suffix}-{position}'
             for position in range(3)
         ]
-        proposition_uuid = f'kms2-proposition-learning-proposition-{suffix}'
-        hub_uuid = f'kms2-proposition-learning-hub-{suffix}'
-        node_uuids = [
-            source_uuid,
-            *block_uuids,
-            proposition_uuid,
-            hub_uuid,
-        ]
+        node_uuids = [source_uuid, *block_uuids]
         repository = SourceLearningRepository(database.session)
         atomic = SourceFlashcard(
-            uuid=f'kms2-proposition-learning-atomic-{suffix}',
+            uuid=f'kms2-block-learning-atomic-{suffix}',
             question='What property does the passage establish?',
             answer='Every stated condition is required.',
         )
         coherent = SourceFlashcard(
-            uuid=f'kms2-proposition-learning-coherent-{suffix}',
+            uuid=f'kms2-block-learning-coherent-{suffix}',
             question='Which condition bounds the established property?',
             answer='The source states the required condition.',
         )
@@ -281,84 +274,43 @@ def test_proposition_learning_round_trips_evidence_without_entity_links():
                     CREATE (source)-[:FIRST_BLOCK]->(first)
                     CREATE (first)-[:NEXT_BLOCK]->(target)
                     CREATE (target)-[:NEXT_BLOCK]->(after)
-                    CREATE (target)-[:MEMBER_OF]->(
-                        proposition:SourceProposition {
-                            uuid: $proposition_uuid,
-                            text: 'The object satisfies the stated condition.'
-                        }
-                    )
-                    CREATE (proposition)-[:IN_SOURCE_HUB]->(
-                        hub:SourcePropositionHub {uuid: $hub_uuid}
-                    )
                     """,
                     source_uuid=source_uuid,
                     paragraph_type=BlockType.PARAGRAPH.value,
                     before_uuid=block_uuids[0],
                     target_uuid=block_uuids[1],
                     after_uuid=block_uuids[2],
-                    proposition_uuid=proposition_uuid,
-                    hub_uuid=hub_uuid,
                 )
-
-            async with database.session() as session:
-                result = await session.run(
-                    """
-                    MATCH (hub:SourcePropositionHub {uuid: $hub_uuid})
-                    RETURN keys(hub) AS keys
-                    """,
-                    hub_uuid=hub_uuid,
-                )
-                hub = await result.single(strict=True)
-            assert hub['keys'] == ['uuid']
-            async with database.session() as session:
-                result = await session.run(
-                    """
-                    MATCH (source:Source {uuid: $source_uuid})
-                    OPTIONAL MATCH (source)-[:HAS_PROPOSITION]->(direct)
-                    WITH source, count(DISTINCT direct) AS direct_ownership
-                    MATCH (source)-[:HAS_PAGE]->(:SourcePage)
-                        -[:CONTAINS_BLOCK]->(target:SourceBlock)
-                        -[:MEMBER_OF]->(proposition:SourceProposition {
-                            uuid: $proposition_uuid
-                        })
-                    RETURN keys(proposition) AS proposition_keys,
-                           direct_ownership,
-                           target.uuid AS owning_block_uuid
-                    """,
-                    source_uuid=source_uuid,
-                    proposition_uuid=proposition_uuid,
-                )
-                occurrence_graph = await result.single(strict=True)
-            assert set(occurrence_graph['proposition_keys']) == {
-                'uuid',
-                'text',
-            }
-            assert 'ordinal' not in occurrence_graph['proposition_keys']
-            assert 'source_uuid' not in occurrence_graph['proposition_keys']
-            assert occurrence_graph['direct_ownership'] == 0
-            assert occurrence_graph['owning_block_uuid'] == block_uuids[1]
             requests = await repository.load_atomic_flashcard_requests(
                 source_uuid
             )
-            assert len(requests) == 1
-            request = requests[0]
-            assert request.source_block_uuid == block_uuids[1]
-            assert request.input.evidence.source_context.context_before == []
-            assert request.input.evidence.source_context.context_after == []
+            assert [request.source_block_uuid for request in requests] == [
+                block_uuids[0],
+                block_uuids[1],
+                block_uuids[2],
+            ]
+            target_request = requests[1]
+            assert target_request.input.evidence.source_text == (
+                'The object satisfies the stated condition.'
+            )
+            assert (
+                target_request.input.evidence.source_context.context_before
+                == []
+            )
+            assert (
+                target_request.input.evidence.source_context.context_after == []
+            )
             loaded = await _atomic_loader(
                 database,
                 repository,
                 ContextWindowSettings(backward_budget=1, forward_budget=1),
             ).load(SourceLearningState(source_uuid=source_uuid))
-            request = loaded['atomic_requests'][0]
-            assert request.source_proposition_uuid == proposition_uuid
-            assert request.input.context.proposition_statement == (
-                'The object satisfies the stated condition.'
+            loaded_request = next(
+                request
+                for request in loaded['atomic_requests']
+                if request.source_block_uuid == block_uuids[1]
             )
-            assert request.input.evidence.proposition_text == (
-                'The object satisfies the stated condition.'
-            )
-            evidence = request.input.evidence.source_context
+            evidence = loaded_request.input.evidence.source_context
             assert [block.content for block in evidence.context_before] == [
                 'A named object is introduced.'
             ]
@@ -382,7 +334,7 @@ def test_proposition_learning_round_trips_evidence_without_entity_links():
                 [
                     SourceFlashcardOccurrence(
                         card=atomic,
-                        source_proposition_uuids=[proposition_uuid],
+                        source_block_uuids=[block_uuids[1]],
                     )
                 ],
             )
@@ -391,12 +343,11 @@ def test_proposition_learning_round_trips_evidence_without_entity_links():
                 [
                     SourceFlashcardOccurrence(
                         card=coherent,
-                        source_proposition_uuids=[proposition_uuid],
+                        source_block_uuids=[block_uuids[1]],
                         derived_card_uuids=[atomic.uuid],
                     )
                 ],
             )
-
             async with database.session() as session:
                 result = await session.run(
                     """
@@ -404,15 +355,15 @@ def test_proposition_learning_round_trips_evidence_without_entity_links():
                           -[:HAS_FLASHCARD]->(card:SourceFlashcard)
                     OPTIONAL MATCH (card)-[about:ABOUT_HUB]->()
                     OPTIONAL MATCH (card)-[:SUPPORTED_BY]->(
-                        proposition:SourceProposition
+                        block:SourceBlock
                     )
                     OPTIONAL MATCH (card)-[:DERIVED_FROM]->(
                         parent:SourceFlashcard
                     )
                     RETURN card.uuid AS card_uuid,
                            count(DISTINCT about) AS about_count,
-                           collect(DISTINCT proposition.uuid)
-                               AS proposition_uuids,
+                           collect(DISTINCT block.uuid)
+                               AS source_block_uuids,
                            collect(DISTINCT parent.uuid) AS parent_uuids
                     ORDER BY card_uuid
                     """,
@@ -422,7 +373,7 @@ def test_proposition_learning_round_trips_evidence_without_entity_links():
             assert len(rows) == 2
             assert all(row['about_count'] == 0 for row in rows)
             assert all(
-                row['proposition_uuids'] == [proposition_uuid] for row in rows
+                row['source_block_uuids'] == [block_uuids[1]] for row in rows
             )
             coherent_row = next(
                 row for row in rows if row['card_uuid'] == coherent.uuid
@@ -453,38 +404,17 @@ def test_learning_builds_independent_cross_page_windows_without_stored_context()
     async def exercise() -> None:
         database = DatabaseClient(Settings().database)
         suffix = uuid.uuid4().hex
-        source_uuid = f'kms2-proposition-window-source-{suffix}'
-        hub_uuid = f'kms2-proposition-window-hub-{suffix}'
+        source_uuid = f'kms2-block-window-source-{suffix}'
         block_uuids = [
-            f'kms2-proposition-window-block-{suffix}-{index}'
-            for index in range(20)
+            f'kms2-block-window-block-{suffix}-{index}' for index in range(20)
         ]
-        proposition_uuids = [
-            f'kms2-proposition-window-proposition-{suffix}-z',
-            f'kms2-proposition-window-proposition-{suffix}-m',
-            f'kms2-proposition-window-proposition-{suffix}-a',
-            f'kms2-proposition-window-proposition-{suffix}-y',
-        ]
-        windows = [(0, 0, 3), (10, 7, 13), (10, 7, 13), (19, 16, 19)]
         rows = [
             {
-                'uuid': uuid,
-                'index': index,
+                'uuid': block_uuid,
                 'page_index': index // 10,
                 'content': f'Window evidence block {index}.',
             }
-            for index, uuid in enumerate(block_uuids)
-        ]
-        proposition_rows = [
-            {
-                'uuid': proposition_uuid,
-                'text': f'Occurrence statement {sequence_index}.',
-                'owner': block_uuids[owner],
-            }
-            for sequence_index, (
-                proposition_uuid,
-                (owner, start, end),
-            ) in enumerate(zip(proposition_uuids, windows, strict=True))
+            for index, block_uuid in enumerate(block_uuids)
         ]
         repository = SourceLearningRepository(database.session)
         try:
@@ -492,12 +422,11 @@ def test_learning_builds_independent_cross_page_windows_without_stored_context()
                 await session.run(
                     """
                     CREATE (source:Source {uuid: $source_uuid})
-                    CREATE (hub:SourcePropositionHub {uuid: $hub_uuid})
-                    WITH source, hub
+                    WITH source
                     UNWIND [0, 1] AS page_index
                     CREATE (page:SourcePage {index: page_index})
                     CREATE (source)-[:HAS_PAGE]->(page)
-                    WITH DISTINCT source, hub
+                    WITH DISTINCT source
                     UNWIND $blocks AS row
                     MATCH (source)-[:HAS_PAGE]->(page:SourcePage {
                         index: row.page_index
@@ -509,54 +438,25 @@ def test_learning_builds_independent_cross_page_windows_without_stored_context()
                             content: row.content
                         }
                     )
-                    WITH DISTINCT source, hub
+                    WITH DISTINCT source
                     UNWIND range(0, 18) AS index
                     MATCH (left:SourceBlock {uuid: $block_uuids[index]})
                     MATCH (right:SourceBlock {uuid: $block_uuids[index + 1]})
                     CREATE (left)-[:NEXT_BLOCK]->(right)
-                    WITH DISTINCT source, hub
+                    WITH DISTINCT source
                     MATCH (first:SourceBlock {uuid: $block_uuids[0]})
                     CREATE (source)-[:FIRST_BLOCK]->(first)
-                    WITH source, hub
-                    UNWIND $propositions AS row
-                    MATCH (source)-[:HAS_PAGE]->(:SourcePage)
-                        -[:CONTAINS_BLOCK]->(owner:SourceBlock {uuid: row.owner})
-                    CREATE (owner)-[:MEMBER_OF]->(
-                        proposition:SourceProposition {
-                            uuid: row.uuid,
-                            text: row.text
-                        }
-                    )
-                    CREATE (proposition)-[:IN_SOURCE_HUB]->(hub)
                     """,
                     source_uuid=source_uuid,
-                    hub_uuid=hub_uuid,
                     blocks=rows,
                     block_uuids=block_uuids,
-                    propositions=proposition_rows,
                     paragraph_type=BlockType.PARAGRAPH.value,
                 )
-
-            async with database.session() as session:
-                result = await session.run(
-                    """
-                    MATCH (source:Source {uuid: $source_uuid})
-                    OPTIONAL MATCH (source)-[:HAS_PAGE]->(:SourcePage)
-                        -[:CONTAINS_BLOCK]->(:SourceBlock)-[:MEMBER_OF]->
-                        (proposition:SourceProposition)
-                    OPTIONAL MATCH (proposition)-[reference]->()
-                    WITH count(DISTINCT proposition) AS occurrence_count,
-                         collect(DISTINCT type(reference)) AS reference_types
-                    RETURN occurrence_count, reference_types
-                    """,
-                    source_uuid=source_uuid,
-                )
-                counts = await result.single(strict=True)
-            assert counts['reference_types'] == ['IN_SOURCE_HUB']
-            assert counts['occurrence_count'] == 4
-
             requests = await repository.load_atomic_flashcard_requests(
                 source_uuid
+            )
+            assert [request.source_block_uuid for request in requests] == (
+                block_uuids
             )
             assert all(
                 not request.input.evidence.source_context.context_before
@@ -569,30 +469,21 @@ def test_learning_builds_independent_cross_page_windows_without_stored_context()
                 ContextWindowSettings(backward_budget=3, forward_budget=3),
             ).load(SourceLearningState(source_uuid=source_uuid))
             requests = loaded['atomic_requests']
-            ordered_indices = (0, 2, 1, 3)
-            assert [
-                request.source_proposition_uuid for request in requests
-            ] == [proposition_uuids[index] for index in ordered_indices]
-            for sequence_index, request_index in enumerate(ordered_indices):
-                owner, start, end = windows[request_index]
-                request = requests[sequence_index]
+            for request_index in (0, 10, 19):
+                request = requests[request_index]
                 evidence = request.input.evidence.source_context
-                assert request.input.context.proposition_statement == (
-                    'Occurrence statement 0.'
-                )
-                assert request.input.evidence.proposition_text == (
-                    f'Occurrence statement {request_index}.'
-                )
                 assert [block.content for block in evidence.target_blocks] == [
-                    f'Window evidence block {owner}.'
+                    f'Window evidence block {request_index}.'
                 ]
                 assert [block.content for block in evidence.context_before] == [
                     f'Window evidence block {index}.'
-                    for index in range(start, owner)
+                    for index in range(max(0, request_index - 3), request_index)
                 ]
                 assert [block.content for block in evidence.context_after] == [
                     f'Window evidence block {index}.'
-                    for index in range(owner + 1, end + 1)
+                    for index in range(
+                        request_index + 1, min(20, request_index + 4)
+                    )
                 ]
                 assert all(
                     not hasattr(block, 'uuid')
@@ -611,10 +502,6 @@ def test_learning_builds_independent_cross_page_windows_without_stored_context()
                 await session.run(
                     'MATCH (source:Source {uuid: $uuid}) DETACH DELETE source',
                     uuid=source_uuid,
-                )
-                await session.run(
-                    'MATCH (hub:SourcePropositionHub {uuid: $uuid}) DETACH DELETE hub',
-                    uuid=hub_uuid,
                 )
             await database.close()
 

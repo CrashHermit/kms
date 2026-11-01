@@ -35,7 +35,7 @@ class SourceAtomicFlashcardWorkerState(TypedDict):
 
 
 class SourceAtomicFlashcardNode:
-    """Generate ordered atomic cards from exact proposition requests."""
+    """Generate ordered atomic cards from source-material requests."""
 
     def __init__(
         self,
@@ -141,7 +141,7 @@ class SourceAtomicFlashcardNode:
                         question=candidate.question,
                         answer=candidate.answer,
                     ),
-                    source_proposition_uuids=[request.source_proposition_uuid],
+                    source_block_uuids=[request.source_block_uuid],
                 )
                 for candidate in result.cards
             ]

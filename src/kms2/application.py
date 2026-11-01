@@ -13,8 +13,21 @@ from kms2.composition.embedding import (
     embedding_dimension,
 )
 from kms2.composition.reranking import reranker_resources
+from kms2.composition.research import (
+    research_resources as open_research_resources,
+)
+from kms2.composition.research_source_migration import (
+    build_research_source_migration_finalizer,
+)
 from kms2.composition.services import (
+    build_knowledge_search_service,
+    build_knowledge_service,
+    build_learner_observation_search_service,
+    build_learner_observation_service,
     build_learning_service,
+    build_research_source_migration_service,
+    build_source_evidence_service,
+    build_source_search_service,
     build_teaching_service,
     build_user_service,
 )
@@ -24,9 +37,13 @@ from kms2.composition.source_pedagogical import (
 )
 from kms2.composition.source_processing import build_source_processing_graph
 from kms2.composition.source_semantic import build_source_semantic_graph
+from kms2.composition.teaching import build_teaching_graph
 from kms2.config.inference import StageInferenceSettings
 from kms2.config.settings import Settings
 from kms2.core.embedding import EmbeddingClient
+from kms2.core.model.knowledge.proposition import PropositionRecord
+from kms2.core.model.knowledge.reasoning import ReasoningStepRecord
+from kms2.core.model.knowledge.retrieval import PropositionSearchHit
 from kms2.core.model.learning import (
     DeckCard,
     DueDeckCard,
@@ -35,10 +52,31 @@ from kms2.core.model.learning import (
     ReviewReceipt,
 )
 from kms2.core.model.source import Source
+from kms2.core.model.source_evidence import (
+    SourceImage,
+    SourcePassage,
+    SourceProcedurePassage,
+    SourceProcedureSearchHit,
+    SourceSearchHit,
+    SourceStatementPassage,
+    SourceStatementSearchHit,
+)
+from kms2.core.model.source_processing.admission import (
+    ResearchSourceMigrationResult,
+)
+from kms2.core.model.source_processing.input import PDFSourceInput
+from kms2.core.model.teaching.evidence import (
+    TeachingCitationMedia,
+    TeachingCitationView,
+    TeachingEvidenceReference,
+)
+from kms2.core.model.teaching.observation import LearnerObservationView
 from kms2.core.model.teaching.session import (
     TeachingSession,
     TeachingSessionView,
+    TeachingStatus,
 )
+from kms2.core.model.teaching.workflow import TeachingTurnRequest
 from kms2.core.model.user import Deck, User
 from kms2.core.reranking import RerankerClient
 from kms2.database import schema
@@ -85,8 +123,6 @@ class SourcePedagogicalStageResult:
 class SourceSemanticStageResult:
     """Counts persisted by one complete source semantic stage."""
 
-    source_proposition_count: int
-    source_proposition_hub_count: int
     source_statement_hub_count: int
     source_procedure_hub_count: int
     source_entity_count: int
@@ -270,10 +306,6 @@ def _source_semantic_stage_result(
 ) -> SourceSemanticStageResult:
     """Convert the final source semantic graph state to its public result."""
     return SourceSemanticStageResult(
-        source_proposition_count=len(final_state['source_propositions']),
-        source_proposition_hub_count=final_state[
-            'source_proposition_hub_count'
-        ],
         source_statement_hub_count=final_state['source_statement_hub_count'],
         source_procedure_hub_count=final_state['source_procedure_hub_count'],
         source_entity_count=len(final_state['source_entities']),
@@ -347,6 +379,243 @@ async def list_sources(settings: Settings, user_uuid: str) -> list[Source]:
         await database.close()
 
 
+async def search_sources(
+    settings: Settings,
+    user_uuid: str,
+    query: str,
+    *,
+    source_uuids: list[str] | None = None,
+) -> list[SourceSearchHit]:
+    """Search a user's source blocks with the configured embedding and reranker."""
+
+    if source_uuids == []:
+        return []
+
+    async with _application_resources(
+        settings,
+        reranking_required=True,
+    ) as resources:
+        assert resources.embedding_client is not None
+        assert resources.reranker_client is not None
+        service = build_source_search_service(
+            resources.database,
+            embedding_client=resources.embedding_client,
+            reranker_client=resources.reranker_client,
+            settings=settings.source_search,
+        )
+        return await service.search_sources(
+            user_uuid,
+            query,
+            source_uuids=source_uuids,
+        )
+
+
+async def read_source_passages(
+    settings: Settings,
+    user_uuid: str,
+    block_uuids: list[str],
+    *,
+    expand_memberships: bool = True,
+    before: int = 0,
+    after: int = 0,
+) -> list[SourcePassage]:
+    """Read authorized source passages and their direct evidence groups."""
+    async with _database_resources(settings) as database:
+        service = build_source_evidence_service(database)
+        return await service.read_passages(
+            user_uuid,
+            block_uuids,
+            expand_memberships=expand_memberships,
+            before=before,
+            after=after,
+        )
+
+
+async def read_source_images(
+    settings: Settings,
+    user_uuid: str,
+    asset_uuids: list[str],
+) -> list[SourceImage]:
+    """Read original image bytes attached to a user's source blocks."""
+    async with _database_resources(settings) as database:
+        service = build_source_evidence_service(database)
+        return await service.read_images(user_uuid, asset_uuids)
+
+
+async def search_source_statements(
+    settings: Settings,
+    user_uuid: str,
+    query: str,
+    *,
+    source_uuids: list[str] | None = None,
+    is_exercise: bool | None = None,
+) -> list[SourceStatementSearchHit]:
+    """Search reconstructed statements in the user's eligible sources."""
+    if source_uuids == []:
+        return []
+    async with _application_resources(
+        settings, reranking_required=True
+    ) as resources:
+        assert resources.embedding_client is not None
+        assert resources.reranker_client is not None
+        service = build_source_search_service(
+            resources.database,
+            embedding_client=resources.embedding_client,
+            reranker_client=resources.reranker_client,
+            settings=settings.source_search,
+        )
+        return await service.search_statements(
+            user_uuid,
+            query,
+            source_uuids=source_uuids,
+            is_exercise=is_exercise,
+        )
+
+
+async def search_source_procedures(
+    settings: Settings,
+    user_uuid: str,
+    query: str,
+    *,
+    source_uuids: list[str] | None = None,
+) -> list[SourceProcedureSearchHit]:
+    """Search reconstructed procedures without mixing material-type scores."""
+    if source_uuids == []:
+        return []
+    async with _application_resources(
+        settings, reranking_required=True
+    ) as resources:
+        assert resources.embedding_client is not None
+        assert resources.reranker_client is not None
+        service = build_source_search_service(
+            resources.database,
+            embedding_client=resources.embedding_client,
+            reranker_client=resources.reranker_client,
+            settings=settings.source_search,
+        )
+        return await service.search_procedures(
+            user_uuid, query, source_uuids=source_uuids
+        )
+
+
+async def read_source_statements(
+    settings: Settings, user_uuid: str, statement_uuids: list[str]
+) -> list[SourceStatementPassage]:
+    """Read statements with their original member evidence and instructions."""
+    async with _database_resources(settings) as database:
+        return await build_source_evidence_service(database).read_statements(
+            user_uuid, statement_uuids
+        )
+
+
+async def read_source_procedures(
+    settings: Settings, user_uuid: str, procedure_uuids: list[str]
+) -> list[SourceProcedurePassage]:
+    """Read procedures with their ordinary source passages."""
+    async with _database_resources(settings) as database:
+        return await build_source_evidence_service(database).read_procedures(
+            user_uuid, procedure_uuids
+        )
+
+
+async def search_propositions(
+    settings: Settings, user_uuid: str, query: str
+) -> list[PropositionSearchHit]:
+    """Search canonical claims across the user's learned knowledge."""
+    async with _application_resources(
+        settings, reranking_required=True
+    ) as resources:
+        assert resources.embedding_client is not None
+        assert resources.reranker_client is not None
+        service = build_knowledge_search_service(
+            resources.database,
+            embedding_client=resources.embedding_client,
+            reranker_client=resources.reranker_client,
+            settings=settings.knowledge.search,
+        )
+        return await service.search_propositions(user_uuid, query)
+
+
+async def read_propositions(
+    settings: Settings, user_uuid: str, proposition_uuids: list[str]
+) -> list[PropositionRecord]:
+    """Read claims and their bounded per-turn support references."""
+    async with _database_resources(settings) as database:
+        return await build_knowledge_service(database).read_propositions(
+            user_uuid, proposition_uuids
+        )
+
+
+async def search_learner_observations(
+    settings: Settings,
+    user_uuid: str,
+    query: str,
+) -> list[LearnerObservationView]:
+    """Search user-owned learner evidence with embedding and reranking."""
+    async with _application_resources(
+        settings,
+        reranking_required=True,
+    ) as resources:
+        assert resources.embedding_client is not None
+        assert resources.reranker_client is not None
+        search_service = build_learner_observation_search_service(
+            resources.database,
+            embedding_client=resources.embedding_client,
+            reranker_client=resources.reranker_client,
+            settings=settings.teaching.learner_history,
+        )
+        view_service = build_learner_observation_service(resources.database)
+        hits = await search_service.search(user_uuid, query)
+        return [view_service.view(hit.record) for hit in hits]
+
+
+async def read_learner_observations(
+    settings: Settings,
+    user_uuid: str,
+    observation_uuids: list[str],
+) -> list[LearnerObservationView]:
+    """Read learner-safe views of selected user-owned observations."""
+    async with _database_resources(settings) as database:
+        service = build_learner_observation_service(database)
+        records = await service.read(user_uuid, observation_uuids)
+        return [service.view(record) for record in records]
+
+
+async def read_reasoning_steps(
+    settings: Settings, user_uuid: str, step_uuids: list[str]
+) -> list[ReasoningStepRecord]:
+    """Read selected joint-premise arguments without recursive expansion."""
+    async with _database_resources(settings) as database:
+        return await build_knowledge_service(database).read_reasoning_steps(
+            user_uuid, step_uuids
+        )
+
+
+async def migrate_research_sources(
+    settings: Settings, user_uuid: str
+) -> ResearchSourceMigrationResult:
+    """Move this user's retained research citations into ordinary sources."""
+    async with _application_resources(
+        settings,
+        embeddings_required=True,
+        reranking_required=False,
+    ) as resources:
+        assert resources.embedding_client is not None
+        service = build_research_source_migration_service(
+            resources.database,
+            embedding_client=resources.embedding_client,
+            storage_root=settings.research.source_directory,
+        )
+        return await service.migrate(user_uuid)
+
+
+async def finalize_research_source_migration(settings: Settings) -> None:
+    """Drop the legacy evidence constraint after every owner is migrated."""
+    async with _database_resources(settings) as database:
+        finalizer = build_research_source_migration_finalizer(database)
+        await finalizer.finalize()
+
+
 async def _run_source_processing_stage(
     settings: Settings,
     resources: _ApplicationResources,
@@ -357,8 +626,7 @@ async def _run_source_processing_stage(
     await _preflight_chatgpt(settings, settings.source_processing)
     source = Source(key=Path(pdf_path).name)
     initial_state = {
-        'pdf_path': pdf_path,
-        'pages': pages,
+        'input': PDFSourceInput(pdf_path=pdf_path, pages=pages),
         'source': source,
     }
     assert resources.embedding_client is not None
@@ -595,6 +863,32 @@ async def load_teaching_session(
         )
 
 
+async def read_teaching_citations(
+    settings: Settings,
+    user_uuid: str,
+    session_uuid: str,
+    references: list[TeachingEvidenceReference],
+) -> list[TeachingCitationView]:
+    """Read safe evidence views cited in one owned teaching session."""
+    async with _database_resources(settings) as database:
+        return await build_teaching_service(database).read_teaching_citations(
+            user_uuid, session_uuid, references
+        )
+
+
+async def read_teaching_citation_media(
+    settings: Settings,
+    user_uuid: str,
+    session_uuid: str,
+    asset_uuid: str,
+) -> TeachingCitationMedia:
+    """Read an original image cited in one owned teaching session."""
+    async with _database_resources(settings) as database:
+        return await build_teaching_service(
+            database
+        ).read_teaching_citation_media(user_uuid, session_uuid, asset_uuid)
+
+
 async def submit_teaching_response(
     settings: Settings,
     user_uuid: str,
@@ -610,6 +904,77 @@ async def submit_teaching_response(
             session_uuid,
             content,
             expected_revision=expected_revision,
+        )
+
+
+async def run_teaching_turn(
+    settings: Settings,
+    user_uuid: str,
+    session_uuid: str,
+    *,
+    expected_revision: int,
+    source_uuids: list[str] | None = None,
+) -> TeachingSessionView:
+    """Run one bounded teacher turn for an awaiting-teacher session.
+
+    The session is ownership-checked before inference resources are acquired.
+    Source identifiers, when provided, restrict local search to that allowlist.
+    """
+    async with _database_resources(settings) as database:
+        teaching = build_teaching_service(database)
+        snapshot = await teaching.load_snapshot(user_uuid, session_uuid)
+        if (
+            snapshot.session.status != TeachingStatus.AWAITING_TEACHER
+            or snapshot.session.revision != expected_revision
+        ):
+            raise ValueError(
+                'Teaching session is not awaiting teacher at expected revision'
+            )
+
+    await _preflight_chatgpt(
+        settings, settings.knowledge.extraction, settings.knowledge.identity
+    )
+    if settings.research.enabled:
+        await _preflight_chatgpt(
+            settings,
+            settings.research.inference,
+            settings.research.formatting.inference,
+            settings.source_processing,
+        )
+    async with AsyncExitStack() as stack:
+        research = (
+            await stack.enter_async_context(open_research_resources(settings))
+            if settings.research.enabled
+            else None
+        )
+        resources = await stack.enter_async_context(
+            _application_resources(
+                settings,
+                reranking_required=True,
+            )
+        )
+        assert resources.embedding_client is not None
+        assert resources.reranker_client is not None
+        graph = build_teaching_graph(
+            settings,
+            resources.local_models,
+            resources.database,
+            embedding_client=resources.embedding_client,
+            reranker_client=resources.reranker_client,
+            tokenizers=resources.tokenizers,
+            research_resources=research,
+            recorder=resources.recorder,
+        )
+        return await graph.run(
+            TeachingTurnRequest(
+                user_uuid=user_uuid,
+                session_uuid=session_uuid,
+                expected_revision=expected_revision,
+                snapshot=snapshot,
+                source_uuids=(
+                    None if source_uuids is None else list(source_uuids)
+                ),
+            )
         )
 
 

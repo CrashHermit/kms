@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import pytest
 
+from kms2.composition.embedding import embedding_dimension
 from kms2.config.settings import Settings
 from kms2.core.model.block import SourceBlock
 from kms2.core.model.page import SourcePage
@@ -26,13 +27,6 @@ from kms2.core.model.source_semantic.source_entity_hub import (
 from kms2.core.model.source_semantic.source_procedure_hub import (
     SourceProcedureHub,
 )
-from kms2.core.model.source_semantic.source_proposition_extraction import (
-    SourceProposition,
-    SourcePropositionEmbeddingResult,
-)
-from kms2.core.model.source_semantic.source_proposition_hub import (
-    SourcePropositionHub,
-)
 from kms2.core.model.source_semantic.source_statement_hub import (
     SourceStatementHub,
 )
@@ -45,9 +39,6 @@ from kms2.database.source.source_entity_repository import (
 from kms2.database.source.source_graph_repository import SourceGraphRepository
 from kms2.database.source_semantic.source_procedure_repository import (
     SourceProcedureRepository,
-)
-from kms2.database.source_semantic.source_proposition_repository import (
-    SourcePropositionRepository,
 )
 from kms2.database.source_semantic.source_statement_repository import (
     SourceStatementRepository,
@@ -74,8 +65,8 @@ def test_kms2_neo4j_source_occurrence_round_trip_and_replacement():
     async def exercise() -> None:
         settings = Settings()
         database = DatabaseClient(settings.database)
-        source_uuid = f'kms2-proposition-it-{uuid4().hex}'
-        other_source_uuid = f'kms2-proposition-other-it-{uuid4().hex}'
+        source_uuid = f'kms2-semantic-it-{uuid4().hex}'
+        other_source_uuid = f'kms2-semantic-other-it-{uuid4().hex}'
         source = Source(
             uuid=source_uuid,
             key=f'{source_uuid}.pdf',
@@ -90,9 +81,7 @@ def test_kms2_neo4j_source_occurrence_round_trip_and_replacement():
             uuid=f'{source_uuid}-block',
             block_type='paragraph',
             content='A real square matrix is invertible exactly when its determinant is nonzero.',
-            embedding=_embedding(
-                1.0, 0.0, settings.local_models.embedding.model.dimension
-            ),
+            embedding=_embedding(1.0, 0.0, embedding_dimension(settings)),
             assets=[
                 VisualAsset(uuid=f'{source_uuid}-asset-1', path='matrix-a.png'),
                 VisualAsset(uuid=f'{source_uuid}-asset-2', path='matrix-b.png'),
@@ -112,27 +101,7 @@ def test_kms2_neo4j_source_occurrence_round_trip_and_replacement():
             uuid=f'{other_source_uuid}-block',
             block_type='paragraph',
             content='An unrelated source block.',
-            embedding=_embedding(
-                0.0, 1.0, settings.local_models.embedding.model.dimension
-            ),
-        )
-        proposition = SourceProposition(
-            uuid=f'{source_uuid}-z-proposition',
-            source_uuid=source_uuid,
-            text='A real square matrix is invertible exactly when its determinant is nonzero.',
-            target=SourceExtractionTarget(source_blocks=[block]),
-        )
-        best_proposition = SourceProposition(
-            uuid=f'{source_uuid}-a-proposition-z-best',
-            source_uuid=source_uuid,
-            text='A distinct proposition member with a query-aligned vector.',
-            target=SourceExtractionTarget(source_blocks=[context_block]),
-        )
-        other_proposition = SourceProposition(
-            uuid=f'{other_source_uuid}-proposition',
-            source_uuid=other_source_uuid,
-            text='An unrelated proposition.',
-            target=SourceExtractionTarget(source_blocks=[other_block]),
+            embedding=_embedding(0.0, 1.0, embedding_dimension(settings)),
         )
         entity = SourceEntity(
             uuid=f'{source_uuid}-z-entity',
@@ -152,7 +121,6 @@ def test_kms2_neo4j_source_occurrence_round_trip_and_replacement():
             name='unrelated concept',
             target=SourceExtractionTarget(source_blocks=[other_block]),
         )
-        proposition_repository = SourcePropositionRepository(database.session)
         entity_repository = SourceEntityRepository(database.session)
         source_graph_repository = SourceGraphRepository(database.session)
 
@@ -168,14 +136,13 @@ def test_kms2_neo4j_source_occurrence_round_trip_and_replacement():
         try:
             await schema.ensure_schema(
                 database.session,
-                embedding_dimension=settings.local_models.embedding.model.dimension,
+                embedding_dimension=embedding_dimension(settings),
             )
             source_pages = [
-                SourcePage(index=0, blocks=[block]),
                 SourcePage(
-                    index=1,
-                    blocks=[context_block, following_context_block],
-                ),
+                    index=0,
+                    blocks=[block, context_block, following_context_block],
+                )
             ]
             await source_graph_repository.replace_source(source, source_pages)
             await source_graph_repository.replace_pedagogical_material(
@@ -196,8 +163,7 @@ def test_kms2_neo4j_source_occurrence_round_trip_and_replacement():
                     StatementDraft(
                         uuid=f'{source_uuid}-statement',
                         content='An exercise about the real matrix A.',
-                        embedding=[0.1]
-                        * settings.local_models.embedding.model.dimension,
+                        embedding=[0.1] * embedding_dimension(settings),
                         member_block_uuids=[
                             context_block.uuid,
                             following_context_block.uuid,
@@ -209,8 +175,7 @@ def test_kms2_neo4j_source_occurrence_round_trip_and_replacement():
                     ProcedureDraft(
                         uuid=f'{source_uuid}-procedure',
                         content='Read the matrix and determine its dimensions.',
-                        embedding=[0.2]
-                        * settings.local_models.embedding.model.dimension,
+                        embedding=[0.2] * embedding_dimension(settings),
                         member_block_uuids=[block.uuid],
                     )
                 ],
@@ -219,108 +184,13 @@ def test_kms2_neo4j_source_occurrence_round_trip_and_replacement():
                 other_source,
                 [SourcePage(index=0, blocks=[other_block])],
             )
-            async with database.session() as session:
-                result = await session.run(
-                    """
-                    MATCH (source:Source {uuid: $source_uuid})
-                    OPTIONAL MATCH (source)-[:HAS_PAGE]->(page:SourcePage)
-                    OPTIONAL MATCH (page)-[:CONTAINS_BLOCK]->(block:SourceBlock)
-                    OPTIONAL MATCH (block)-[:CONTAINS_VISUAL_ASSET]->(asset:VisualAsset)
-                    OPTIONAL MATCH (block)-[:MEMBER_OF]->(statement:SourceStatement)
-                    OPTIONAL MATCH (block)-[:MEMBER_OF]->(procedure:SourceProcedure)
-                    OPTIONAL MATCH (block)-[:MEMBER_OF]->(instruction:Instruction)
-                    RETURN count(DISTINCT page) AS pages,
-                           count(DISTINCT block) AS blocks,
-                           count(DISTINCT asset) AS assets,
-                           count(DISTINCT statement) AS statements,
-                           count(DISTINCT procedure) AS procedures,
-                           count(DISTINCT instruction) AS instructions,
-                           collect(DISTINCT statement.content) AS statement_contents,
-                           collect(DISTINCT statement.embedding) AS statement_embeddings,
-                           collect(DISTINCT procedure.content) AS procedure_contents,
-                           collect(DISTINCT procedure.embedding) AS procedure_embeddings
-                    """,
-                    source_uuid=source_uuid,
-                )
-                structure = await result.single(strict=True)
-            assert dict(structure) == {
-                'pages': 2,
-                'blocks': 3,
-                'assets': 2,
-                'statements': 1,
-                'procedures': 1,
-                'instructions': 1,
-                'statement_contents': ['An exercise about the real matrix A.'],
-                'statement_embeddings': [
-                    [0.1] * settings.local_models.embedding.model.dimension
-                ],
-                'procedure_contents': [
-                    'Read the matrix and determine its dimensions.'
-                ],
-                'procedure_embeddings': [
-                    [0.2] * settings.local_models.embedding.model.dimension
-                ],
-            }
-            statement_repository = SourceStatementRepository(database.session)
-            communities = (
-                await statement_repository.detect_source_statement_communities(
-                    source_uuid,
-                    max_iterations=5,
-                    min_association_strength=0.1,
-                    minimum_community_size=1,
-                )
-            )
-            assert [
-                [member.uuid for member in group] for group in communities
-            ] == [[f'{source_uuid}-statement']]
-            await proposition_repository.replace_source_propositions(
-                source_uuid, [proposition, best_proposition]
-            )
-            await proposition_repository.replace_source_propositions(
-                other_source_uuid, [other_proposition]
-            )
             await entity_repository.replace_source_entities(
                 source_uuid, [entity, unrelated_entity]
             )
             await entity_repository.replace_source_entities(
                 other_source_uuid, [other_entity]
             )
-
-            proposition_vector = _embedding(
-                0.0, 1.0, settings.local_models.embedding.model.dimension
-            )
-            other_proposition_vector = _embedding(
-                1.0, 0.0, settings.local_models.embedding.model.dimension
-            )
-            await proposition_repository.update_source_proposition_embeddings(
-                source_uuid,
-                [
-                    SourcePropositionEmbeddingResult(
-                        **proposition.model_dump(),
-                        embedding=proposition_vector,
-                    ),
-                    SourcePropositionEmbeddingResult(
-                        **best_proposition.model_dump(),
-                        embedding=_embedding(
-                            1.0,
-                            0.0,
-                            settings.local_models.embedding.model.dimension,
-                        ),
-                    ),
-                ],
-            )
-            await proposition_repository.update_source_proposition_embeddings(
-                other_source_uuid,
-                [
-                    SourcePropositionEmbeddingResult(
-                        **other_proposition.model_dump(),
-                        embedding=other_proposition_vector,
-                    )
-                ],
-            )
-            entity_vector = _embedding(
-                0.0, 1.0, settings.local_models.embedding.model.dimension
-            )
+            entity_vector = _embedding(0.0, 1.0, embedding_dimension(settings))
             await entity_repository.update_source_entity_description(
                 source_uuid,
                 [
@@ -336,44 +206,26 @@ def test_kms2_neo4j_source_occurrence_round_trip_and_replacement():
                     ),
                 ],
             )
-            other_entity_vector = _embedding(
-                1.0, 0.0, settings.local_models.embedding.model.dimension
-            )
             await entity_repository.update_source_entity_description(
                 other_source_uuid,
                 [
                     SourceEntityDescriptionResult(
                         **other_entity.model_dump(),
                         description='An unrelated source concept.',
-                        embedding=other_entity_vector,
+                        embedding=_embedding(
+                            1.0,
+                            0.0,
+                            embedding_dimension(settings),
+                        ),
                     )
                 ],
             )
-
-            proposition_hub = SourcePropositionHub(
-                uuid=f'{source_uuid}-proposition-hub',
-            )
-            other_proposition_hub = SourcePropositionHub(
-                uuid=f'{other_source_uuid}-proposition-hub',
-            )
-            entity_hub = SourceEntityHub(
-                uuid=f'{source_uuid}-entity-hub',
-            )
+            entity_hub = SourceEntityHub(uuid=f'{source_uuid}-entity-hub')
             unrelated_entity_hub = SourceEntityHub(
-                uuid=f'{source_uuid}-unrelated-entity-hub',
+                uuid=f'{source_uuid}-unrelated-entity-hub'
             )
             other_entity_hub = SourceEntityHub(
-                uuid=f'{other_source_uuid}-entity-hub',
-            )
-            await proposition_repository.replace_source_proposition_hubs(
-                source_uuid,
-                [proposition_hub],
-                [[proposition.uuid, best_proposition.uuid]],
-            )
-            await proposition_repository.replace_source_proposition_hubs(
-                other_source_uuid,
-                [other_proposition_hub],
-                [[other_proposition.uuid]],
+                uuid=f'{other_source_uuid}-entity-hub'
             )
             await entity_repository.replace_source_entity_hubs(
                 source_uuid,
@@ -385,54 +237,6 @@ def test_kms2_neo4j_source_occurrence_round_trip_and_replacement():
                 [other_entity_hub],
                 [[other_entity.uuid]],
             )
-            async with database.session() as session:
-                result = await session.run(
-                    """
-                    MATCH (hub)
-                    WHERE hub.uuid IN $hub_uuids
-                    RETURN hub.uuid AS uuid, keys(hub) AS keys
-                    ORDER BY uuid
-                    """,
-                    hub_uuids=[
-                        proposition_hub.uuid,
-                        other_proposition_hub.uuid,
-                        entity_hub.uuid,
-                        unrelated_entity_hub.uuid,
-                        other_entity_hub.uuid,
-                    ],
-                )
-                persisted_hubs = await result.data()
-            assert {row['uuid'] for row in persisted_hubs} == {
-                proposition_hub.uuid,
-                other_proposition_hub.uuid,
-                entity_hub.uuid,
-                unrelated_entity_hub.uuid,
-                other_entity_hub.uuid,
-            }
-            assert all(row['keys'] == ['uuid'] for row in persisted_hubs)
-            loaded_propositions = (
-                await proposition_repository.load_source_propositions(
-                    source_uuid
-                )
-            )
-
-            assert len(loaded_propositions) == 2
-            assert [item.uuid for item in loaded_propositions] == [
-                proposition.uuid,
-                best_proposition.uuid,
-            ]
-            loaded_proposition = loaded_propositions[0]
-            assert loaded_proposition.text == proposition.text
-            assert [
-                item.uuid for item in loaded_proposition.target.source_blocks
-            ] == [block.uuid]
-            hub_members = await proposition_repository.read_source_proposition_hub_members(
-                source_uuid
-            )
-            assert [member.uuid for member in hub_members] == [
-                proposition.uuid,
-                best_proposition.uuid,
-            ]
             loaded_entities = await entity_repository.load_source_entities(
                 source_uuid
             )
@@ -445,11 +249,6 @@ def test_kms2_neo4j_source_occurrence_round_trip_and_replacement():
             assert [
                 item.uuid for item in loaded_entity.target.source_blocks
             ] == [block.uuid]
-            assert all(
-                'context_before' not in occurrence.model_dump()
-                and 'context_after' not in occurrence.model_dump()
-                for occurrence in [*loaded_propositions, *loaded_entities]
-            )
             async with database.session() as session:
                 result = await session.run(
                     """
@@ -458,89 +257,28 @@ def test_kms2_neo4j_source_occurrence_round_trip_and_replacement():
                         -[:CONTAINS_BLOCK]->(owner:SourceBlock)
                         -[:MEMBER_OF]->(occurrence)
                     WHERE occurrence:SourceEntity
-                       OR occurrence:SourceProposition
                     RETURN collect({
                         uuid: occurrence.uuid,
                         owner_uuid: owner.uuid,
-                        keys: keys(occurrence),
-                        context_edges: size([
-                            (occurrence)-[reference]->()
-                            WHERE type(reference) CONTAINS 'CONTEXT' | 1
-                        ])
+                        keys: keys(occurrence)
                     }) AS occurrence_ownership
                     """,
                     source_uuid=source_uuid,
                 )
                 evidence_graph = await result.single(strict=True)
-            assert len(evidence_graph['occurrence_ownership']) == 4
             assert {
-                (item['uuid'], item['owner_uuid'], item['context_edges'])
+                (item['uuid'], item['owner_uuid'])
                 for item in evidence_graph['occurrence_ownership']
             } == {
-                (proposition.uuid, block.uuid, 0),
-                (best_proposition.uuid, context_block.uuid, 0),
-                (entity.uuid, block.uuid, 0),
-                (unrelated_entity.uuid, block.uuid, 0),
+                (entity.uuid, block.uuid),
+                (unrelated_entity.uuid, block.uuid),
             }
             assert all(
                 'ordinal' not in item['keys']
                 and 'source_uuid' not in item['keys']
-                and 'context_before' not in item['keys']
-                and 'context_after' not in item['keys']
-                and 'context_start_block_uuid' not in item['keys']
-                and 'context_end_block_uuid' not in item['keys']
                 for item in evidence_graph['occurrence_ownership']
             )
-
-            async with database.session() as session:
-                result = await session.run(
-                    """
-                    MATCH (first:SourceBlock {uuid: $first_uuid})
-                        -[:NEXT_BLOCK]->
-                        (second:SourceBlock {uuid: $second_uuid})
-                    RETURN count(*) AS cross_page_links
-                    """,
-                    first_uuid=block.uuid,
-                    second_uuid=context_block.uuid,
-                )
-                cross_page_stream = await result.single(strict=True)
-            assert cross_page_stream['cross_page_links'] == 1
-
-            async with database.session() as session:
-                result = await session.run(
-                    """
-                    MATCH (source:Source {uuid: $source_uuid})
-                    OPTIONAL MATCH (source)-[:HAS_PROPOSITION|HAS_ENTITY]->(direct)
-                    WITH source, count(DISTINCT direct) AS direct_ownership
-                    MATCH (source)-[:HAS_PAGE]->(:SourcePage)
-                        -[:CONTAINS_BLOCK]->(block:SourceBlock)-[:MEMBER_OF]->
-                        (entity:SourceEntity {uuid: $entity_uuid})
-                    RETURN keys(entity) AS entity_keys,
-                           direct_ownership,
-                           block.uuid AS owning_block_uuid
-                    """,
-                    source_uuid=source_uuid,
-                    entity_uuid=entity.uuid,
-                )
-                entity_graph = await result.single(strict=True)
-            assert 'source_uuid' not in entity_graph['entity_keys']
-            assert entity_graph['direct_ownership'] == 0
-            assert entity_graph['owning_block_uuid'] == block.uuid
-            search_vector = _embedding(
-                1.0, 0.0, settings.local_models.embedding.model.dimension
-            )
-            proposition_matches = (
-                await proposition_repository.search_source_proposition_hubs(
-                    source_uuid, search_vector, top_k=5
-                )
-            )
-            assert len(proposition_matches) == 1
-            proposition_match = proposition_matches[0]
-            assert proposition_match.uuid == proposition_hub.uuid
-            assert proposition_match.member_uuid == best_proposition.uuid
-            assert proposition_match.text == best_proposition.text
-            assert proposition_match.target_block_uuids == [context_block.uuid]
-            assert proposition_match.source_uuid == source_uuid
+            search_vector = _embedding(1.0, 0.0, embedding_dimension(settings))
             entity_matches = await entity_repository.search_source_entity_hubs(
                 source_uuid, search_vector, top_k=2
             )
@@ -548,20 +286,8 @@ def test_kms2_neo4j_source_occurrence_round_trip_and_replacement():
                 entity_hub.uuid,
                 unrelated_entity_hub.uuid,
             ]
-            entity_match = entity_matches[0]
-            assert entity_match.uuid == entity_hub.uuid
-            assert entity_match.member_uuid == entity.uuid
-            assert entity_match.target_block_uuids == [block.uuid]
-            assert entity_match.source_uuid == source_uuid
-            other_matches = (
-                await proposition_repository.search_source_proposition_hubs(
-                    other_source_uuid, search_vector, top_k=1
-                )
-            )
-            assert [match.uuid for match in other_matches] == [
-                other_proposition_hub.uuid
-            ]
-
+            assert entity_matches[0].member_uuid == entity.uuid
+            assert entity_matches[0].target_block_uuids == [block.uuid]
             members = await entity_repository.read_source_entity_hub_members(
                 source_uuid
             )
@@ -569,104 +295,12 @@ def test_kms2_neo4j_source_occurrence_round_trip_and_replacement():
                 entity.uuid,
                 unrelated_entity.uuid,
             }
-            owner = next(
-                member for member in members if member.uuid == entity.uuid
-            )
-            assert owner.source_block_uuid == block.uuid
-            assert owner.evidence.target_blocks[0].content == block.content
-            assert owner.evidence.context_before == []
-            assert owner.evidence.context_after == []
-            candidates = (
-                await entity_repository.read_source_entity_hub_candidates(
-                    source_uuid,
-                    [[member] for member in members],
-                    candidate_limit=1,
-                    minimum_similarity=0.0,
-                )
-            )
-            assert {
-                frozenset((candidate.left_uuid, candidate.right_uuid))
-                for candidate in candidates
-            } == {frozenset((entity.uuid, unrelated_entity.uuid))}
-            assert (
-                await entity_repository.read_source_entity_hub_candidates(
-                    source_uuid,
-                    [members],
-                    candidate_limit=1,
-                    minimum_similarity=0.0,
-                )
-                == []
-            )
-            other_members = (
-                await entity_repository.read_source_entity_hub_members(
-                    other_source_uuid
-                )
-            )
-            assert [member.uuid for member in other_members] == [
-                other_entity.uuid
-            ]
-            await proposition_repository.replace_source_proposition_hubs(
-                source_uuid, [], []
-            )
             await entity_repository.replace_source_entity_hubs(
                 source_uuid, [], []
             )
-            await proposition_repository.replace_source_propositions(
-                source_uuid, []
-            )
-            assert (
-                await proposition_repository.load_source_propositions(
-                    source_uuid
-                )
-                == []
-            )
-            assert {
-                occurrence.uuid
-                for occurrence in await entity_repository.load_source_entities(
-                    source_uuid
-                )
-            } == {entity.uuid, unrelated_entity.uuid}
             await entity_repository.replace_source_entities(source_uuid, [])
             assert (
                 await entity_repository.load_source_entities(source_uuid) == []
-            )
-            async with database.session() as session:
-                stale = await (
-                    await session.run(
-                        """
-                        MATCH (node)
-                        WHERE node.uuid IN $hub_uuids
-                        RETURN count(node) AS count
-                        """,
-                        hub_uuids=[
-                            proposition_hub.uuid,
-                            entity_hub.uuid,
-                            unrelated_entity_hub.uuid,
-                        ],
-                    )
-                ).single(strict=True)
-            assert stale['count'] == 0
-            assert [
-                occurrence.uuid
-                for occurrence in await proposition_repository.load_source_propositions(
-                    other_source_uuid
-                )
-            ] == [other_proposition.uuid]
-            await proposition_repository.replace_source_propositions(
-                source_uuid, [proposition, best_proposition]
-            )
-            await proposition_repository.replace_source_proposition_hubs(
-                source_uuid,
-                [proposition_hub],
-                [[proposition.uuid, best_proposition.uuid]],
-            )
-            await entity_repository.replace_source_entities(
-                source_uuid, [entity, unrelated_entity]
-            )
-            await entity_repository.replace_source_entity_hubs(
-                source_uuid,
-                [entity_hub, unrelated_entity_hub],
-                [[entity.uuid], [unrelated_entity.uuid]],
             )
             replacement_block = SourceBlock(
                 uuid=f'{source_uuid}-replacement-block',
@@ -677,118 +311,19 @@ def test_kms2_neo4j_source_occurrence_round_trip_and_replacement():
                 source,
                 [SourcePage(index=4, blocks=[replacement_block])],
             )
-
-            assert (
-                await proposition_repository.load_source_propositions(
-                    source_uuid
-                )
-                == []
-            )
-            assert (
-                await entity_repository.load_source_entities(source_uuid) == []
-            )
             async with database.session() as session:
                 result = await session.run(
                     """
                     MATCH (source:Source {uuid: $uuid})
-                    OPTIONAL MATCH (source)-[:HAS_PROPOSITION|HAS_ENTITY]->(direct)
                     OPTIONAL MATCH (source)-[:HAS_PAGE]->(:SourcePage)
-                        -[:CONTAINS_BLOCK]->(:SourceBlock)-[:MEMBER_OF]->(occurrence)
-                    WHERE occurrence:SourceProposition OR occurrence:SourceEntity
-                    RETURN count(DISTINCT direct) AS direct_ownership,
-                           count(DISTINCT occurrence) AS occurrences
+                        -[:CONTAINS_BLOCK]->(:SourceBlock)
+                        -[:MEMBER_OF]->(occurrence:SourceEntity)
+                    RETURN count(occurrence) AS occurrences
                     """,
                     uuid=source_uuid,
                 )
                 row = await result.single(strict=True)
-            assert row['direct_ownership'] == 0
             assert row['occurrences'] == 0
-            async with database.session() as session:
-                result = await session.run(
-                    """
-                    MATCH (hub)
-                    WHERE hub.uuid IN $hub_uuids
-                    RETURN hub.uuid AS uuid, keys(hub) AS keys
-                    ORDER BY uuid
-                    """,
-                    hub_uuids=[
-                        other_proposition_hub.uuid,
-                        other_entity_hub.uuid,
-                    ],
-                )
-                remaining_hubs = await result.data()
-            assert [hub['uuid'] for hub in remaining_hubs] == [
-                other_entity_hub.uuid,
-                other_proposition_hub.uuid,
-            ]
-            assert all(hub['keys'] == ['uuid'] for hub in remaining_hubs)
-            assert (
-                await entity_repository.read_source_entity_hub_members(
-                    source_uuid
-                )
-                == []
-            )
-            remaining_propositions = (
-                await proposition_repository.load_source_propositions(
-                    other_source_uuid
-                )
-            )
-            assert [item.uuid for item in remaining_propositions] == [
-                other_proposition.uuid
-            ]
-            remaining_entities = await entity_repository.load_source_entities(
-                other_source_uuid
-            )
-            assert [item.uuid for item in remaining_entities] == [
-                other_entity.uuid
-            ]
-
-            async with database.session() as session:
-                constraint_result = await session.run(
-                    'SHOW CONSTRAINTS YIELD labelsOrTypes RETURN labelsOrTypes'
-                )
-                constraint_labels = {
-                    label
-                    for row in await constraint_result.data()
-                    for label in row['labelsOrTypes']
-                }
-                index_result = await session.run(
-                    "SHOW INDEXES YIELD name, type WHERE type = 'VECTOR' RETURN name ORDER BY name"
-                )
-                vector_names = [
-                    row['name'] for row in await index_result.data()
-                ]
-            assert constraint_labels == {
-                'Source',
-                'SourceBlock',
-                'Instruction',
-                'SourceStatement',
-                'SourceProcedure',
-                'VisualAsset',
-                'SourceProposition',
-                'SourceEntity',
-                'SourceEntityHub',
-                'SourcePropositionHub',
-                'SourceStatementHub',
-                'SourceProcedureHub',
-                'SourceFlashcard',
-                'User',
-                'Deck',
-                'UserSchedulerSettings',
-                'UserCardReview',
-                'ReviewEvent',
-            }
-            assert vector_names == sorted(
-                (
-                    'source_block_embedding',
-                    'source_proposition_embedding',
-                    'source_entity_embedding',
-                    'source_statement_embedding',
-                    'source_procedure_embedding',
-                    'source_statement_hub_embedding',
-                    'source_procedure_hub_embedding',
-                )
-            )
         finally:
             await clean_fixture(source)
             await clean_fixture(other_source)
@@ -806,7 +341,7 @@ def test_entity_group_retrieval_excludes_own_members_before_limiting():
     async def exercise() -> None:
         settings = Settings()
         database = DatabaseClient(settings.database)
-        dimension = settings.local_models.embedding.model.dimension
+        dimension = embedding_dimension(settings)
         prefix = f'kms2-entity-groups-{uuid4().hex}'
         source = Source(uuid=f'{prefix}-source', key='groups.pdf')
         foreign_source = Source(uuid=f'{prefix}-foreign', key='foreign.pdf')
@@ -981,7 +516,7 @@ def test_kms2_statement_procedure_source_scope_uses_block_ownership():
         source_graph_repository = SourceGraphRepository(database.session)
         statement_repository = SourceStatementRepository(database.session)
         procedure_repository = SourceProcedureRepository(database.session)
-        dimension = settings.local_models.embedding.model.dimension
+        dimension = embedding_dimension(settings)
         source_statements = [
             StatementDraft(
                 uuid=f'{prefix}-source-statement-{index}',

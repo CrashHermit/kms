@@ -100,6 +100,7 @@ def test_source_is_the_ingestion_root_vertex():
         'uuid': 'source-1',
         'key': 'calculus-book',
         'metadata': {'title': 'Calculus'},
+        'revision': 0,
     }
 
 

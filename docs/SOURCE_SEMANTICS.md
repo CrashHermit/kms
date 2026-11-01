@@ -5,10 +5,10 @@ learner's argument graph. Source Processing materializes corrected, formatted,
 described, and embedded source blocks. Source Pedagogical identifies exercises,
 instructions, and pedagogical components; persists statement and procedure
 ownership; and reconstructs complete searchable statement/procedure content.
-Source Semantic independently extracts entities and propositions from source
-blocks, describes entities, and groups entity, proposition, statement, and
-procedure occurrences. Statement and procedure hubs consume the reconstructed
-content and embeddings written by Source Pedagogical.
+Source Semantic independently extracts entities from persisted source blocks,
+describes entities, and groups entity, statement, and procedure occurrences.
+Statement and procedure hubs consume the reconstructed content and embeddings
+written by Source Pedagogical.
 
 The proposed goal-driven learning layer is recorded in the
 [teaching roadmap](TEACHING_ROADMAP.md), with a separate
@@ -23,8 +23,15 @@ loads persisted pages, discovers and splits pedagogical material, embeds only
 new split blocks, reconstructs statement/procedure content, and persists the
 updated block order plus instruction, statement, and procedure data. It does not
 rerun OCR or source correction. Source Semantic independently extracts entities
-and propositions from persisted source blocks, describes entities, then runs
-local occurrence grouping.
+from persisted source blocks, describes entities, then runs local occurrence
+grouping.
+
+Each OCR invocation writes page renders, original images, and block crops beneath
+the configured output directory in a source-specific, unique processing-run
+directory. A later ingestion or reprocessing run therefore does not overwrite
+artifacts referenced by an earlier graph. Existing artifacts are not migrated;
+previously overwritten files cannot be recovered from their stored paths.
+Run directories are not automatically deleted.
 
 `run_source_pedagogical_stage(settings, user_uuid, source_uuid)` runs the
 pedagogical graph for a source owned by the selected user. The combined
@@ -497,9 +504,11 @@ and persistence contracts are unchanged.
 
 ## Entity indexing and semantic hubs
 
-Source Semantic extracts entity occurrences independently from propositions,
-persists them, then generates entity descriptions and embeddings before local
-hub reconciliation. It does not construct the later learning proposition graph.
+Source Semantic extracts entity occurrences independently, persists them, then
+generates entity descriptions and embeddings before local hub reconciliation.
+It does not create propositions or reasoning steps. Those user-owned canonical
+knowledge records are admitted from teaching interactions, not exhaustively
+generated during source ingestion.
 Entity extraction, descriptions, embeddings, and their runtime examples, nodes,
 and phase registrations live in `source_semantic`. Hub models, judges, examples,
 nodes, and phase registration also live in `source_semantic`.
@@ -521,12 +530,11 @@ identity-judge budgets. The reconciliation algorithm is unchanged.
 counts. `SourceProcessingStageResult` reports source-processing page counts.
 Entity occurrences are extracted and described as part of Source Semantic.
 
-Entity occurrence embeddings are vector-indexed before any hubs exist. The
-entity index supports evidence retrieval for a future learning proposition
-graph; semantic ingestion does not construct that graph. The existing
-hub-search repository API requires hub generation. Reconciliation and hub
-search remain source-scoped, not global identity resolution. Moving hub
-creation does not delete previously persisted hubs.
+Entity occurrence embeddings are vector-indexed for source-scoped entity
+retrieval. The hub-search repository API requires hub generation. Reconciliation
+and hub search remain source-scoped, not global identity resolution. Source
+entity hubs are not canonical proposition identities and are not joined to the
+teaching knowledge graph by source extraction.
 
 ## Extraction and evidence
 
@@ -550,50 +558,37 @@ Extraction windows are transient request data. Collectors retain each occurrence
 owning block, not references to the other target/context blocks. Later consumers
 select their own surrounding context from the canonical source-block stream.
 
-- A proposition is a self-contained reusable claim. It preserves domains,
-  assumptions, exceptions, negation, quantifiers, and mathematical conditions.
-  Unresolvable references are not invented. A proposition needs neither a proof
-  nor a matching entity to be retained.
 - An entity is an explicitly discussed concept, named result, structure,
   algorithm, object, or meaningful named person/organization. Substantive
-  headings can yield entities even when they assert no proposition. Consolidate
-  mentions of the same entity within one block, including supported aliases,
-  into one occurrence; extract another occurrence if another block mentions it.
-  Entity extraction is not gated by proposition extraction. Entity identity is
-  an inference responsibility, not a fuzzy backend deduplication step.
+  headings can yield entities even when they assert no reusable claim.
+  Consolidate mentions of the same entity within one block, including supported
+  aliases, into one occurrence; extract another occurrence if another block
+  mentions it. Entity extraction is not gated by any separate claim
+  representation.
+  Entity identity is an inference responsibility, not a fuzzy backend
+  deduplication step.
 
-Proposition admission distinguishes asserted mathematical claims from requested
-constructions and local task requirements. Conditions listed under a graphing
-exercise are not evidence that a function with those properties exists.
-General rules explicitly supplied in hints are eligible independently of
-surrounding question clauses; the task is not to solve those questions.
-Composition supplies `source_proposition_extraction_examples()` with contrasting
-requested constructions, asserted existence, and mixed question/hint evidence.
-
-`SourceProposition` and `SourceEntity` occurrences each have exactly one owning
-source block. `SourceStatement` and `SourceProcedure` occurrences connect to
-every contributing source block. All four use `SourceBlock → MEMBER_OF →
-occurrence`. There are no direct document-Source-to-occurrence edges,
-target/context pointer vertices, per-block context relationships,
-context-boundary relationships, or context-window reference properties. The
-source's existing `NEXT_BLOCK` chain provides ordering for transient context
-selection.
+`SourceEntity` occurrences each have exactly one owning source block.
+`SourceStatement` and `SourceProcedure` occurrences connect to every
+contributing source block. All three use `SourceBlock → MEMBER_OF → occurrence`.
+There are no direct document-Source-to-occurrence edges, target/context pointer
+vertices, per-block context relationships, context-boundary relationships, or
+context-window reference properties. The source's existing `NEXT_BLOCK` chain
+provides ordering for transient context selection.
 
 ```mermaid
 flowchart LR
     S[Source] -->|HAS_PAGE| PG[SourcePage]
     PG -->|CONTAINS_BLOCK| B[SourceBlock]
-    B -->|MEMBER_OF| P[SourceProposition]
     B -->|MEMBER_OF| E[SourceEntity]
     B -->|MEMBER_OF| ST[SourceStatement]
     B -->|MEMBER_OF| PR[SourceProcedure]
-    P -->|IN_SOURCE_HUB| PH[SourcePropositionHub]
     E -->|IN_SOURCE_HUB| EH[SourceEntityHub]
     ST -->|IN_SOURCE_HUB| STH[SourceStatementHub]
     PR -->|IN_SOURCE_HUB| PRH[SourceProcedureHub]
 ```
 
-Source scope is derived from page/block ownership for all four occurrence types
+Source scope is derived from page/block ownership for all three occurrence types
 and their local hubs; no occurrence or hub node persists `source_uuid`. Runtime
 extraction occurrences may carry the derived UUID only as transient job context.
 Only extraction requests retain extraction-window context. Occurrences in
@@ -610,14 +605,12 @@ block and ordered, unindexed before/after reference context. Descriptions,
 entity identity judging, and learning use this UUID-free evidence. Positions
 select ownership during extraction; persistent UUID mapping belongs to nodes.
 
-Both extraction streams default to 2048 target tokens, 1024 backward reference
-tokens, and 1024 forward reference tokens, but now have independent settings.
-Propositions use `KMS2_SOURCE_SEMANTIC__CONTEXT_WINDOW__TARGET_BUDGET`,
-`BACKWARD_BUDGET`, and `FORWARD_BUDGET`. Entities use the corresponding fields
-under `KMS2_SOURCE_SEMANTIC__SOURCE_ENTITY_CONTEXT_WINDOW__`.
-Entity-description reference windows remain separate. Statement and procedure
-reconstruction use their explicit owning source blocks; statement requests also
-include blocks from instructions governing that statement.
+Entity extraction defaults to 2048 target tokens, 1024 backward reference
+tokens, and 1024 forward reference tokens under
+`KMS2_SOURCE_SEMANTIC__SOURCE_ENTITY_CONTEXT_WINDOW__`. Entity-description
+reference windows remain separate. Statement and procedure reconstruction use
+their explicit owning source blocks; statement requests also include blocks from
+instructions governing that statement.
 
 ### Transient consumer context
 
@@ -713,13 +706,13 @@ above, not those entity context windows.
 
 ## Local hubs
 
-Proposition and entity hubs are identity-only containers: their only durable
-property is `uuid`, with incoming `IN_SOURCE_HUB` relationships from original
-occurrences. Source scope is derived through page/block membership and then
-`occurrence → IN_SOURCE_HUB → hub`;
-it is not duplicated as a hub property. Names, statements, descriptions, aliases,
-and embeddings are not copied or synthesized onto these hubs. Occurrence text,
-descriptions, embeddings, and source-block ownership remain intact.
+Entity, statement, and procedure hubs are identity-only containers: their only
+durable property is `uuid`, with incoming `IN_SOURCE_HUB` relationships from
+original occurrences. Source scope is derived through page/block membership and
+then `occurrence → IN_SOURCE_HUB → hub`; it is not duplicated as a hub property.
+Names, statements, descriptions, aliases, and embeddings are not copied or
+synthesized onto these hubs. Occurrence text, descriptions, embeddings, and
+source-block ownership remain intact.
 
 Entity hubs use iterative group-level reconciliation:
 
@@ -743,9 +736,9 @@ Entity hubs use iterative group-level reconciliation:
    round makes no merge.
 
 Positive judgments, negative judgments, and reranker rejections are cached by
-unordered occurrence pair within this invocation. Unknown pairs do not authorize
-a merge. Reducer-backed worker outputs are cleared between rounds using
-LangGraph's `Overwrite`; upstream processing histories are not replayed.
+unordered occurrence pair within this invocation. Unknown pairs do not
+authorize a merge. Reducer-backed worker outputs are cleared between rounds
+using LangGraph's `Overwrite`; upstream processing histories are not replayed.
 An internal worker subgraph uses a member-count-derived execution-step bound:
 each merging round reduces the number of groups, so no arbitrary round cap is
 needed.
@@ -758,54 +751,39 @@ in source size, and strict cross-member judging can be costly for large groups.
 Statement/procedure grouping algorithms are unchanged; their judgment and
 synthesis evidence is now the full reconstructed occurrence content.
 
-Proposition hubs use a narrower contract: members must express the same claim.
-Paraphrases and consistent renaming of arbitrary variables may qualify; changed
-assumptions, domains, quantifiers, negation, fixed constants, or implication
-strength/direction do not.
-
-Vector retrieval nominates bounded candidates; reranking can reject them but
-cannot approve membership. Every surviving pair requires an explicit positive
-model judgment. Groups are disjoint and use deterministic complete-link merges:
-every cross-group pair must have been approved. An absent or negative comparison
-prevents a merge, so an A–B–C bridge cannot silently authorize A/C equivalence.
-Missed candidates remain separate searchable hubs; this is not an exhaustive or
-formal mathematical-equivalence procedure.
-
 Neither hub type requires a synthesis, summary-reduction, or hub-embedding call.
-Proposition grouping still operates on original statements; it does not rewrite
-variables or generate premises/conclusions. Hubs remain source-local and are
-rebuilt by source replacement, not incrementally reconciled across sources.
+Hubs remain source-local and are rebuilt by source replacement, not
+incrementally reconciled across sources.
 
 ## Independent search
 
-Proposition and entity occurrences and their hubs remain independent. There is
-no proposition/entity association stage or stored cross-link between these
-streams. Entity extraction and search do not depend on propositions, and source
-learning does not consume entity descriptions.
+Entity occurrences and their hubs remain independent of statement and procedure
+occurrences. There is no entity/statement/procedure association stage or stored
+cross-link between these streams. Entity extraction and search are independent
+of pedagogical reconstruction; source learning receives source blocks directly.
 
-`SourcePropositionRepository.search_source_proposition_hubs` and
-`SourceEntityRepository.search_source_entity_hubs` accept a source UUID, nonempty
-query embedding, and positive `top_k`. Each requested source's hub is scored by
-the maximum exact cosine similarity among its embedded members. Equal-scoring
-members are resolved by member UUID; hubs rank by score, then hub UUID.
-Grouping precedes `top_k`, so multiple matching members do not consume multiple
-result slots for one hub. The requested Source node's ownership relationships
-select members and their hubs; unrelated sources cannot consume a global ANN
-result limit. Search-result source UUIDs are derived from that matched Source.
+`SourceEntityRepository.search_source_entity_hubs` accepts a source UUID,
+nonempty query embedding, and positive `top_k`. Each requested source's hub is
+scored by the maximum exact cosine similarity among its embedded members.
+Equal-scoring members are resolved by member UUID; hubs rank by score, then hub
+UUID. Grouping precedes `top_k`, so multiple matching members do not consume
+multiple result slots for one hub. The requested Source node's ownership
+relationships select members and their hubs; unrelated sources cannot consume a
+global ANN result limit.
 
-Each result carries the hub UUID, best-matching member UUID, original member
-text (or entity name and description), source UUID, owning target-block UUIDs,
-and score. This is query-specific evidence, not an authoritative hub summary.
-The search API computes exact member scores rather than using a hub vector
-index. Its work scales with the source's embedded memberships. Search is a
-repository API, not a separate terminal action.
+Each entity result carries the hub UUID, best-matching member UUID, entity name
+and description, owning target-block UUIDs, and score. This is query-specific
+evidence, not an authoritative hub summary. The search API computes exact member
+scores rather than using a hub vector index. Its work scales with the source's
+embedded memberships. Search is a repository API, not a separate terminal
+action.
 
 ## Execution and ownership
 
-Source Semantic extracts propositions and entities from persisted source
-blocks, generates entity descriptions, and runs local hub processing. Statement
-and procedure content/embeddings are already persisted by Source Pedagogical;
-their hub stages read that material without rewriting it. Proposition and entity
+Source Semantic extracts entities from persisted source blocks, generates entity
+descriptions, and runs entity, statement, and procedure hub processing.
+Statement and procedure content/embeddings are already persisted by Source
+Pedagogical; their hub stages read that material without rewriting it. Entity
 extraction remains independent of the pedagogical occurrence streams.
 
 `SourceSemanticSourceLoadNode` is the sole writer of the shared `blocks` state.
@@ -814,19 +792,17 @@ The block list uses ordinary replacement semantics, not a first-nonempty-wins
 reducer; parallel branches do not merge or republish source blocks.
 
 Source-owned replacement is destructive within that source's generated output.
-Replacing proposition occurrences removes their previous occurrences, evidence
-relationships, corresponding hubs, and dependent cards/reviews, including when
-the new output is empty. Replacing entities removes their occurrences, evidence
-relationships, and hubs without deleting proposition-derived cards or reviews.
-Neither stream replaces the other extraction stream or canonical source blocks.
+Replacing entity occurrences removes their previous occurrences, evidence
+relationships, and hubs. Statement and procedure hubs are rebuilt from their
+pedagogical occurrences. Neither semantic stream replaces the other stream or
+canonical source blocks.
 
 Replacing source structure removes its local semantic artifacts before rebuilding
 the block chain. Hubs are discovered and removed before their member occurrences,
 while those ownership paths still exist. Other sources remain untouched.
-Schema definitions no longer create target/context pointer constraints,
-proposition/entity hub vector indexes, or hub source-UUID indexes. No stored-data
-cleanup or migration runs during schema initialization; existing database
-contents are left alone.
+Schema definitions expose only active source labels and vector indexes. No
+stored-data cleanup or migration runs during schema initialization;
+existing database contents are left alone.
 
 Structural schema initialization explicitly declares the `SIMILAR_TO` relationship
 type and `score` property key required by retained native GDS projections, even
@@ -891,7 +867,7 @@ override, use:
 
 ```bash
 KMS2_LLM__DEFAULT_TEXT_PROFILE=chatgpt-luna uv run kms2
-KMS2_LLM__DEFAULT_TEXT_PROFILE=chatgpt-luna KMS2_SOURCE_SEMANTIC__SOURCE_PROPOSITION_EXTRACTION__PROFILE=gemma-text-32k uv run kms2
+KMS2_LLM__DEFAULT_TEXT_PROFILE=chatgpt-luna KMS2_SOURCE_SEMANTIC__SOURCE_ENTITY_EXTRACTION__PROFILE=gemma-text-32k uv run kms2
 ```
 
 Nested profile settings can be overridden, for example
@@ -952,13 +928,13 @@ provider's response indexes. Concurrent `embed()` calls share the same limit.
 Invalid indexes, missing/duplicate results, and wrong vector dimensions fail at
 the provider boundary rather than producing fabricated embeddings.
 
-Processing, entity, and proposition embedding each run as one ordinary async
-graph node, matching statement/procedure embedding in Source Pedagogical.
-Each node supplies an ordered list to the shared embedding client; this is not
-one provider request per item. Provider item/token budgets and shared concurrency
-remain inside that client. Processing reuses `embed_source_pages` to preserve
-existing vectors and embed only blocks without vectors. Entities retain their
-name-description inputs; propositions retain their full-text inputs.
+Processing and entity embedding each run as one ordinary async graph node,
+matching statement/procedure embedding in Source Pedagogical. Each node supplies
+an ordered list to the shared embedding client; this is not one provider request
+per item. Provider item/token budgets and shared concurrency remain inside that
+client. Processing reuses `embed_source_pages` to preserve existing vectors and
+embed only blocks without vectors. Entities retain their name-description
+inputs.
 
 These single-batch phases have no LangGraph worker dispatch, collector, or
 additive embedding-result reducer. Each writes its output channel directly,
@@ -1029,6 +1005,7 @@ Configuration:
 - `KMS2_RERANKER__BACKEND`: `voyage` (default) or explicit `local`.
 - `KMS2_RERANKER__MODEL`: `rerank-3-lite`, currently the supported hosted model.
 - `KMS2_RERANKER__MAX_CONCURRENCY`: default 4, shared across concurrent calls.
+- `KMS2_RERANKER__BATCH_TOKEN_BUDGET`: default 4096 pair tokens per request.
 - `KMS2_RERANKER__TIMEOUT_SECONDS`: default 120 per HTTP request.
 - `KMS2_RERANKER__TOKENIZER_PATH`: optional Voyage tokenizer JSON path.
 
@@ -1046,20 +1023,28 @@ Token counting loads/caches the model's published
 `voyageai/rerank-3-lite` tokenizer with no padding or truncation. Requests enforce
 the published limits: 8000 query tokens, 32000 query-plus-document tokens per
 pair, 1000 documents, and 600000 aggregate tokens. Aggregate usage counts the
-query once per document plus all document tokens. Existing per-hub
-`reranker_token_budget` settings still control graph batching; provider limits
-are ceilings, not a reason to expand those batches automatically.
+query once per document plus all document tokens. The shared reranker boundary
+packs whole query-document pairs using the configured batch budget, provider
+document limit, and selected tokenizer. A pair exceeding the batching target is
+sent alone; actual provider limits still apply and inputs are never truncated.
+This replaces per-hub `reranker_token_budget` settings.
 
 Returned document indexes retain their input identity and relevance order.
 Invalid/duplicate indexes, unexpected result counts, and non-finite scores fail
 at the provider boundary. Provider failures propagate, including rate limits.
+When a search spans multiple requests, the boundary merges by returned relevance
+score and applies the final top-k after restoring original indexes. Voyage
+describes rerankers as cross-encoders, but does not explicitly guarantee in its
+published API documentation that scores are comparable across requests. Treat
+cross-batch ordering as an approximation until evaluated on representative
+material. Hub thresholds likewise remain model-dependent.
 Concurrency is not a requests-per-minute or tokens-per-minute limiter; configure
 it for the account's limits.
 
 Existing hub acceptance/rejection thresholds remain configurable and unchanged;
 they are not calibrated for Voyage. Evaluate equivalent-versus-related technical
-claims before relying on the new model's grouping quality. Proposition hub
-membership still requires explicit positive semantic judgment.
+claims before relying on the new model's grouping quality. Entity-hub membership
+still requires explicit positive semantic judgment.
 
 Runtime verification exercised six rerank requests and four embedding requests
 against local HTTP fixtures alongside a live ChatGPT request. Both HTTP clients
@@ -1070,24 +1055,24 @@ to verify real account/model access and ranking behavior.
 
 ## Source learning
 
-Atomic generation receives one proposition occurrence, its exact owning block
-and transiently selected source context, plus the earliest original statement
-in its hub as shared context, selected by owning-block order and occurrence UUID.
-That statement is projected from a member at read time, not stored as a canonical
-hub property. Learning does not load entity context or stored extraction windows.
+Atomic generation receives one source block's material and its exact owning
+block provenance. `SourceAtomicFlashcardNode.load()` selects transient
+before/after context from the canonical block stream; the block UUID and source
+page index remain backend grouping data and are excluded from model input.
+Learning does not load stored extraction windows or any source-specific claim
+hub.
 
-The coherent pass stays inside one proposition hub and may combine useful,
-distinct retrieval facets. Paraphrases alone do not warrant another card. Hub
-UUIDs are transient generation/grouping inputs, not persisted card associations.
-Generated cards point `SUPPORTED_BY` to the selected proposition occurrences and
-have no stored card-to-hub relationship. Coherent cards also retain
-`DERIVED_FROM` links and union only their selected parents' proposition
-provenance.
+The coherent pass groups atomic packets by source page only to create bounded
+inference requests. Page grouping is a structural batching boundary, not a
+semantic identity decision. Generated cards point `SUPPORTED_BY` directly to
+the selected `SourceBlock` nodes. Coherent cards also retain `DERIVED_FROM`
+links and union the exact source-block provenance of their selected parents.
 
 Generic deck/review behavior and independently sourced statement/procedure paths
-remain. Triplet decomposition, event/predicate pipelines, and Global Semantic are
-retired. Cross-source connections and LearnHarness-style reasoning construction
-are separate learning work, not implicit source-extraction behavior.
+remain separate. Teaching interactions can admit canonical propositions and
+reasoning chains with direct source-block provenance; this does not change source
+learning into exhaustive proposition extraction. Triplet decomposition,
+event/predicate pipelines, and Global Semantic remain retired.
 
 ## Verification
 
@@ -1136,7 +1121,7 @@ automatic migration or fallback property reads were added.
 Ruff formatting/lint and all 321 KMS2 tests passed with Neo4j integration enabled.
 Repository fixtures deliberately make UUID order disagree with block order;
 they verify canonical owner ordering, UUID ties within a block, and selection
-of the earliest original proposition statement for learning.
+of the earliest original source block for learning.
 
 A real application smoke on disposable Neo4j ingested one Active Calculus page
 into 15 described/embedded entities without creating hubs or recording entity
@@ -1147,8 +1132,8 @@ extraction/description invocations. Neither stage persisted occurrence ordinals
 or context relationships. DSPy inputs were warm; these are correctness checks,
 not cold-throughput or model-quality measurements.
 
-The configured five-page graph had only its 67 obsolete entity/proposition
-ordinal properties removed. All other properties, embeddings, node/relationship
+The configured five-page graph had only its 67 obsolete entity ordinal
+properties removed. All other properties, embeddings, node/relationship
 identities, and existing hub memberships were preserved: 207 nodes and 352
 relationships remain. No automatic legacy-property cleanup or fallback reads
 were added.
@@ -1172,22 +1157,20 @@ A live standalone ingestion processed one Active Calculus page into 17 blocks,
 69.013 seconds. It used one entity-extraction call, three entity-description
 calls, and two batched identity-judge calls. Every occurrence had exactly one
 owning block and one hub; query results returned original member/block evidence.
-No proposition extraction ran during ingestion.
-
-The subsequent semantic run completed with three propositions and three statement
-descriptions, made zero entity calls, and preserved all entity occurrence and
-hub UUIDs. It reused warm DSPy responses from the first attempt, which had exposed
-the missing GDS schema-token dependency. These are correctness smoke results,
-not a deduplication-quality or cold-throughput benchmark. The existing user's
-Neo4j instance was not modified.
+No source-level claim stream ran during ingestion. The subsequent semantic run
+completed with three pedagogical statement descriptions, made zero entity calls,
+and preserved all entity occurrence and hub UUIDs. It reused warm DSPy responses
+from the first attempt, which had exposed the missing GDS schema-token
+dependency. These are correctness smoke results, not a deduplication-quality or
+cold-throughput benchmark. The existing user's Neo4j instance was not modified.
 
 ### Owner-only context storage verification
 
 The five-page Active Calculus ingestion/semantic run completed with 64 blocks,
-four visual assets, 12 exercises, 62 entity occurrences in 46 hubs, and five
-propositions. Source processing took 66.948 seconds and semantics took 4.291
-seconds with DSPy caching enabled; OCR was freshly requested. Recorded module
-invocations include cached results, not just remote requests.
+four visual assets, 12 exercises, and 62 entity occurrences in 46 hubs. Source
+processing took 66.948 seconds and semantics took 4.291 seconds with DSPy
+caching enabled; OCR was freshly requested. Recorded module invocations include
+cached results, not just remote requests.
 
 The run exposed per-occurrence context fan-out. The user selected no persisted
 context references, rather than boundary-link compression. Replaying the captured
@@ -1218,10 +1201,10 @@ removing redundant context relationships.
 ### Earlier topology verification
 
 Block-owned topology verification used a separate Neo4j 5.26/GDS container,
-leaving the existing extraction graph untouched. A smoke persisted two
-propositions and two entities per source across two sources, with ownership and
+leaving the existing extraction graph untouched. A smoke persisted two source
+evidence sets and two entities per source across two sources, with ownership and
 context spanning page boundaries. It exercised occurrence reload, grouped
-member search, learning-request loading, card-to-proposition support, and
+member search, learning-request loading, direct card-to-block support, and
 populated source replacement. No direct document-to-occurrence edges, pointer
 vertices, or stored occurrence/hub source UUIDs were present. No hosted LLM,
 embedding, or reranker quality claims follow from these checks.
@@ -1270,19 +1253,19 @@ The actual DSPy cache audit recorded 47 hits and 139 misses, including 46
 processing-stage hits. Semantic inputs changed downstream of revised visual
 descriptions, so most semantic requests missed the cache.
 
-The seven task-requirement-to-existence errors were eliminated. The corrected
-five propositions are source-asserted summary claims; no construction properties
-were promoted into assertions. Exercise 9's historical statement-description pass
-retained the supplied absolute-value hint and the required explanation when a
-limit does not exist. Original figures remain available rather than replacing
-their unannotated coordinates with numerical guesses.
+The seven task-requirement-to-existence errors were eliminated in the historical
+claim-description pass. The corrected outputs retained source-asserted summary
+claims; no construction properties were promoted into assertions. Exercise 9's
+historical statement-description pass retained the supplied absolute-value hint
+and the required explanation when a limit does not exist. Original figures
+remain available rather than replacing their unannotated coordinates with
+numerical guesses.
 
-That historical evaluation still missed the inline absolute-value hint as a
-proposition, although the source block and then-current statement-description
-pass retained it.
-The then-current entity algorithm also merged different exercise-local functions
-and produced duplicate community memberships. The ingestion experiment replaces
-that entity algorithm with scoped judgments and disjoint iterative groups; it
-does not establish perfect model identity accuracy or change the proposition,
-statement, or procedure grouping algorithms.
+That historical evaluation still missed the inline absolute-value hint as an
+extracted claim, although the source block and then-current statement-description
+pass retained it. The then-current entity algorithm also merged different
+exercise-local functions and produced duplicate community memberships. The
+ingestion experiment replaces that entity algorithm with scoped judgments and
+disjoint iterative groups; it does not establish perfect model identity accuracy
+or change claim, statement, or procedure grouping algorithms.
 

@@ -54,7 +54,7 @@ class _ScriptedPredictor:
 
 def _state(pages: list[SourcePage]) -> SourceProcessingState:
     return SourceProcessingState(
-        pdf_path='document.pdf',
+        input={'kind': 'pdf', 'pdf_path': 'document.pdf'},
         source=Source(uuid='source-1', key='document.pdf'),
         corrected_pages=pages,
     )

@@ -1,4 +1,4 @@
-"""Exact token counting and bounded HTTP reranking for Voyage AI."""
+"""Token-aware batching and HTTP reranking for Voyage AI."""
 
 import asyncio
 import math
@@ -8,7 +8,7 @@ import httpx
 from tokenizers import Tokenizer
 
 from kms2.config.reranking import RerankerProviderSettings
-from kms2.core.reranking import RerankResult
+from kms2.core.reranking import RerankerClient, RerankResult
 from kms2.core.windowing import TextTokenCounter
 
 VOYAGE_RERANK_MODEL = 'rerank-3-lite'
@@ -20,6 +20,143 @@ VOYAGE_MAX_QUERY_TOKENS = 8_000
 VOYAGE_MAX_DOCUMENT_PAIR_TOKENS = 32_000
 VOYAGE_MAX_TOTAL_TOKENS = 600_000
 VOYAGE_MAX_DOCUMENTS = 1_000
+MAX_RERANKER_BATCH_DOCUMENTS = VOYAGE_MAX_DOCUMENTS
+
+
+class BatchingRerankerClient:
+    """Batch candidates for one client; scores across batches may not compare.
+
+    Each document's cost includes a repeated query count and backend overhead.
+    A document exceeding the configured batch budget is sent alone, without
+    truncation; the backend remains responsible for its individual limits.
+    """
+
+    def __init__(
+        self,
+        client: RerankerClient,
+        token_counter: TextTokenCounter,
+        *,
+        token_budget: int,
+        max_concurrency: int,
+        overhead_tokens: int = 0,
+        max_request_tokens: int | None = None,
+    ) -> None:
+        self._client = client
+        self._token_counter = token_counter
+        self._token_budget = (
+            min(token_budget, max_request_tokens)
+            if max_request_tokens is not None
+            else token_budget
+        )
+        self._overhead_tokens = overhead_tokens
+        self._semaphore = asyncio.Semaphore(max_concurrency)
+        self._max_concurrency = max_concurrency
+
+    async def rerank(
+        self,
+        query: str,
+        documents: list[str],
+        top_n: int | None = None,
+    ) -> list[RerankResult]:
+        """Rerank every candidate, restoring original indexes after batching.
+
+        Results from a single backend request retain provider order. Results
+        merged from multiple requests sort by score and then original index;
+        scores are not guaranteed comparable across requests.
+        """
+        if not documents:
+            return []
+        if top_n is not None and top_n < 1:
+            raise ValueError('top_n must be positive when provided')
+
+        query_count, *document_counts = self._token_counter.count_texts(
+            [query, *documents]
+        )
+        pair_costs = [
+            query_count + count + self._overhead_tokens
+            for count in document_counts
+        ]
+        batches: list[list[int]] = []
+        batch: list[int] = []
+        batch_cost = 0
+        for index, pair_cost in enumerate(pair_costs):
+            if pair_cost > self._token_budget:
+                if batch:
+                    batches.append(batch)
+                    batch = []
+                    batch_cost = 0
+                batches.append([index])
+                continue
+            if batch and (
+                batch_cost + pair_cost > self._token_budget
+                or len(batch) >= MAX_RERANKER_BATCH_DOCUMENTS
+            ):
+                batches.append(batch)
+                batch = []
+                batch_cost = 0
+            batch.append(index)
+            batch_cost += pair_cost
+        if batch:
+            batches.append(batch)
+
+        async def rerank_batch(
+            indexes: list[int],
+        ) -> tuple[list[int], list[RerankResult]]:
+            async with self._semaphore:
+                results = await self._client.rerank(
+                    query, [documents[index] for index in indexes]
+                )
+            return indexes, results
+
+        if len(batches) == 1:
+            indexed_batches = [await rerank_batch(batches[0])]
+        else:
+            next_batch_index = 0
+            indexed_batches_by_index: dict[
+                int, tuple[list[int], list[RerankResult]]
+            ] = {}
+
+            async def rerank_batches() -> None:
+                nonlocal next_batch_index
+                while next_batch_index < len(batches):
+                    batch_index = next_batch_index
+                    next_batch_index += 1
+                    indexed_batches_by_index[batch_index] = await rerank_batch(
+                        batches[batch_index]
+                    )
+
+            tasks = [
+                asyncio.create_task(rerank_batches())
+                for _ in range(min(len(batches), self._max_concurrency))
+            ]
+            try:
+                await asyncio.gather(*tasks)
+            except BaseException:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
+            indexed_batches = [
+                indexed_batches_by_index[index] for index in range(len(batches))
+            ]
+
+        results: list[RerankResult] = []
+        for indexes, batch_results in indexed_batches:
+            results.extend(
+                {
+                    'index': indexes[result['index']],
+                    'relevance_score': result['relevance_score'],
+                }
+                for result in batch_results
+            )
+        if len(batches) > 1:
+            results.sort(
+                key=lambda result: (
+                    -result['relevance_score'],
+                    result['index'],
+                )
+            )
+        return results[:top_n] if top_n is not None else results
 
 
 class VoyageRerankTokenCounter:

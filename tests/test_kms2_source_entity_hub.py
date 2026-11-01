@@ -1,7 +1,7 @@
 import asyncio
 
 import pytest
-from kms2_token_helpers import JUDGE_BUDGET, RERANKER_COUNTER
+from kms2_token_helpers import JUDGE_BUDGET
 from langgraph.graph import StateGraph
 
 from kms2.config.inference import ContextWindowSettings
@@ -155,8 +155,6 @@ def _node(repository, judge, reranker=None, settings=None):
         judge,
         reranker or _Reranker(),
         settings or SourceEntityHubSettings(),
-        reranker_token_counter=RERANKER_COUNTER,
-        reranker_overhead_tokens=0,
         judge_budget=JUDGE_BUDGET,
     )
 

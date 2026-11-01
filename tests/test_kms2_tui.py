@@ -24,8 +24,6 @@ class _Prompt:
 
 def _semantic_result() -> SourceSemanticStageResult:
     return SourceSemanticStageResult(
-        source_proposition_count=5,
-        source_proposition_hub_count=2,
         source_statement_hub_count=0,
         source_procedure_hub_count=0,
         source_entity_count=0,

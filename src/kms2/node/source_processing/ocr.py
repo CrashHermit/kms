@@ -2,11 +2,10 @@
 
 from dataclasses import dataclass
 
-from kms2.core.model.block import SourceBlock
 from kms2.core.model.page import SourcePage
-from kms2.core.model.visual_asset import VisualAsset
+from kms2.core.model.source_processing.input import PDFSourceInput
 from kms2.langgraph.source_processing.state import SourceProcessingState
-from kms2.ocr.provider import OCRProvider
+from kms2.ocr.provider import OCRProvider, source_pages_from_ocr
 
 
 @dataclass
@@ -17,30 +16,11 @@ class OCRNode:
 
     def run(self, state: SourceProcessingState) -> dict[str, list[SourcePage]]:
         """Extract ordered source pages and blocks for the PDF."""
+        source_input = state.input
+        assert isinstance(source_input, PDFSourceInput)
         pages = self.provider.extract(
-            state.pdf_path,
-            pages=state.pages,
+            source_input.pdf_path,
+            source_uuid=state.source.uuid,
+            pages=source_input.pages,
         )
-        ocr_pages = [
-            SourcePage(
-                index=page.page_index,
-                markdown=page.markdown,
-                blocks=[
-                    SourceBlock(
-                        block_type=artifact.block_type,
-                        content=artifact.content,
-                        crop_path=artifact.crop_path,
-                        crop_bbox=artifact.crop_bbox,
-                        assets=[
-                            VisualAsset(path=image.path)
-                            for image in artifact.images
-                        ],
-                    )
-                    for artifact in sorted(
-                        page.blocks, key=lambda item: item.block_index
-                    )
-                ],
-            )
-            for page in pages
-        ]
-        return {'ocr_pages': ocr_pages}
+        return {'ocr_pages': source_pages_from_ocr(pages)}

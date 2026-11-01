@@ -30,20 +30,12 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     FOR (asset:VisualAsset) REQUIRE asset.uuid IS UNIQUE
     """,
     """
-    CREATE CONSTRAINT source_proposition_uuid IF NOT EXISTS
-    FOR (proposition:SourceProposition) REQUIRE proposition.uuid IS UNIQUE
-    """,
-    """
     CREATE CONSTRAINT source_entity_uuid IF NOT EXISTS
     FOR (entity:SourceEntity) REQUIRE entity.uuid IS UNIQUE
     """,
     """
     CREATE CONSTRAINT source_entity_hub_uuid IF NOT EXISTS
     FOR (hub:SourceEntityHub) REQUIRE hub.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_proposition_hub_uuid IF NOT EXISTS
-    FOR (hub:SourcePropositionHub) REQUIRE hub.uuid IS UNIQUE
     """,
     """
     CREATE CONSTRAINT source_statement_hub_uuid IF NOT EXISTS
@@ -102,6 +94,22 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     FOR (question:TeachingQuestion) REQUIRE question.uuid IS UNIQUE
     """,
     """
+    CREATE CONSTRAINT proposition_uuid IF NOT EXISTS
+    FOR (proposition:Proposition) REQUIRE proposition.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT learner_observation_uuid IF NOT EXISTS
+    FOR (observation:LearnerObservation) REQUIRE observation.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT reasoning_step_uuid IF NOT EXISTS
+    FOR (step:ReasoningStep) REQUIRE step.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT knowledge_assertion_uuid IF NOT EXISTS
+    FOR (assertion:KnowledgeAssertion) REQUIRE assertion.uuid IS UNIQUE
+    """,
+    """
     CREATE INDEX user_card_review_due_at IF NOT EXISTS
     FOR (review:UserCardReview) ON (review.due_at)
     """,
@@ -112,7 +120,7 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
 
 
 def vector_index_statements(embedding_dimension: int) -> tuple[str, ...]:
-    """Return KMS2 cosine vector-index DDL for all persisted embeddings."""
+    """Return DDL for embeddings queried through Neo4j vector indexes."""
     return tuple(
         f"""
         CREATE VECTOR INDEX {index_name} IF NOT EXISTS
@@ -123,8 +131,8 @@ def vector_index_statements(embedding_dimension: int) -> tuple[str, ...]:
         }}}}
         """
         for index_name, label in (
+            ('proposition_embedding', 'Proposition'),
             ('source_block_embedding', 'SourceBlock'),
-            ('source_proposition_embedding', 'SourceProposition'),
             ('source_entity_embedding', 'SourceEntity'),
             ('source_statement_embedding', 'SourceStatement'),
             ('source_procedure_embedding', 'SourceProcedure'),
@@ -135,8 +143,8 @@ def vector_index_statements(embedding_dimension: int) -> tuple[str, ...]:
 
 
 VECTOR_INDEX_NAMES = (
+    'proposition_embedding',
     'source_block_embedding',
-    'source_proposition_embedding',
     'source_entity_embedding',
     'source_statement_embedding',
     'source_procedure_embedding',
@@ -195,12 +203,13 @@ async def ensure_schema(
             """,
             labels=[
                 'SourceBlock',
-                'SourceProposition',
+                'Proposition',
                 'SourceEntity',
                 'SourceStatement',
                 'SourceProcedure',
                 'SourceStatementHub',
                 'SourceProcedureHub',
+                'LearnerObservation',
             ],
             dimension=embedding_dimension,
         )

@@ -29,19 +29,6 @@ from kms2.core.model.source_semantic.source_procedure_hub import (
     SourceProcedureHubRerankResult,
     SourceProcedureHubSynthesisResult,
 )
-from kms2.core.model.source_semantic.source_proposition_extraction import (
-    SourceProposition,
-    SourcePropositionEmbeddingResult,
-    SourcePropositionExtractionResult,
-)
-from kms2.core.model.source_semantic.source_proposition_hub import (
-    SourcePropositionHub,
-    SourcePropositionHubCandidate,
-    SourcePropositionHubGroup,
-    SourcePropositionHubJudgeResult,
-    SourcePropositionHubMember,
-    SourcePropositionHubRerankResult,
-)
 from kms2.core.model.source_semantic.source_statement_hub import (
     SourceStatementHub,
     SourceStatementHubCandidate,
@@ -97,38 +84,6 @@ class SourceSemanticState(BaseModel):
     source_entity_hub_memberships: list[list[str]] = Field(default_factory=list)
     source_entity_hub_count: int = 0
     source_entity_hub_round_merged: bool = False
-    proposition_results: Annotated[
-        list[SourcePropositionExtractionResult], operator.add
-    ] = Field(default_factory=list)
-    source_propositions: list[SourceProposition] = Field(default_factory=list)
-    source_proposition_embedding_results: list[
-        SourcePropositionEmbeddingResult
-    ] = Field(default_factory=list)
-    source_proposition_hub_candidates: list[SourcePropositionHubCandidate] = (
-        Field(default_factory=list)
-    )
-    source_proposition_hub_members: list[SourcePropositionHubMember] = Field(
-        default_factory=list
-    )
-    source_proposition_hub_rerank_results: Annotated[
-        list[SourcePropositionHubRerankResult], operator.add
-    ] = Field(default_factory=list)
-    source_proposition_hub_reranked_candidates: list[
-        SourcePropositionHubCandidate
-    ] = Field(default_factory=list)
-    source_proposition_hub_judge_results: Annotated[
-        list[SourcePropositionHubJudgeResult], operator.add
-    ] = Field(default_factory=list)
-    source_proposition_hub_groups: list[SourcePropositionHubGroup] = Field(
-        default_factory=list
-    )
-    source_proposition_hubs: list[SourcePropositionHub] = Field(
-        default_factory=list
-    )
-    source_proposition_hub_memberships: list[list[str]] = Field(
-        default_factory=list
-    )
-    source_proposition_hub_count: int = 0
     source_statement_hub_candidates: list[SourceStatementHubCandidate] = Field(
         default_factory=list
     )

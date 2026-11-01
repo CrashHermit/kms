@@ -3,6 +3,7 @@
 import base64
 from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 
 import httpx
 import pypdfium2 as pdfium
@@ -16,6 +17,7 @@ from kms2.core.model.source_processing.ocr import (
     OCRImageArtifact,
     OCRPageArtifact,
 )
+from kms2.core.pdf import PDFIUM_LOCK
 
 _TIMEOUT = httpx.Timeout(300.0, connect=30.0)
 
@@ -292,12 +294,19 @@ def _materialize_page(
     render_scale: float,
     block_crop_scale: float,
     pdf_path: Path,
+    rendered_page: bytes | None = None,
 ) -> OCRPageArtifact:
-    """Render one page and build its ordered block artifacts."""
+    """Materialize block and image crops from one OCR page."""
     page_path = document_dir / 'Document.png'
-    image_size = _render_page(
-        pdf, page.index, page_path, render_scale, pdf_path
-    )
+    if rendered_page is None:
+        image_size = _render_page(
+            pdf, page.index, page_path, render_scale, pdf_path
+        )
+    else:
+        page_path.parent.mkdir(parents=True, exist_ok=True)
+        page_path.write_bytes(rendered_page)
+        with Image.open(page_path) as rendered:
+            image_size = rendered.size
     materialized_images: list[tuple[OCRImage, Path]] = []
     images_dir = document_dir / 'Images'
     images_dir.mkdir(parents=True, exist_ok=True)
@@ -351,35 +360,47 @@ def _materialize_page(
     )
 
 
-def _materialize_artifacts(
+def materialize_ocr_artifacts(
     response: OCRResponse,
-    pdf_path: Path,
+    pdf_path: str | Path,
     output_dir: str | Path,
     render_scale: float,
     block_crop_scale: float,
+    *,
+    rendered_pages: dict[int, bytes] | None = None,
 ) -> list[OCRPageArtifact]:
-    """Materialize response pages as provider-neutral OCR artifacts."""
+    """Materialize OCR response pages as provider-neutral artifacts."""
+    source_path = Path(pdf_path)
     output_root = Path(output_dir)
-    pdf = pdfium.PdfDocument(str(pdf_path))
-    try:
-        pages: list[OCRPageArtifact] = []
-        for page in response.pages:
-            document_dir = (
-                output_root / 'Documents' / f'Document_{page.index:04d}'
-            )
-            pages.append(
-                _materialize_page(
-                    page,
-                    document_dir,
-                    pdf,
-                    render_scale,
-                    block_crop_scale,
-                    pdf_path,
+    with PDFIUM_LOCK:
+        pdf = None
+        if rendered_pages is None:
+            pdf = pdfium.PdfDocument(str(source_path))
+        try:
+            pages: list[OCRPageArtifact] = []
+            for page in response.pages:
+                document_dir = (
+                    output_root / 'Documents' / f'Document_{page.index:04d}'
                 )
-            )
-        return pages
-    finally:
-        pdf.close()
+                pages.append(
+                    _materialize_page(
+                        page,
+                        document_dir,
+                        pdf,
+                        render_scale,
+                        block_crop_scale,
+                        source_path,
+                        rendered_page=(
+                            rendered_pages.get(page.index)
+                            if rendered_pages is not None
+                            else None
+                        ),
+                    )
+                )
+            return pages
+        finally:
+            if pdf is not None:
+                pdf.close()
 
 
 class MistralOCRProvider:
@@ -392,6 +413,7 @@ class MistralOCRProvider:
         self,
         pdf_path: str | Path,
         *,
+        source_uuid: str,
         pages: list[int] | None = None,
     ) -> list[OCRPageArtifact]:
         """OCR a PDF and materialize its ordered page artifacts."""
@@ -401,10 +423,13 @@ class MistralOCRProvider:
             self._settings,
             pages=pages,
         )
-        return _materialize_artifacts(
+        return materialize_ocr_artifacts(
             response,
             source_path,
-            self._settings.output_dir,
+            Path(self._settings.output_dir)
+            / 'sources'
+            / source_uuid
+            / uuid4().hex,
             self._settings.render_scale,
             self._settings.block_crop_scale,
         )

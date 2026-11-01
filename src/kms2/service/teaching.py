@@ -1,14 +1,15 @@
 """Application service for goal-driven teaching-session workflows."""
 
+import asyncio
 from datetime import UTC, datetime
+from pathlib import Path
 
-from kms2.core.model.teaching.question import (
-    FreeResponseSpecification,
-    FreeResponseView,
-    MultipleChoiceView,
-    TeachingQuestion,
-    TeachingQuestionView,
+from kms2.core.model.teaching.evidence import (
+    TeachingCitationMedia,
+    TeachingCitationView,
+    TeachingEvidenceReference,
 )
+from kms2.core.model.teaching.question import question_view
 from kms2.core.model.teaching.session import (
     TeachingPhase,
     TeachingSession,
@@ -20,6 +21,7 @@ from kms2.core.model.teaching.session import (
 )
 from kms2.core.model.teaching.turn import TeachingRole, TeachingTurn
 from kms2.database.teaching.repository import TeachingRepository
+from kms2.service.learner_observations import LearnerObservationService
 
 
 class TeachingService:
@@ -58,6 +60,45 @@ class TeachingService:
         """Load one session as a learner-safe view."""
         snapshot = await self._teaching.load_session(user_uuid, session_uuid)
         return self._view(snapshot)
+
+    async def read_teaching_citations(
+        self,
+        user_uuid: str,
+        session_uuid: str,
+        references: list[TeachingEvidenceReference],
+    ) -> list[TeachingCitationView]:
+        """Read safe projections of evidence cited in one owned session."""
+        return await self._teaching.read_teaching_citations(
+            user_uuid,
+            session_uuid,
+            references,
+        )
+
+    async def read_teaching_citation_media(
+        self,
+        user_uuid: str,
+        session_uuid: str,
+        asset_uuid: str,
+    ) -> TeachingCitationMedia:
+        """Read actual media bytes for an image cited in the owned session."""
+        path = await self._teaching.read_teaching_citation_media_path(
+            user_uuid,
+            session_uuid,
+            asset_uuid,
+        )
+        data = await asyncio.to_thread(Path(path).read_bytes)
+        return TeachingCitationMedia(
+            media_type=_image_media_type(data),
+            data=data,
+        )
+
+    async def load_snapshot(
+        self,
+        user_uuid: str,
+        session_uuid: str,
+    ) -> TeachingSessionSnapshot:
+        """Load the private aggregate for backend teaching orchestration."""
+        return await self._teaching.load_session(user_uuid, session_uuid)
 
     async def submit_response(
         self,
@@ -120,8 +161,27 @@ class TeachingService:
             commit,
         )
 
-    @classmethod
-    def _view(cls, snapshot: TeachingSessionSnapshot) -> TeachingSessionView:
+    async def record_result(
+        self,
+        user_uuid: str,
+        session_uuid: str,
+        content: str,
+        commit: TeachingTurnCommit,
+        *,
+        expected_revision: int,
+    ) -> TeachingSessionView:
+        """Persist one complete teacher result and return its safe projection."""
+        snapshot = await self.record_teaching_turn(
+            user_uuid,
+            session_uuid,
+            content,
+            commit,
+            expected_revision=expected_revision,
+        )
+        return self._view(snapshot)
+
+    @staticmethod
+    def _view(snapshot: TeachingSessionSnapshot) -> TeachingSessionView:
         """Project a private snapshot without exposing answer metadata."""
         return TeachingSessionView(
             session=snapshot.session,
@@ -129,7 +189,7 @@ class TeachingService:
                 TeachingTurnView(
                     turn=record.turn,
                     question=(
-                        cls._question_view(record.question)
+                        question_view(record.question)
                         if record.question is not None
                         else None
                     ),
@@ -137,6 +197,12 @@ class TeachingService:
                     responds_to_question_uuid=record.responds_to_question_uuid,
                     presented_plan_uuid=record.presented_plan_uuid,
                     accepted_plan_uuid=record.accepted_plan_uuid,
+                    citations=record.citations,
+                    knowledge_assertions=record.knowledge_assertions,
+                    learner_observations=[
+                        LearnerObservationService.view(observation)
+                        for observation in record.learner_observations
+                    ],
                 )
                 for record in snapshot.turns
             ],
@@ -147,18 +213,17 @@ class TeachingService:
             pending_question_uuid=snapshot.pending_question_uuid,
         )
 
-    @staticmethod
-    def _question_view(question: TeachingQuestion) -> TeachingQuestionView:
-        """Project a typed question response without its private answer."""
-        response = question.response
-        if isinstance(response, FreeResponseSpecification):
-            response_view = FreeResponseView()
-        else:
-            response_view = MultipleChoiceView(options=response.options)
-        return TeachingQuestionView(
-            uuid=question.uuid,
-            kind=question.kind,
-            prompt=question.prompt,
-            response=response_view,
-            created_at=question.created_at,
-        )
+
+def _image_media_type(data: bytes) -> str:
+    """Identify the actual stored image format from its bytes."""
+    if data.startswith(b'\x89PNG\r\n\x1a\n'):
+        return 'image/png'
+    if data.startswith(b'\xff\xd8\xff'):
+        return 'image/jpeg'
+    if data.startswith((b'GIF87a', b'GIF89a')):
+        return 'image/gif'
+    if data.startswith(b'RIFF') and data[8:12] == b'WEBP':
+        return 'image/webp'
+    if b'<svg' in data[:1024]:
+        return 'image/svg+xml'
+    raise ValueError('Cited image has an unsupported media format')

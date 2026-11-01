@@ -21,10 +21,7 @@ from kms2.core.model.source_learning.atomic import (
 from kms2.core.model.source_learning.coherent import (
     SourceCoherentFlashcardCandidate,
 )
-from kms2.core.model.source_learning.context import (
-    SourceLearningEvidence,
-    SourceLearningHubContext,
-)
+from kms2.core.model.source_learning.context import SourceLearningEvidence
 from kms2.core.model.source_learning.flashcard import (
     SourceFlashcardCandidate,
     SourceFlashcardOccurrence,
@@ -180,8 +177,8 @@ class _AtomicModule:
     async def acall(self, *, request: SourceAtomicFlashcardInput):
         return [
             SourceFlashcardCandidate(
-                question=f'Question: {request.evidence.proposition_text}',
-                answer=request.evidence.proposition_text,
+                question=f'Question: {request.evidence.source_text}',
+                answer=request.evidence.source_text,
             )
         ]
 
@@ -202,10 +199,7 @@ class _CoherentModule:
         ]
 
 
-def _request(proposition_uuid):
-    context = SourceLearningHubContext(
-        proposition_statement='A body has average velocity.',
-    )
+def _request(block_key, page_index=0):
     source_context = SourceEvidenceInput(
         context_before=[],
         target_blocks=[
@@ -217,24 +211,22 @@ def _request(proposition_uuid):
         context_after=[],
     )
     return SourceAtomicFlashcardRequest(
-        source_block_uuid=f'block-{proposition_uuid}',
-        hub_uuid='hub-1',
-        source_proposition_uuid=proposition_uuid,
+        source_block_uuid=f'block-{block_key}',
+        source_page_index=page_index,
         input=SourceAtomicFlashcardInput(
-            context=context,
             evidence=SourceLearningEvidence(
-                proposition_text='The source defines the average velocity.',
+                source_text='The source defines the average velocity.',
                 source_context=source_context,
-            ),
+            )
         ),
     )
 
 
 def test_two_pass_generation_retains_context_and_uses_local_indexes():
     requests = [
-        _request('proposition-1'),
-        _request('proposition-2'),
-        _request('proposition-3'),
+        _request('1'),
+        _request('2'),
+        _request('3'),
     ]
     repository = _Repository(requests)
     budget = TokenBudget(counter=_Counter(), token_limit=100)
@@ -301,20 +293,20 @@ def test_two_pass_generation_retains_context_and_uses_local_indexes():
         )
     )
     occurrence: SourceFlashcardOccurrence = collected['coherent_occurrences'][0]
-    assert occurrence.source_proposition_uuids == [
-        'proposition-1',
-        'proposition-3',
+    assert occurrence.source_block_uuids == [
+        'block-1',
+        'block-3',
     ]
     assert len(occurrence.derived_card_uuids) == 2
     assert occurrence.derived_card_uuids == [
         coherent_state.atomic_packets[0].cards[0].card.uuid,
         coherent_state.atomic_packets[2].cards[0].card.uuid,
     ]
-    assert coherent_module.inputs[0].packets[0].evidence.proposition_text
+    assert coherent_module.inputs[0].packets[0].evidence.source_text
 
 
 def test_atomic_load_assembles_independent_token_bounded_context_windows():
-    requests = [_request('proposition-1'), _request('proposition-2')]
+    requests = [_request('1'), _request('2')]
     blocks = [
         SourceBlock(
             uuid=f'block-{index}',
@@ -378,8 +370,8 @@ def test_learning_graph_persists_selected_provenance_after_atomic_parents(
 ):
     requests = (
         [
-            _request('proposition-1'),
-            _request('proposition-2'),
+            _request('1'),
+            _request('2'),
         ]
         if has_evidence
         else []
@@ -444,14 +436,14 @@ def test_learning_graph_persists_selected_provenance_after_atomic_parents(
         coherent.card.uuid,
         *(occurrence.card.uuid for occurrence in atomic),
     }
-    assert [occurrence.source_proposition_uuids for occurrence in atomic] == [
-        ['proposition-1'],
-        ['proposition-2'],
+    assert [occurrence.source_block_uuids for occurrence in atomic] == [
+        ['block-1'],
+        ['block-2'],
     ]
     assert coherent.derived_card_uuids == [
         occurrence.card.uuid for occurrence in atomic
     ]
-    assert coherent.source_proposition_uuids == [
-        'proposition-1',
-        'proposition-2',
+    assert coherent.source_block_uuids == [
+        'block-1',
+        'block-2',
     ]
