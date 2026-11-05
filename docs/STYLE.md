@@ -47,8 +47,8 @@ from pathlib import Path
 
 import httpx
 
-from kms.core import models
-from kms.core.state import State
+from kms.core.model.source import Source
+from kms.core.model.user import User
 ```
 
 For project modules, use module-qualified names when they improve provenance or

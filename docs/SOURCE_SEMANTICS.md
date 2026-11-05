@@ -1,14 +1,14 @@
 # Source semantics
 
-KMS2 treats a source as evidence and searchable learning material, not as a
+KMS treats a source as evidence and searchable learning material, not as a
 learner's argument graph. Source Processing materializes corrected, formatted,
-described, and embedded source blocks. Source Pedagogical identifies exercises,
-instructions, and pedagogical components; persists statement and procedure
-ownership; and reconstructs complete searchable statement/procedure content.
-Source Semantic independently extracts entities from persisted source blocks,
-describes entities, and groups entity, statement, and procedure occurrences.
-Statement and procedure hubs consume the reconstructed content and embeddings
-written by Source Pedagogical.
+filtered, described, and embedded source blocks. Source Pedagogical identifies
+exercises, instructions, and pedagogical components; persists statement and
+procedure ownership; and reconstructs complete searchable statement/procedure
+content. Source Semantic independently extracts entities from persisted source
+blocks, describes entities, and groups entity, statement, and procedure
+occurrences. Statement and procedure hubs consume the reconstructed content
+and embeddings written by Source Pedagogical.
 
 The proposed goal-driven learning layer is recorded in the
 [teaching roadmap](TEACHING_ROADMAP.md), with a separate
@@ -17,14 +17,16 @@ planned work; the source-stage behavior below remains the current implementation
 
 ## Stage ownership
 
-Source Processing persists the corrected, formatted, image-described, and
-embedded source graph. Source Pedagogical is a separately runnable graph: it
-loads persisted pages, discovers and splits pedagogical material, embeds only
-new split blocks, reconstructs statement/procedure content, and persists the
-updated block order plus instruction, statement, and procedure data. It does not
-rerun OCR or source correction. Source Semantic independently extracts entities
-from persisted source blocks, describes entities, then runs local occurrence
-grouping.
+Source Processing corrects and formats source blocks, joins adjacent image
+seams, then applies contextual image-retention decisions before image
+description and embedding. Rejected image blocks do not enter descriptions,
+embeddings, or the searchable source-block set; raw capture artifacts remain.
+Source Pedagogical is a separately runnable graph: it loads persisted pages,
+discovers and splits pedagogical material, embeds only new split blocks,
+reconstructs statement/procedure content, and persists the updated block order
+plus instruction, statement, and procedure data. It does not rerun OCR or source
+correction. Source Semantic independently extracts entities from persisted
+source blocks, describes entities, then runs local occurrence grouping.
 
 Each OCR invocation writes page renders, original images, and block crops beneath
 the configured output directory in a source-specific, unique processing-run
@@ -42,7 +44,7 @@ order. The TUI also exposes Source Pedagogical for existing sources.
 ## Explicit runtime examples
 
 Curated demonstrations live beside their module family. Source Pedagogical
-examples live in `src/kms2/module/source_pedagogical/examples/`. Each file
+examples live in `src/kms/module/source_pedagogical/examples/`. Each file
 exposes task-specific functions such as `instruction_start_examples()` that
 build a fresh `list[dspy.Example]`, including fresh nested input/output models.
 Examples match the signature's fields and mark runtime inputs with
@@ -86,71 +88,108 @@ isolation, and typed native-image dataset hydration. The comparison fixtures
 used 8 batched calls versus 21 singleton calls. These are small correctness
 fixtures, not throughput estimates; no Neo4j data was rewritten.
 
+## Shared multimodal request material
+
+Model-facing readable content uses `MultimodalContent`: selected text and
+request-local image ordinals refer to one top-level `content_images` catalog.
+Generative DSPy modules receive referenced images as native `dspy.Image`
+inputs. Retrieval adapters receive the same catalog as `ContentImage` objects
+and encode it in each provider's native request format. Source projection
+deduplicates repeated asset paths within that request only; source, revision,
+block, and asset identities remain separate backend provenance. Image ordinals
+are transient and are not persisted.
+
+Source correction, image filtering, descriptions, seams, pedagogical
+classification, reconstruction, semantic extraction, and source learning use
+this request shape. Text editing and generated output strings remain
+text-specific tasks. Generative budgets use `MaterialTokenEstimator` to combine
+the selected inference tokenizer's text count with a fixed image estimate.
+Provider retrieval budgets use their own tokenizer, image accounting, and
+published request limits.
+
+`MaterialTokenEstimator.estimate()` sizes application payloads, not DSPy
+instructions, examples, chat templates, or provider-internal processing.
+`LanguageModelTokenizers` owns the LLM tokenizer and image-metadata caches for
+one application invocation. Image keys identify immutable payloads; provider
+token counters and budgets are owned by their respective retrieval adapters.
+
 ## Source-processing correction batches
 
-Visual OCR correction batches every source block, including image blocks and
-blocks without OCR text. Each request contains indexed block metadata and an
-ordered list of native crop images; crop ordinal matches the batch-local block
-position. Returned corrected content maps directly to the original page/block.
-Inputs and outputs are assumed valid and complete: there is no result repair,
-fallback transcription, or defensive output-coverage validation. UUIDs, visual
-assets, crop paths, page metadata, and empty pages are preserved.
+Only non-image source blocks enter visual OCR correction. Each request carries
+indexed block metadata, OCR text, the target crop, and a context image in the
+shared `content_images` catalog. `ContentCorrectionBlockContext` identifies the
+context image and the target's `(left, top, right, bottom)` bounds within it.
+The context image uses positional previous/target/next block evidence while
+preserving page layout; the target crop remains separate and exact. Original
+page images are not modified. Returned decisions map directly to the original
+page and block.
 
-The correction prompt treats each crop as authoritative and OCR text only as
-a potentially faulty aid. It preserves intentional blanks, checks visible
-signs and exponents, and never solves the source task. Its runtime examples
-use small packaged crops under `examples/assets/`, loaded as native
-`dspy.Image` inputs. They contrast blank preservation, literal OCR correction,
-and a non-text figure whose corrected transcription is null. Representation
-formatting remains a separate stage.
+The corrector returns an explicit `keep` decision. A rejected block is removed
+before formatting; null corrected text does not signal deletion. A kept block
+receives faithful corrected OCR text and exact, narrow cleanup instructions for
+any mixed-in artifact. The formatter receives those instructions by stable
+source-block UUID and applies only the directed cleanup. Input and output
+contracts are assumed valid and complete; UUIDs, assets, crop paths, page
+metadata, and empty pages are preserved.
+
+The correction prompt uses the target crop and its bounded position in the
+context image as visual evidence, with OCR text as a potentially faulty aid.
+It may use adjacent positional evidence to recover text cut off at a page edge
+when it is clearly the same target block, without transcribing independent
+neighboring blocks. It preserves intentional blanks, checks visible signs and
+exponents, never solves the source task, and rejects only clear interface,
+advertising, or extraction artifacts. Representation formatting remains a
+separate stage.
 
 Configure `settings.source_processing.content_correction`:
 
-- `batch_size`: maximum blocks/images per request, default 4.
-- `input_token_budget`: serialized text/metadata budget, default 2048 tokens.
+- `batch_size`: maximum non-image blocks per request, default 4.
+- `input_token_budget`: serialized text plus estimated image-token budget
+  (default 8192 tokens).
 - `safety_margin_tokens`: model-capacity reserve, default 256.
 - `inference`: the existing vision-inference settings, now nested.
+- `image_payload`: separate image-count, aggregate-byte, and aggregate-pixel limits.
 
-Set `KMS2_SOURCE_PROCESSING__CONTENT_CORRECTION__BATCH_SIZE=1` for one block per
+Set `KMS_SOURCE_PROCESSING__CONTENT_CORRECTION__BATCH_SIZE=1` for one block per
 call. The other fields use the same environment prefix, for example
-`KMS2_SOURCE_PROCESSING__CONTENT_CORRECTION__INPUT_TOKEN_BUDGET`. Inference
+`KMS_SOURCE_PROCESSING__CONTENT_CORRECTION__INPUT_TOKEN_BUDGET`. Inference
 overrides now use `CONTENT_CORRECTION__INFERENCE__PROFILE`, etc., rather than
 flat fields. Old single-block correction recordings must be regenerated for the
 new indexed signature.
 
-The shared whole-item packer bounds serialized text/metadata tokens and block
-count only. Dispatch does not inspect crop dimensions or file sizes. Images are
-loaded unchanged when the worker runs; there are no image-byte or pixel budgets,
-resizing, or image-quality reductions.
+The shared whole-item packer counts provider-tokenized serialized text plus a
+dimension-based estimate for each image in the request-local `content_images`
+catalog. It estimates `ceil(ceil(width / 32) * ceil(height / 32) * 1.2)` image
+tokens per asset, deduplicating repeated paths within that catalog. This is a
+conservative approximation, not the provider's exact image-token accounting.
+Crop and context images are counted in the same request budget;
+`image_payload` separately bounds image count, bytes, and pixels. A block that
+cannot fit raises the input-budget error before inference; blocks are never
+split, truncated, or silently dropped.
 
-The text budget is not a total multimodal token budget: image tokens are not
-counted. The profile-aware budget retains the configured completion reserve and
-safety margin, but does not guarantee image-context fitting. Oversized text
-singletons raise the packer's input-budget error rather than being split,
-truncated, or dropped.
-
-Correction remains separate from formatting and shares the existing ChatGPT
-concurrency limit. A live Luna smoke corrected three real textbook crops in one
-batched call versus three singleton calls, retaining heading/paragraph content
-and equation values, source identities, assets, and empty-page structure.
+Correction remains separate from formatting and uses the existing ChatGPT
+concurrency limit.
 
 ## Source-processing formatting batches
 
 Formatting packs nonempty, non-image source blocks in source order using the
 shared `pack_items()` token-budget machinery. Batches may span pages, but blocks
-remain independent: the model returns each complete rewritten block with its
+remain independent: the model returns each complete formatted block with its
 zero-based batch-local `position`. Exact output-position coverage is required;
 missing, duplicate, and unknown positions fail instead of misattributing text.
-The backend restores original page/block locations, UUIDs, and visual assets.
-Images and empty blocks pass through unchanged.
+Cleanup instructions from correction follow the retained block by UUID. The
+formatter removes only specifically directed artifacts; it never deletes,
+merges, splits, or reorders a block. UUIDs, visual assets, page metadata, and
+empty pages remain intact. Images and empty blocks pass through unchanged.
 
 Formatting demonstrations are indexed `FormattingInput`/`FormattingOutput`
 batches supplied by `formatting_examples()`. They cover mathematical
 representation, code and image-placeholder preservation, prices/references,
-answer blanks, and prose punctuation outside math delimiters. The formatter
-does not apply global delimiter replacements after inference: valid code
-containing literal delimiter characters is returned unchanged. Existing
-position-coverage checks remain at the formatting boundary.
+answer blanks, prose punctuation outside math delimiters, and targeted cleanup
+of a mixed advertising footer while preserving useful text and complete links.
+The formatter does not apply global delimiter replacements after inference:
+valid code containing literal delimiter characters is returned unchanged.
+Existing position-coverage checks remain at the formatting boundary.
 
 Configure `settings.source_processing.formatting`:
 
@@ -159,23 +198,23 @@ Configure `settings.source_processing.formatting`:
 - `safety_margin_tokens`: model-capacity reserve, default 256.
 - `inference`: the existing text-inference settings, now nested under formatting.
 
-For one block per call, set `KMS2_SOURCE_PROCESSING__FORMATTING__BATCH_SIZE=1`.
+For one block per call, set `KMS_SOURCE_PROCESSING__FORMATTING__BATCH_SIZE=1`.
 Smaller token budgets also reduce batch sizes, but each whole block must fit:
 an oversized singleton raises an input-budget error, never truncates or splits
-the block. Input costs include serialized indexes and list overhead. The shared
-profile-aware budget reserves the configured inference completion allowance and
-safety margin against model capacity.
+the block. Input costs include cleanup directions, indexes, and list overhead.
+The shared profile-aware budget reserves the configured inference completion
+allowance and safety margin against model capacity.
 
 Formatting inference overrides move from `FORMATTING__PROFILE` and similar
 fields to `FORMATTING__INFERENCE__PROFILE`, `FORMATTING__INFERENCE__MAX_TOKENS`,
-etc., all with the existing `KMS2_SOURCE_PROCESSING__` prefix. Old single-block
+etc., all with the existing `KMS_SOURCE_PROCESSING__` prefix. Old single-block
 formatter recordings do not match the new indexed signature; regenerate those
 examples rather than mixing recording contracts.
 
-Batching reduces model calls; it does not combine correction with formatting or
-change the provider concurrency limit. A live Luna smoke formatted three blocks
-across two pages in one request and the same material in three requests with
-`batch_size=1`, preserving source identities and skipped blocks in both modes.
+Correction and formatting remain separate sequential stages. Correction decides
+whether a non-image block stays and supplies any cleanup directions; formatting
+applies those directions without deleting the block. Both continue to use the
+existing ChatGPT concurrency limit.
 
 ## Instruction finder batches
 
@@ -215,8 +254,8 @@ start/boundary selections. There is no automatic local-only singleton cap.
 Model-specific token budgets still constrain how many items fit each request.
 
 For singleton operation set both
-`KMS2_SOURCE_PEDAGOGICAL__INSTRUCTION_FINDER__START_BATCH_SIZE=1` and
-`KMS2_SOURCE_PEDAGOGICAL__INSTRUCTION_FINDER__BOUNDARY_BATCH_SIZE=1`.
+`KMS_SOURCE_PEDAGOGICAL__INSTRUCTION_FINDER__START_BATCH_SIZE=1` and
+`KMS_SOURCE_PEDAGOGICAL__INSTRUCTION_FINDER__BOUNDARY_BATCH_SIZE=1`.
 Input budgets use the same prefix with `START_INPUT_TOKEN_BUDGET` and
 `BOUNDARY_INPUT_TOKEN_BUDGET`.
 
@@ -279,8 +318,8 @@ Configure `settings.source_pedagogical.exercise_finder`:
 - Existing `start_router`, `boundary_router`, and per-router context windows remain.
 
 For singleton operation set both
-`KMS2_SOURCE_PEDAGOGICAL__EXERCISE_FINDER__START_BATCH_SIZE=1` and
-`KMS2_SOURCE_PEDAGOGICAL__EXERCISE_FINDER__BOUNDARY_BATCH_SIZE=1`. Input budgets
+`KMS_SOURCE_PEDAGOGICAL__EXERCISE_FINDER__START_BATCH_SIZE=1` and
+`KMS_SOURCE_PEDAGOGICAL__EXERCISE_FINDER__BOUNDARY_BATCH_SIZE=1`. Input budgets
 use that prefix with `START_INPUT_TOKEN_BUDGET` and `BOUNDARY_INPUT_TOKEN_BUDGET`.
 The same settings apply to local, remote, and mixed-profile selections.
 
@@ -331,8 +370,8 @@ Configure `settings.source_pedagogical.pedagogical_finder`:
 - Existing router inference and per-item context-window settings remain unchanged.
 
 For singleton operation set both
-`KMS2_SOURCE_PEDAGOGICAL__PEDAGOGICAL_FINDER__START_BATCH_SIZE=1` and
-`KMS2_SOURCE_PEDAGOGICAL__PEDAGOGICAL_FINDER__BOUNDARY_BATCH_SIZE=1`. Input-token
+`KMS_SOURCE_PEDAGOGICAL__PEDAGOGICAL_FINDER__START_BATCH_SIZE=1` and
+`KMS_SOURCE_PEDAGOGICAL__PEDAGOGICAL_FINDER__BOUNDARY_BATCH_SIZE=1`. Input-token
 budgets use that prefix with `START_INPUT_TOKEN_BUDGET` and
 `BOUNDARY_INPUT_TOKEN_BUDGET`. Local, remote, and mixed profiles use the same
 settings. Whole serialized items are packed with `pack_items()`; the shared
@@ -370,9 +409,9 @@ Configure `settings.source_pedagogical.exercise_splitter`:
   budgets, unchanged.
 - `router` / `splitter`: existing separate text-inference settings, unchanged.
 
-Use `KMS2_SOURCE_PEDAGOGICAL__EXERCISE_SPLITTER__BATCH_SIZE=1` for singleton
+Use `KMS_SOURCE_PEDAGOGICAL__EXERCISE_SPLITTER__BATCH_SIZE=1` for singleton
 windows. Target-budget overrides use
-`KMS2_SOURCE_PEDAGOGICAL__EXERCISE_SPLITTER__CONTEXT_WINDOW__TARGET_BUDGET`.
+`KMS_SOURCE_PEDAGOGICAL__EXERCISE_SPLITTER__CONTEXT_WINDOW__TARGET_BUDGET`.
 A zero target budget also retains one initial target per window. The token budget
 counts block content using the conservative maximum across router and splitter
 tokenizers; it is not a count of the complete serialized prompt. Single blocks
@@ -433,14 +472,43 @@ multiple instruction anchors, and each item's context is its own reference
 evidence. `instruction_governance_examples()` supplies contrasting candidates
 under shared anchors.
 
+## Contextual image filtering
+
+Image filtering runs after image seams and before image description, embedding,
+and source-block persistence. Each assetful image block is one target and gets
+one keep/reject decision; a multi-asset stitched figure remains one target.
+The request includes a bounded local source window with read-only neighboring
+text and images. The filter keeps uncertain or instructional material and
+removes only clear interface decoration, unrelated advertising, or extraction
+artifacts. Context can establish that an advertisement itself is being studied.
+
+A rejection removes only that target block. It does not rewrite or reorder
+neighbors, alter page markdown, or delete capture files. Empty pages and all
+original page indexes survive. For normalized web material, each surviving
+block UUID maps back to its original normalization-block position; deleting an
+earlier block leaves a gap rather than renumbering later source provenance.
+Transient request positions and image ordinals are not persisted.
+
+Configure `settings.source_processing.image_filter` with `batch_size` (4),
+`input_token_budget` (8192), `safety_margin_tokens` (256), vision `inference`
+(`max_tokens=1024`), and a 1024-token backward/forward context window.
+`image_payload` separately limits image count, aggregate bytes, and aggregate
+pixels. The shared token budget includes the dimension-based image estimate.
+Examples cover retained instructional diagrams and equations, rejected
+advertising and interface controls, and an advertisement kept as study material.
+
 ## Logical image description batches
 
-Descriptions batch logical image blocks, not individual assets. Each indexed
-item addresses its ordered assets in a top-level native `target_images` list.
-One two-asset block receives one description; an existing image block with no
-assets is still an item with an empty reference list. Each item retains its own
-200-before/200-after context. Workers load files, restore original ownership,
-and change only block content; UUIDs, crops, assets, and page order survive.
+Descriptions batch logical image blocks, not individual assets. Each request
+carries an ordered native `content_images` catalog. Each target's `material` and
+each before/after `SourceBlockContext.material` address assets through zero-based,
+request-local `image_positions`. One two-asset block receives one description;
+an image block without assets remains an item with an empty reference list.
+Each item retains its own 200-before/200-after context, and context blocks may
+also reference native images. Workers load the request catalog under its
+configured image-payload limits, pass native images to DSPy, restore original
+block ownership, and change only block content; UUIDs, crops, assets, and page
+order survive.
 
 Image descriptions preserve source-associated variable labels and units and
 distinguish open/filled markers and separate branches. Unannotated graph
@@ -451,10 +519,12 @@ turning a low-effort vision misreading of a non-unit scale into false numeric
 source evidence. Runtime demonstrations contrast explicit point annotations,
 contextual units, identified panels, and an unidentifiable panel.
 
-Configure `settings.source_processing.image_description` with `batch_size`
-(4), `input_token_budget` (2048), and `safety_margin_tokens` (256), alongside
-its existing inference/context settings. `image_description_examples()` uses
-packaged native images to contrast a split grid with an unrelated triangle.
+Configure `settings.source_processing.image_description` with `batch_size` (4),
+`input_token_budget` (2048), and `safety_margin_tokens` (256), alongside its
+inference/context settings and `image_payload` limits for image count, aggregate
+bytes, and aggregate pixels. Its shared token budget includes the
+dimension-based image estimate. `image_description_examples()` uses packaged
+native images to contrast a split grid with an unrelated triangle.
 
 ## Text and image seam batches
 
@@ -468,7 +538,7 @@ Text workers judge a packet once and send only positive decisions for rewriting.
 Rewrite positions retain their original judge-packet values, including gaps.
 Rejoining changes only the upper tail's content and removes the selected lower
 head; negative pairs are not rewritten. Reference context is never inserted.
-Image workers use a top-level native `seam_images` list with paired references;
+Image workers use a top-level native `content_images` list with paired materials;
 a positive appends lower assets after upper assets, keeps upper provenance, and
 removes only the lower edge block. A merged multi-asset image remains one target
 for the subsequent description stage.
@@ -478,20 +548,25 @@ Configure `settings.source_processing.text_seam` with `judge_batch_size` /
 `rewrite_input_token_budget` (4096 each), and `safety_margin_tokens` (256).
 Judge and rewriter inference remain separate. Configure
 `settings.source_processing.image_seam` with nested `inference`, `batch_size`
-(4), `input_token_budget` (2048), and `safety_margin_tokens` (256). Image-seam
-inference environment overrides now use
-`KMS2_SOURCE_PROCESSING__IMAGE_SEAM__INFERENCE__PROFILE` (and corresponding
-inference fields); limits use `...__IMAGE_SEAM__BATCH_SIZE`, etc. Old flat
+(4), `image_payload` limits for image count, aggregate bytes, and aggregate
+pixels, `input_token_budget` (2048), and `safety_margin_tokens` (256).
+Image-seam inference environment overrides now use
+`KMS_SOURCE_PROCESSING__IMAGE_SEAM__INFERENCE__PROFILE` (and corresponding
+inference fields); payload limits use
+`KMS_SOURCE_PROCESSING__IMAGE_SEAM__IMAGE_PAYLOAD__MAX_IMAGES`,
+`KMS_SOURCE_PROCESSING__IMAGE_SEAM__IMAGE_PAYLOAD__MAX_BYTES`, and
+`KMS_SOURCE_PROCESSING__IMAGE_SEAM__IMAGE_PAYLOAD__MAX_PIXELS`. Old flat
 inference keys are not aliases.
 
 All remaining-stage limits apply identically to local and subscription profiles.
-Setting a count limit to 1 forces singleton calls. Whole requests include their
-own context in compact JSON costs, reserve shared envelopes once, and use
-conservative local-index widths. Oversized atomic requests raise
-`InputBudgetExceeded`; components and context are never truncated. Empty work
-does not tokenize or call inference. These budgets estimate application text
-and metadata only, not signature/demo overhead or native vision tokens; no
-image byte/pixel budget or full multimodal fitting guarantee is introduced.
+Setting a count limit to 1 forces singleton calls. Whole-request cost includes
+provider-tokenized serialized text/metadata and estimated tokens for the exact
+request-local native-image catalog. The estimate uses 32-pixel patches and a
+1.2 multiplier; it is approximate, not provider-exact. Oversized atomic
+requests raise `InputBudgetExceeded`; components and context are never
+truncated. Empty work does not tokenize or call inference. Signature/demo
+overhead is not included. Nested `image_payload` settings separately bound
+image count, aggregate bytes, and aggregate pixels.
 
 The eight changed call types have explicitly selected typed runtime examples.
 New native-image examples use packaged, purpose-drawn assets. Old scalar
@@ -506,7 +581,7 @@ and persistence contracts are unchanged.
 
 Source Semantic extracts entity occurrences independently, persists them, then
 generates entity descriptions and embeddings before local hub reconciliation.
-It does not create propositions or reasoning steps. Those user-owned canonical
+It does not create propositions or arguments. Those user-owned canonical
 knowledge records are admitted from teaching interactions, not exhaustively
 generated during source ingestion.
 Entity extraction, descriptions, embeddings, and their runtime examples, nodes,
@@ -543,6 +618,13 @@ non-overlapping targets with separate before/after reference context. The cursor
 advances past the complete target, so each source block is targeted once per
 stream. `select_window()` and token counting are shared with existing source
 processing; no second window-selection system is introduced.
+
+`select_window()` retains canonical `SourceBlock` values, including assets and
+crop provenance, until request assembly. `MultimodalContentBuilder` then projects
+each block into a `SourceBlockContext.material` and an ordered, request-local
+native-image catalog. Repeated asset paths share a catalog position only within
+that request. Paths and asset UUIDs remain backend-only; material image positions
+are request data, never persisted graph relationships.
 
 Target blocks are projected as `PositionedSourceBlock` records containing
 `position` and `source_block`. Positions are contiguous, zero-based, and reset
@@ -601,23 +683,26 @@ not occurrence properties.
 
 `SourceExtractionInput` carries positioned targets without database identities.
 The shared `SourceEvidenceInput` contract carries one unindexed owning target
-block and ordered, unindexed before/after reference context. Descriptions,
-entity identity judging, and learning use this UUID-free evidence. Positions
-select ownership during extraction; persistent UUID mapping belongs to nodes.
+block and ordered, unindexed before/after reference context. Source-block
+signatures pair that evidence with a separate native-image list; each block's
+`image_positions` addresses only images in its current request. Those positions
+are transient model-input data, not source graph relationships. Positions select
+ownership during extraction; persistent UUID mapping belongs to nodes.
 
 Entity extraction defaults to 2048 target tokens, 1024 backward reference
 tokens, and 1024 forward reference tokens under
-`KMS2_SOURCE_SEMANTIC__SOURCE_ENTITY_CONTEXT_WINDOW__`. Entity-description
+`KMS_SOURCE_SEMANTIC__SOURCE_ENTITY_CONTEXT_WINDOW__`. Entity-description
 reference windows remain separate. Statement and procedure reconstruction use
 their explicit owning source blocks; statement requests also include blocks from
 instructions governing that statement.
 
 ### Transient consumer context
 
-Descriptions, entity identity judging, and atomic learning select their own
+Descriptions, entity identity judgments, and atomic learning select their own
 reference blocks through the existing `select_window()` machinery. The owning
-block is the fixed target; context budgets never expand ownership. This does not
-require persisted window references or a second context-selection system.
+block is the fixed target; text context budgets never expand ownership. Assets
+from the selected target and context blocks enter only that request's image
+catalog; window references and image positions are not persisted.
 
 - Entity descriptions retain
   `settings.source_semantic.source_entity_description.context_window`.
@@ -680,7 +765,7 @@ Configure `settings.source_pedagogical.source_statement_reconstruction` and
 - `inference`: no-retry text-inference settings.
 
 For singleton statement calls, set
-`KMS2_SOURCE_PEDAGOGICAL__SOURCE_STATEMENT_RECONSTRUCTION__BATCH_SIZE=1`.
+`KMS_SOURCE_PEDAGOGICAL__SOURCE_STATEMENT_RECONSTRUCTION__BATCH_SIZE=1`.
 Procedure settings use the corresponding `SOURCE_PROCEDURE_RECONSTRUCTION`
 prefix. Each stage has independent batch, budget, margin, and inference
 configuration. Budgets use the stage tokenizer and completion/capacity reserves;
@@ -819,12 +904,14 @@ predictors; composition selects their named local or subscription backend.
 The configured text default is `chatgpt-luna`. All text stages, including
 source-learning cards, follow `settings.llm.default_text_profile` unless their
 own inference settings specify a `profile`. Vision stages (content correction,
-image seam, and image description) explicitly default to `chatgpt-luna` too.
-Changing the text default alone does not change those explicit vision selections;
-each remains independently overridable, including with `gemma-vision-8k`.
+image seam, image filtering, and image description) explicitly default to
+`chatgpt-luna` too. Changing the text default alone does not change those
+explicit vision selections; each remains independently overridable, including
+with `gemma-vision-8k`.
 Stage selection uses `profile`, not the removed stage-level
-`model_server_profile` field. Embeddings default to OpenRouter Voyage 4 Large, and
-reranking defaults to Voyage `rerank-3-lite`; local profiles remain opt-in.
+`model_server_profile` field. Embeddings use hosted Voyage Multimodal 3.5;
+reranking uses the hosted IONOS Qwen3-VL Reranker. Neither is a local llama.cpp
+profile.
 
 `settings.llm.profiles` is a discriminated registry. A `local` profile references
 a separately configured llama.cpp `model_server_profile`; the existing
@@ -844,7 +931,7 @@ limit.
 Authenticate explicitly from a foreground terminal:
 
 ```bash
-uv run kms2 --login-chatgpt
+uv run kms --login-chatgpt
 ```
 
 Follow the device authorization URL and code printed by LiteLLM. Device-code
@@ -858,7 +945,7 @@ The login belongs to the operator's subscription, not to each KMS learning user.
 Select Luna for one invocation:
 
 ```bash
-uv run kms2 --llm-profile chatgpt-luna
+uv run kms --llm-profile chatgpt-luna
 ```
 
 The TUI's **Select text inference profile** action changes the default for the
@@ -866,12 +953,12 @@ same invocation. For an environment-configured default and a local stage
 override, use:
 
 ```bash
-KMS2_LLM__DEFAULT_TEXT_PROFILE=chatgpt-luna uv run kms2
-KMS2_LLM__DEFAULT_TEXT_PROFILE=chatgpt-luna KMS2_SOURCE_SEMANTIC__SOURCE_ENTITY_EXTRACTION__PROFILE=gemma-text-32k uv run kms2
+KMS_LLM__DEFAULT_TEXT_PROFILE=chatgpt-luna uv run kms
+KMS_LLM__DEFAULT_TEXT_PROFILE=chatgpt-luna KMS_SOURCE_SEMANTIC__SOURCE_ENTITY_EXTRACTION__PROFILE=gemma-text-32k uv run kms
 ```
 
 Nested profile settings can be overridden, for example
-`KMS2_LLM__PROFILES__CHATGPT-LUNA__REASONING_EFFORT=medium`. Because that variable
+`KMS_LLM__PROFILES__CHATGPT-LUNA__REASONING_EFFORT=medium`. Because that variable
 contains a hyphen, set it using `env 'NAME=value' ...` rather than shell assignment
 syntax. Explicit unknown profiles and mixed provider options are errors, not
 reasons to fall back to local inference.
@@ -883,16 +970,16 @@ login command if the provider requires reauthorization. The subscription model
 must be available to the signed-in account and workspace.
 
 ChatGPT requests do not acquire the GPU residency lock. Predictors from one
-graph's factory share a semaphore configured by `KMS2_LLM__MAX_CONCURRENCY`
-(default 4). OpenRouter embedding and Voyage reranking requests each have their
-own independent semaphore (default 4); independent requests across all three
-providers can overlap. Graph dependencies still determine when dependent stages
-run; entity reconciliation has round barriers, and the remaining semantic hub
-families run serially.
+graph's factory share a semaphore configured by `KMS_LLM__MAX_CONCURRENCY`
+(default 4). Voyage embedding and IONOS reranking each have an independent
+semaphore (default 4), and independent LLM/retrieval requests can overlap.
+Graph dependencies still determine when dependent stages run; entity
+reconciliation has round barriers, and the remaining semantic hub families run
+serially.
 
-The local router starts only when local LLM inference is used. Local text,
-vision, embedding overrides, and explicit local reranking retain exclusive
-GPU-role switching. Hosted requests do not load another local GPU model.
+The local router starts only when local LLM inference is used. Hosted embedding
+and reranking do not load local GPU models or participate in model-role
+switching.
 
 Remote windows and payload budgets use the profile's explicit `o200k_base`
 encoding estimate, not a local Qwen/Gemma tokenizer. This is not an authoritative
@@ -914,153 +1001,110 @@ introduced. OCR is a separate provider and is not covered by DSPy's LM cache.
 
 ## Embedding providers
 
-Embeddings default to OpenRouter's `voyageai/voyage-4-large`, through LiteLLM's asynchronous
-embedding API. Set `KMS2_EMBEDDING__API_KEY` in the process environment to your
-OpenRouter API key; it is separate from ChatGPT subscription authentication and
-OpenRouter embedding usage is separately billed. The key is represented as a
-secret setting. Never commit it, print it, or paste it into chat. A missing or
-empty key is an error, not a reason to fall back to local inference.
+Embeddings use the pinned `voyage/voyage-multimodal-3.5` model through
+LiteLLM's asynchronous embedding API. Set `KMS_EMBEDDING__API_KEY` to a Voyage
+API key in the process environment or an uncommitted local `.env` file. The key
+is independent of ChatGPT authentication, is treated as a secret, and has no
+local-model fallback.
 
-One embedding client is shared across source-processing and source-semantic
-stages in an application invocation. It packs ordered inputs by item count and
-token budget, runs bounded batch workers, and restores input ordering using the
-provider's response indexes. Concurrent `embed()` calls share the same limit.
-Invalid indexes, missing/duplicate results, and wrong vector dimensions fail at
-the provider boundary rather than producing fabricated embeddings.
+Each application invocation owns one `EmbeddingResources` containing the
+`Embedder`, its `EmbeddingModel` identity and dimension, and its
+`VoyageEmbeddingBudget`. Combined ingestion and semantics reuse that resource.
+Ingestion, pedagogical processing, semantic processing, vector search, and
+teaching acquire embeddings; source-learning-only operations do not.
 
-Processing and entity embedding each run as one ordinary async graph node,
-matching statement/procedure embedding in Source Pedagogical. Each node supplies
-an ordered list to the shared embedding client; this is not one provider request
-per item. Provider item/token budgets and shared concurrency remain inside that
-client. Processing reuses `embed_source_pages` to preserve existing vectors and
-embed only blocks without vectors. Entities retain their name-description
-inputs.
+The adapter sends ordered `MultimodalContent` as Voyage text and native image
+inputs, with explicit `query` or `document` input type, 1,024 dimensions, and
+truncation disabled. Results are mapped by provider indexes; response counts and
+indexes are validated, and vectors must be finite and 1,024-dimensional. Images
+are encoded once per call from the request-local catalog. The default tokenizer
+is `MongoDB/voyage-multimodal-3.5`, with special tokens enabled, no padding, and
+no truncation.
 
-These single-batch phases have no LangGraph worker dispatch, collector, or
-additive embedding-result reducer. Each writes its output channel directly,
-then hands off to its existing persistence node. Empty work makes no embedding
-request, and operational failures propagate without an unembedded-data fallback.
-Multi-packet extraction/reconstruction reducers and hub-round resets are
-unchanged.
+Hard request limits are 32,000 estimated tokens per input, 320,000 tokens per
+request, and 1,000 inputs. The default soft batch target is 8,192 tokens and 32
+inputs; an item above that soft target is sent alone if it fits the hard
+limits. Concurrency defaults to 4 and timeout to 120 seconds. Image inputs are
+limited to 16,000,000 pixels and 20,000,000 encoded bytes. Requests exceeding
+any hard limit fail before provider dispatch; inputs are never truncated.
 
 Configuration:
 
-- `KMS2_EMBEDDING__BACKEND`: `openrouter` (default) or explicit `local`.
-- `KMS2_EMBEDDING__MODEL`: `voyageai/voyage-4-large`, the supported hosted model.
-- `KMS2_EMBEDDING__MAX_CONCURRENCY`: default 4.
-- `KMS2_EMBEDDING__BATCH_SIZE`: default 32 texts.
-- `KMS2_EMBEDDING__BATCH_TOKEN_BUDGET`: default 8192 aggregate tokens.
-- `KMS2_EMBEDDING__TIMEOUT_SECONDS`: default 120.
-- `KMS2_EMBEDDING__TOKENIZER_PATH`: optional Voyage 4 Large tokenizer JSON path.
+- `KMS_EMBEDDING__API_KEY`: required for operations that acquire embeddings.
+- `KMS_EMBEDDING__MODEL`: pinned to `voyage/voyage-multimodal-3.5`.
+- `KMS_EMBEDDING__MAX_CONCURRENCY`: default 4.
+- `KMS_EMBEDDING__BATCH_SIZE`: default 32, maximum 1,000.
+- `KMS_EMBEDDING__BATCH_TOKEN_BUDGET`: default 8,192 soft batch target.
+- `KMS_EMBEDDING__TIMEOUT_SECONDS`: default 120.
+- `KMS_EMBEDDING__TOKENIZER_PATH`: default `MongoDB/voyage-multimodal-3.5`.
 
-Hosted token counting uses Voyage 4 Large's tokenizer with special tokens, no
-padding, and no truncation. Without an explicit path, its tokenizer is
-fetched/cached from `voyageai/voyage-4-large` on Hugging Face. Each input is
-limited to 32,000 tokens independently of the configured aggregate batch budget;
-the default aggregate budget remains 8192, not the model's larger context limit.
-Local selection retains the configured local embedding tokenizer, files, server
-settings, and GPU ownership.
-
-Hosted Voyage vectors use the default 1024 dimensions; local Qwen uses
-4096. Index and stored-vector dimensions are checked before vector-index
-initialization. Incompatible data/indexes require explicit re-embedding and
-index rebuilding; no automatic deletion or dimension conversion is performed.
-Even equal dimensions do not make different model spaces interchangeable:
-indexing and querying must use the same embedding model. Evaluate similarity
-thresholds after changing models. Learning-only operations use structural schema
-and do not require an embedding key or start an embedding client.
-
-Voyage 4 Large replaces BGE-M3; their equal dimensions do not imply compatible
-vectors. Re-embed old BGE-M3 material before searching it with Voyage queries or
-mixing it with Voyage output. Dimension checks cannot detect a same-width model
-change. No automatic database cleanup, migration, or re-embedding is performed.
-
-A live OpenRouter smoke embedded three inputs into three 1024-dimensional
-vectors in 0.646 seconds (embedding request only). The tokenizer counted 13, 11,
-and 10 input tokens. A paraphrase pair scored cosine 0.7561 versus 0.1643 for an
-unrelated passage. This is transport/tokenizer/model smoke evidence, not a
-retrieval-quality benchmark. Concurrency remains 4, batches remain at most 32
-texts and 8192 aggregate tokens, and the separate `rerank-3-lite` selection is
-unchanged. Provider model/limit sources:
-[OpenRouter](https://openrouter.ai/api/v1/models/voyageai/voyage-4-large/endpoints),
-[Voyage embeddings](https://docs.voyageai.com/docs/embeddings), and
-[Voyage tokenization](https://docs.voyageai.com/docs/tokenization).
-Ruff formatting/lint passed, and the KMS2 regression suite passed with 313 tests
-and four opt-in Neo4j integration skips. The changed input-limit test accepts
-32,000 tokens and rejects 32,001; tokenizer verification preserves special-token
-counts without padding/truncation.
+Voyage vectors use 1,024 dimensions. Schema initialization uses the selected
+embedding descriptor. Equal dimensions do not make vectors from different
+models compatible; re-embedding and index rebuilding are explicit operations.
+No automatic graph deletion, model conversion, or re-embedding occurs.
 
 ## Reranking providers
 
-Reranking defaults to Voyage AI's `rerank-3-lite`. Set
-`KMS2_RERANKER__API_KEY` to your Voyage key in the process environment or an
-uncommitted local `.env` file. The secret is independent of OpenRouter keys and
-ChatGPT subscription authentication. Missing credentials fail explicitly; there
-is no automatic local fallback. Semantic processing requires the reranker for
-hub reconciliation. Ingestion-only and learning-only operations do not construct
-a reranker or require its credentials/tokenizer.
+Reranking uses the pinned IONOS-hosted `Qwen/Qwen3-VL-Reranker-8B` model through
+its OpenAI-compatible HTTP endpoint. Set `KMS_RERANKER__API_KEY` to an IONOS
+API key. The adapter is a dedicated `IonosReranker`: LiteLLM's DSPy integration
+continues to own language-model inference, while retrieval implementations
+share provider-neutral `Embedder` and `Reranker` protocols. There is no local
+reranker fallback.
+
+Each application invocation that needs reranking owns one pooled asynchronous
+HTTP client and one `RerankingResources`. Combined ingestion and semantics
+reuse it. Source search, semantic hub reconciliation, and teaching require a
+reranker; plain ingestion and source-learning-only operations do not acquire
+one. The adapter sends the request-local image catalog as native image URL
+parts, disables returned-document payloads, and applies `top_n` after mapping
+provider indexes back to the original candidates. Provider failures propagate;
+there is no retry or truncation layer.
+
+Reranker response counts and indexes are checked, and relevance scores must be
+finite.
+
+The default text tokenizer is `Qwen/Qwen3-VL-Reranker-8B`, with special tokens
+disabled, no padding, and no truncation. The conservative pair budget counts
+the query once per candidate, candidate text, 256 framing tokens, and image
+patches. Hard limits are 32,768 estimated tokens per query/candidate pair,
+1,000 documents per request, 2,048 content parts per query or candidate,
+12 MiB encoded bytes per image, and 16 MiB for the exact UTF-8 JSON request
+body. The default soft batch target is 32,768 tokens; an over-target pair is
+sent alone if it fits the hard limits. Concurrency defaults to 4 and timeout to
+120 seconds.
 
 Configuration:
 
-- `KMS2_RERANKER__BACKEND`: `voyage` (default) or explicit `local`.
-- `KMS2_RERANKER__MODEL`: `rerank-3-lite`, currently the supported hosted model.
-- `KMS2_RERANKER__MAX_CONCURRENCY`: default 4, shared across concurrent calls.
-- `KMS2_RERANKER__BATCH_TOKEN_BUDGET`: default 4096 pair tokens per request.
-- `KMS2_RERANKER__TIMEOUT_SECONDS`: default 120 per HTTP request.
-- `KMS2_RERANKER__TOKENIZER_PATH`: optional Voyage tokenizer JSON path.
+- `KMS_RERANKER__API_KEY`: required for operations that acquire reranking.
+- `KMS_RERANKER__MODEL`: pinned to `Qwen/Qwen3-VL-Reranker-8B`.
+- `KMS_RERANKER__MAX_CONCURRENCY`: default 4.
+- `KMS_RERANKER__BATCH_TOKEN_BUDGET`: default 32,768 soft batch target.
+- `KMS_RERANKER__TIMEOUT_SECONDS`: default 120.
+- `KMS_RERANKER__TOKENIZER_PATH`: default `Qwen/Qwen3-VL-Reranker-8B`.
 
-The application owns one pooled asynchronous Voyage client per semantic
-invocation. Combined ingestion/semantics reuses that client across its stages.
-All hub nodes receive the provider-neutral `RerankerClient`; nodes neither
-select providers nor acquire hosted-client lifetime.
-Voyage requests use its HTTP API directly because the installed LiteLLM 1.106.5
-rerank adapter drops the provider's `truncation` parameter. Every request sends
-`truncation: false`; no hidden shortening, retries, or score conversion is added.
-Voyage dashboard keys use `api.voyageai.com`; MongoDB-issued `al-` keys use
-`ai.mongodb.com`.
+Provider result indexes retain candidate identity and single-request provider
+order. When candidates require multiple requests, returned scores are merged by
+descending score with original index as the tie-breaker before applying
+`top_n`; cross-request scores may not be calibrated against one another.
+Concurrency is not a requests-per-minute or tokens-per-minute limiter.
 
-Token counting loads/caches the model's published
-`voyageai/rerank-3-lite` tokenizer with no padding or truncation. Requests enforce
-the published limits: 8000 query tokens, 32000 query-plus-document tokens per
-pair, 1000 documents, and 600000 aggregate tokens. Aggregate usage counts the
-query once per document plus all document tokens. The shared reranker boundary
-packs whole query-document pairs using the configured batch budget, provider
-document limit, and selected tokenizer. A pair exceeding the batching target is
-sent alone; actual provider limits still apply and inputs are never truncated.
-This replaces per-hub `reranker_token_budget` settings.
-
-Returned document indexes retain their input identity and relevance order.
-Invalid/duplicate indexes, unexpected result counts, and non-finite scores fail
-at the provider boundary. Provider failures propagate, including rate limits.
-When a search spans multiple requests, the boundary merges by returned relevance
-score and applies the final top-k after restoring original indexes. Voyage
-describes rerankers as cross-encoders, but does not explicitly guarantee in its
-published API documentation that scores are comparable across requests. Treat
-cross-batch ordering as an approximation until evaluated on representative
-material. Hub thresholds likewise remain model-dependent.
-Concurrency is not a requests-per-minute or tokens-per-minute limiter; configure
-it for the account's limits.
-
-Existing hub acceptance/rejection thresholds remain configurable and unchanged;
-they are not calibrated for Voyage. Evaluate equivalent-versus-related technical
-claims before relying on the new model's grouping quality. Entity-hub membership
-still requires explicit positive semantic judgment.
-
-Runtime verification exercised six rerank requests and four embedding requests
-against local HTTP fixtures alongside a live ChatGPT request. Both HTTP clients
-reached their configured concurrency of two, all three paths overlapped, and no
-local router started. These fixtures verify transport, indexing, and concurrency,
-not hosted ranking or embedding quality. A configured Voyage key is still needed
-to verify real account/model access and ranking behavior.
+The request-contract and batching tests use a local HTTP fixture. They verify
+wire shape, image propagation, index restoration, and deterministic batching,
+not hosted model quality or account access.
 
 ## Source learning
 
 Atomic generation receives one source block's material and its exact owning
 block provenance. `SourceAtomicFlashcardNode.load()` selects transient
 before/after context from the canonical block stream; the block UUID and source
-page index remain backend grouping data and are excluded from model input.
-Learning does not load stored extraction windows or any source-specific claim
-hub.
+page index remain backend grouping data and are excluded from model input. Each
+request pairs its source-block evidence with a request-local `content_images`
+list, addressed by each source block's `material.image_positions`.
+`settings.source_learning.image_payload` independently bounds image count,
+aggregate bytes, and aggregate pixels; it is separate from the text/metadata
+token budget. Learning does not load stored extraction windows or any
+source-specific claim hub.
 
 The coherent pass groups atomic packets by source page only to create bounded
 inference requests. Page grouping is a structural batching boundary, not a
@@ -1081,17 +1125,17 @@ Run the retained suite and configured Python checks from the repository root:
 ```bash
 uv run ruff format --check
 uv run ruff check
-uv run pytest tests/test_kms2_*.py
+uv run pytest tests/test_kms_*.py
 ```
 
-Neo4j integration tests additionally require `KMS2_NEO4J_IT=1` and the four
-`KMS2_DATABASE__URI`, `KMS2_DATABASE__USERNAME`, `KMS2_DATABASE__PASSWORD`, and
-`KMS2_DATABASE__DATABASE` environment variables. Use a disposable database with
+Neo4j integration tests additionally require `KMS_NEO4J_IT=1` and the four
+`KMS_DATABASE__URI`, `KMS_DATABASE__USERNAME`, `KMS_DATABASE__PASSWORD`, and
+`KMS_DATABASE__DATABASE` environment variables. Use a disposable database with
 GDS for retained local community detection and the configured vector dimension.
 Fixture cleanup is restricted to fixture-owned source identities.
 
 ```bash
-KMS2_NEO4J_IT=1 uv run pytest tests/test_kms2_database_integration.py tests/test_kms2_learning_integration.py
+KMS_NEO4J_IT=1 uv run pytest tests/test_kms_database_integration.py tests/test_kms_learning_integration.py
 ```
 
 Scripted judges verify grouping/provenance mechanics, not model mathematical

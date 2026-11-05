@@ -1,0 +1,83 @@
+"""Local LLM model-server configuration models."""
+
+from pydantic import BaseModel, Field
+
+
+class ModelServerProfileSettings(BaseModel):
+    """Load-time settings for one llama.cpp model-server profile."""
+
+    model_path: str
+    tokenizer_path: str
+    mmproj_path: str | None = None
+    context_size: int = 32768
+    cache_type_k: str = ''
+    cache_type_v: str = 'q4_0'
+    n_gpu_layers: int = 999
+    no_warmup: bool = True
+    parallel: int = 1
+    flash_attention: str = 'on'
+    reasoning: str = 'off'
+    reasoning_budget: int = -1
+    threads: int = 0
+
+
+class LlamaServerSettings(BaseModel):
+    """Shared process and readiness settings for llama.cpp servers."""
+
+    executable: str = 'llama-server'
+    host: str = '127.0.0.1'
+    port: int
+    ready_timeout: float = 300.0
+    poll_interval: float = 1.0
+    health_timeout: float = 30.0
+    terminate_timeout: float = 15.0
+
+
+class RouterServerSettings(LlamaServerSettings):
+    """llama.cpp router settings and per-profile model definitions."""
+
+    port: int = 8080
+    model_server_profiles: dict[str, ModelServerProfileSettings] = Field(
+        default_factory=lambda: {
+            'gemma-text-32k': ModelServerProfileSettings(
+                model_path='~/models/gemma-4-e4b-qat/gemma-4-E4B_q4_0-it.gguf',
+                tokenizer_path='~/models/gemma-4-e4b-qat/tokenizer.json',
+                reasoning='on',
+            ),
+            'gemma-4-e2b-text': ModelServerProfileSettings(
+                model_path=(
+                    '~/models/gemma-4-e2b-qat-q4_0/gemma-4-E2B_q4_0-it.gguf'
+                ),
+                tokenizer_path=('~/models/gemma-4-e2b-qat-q4_0/tokenizer.json'),
+                context_size=32768,
+                cache_type_v='q4_0',
+                reasoning='off',
+            ),
+            'gemma-vision-8k': ModelServerProfileSettings(
+                model_path='~/models/gemma-4-e4b-qat/gemma-4-E4B_q4_0-it.gguf',
+                tokenizer_path='~/models/gemma-4-e4b-qat/tokenizer.json',
+                mmproj_path=(
+                    '~/models/gemma-4-e4b-qat/gemma-4-E4B-it-mmproj.gguf'
+                ),
+                context_size=8192,
+                cache_type_k='q4_0',
+                reasoning='on',
+            ),
+            'qwen3.8-9b-distill-text': ModelServerProfileSettings(
+                model_path=(
+                    '~/models/qwen3.8-9b-distill/Qwen3.8-9B-Q4_K_M.gguf'
+                ),
+                tokenizer_path=('~/models/qwen3.8-9b-distill/tokenizer.json'),
+                context_size=32768,
+                cache_type_v='q4_0',
+                reasoning='on',
+                reasoning_budget=2048,
+            ),
+        }
+    )
+
+
+class LocalModelRuntimeSettings(BaseModel):
+    """Settings for the local LLM router and model profiles."""
+
+    router: RouterServerSettings = Field(default_factory=RouterServerSettings)

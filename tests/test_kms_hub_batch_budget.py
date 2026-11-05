@@ -1,0 +1,175 @@
+"""Complete-request judge budgets and ordered community-hub collection."""
+
+import asyncio
+from importlib import import_module
+
+import pytest
+from kms_token_helpers import direct_synthesis
+from langgraph.graph import END, START, StateGraph
+
+from kms.core.tokenization.budget import InputBudgetExceeded, TokenBudget
+from kms.core.tokenization.material import MaterialTokenEstimator
+from kms.langgraph.source_semantic.state import SourceSemanticState
+
+CASES = [
+    ('source', 'Statement'),
+    ('source', 'Procedure'),
+]
+
+
+class _Counter:
+    def __init__(self, cost):
+        self.cost = cost
+
+    def count_texts(self, texts):
+        return [self.cost] * len(texts)
+
+
+class _Reranker:
+    def __init__(self):
+        self.documents = []
+
+    async def rerank(self, query, documents, *, content_images, top_n=None):
+        self.documents.append(documents)
+        return [
+            {'index': index, 'relevance_score': 0.7}
+            for index in range(len(documents))
+        ]
+
+
+class _Judge:
+    def __init__(self, decision):
+        self.decision = decision
+        self.requests = []
+
+    async def acall(self, *, requests):
+        self.requests.append(requests)
+        await asyncio.sleep(0.01 if len(requests) == 2 else 0)
+        return [
+            self.decision(index=index, belongs_in_same_hub=True)
+            for index in range(len(requests))
+        ]
+
+
+def _fixture(scope, kind, *, threshold=8, batch_size=10):
+    stem = f'{scope.title()}{kind}Hub'
+    basename = f'{scope}_{kind.lower()}_hub'
+    models = import_module(f'kms.core.model.{scope}_semantic.{basename}')
+    nodes = import_module(f'kms.node.{scope}_semantic.{basename}')
+    config = import_module(f'kms.config.{scope}_semantic')
+    candidate_type = getattr(models, f'{stem}Candidate')
+    candidates = []
+    for index in range(3):
+        values = {
+            field: f'{field}-{index}'
+            for field in candidate_type.model_fields
+            if field != 'score'
+        }
+        values.update(left_uuid='left', right_uuid=f'right-{index}', score=0.9)
+        candidates.append(candidate_type(**values))
+    reranker = _Reranker()
+    judge = _Judge(getattr(models, f'{stem}JudgeDecision'))
+    budget = TokenBudget(MaterialTokenEstimator(_Counter(4)), threshold)
+    settings = getattr(config, f'{stem}Settings')(
+        judge_token_budget=threshold,
+        judge_batch_size=batch_size,
+    )
+    node_class = getattr(nodes, f'{stem}Node')
+    node = node_class(
+        None,
+        None,
+        judge,
+        reranker,
+        None,
+        settings,
+        judge_budget=budget,
+        **direct_synthesis(),
+    )
+    return basename, node, candidates, reranker, judge, budget
+
+
+@pytest.mark.parametrize(('scope', 'kind'), CASES)
+def test_rerank_dispatches_one_worker_per_left_item(scope, kind):
+    basename, node, candidates, _, _, _ = _fixture(scope, kind)
+    grouped_candidates = [
+        candidate.model_copy(update={'left_uuid': 'left-1'})
+        for candidate in candidates[:2]
+    ] + [candidates[2].model_copy(update={'left_uuid': 'left-2'})]
+    state = SourceSemanticState(
+        source_uuid='source',
+        **{f'{basename}_candidates': grouped_candidates},
+    )
+
+    sends = asyncio.run(node.dispatch_rerank(state))
+
+    assert len(sends) == 2
+    assert [send.arg[f'{basename}_rerank_ordinal'] for send in sends] == [0, 1]
+    assert [
+        [
+            candidate.right_uuid
+            for candidate in send.arg[f'{basename}_candidates']
+        ]
+        for send in sends
+    ] == [['right-0', 'right-1'], ['right-2']]
+
+
+@pytest.mark.parametrize(('scope', 'kind'), CASES)
+@pytest.mark.parametrize('batch_size', [1, 10])
+def test_complete_judge_budgets_preserve_candidate_order_through_collectors(
+    scope, kind, batch_size
+):
+    asyncio.run(_exercise(scope, kind, batch_size))
+
+
+async def _exercise(scope, kind, batch_size):
+    basename, node, candidates, reranker, judge, budget = _fixture(
+        scope, kind, batch_size=batch_size
+    )
+    graph = StateGraph(SourceSemanticState)
+    graph.add_node('route', lambda state: {})
+    graph.add_node(f'{basename}_rerank_worker', node.rerank_worker)
+    graph.add_node(f'{basename}_rerank_collect', node.collect_rerank)
+    graph.add_node(f'{basename}_judge_worker', node.judge_worker)
+    graph.add_node(f'{basename}_judge_collect', node.collect_judge)
+    graph.add_edge(START, 'route')
+    graph.add_conditional_edges('route', node.dispatch_rerank)
+    graph.add_edge(f'{basename}_rerank_worker', f'{basename}_rerank_collect')
+    graph.add_conditional_edges(
+        f'{basename}_rerank_collect', node.dispatch_judge
+    )
+    graph.add_edge(f'{basename}_judge_worker', f'{basename}_judge_collect')
+    graph.add_edge(f'{basename}_judge_collect', END)
+    result = await graph.compile().ainvoke(
+        {'source_uuid': 'source', f'{basename}_candidates': candidates}
+    )
+    assert [
+        [material.text for material in batch] for batch in reranker.documents
+    ] == [[f'right_content-{index}' for index in range(3)]]
+    assert [len(requests) for requests in judge.requests] == (
+        [1, 1, 1] if batch_size == 1 else [2, 1]
+    )
+    for requests in judge.requests:
+        assert [request.index for request in requests] == list(
+            range(len(requests))
+        )
+        assert 4 * len(requests) <= budget.token_limit
+    assert [
+        pair.right_uuid for pair in result[f'{basename}_accepted_pairs']
+    ] == ['right-0', 'right-1', 'right-2']
+
+
+@pytest.mark.parametrize(('scope', 'kind'), CASES)
+def test_oversized_judge_singleton_is_not_dispatched(scope, kind):
+    async def exercise():
+        basename, node, candidates, _, judge, _ = _fixture(
+            scope, kind, threshold=3
+        )
+        state = SourceSemanticState(
+            source_uuid='source',
+            **{f'{basename}_borderline_pairs': candidates},
+        )
+        with pytest.raises(InputBudgetExceeded, match='singleton'):
+            await node.dispatch_judge(state)
+        assert judge.requests == []
+
+    asyncio.run(exercise())

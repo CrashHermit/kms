@@ -1,10 +1,9 @@
 # Teaching sessions and bounded teaching workflows
 
-Status: durable teaching sessions, local-first evidence acquisition, staged
-source publication, learner observations, and per-response knowledge admission
-are implemented. External research remains disabled by default. Historical
-`CITES_EXTERNAL` records require explicit per-user migration and a separate
-global finalization operation.
+Status: durable teaching sessions, local-first evidence acquisition, immediate
+owned-source admission, reference-only workspaces, learner observations, and
+per-response knowledge admission are implemented. External research remains
+disabled by default.
 
 ## Problem and decision
 
@@ -32,32 +31,49 @@ Current behavior includes:
 - Provider-neutral DSPy prober, planner, and teacher modules with explicit
   operation-based outputs and runtime demonstrations.
 - Instructional responses in probing, planning, or teaching can admit
-  propositions and reasoning steps against active inspected evidence; coordination
+  propositions and arguments against active inspected evidence; coordination
   responses do not run knowledge extraction.
-- A five-node acyclic parent graph invokes a bounded instructional interaction
-  graph once. Each evidence action and each research/source-preparation workflow
-  runs in its own bounded graph with private state.
-- Local source and proposition retrieval precedes any explicit external
-  expansion. Discovery remains distinct from inspected evidence.
+- One teaching graph contains the bounded instructional and research decision
+  phases. Evidence actions dispatch directly; source admission uses a service
+  and the reusable source-processing graph.
+- `AcquireEvidenceAction` searches owned source blocks and canonical propositions
+  before optional external research. Research exposes ordered Tavily
+  title/URL/snippet results for explicit selection; only selected URLs are
+  captured and sent through normal source admission, which owns OCR and
+  persistence.
+- Independent local searches cover source blocks, source statements/exercises,
+  source procedures, canonical propositions, arguments, and learner
+  observations. They are invoked when useful, not all run automatically.
+  Searches are discovery; read selected records before relying on them. An
+  empty final selector result means no relevant hit, not a provider failure or
+  an automatic request to research. `source_uuids` constrains source-backed
+  searches and research, not canonical knowledge or learner-observation search.
 - Session-workspace positions and receipts; graph UUIDs do not enter model-facing
   context.
-- Atomic persistence of the teacher response, session state, citations, learner
-  observations, staged sources, proposition assertions, and exact source revisions.
+- Atomic persistence of the teacher response, session state, workspace
+  references, citations, learner observations, proposition assertions, and exact
+  source revisions.
 
-When research is disabled, the teacher can use owned source blocks, images,
-statements, procedures, and propositions. When enabled, inspected web pages,
-images, and selected PDF pages are processed through the shared source-processing
-graph and retained as staged source snapshots in the private session evidence
-workspace. They are not publicly owned or searchable until publication.
-The successful final teacher-turn transaction saves the workspace and publishes
-staged snapshots only when a final block/image citation or admitted knowledge
-support uses them. Unused staged snapshots remain private to the session.
-No new external-evidence nodes or `CITES_EXTERNAL` relationships are created.
+When research is enabled, the researcher sees Tavily result titles, URLs, and
+snippets with stable positions. It explicitly submits selected positions; only
+those URLs are captured and passed to the normal source-admission pipeline.
+That pipeline performs source processing, including OCR, and persists sources
+before returning their UUIDs and revisions. Unselected results are never
+captured or processed. External research is unavailable when an explicit source
+allowlist is active; it is never silently widened. The teaching workflow then
+searches newly admitted source UUIDs through ordinary owned-source retrieval.
+The researcher does not read or inspect captured content; the teacher reads
+source blocks and uses its normal image-reading and inspection actions.
 
-Legacy `CITES_EXTERNAL` citations are migrated per user with
-`migrate_research_sources`. Only after every owner has migrated can
-`finalize_research_source_migration` remove orphan legacy nodes and drop the old
-uniqueness constraint.
+The saved teaching workspace is typed. Source block, image, group, and citation
+records retain graph references and exact source revisions; other catalogs keep
+their domain-specific saved values. Learner-observation slots persist only the
+observation UUID and `was_read` state. Reload batch-reads observations through
+the owning user's graph, preserves registry order and active/discovered
+positions, and restores full records only for previously read slots. Source
+revision changes prune stale source evidence without disturbing learner
+observations. Source text and image bytes are not copied into the session;
+original media remains in the content-addressed file store.
 
 ## Domain contracts
 
@@ -76,12 +92,12 @@ No provider configuration or database imports belong in these models.
 | `TeachingPlanStep` | Stable `uuid`, `title`, and `objective`. These are durable lesson objects, not positions in a model request. |
 | `TeachingPlanDependency` | Transport description of prerequisite/dependent step UUIDs; persisted as a relationship rather than a duplicate pair of node properties. |
 | `TeachingQuestion` | Stable `uuid`, `kind`, prompt, response specification, and creation time. Associated with the teacher turn that first posed it; optionally associated with its plan step. |
-| `TeachingSessionSnapshot` | Internal aggregate: session, ordered turns, current assessment, current plan and its acceptance, current step, and pending question. |
-| `TeachingTurnCommit` | Complete backend-owned teacher result and intended next session state, including operation-derived heads, learner-observation writes, staged sources, citations, and knowledge admission. This is not a raw DSPy output schema. |
+| `TeachingSessionSnapshot` | Internal aggregate: session, ordered turns, current assessment, current plan and its acceptance, current step, pending question, and optional reference-only saved workspace. |
+| `TeachingTurnCommit` | Complete backend-owned teacher result and intended next session state, including operation-derived heads, learner-observation writes, exact source revisions, reference-only workspace, citations, and knowledge admission. This is not a raw DSPy output schema. |
 | `TeachingSessionView` | Learner-safe projection of session, conversation, plan, and pending question. It excludes private answer keys and model-internal data. |
 | `Proposition` | User-owned self-contained claim with an embedding; equivalent claims can reuse one canonical node. |
-| `ReasoningStep` | Joint-premise argument with one conclusion, optional direct source-block support, and a learner-facing explanation. |
-| `KnowledgeAssertion` | One teacher turn's admission of a proposition, its direct source-block support, and any reasoning steps. |
+| `Argument` | Joint-premise argument with one claimed conclusion, optional direct source-block support, and a learner-facing explanation. |
+| `KnowledgeAssertion` | One teacher turn's admission of a proposition, its direct source-block support, and any arguments. |
 | `TeachingEvidenceReference` | A typed `block`, `image`, or `proposition` UUID used for a teacher-turn citation; no external evidence node type. |
 | `LearnerObservation` | Append-only, dated interpretation of demonstrated understanding, partial understanding, a gap, or a misconception, linked to its learner-turn evidence and owned by the user. It is not a subject proposition or mutable mastery profile. |
 
@@ -111,9 +127,10 @@ Instructional decisions use a discriminated operation union rather than an
 independently editable phase plus nullable retain/replace/clear flags. The
 operation determines the next phase and complete active heads. The response also
 declares whether its content is instruction or coordination, supplies any
-learner-observation drafts, and cites only the compact positions of inspected
-evidence shown in its final context packet. Backend code resolves all positions
-to durable UUIDs before persistence.
+learner-observation drafts, and pairs each ordered response segment with its
+own inspected evidence positions. Backend code resolves those positions to
+durable UUIDs before persistence. Reference validity does not establish
+semantic support.
 
 Learner observations are produced from learner turns and remain separate from
 subject-matter knowledge. An assessment may explicitly reference retrieved
@@ -226,23 +243,24 @@ flowchart TD
     N -->|CITES_IMAGE| I
     N -->|CITES_PROPOSITION| KP[Proposition]
     U -->|HAS_PROPOSITION| KP
-    U -->|HAS_REASONING_STEP| R[ReasoningStep]
+    U -->|HAS_ARGUMENT| R[Argument]
     N -->|HAS_KNOWLEDGE_ASSERTION| KA[KnowledgeAssertion]
     KA -->|ASSERTS| KP
     KA -->|SUPPORTED_BY| B
     KA -->|DERIVED_BY| R
-    R -->|HAS_PREMISE| KP
-    R -->|HAS_CONCLUSION| KP
+    KP -->|PREMISE_OF| R
+    R -->|PROVES| KP
     R -->|SUPPORTED_BY| B
 ```
 
 The diagram shows relationships, not mandatory edges. `CITES_BLOCK`,
 `CITES_IMAGE`, and `CITES_PROPOSITION` link the completed teacher turn to
 explicitly cited evidence. A turn's `KnowledgeAssertion` links extracted or
-reused propositions to their exact source blocks and reasoning steps. Reasoning
-steps connect premise and conclusion propositions and may carry their own direct
-block support. Sources own blocks structurally; no source UUID is copied onto
-propositions, assertions, or reasoning steps. Question kinds used before a plan
+reused propositions to their exact source blocks and arguments. Premise
+propositions point to an argument, which points to its claimed conclusion and
+may carry direct block support. `PROVES` does not assert formal verification.
+Sources own blocks structurally; no source UUID is copied onto
+propositions, assertions, or arguments. Question kinds used before a plan
 need no `FOR_STEP` edge. Steps and plans belong to one session; cross-session
 prerequisites are not part of this contract.
 Use session `FIRST_TURN` and `LAST_TURN` pointers plus `NEXT_TURN` for canonical
@@ -255,6 +273,8 @@ context relationships, or persist packet-local positions as transcript metadata.
 pointers select the active snapshot without rewriting older content. Plan steps
 form a DAG, not a required linear chain. Read it in deterministic dependency order
 for presentation; the workflow explicitly selects the current step.
+The transaction writes all dependency edges before creating one question and
+one set of session heads, regardless of the number of prerequisite edges.
 
 Persist owner, parent, current-object, question/step, response, and acceptance
 associations through relationships. UUID references in request/snapshot contracts
@@ -273,40 +293,67 @@ or local model startup.
 
 ### Teaching invocation and persistence boundaries
 
-One application call runs one parent `TeachingGraph` and commits at most one
-teacher turn. The parent is acyclic: retrieve learner history once, invoke the
-bounded interaction graph once, prepare learner-observation writes, prepare
-knowledge admission when the response is instructional, then persist. The parent
-uses a fixed recursion limit. It does not wrap its graph in an outer `while`
-loop or restart failed interactions. A later invocation reloads the workspace
-saved with the last successful teacher turn.
+One application call runs one `TeachingGraph` and commits at most one teacher
+turn. The graph retrieves learner history, restores the evidence workspace, runs
+the bounded teaching and optional research decision phases, prepares
+learner-observation and knowledge writes, then persists. A later invocation
+reloads the workspace saved with the last successful teacher turn.
 
-The interaction graph owns the bounded phase/action loop and a private
-`TeachingEvidenceWorkspace`. After an evidence action it returns to the module
-selected by the persisted phase; a typed response ends the child graph. Each
-evidence action invokes a one-action acquisition graph. External research and
-source processing execute inside their own bounded graphs and private states.
-The session transaction persists the workspace after a completed turn.
+Teaching and research retain independent action limits. Evidence actions dispatch
+directly; selected research sources are admitted by a service that invokes the
+reusable source-processing graph with its own execution budget. The session
+transaction persists the workspace after a completed turn.
 
-External captures pass through the shared source-processing graph before they
-enter the workspace. Their processed blocks and images are readable during the
-same interaction, but their source snapshots remain staged and invisible to
-normal owner-scoped retrieval. The final transaction publishes staged snapshots
-only when cited or used as knowledge support; unused snapshots remain private
-in the saved workspace. A failed or stale commit publishes neither the turn nor
-source ownership and retains the preceding workspace. Content-addressed files
-from the failed invocation may remain unreferenced. The system does not save the
-conversation as a synthetic source or automatically run
-source-pedagogical/source-semantic stages on research captures.
+Local search actions address separate catalogs: source blocks, source
+statements/exercises (`is_exercise` filters exercises), source procedures,
+canonical propositions, arguments, and user-owned learner observations.
+Search returns discovery handles; use the matching read action before relying
+on a selected record. Statements and procedures retain source provenance;
+propositions and arguments are canonical knowledge. Learner observations
+describe the learner, not subject matter, and cannot be cited as source
+evidence. Model-facing learner-history positions are compact for assessment
+references; `registry_position` is the stable learner-observation read handle.
+Search only the domains useful to the current decision. An empty final selector
+result is an ordinary no-relevant-hit, not a provider failure or mandatory web
+research.
 
+Reading source passages, statements, or procedures activates their text and
+registers attached image positions without loading image bytes. The teacher can
+select those positions with `read_images`; only selected images enter the native
+multimodal request and become eligible for inspection. An image selection that
+exceeds the configured count, byte, or pixel budget returns a tool observation
+and leaves the previous selection active, so the teacher can choose fewer or
+smaller images. Workspace handles remain separate from request-local image
+ordinals, and source revision checks remain in force.
+Each model-selected evidence action is validated against the exact context
+shown for that prediction. Invalid references produce an `invalid_action`
+observation and consume an interaction tool call without executing the action.
+
+The researcher submits selected search results to the shared source-processing
+graph. Once research ends, the acquisition node searches the newly persisted
+source UUIDs with the original question. The teacher reads the resulting blocks
+and images through its own workspace. A later teacher-turn failure does not undo
+an already admitted source.
+
+The teacher-turn transaction stores the reference-only workspace and validates
+all referenced source revisions, citations, knowledge support, observations,
+response, and session heads atomically. It never publishes or creates sources.
+Content-addressed files from a failed admission may remain unreferenced. The
+system does not save the conversation as a synthetic source or automatically
+run Source Pedagogical or Source Semantic stages on research captures.
 Knowledge extraction occurs once after the final response is selected, not on
 each probe/action and not as a separate teaching phase. Any response marked
-`instruction` may admit propositions and reasoning against its final active
-inspected source/image/proposition packet, regardless of the persisted
-probing/planning/teaching phase. `coordination` skips knowledge admission.
+`instruction` may admit propositions and reasoning, regardless of the persisted
+probing/planning/teaching phase. Each response segment carries only its cited
+inspected source, image, and proposition positions into the extraction request.
+Only cited images with inspection receipts are sent as `content_images`;
+nested block material maps each native payload to its inspected source block.
+For an image-only citation, the block's material text remains absent.
+Uninspected images are not loaded for extraction; `coordination` skips
+knowledge admission.
 The extraction and identity graphs prepare writes without persistence; the
-repository writes them in the same transaction as the teacher turn, source
-publication, citations, and session heads.
+repository writes them in the same transaction as the teacher turn, citations,
+source-revision checks, and session heads.
 
 Learner observations describe what the learner demonstrated, including
 misconceptions or gaps; they are not subject propositions. Each observation is
@@ -339,9 +386,10 @@ Each state-changing operation writes its history and current state in one
 transaction and returns the resulting snapshot. `record_turn` writes the teacher
 message, operation-derived phase and session heads, new assessment/plan/steps,
 question and acceptance relationships, evidence citations, learner observations
-and their learner-turn provenance, assessment links, staged-source publication,
-optional knowledge assertions, status, and revision together. Existing immutable
-object content is never overwritten merely because it is referenced again.
+and their learner-turn provenance, assessment links, the reference-only
+workspace, optional knowledge assertions, status, and revision together.
+Existing immutable object content is never overwritten merely because it is
+referenced again.
 
 Require exactly one user-scoped result for single-session reads/writes, following
 the repository's existing `single(strict=True)` convention. A list may be empty.
@@ -365,8 +413,7 @@ conflict retries to step 1.
 
 ## Application API and resource lifetime
 
-User-scoped operations use `Settings` and `user_uuid`; the global finalizer is
-the exception.
+Every application operation is user-scoped with `Settings` and `user_uuid`.
 
 | Public operation | Remaining arguments | Return / effect |
 |---|---|---|
@@ -374,17 +421,14 @@ the exception.
 | `list_teaching_sessions` | None | Return the user's sessions without loading every transcript. |
 | `load_teaching_session` | `session_uuid` | Return `TeachingSessionView`; resume display. |
 | `submit_teaching_response` | `session_uuid`, `content`, keyword-only `expected_revision` | Persist the learner response. |
-| `run_teaching_turn` | `session_uuid`, keyword-only `expected_revision`, optional `source_uuids` allowlist | Run one bounded parent/interaction workflow; atomically persist the response, citations, observations, staged sources, and any instruction knowledge admission. |
+| `run_teaching_turn` | `session_uuid`, keyword-only `expected_revision`, optional `source_uuids` allowlist | Run one bounded parent/interaction workflow; atomically persist the response, reference-only workspace, citations, observations, and any instruction knowledge admission. |
 | `end_teaching_session` | `session_uuid`, keyword-only `expected_revision` | End the session without deleting history. |
 | `search_sources` / `read_source_passages` / `read_source_images` | Query or block/image UUIDs | Search or read owned source evidence. |
 | `search_source_statements` / `read_source_statements` | Query or statement UUIDs | Search or read reconstructed statements with member blocks. |
 | `search_source_procedures` / `read_source_procedures` | Query or procedure UUIDs | Search or read reconstructed procedures with member blocks. |
-| `search_propositions` / `read_propositions` | Query or proposition UUIDs | Search user-owned claims or read bounded per-turn provenance. |
-| `read_reasoning_steps` | Reasoning-step UUIDs | Read one-hop premises, conclusion, explanation, and direct support blocks. |
+| `search_arguments` / `read_arguments` | Query or argument UUIDs | Search owner-scoped arguments with final relevance selection, or read one-hop premises, conclusion, explanation, and direct support blocks. |
 | `search_learner_observations` / `read_learner_observations` | Query or observation UUIDs | Search owner-scoped learner evidence or read safe observation records with provenance. |
 | `read_teaching_citations` / `read_teaching_citation_media` | `session_uuid` and typed references or image UUID | Read cited block/image/proposition views or authorized image bytes. |
-| `migrate_research_sources` | None | Convert this user's legacy external citations into ordinary owned sources. |
-| `finalize_research_source_migration` | None | Database-only global cleanup; refuses while any legacy citations remain. |
 
 `run_teaching_turn` first loads the user-owned snapshot and checks its
 `awaiting_teacher` status and expected revision. It releases that database scope
@@ -393,12 +437,11 @@ preflight is unconditional because any phase may emit an instructional response.
 When research is enabled, the application opens invocation-scoped Tavily/media
 resources; otherwise it opens none.
 
-The parent teaching graph has a fixed, acyclic history → interaction →
-observation preparation → knowledge preparation → persistence sequence. Its
-bounded interaction child repeats phase prediction and tool execution until one
-response is selected. Each tool action invokes its own one-action evidence graph;
-external research has an independent cap. A later learner interaction starts a
-new parent invocation from persisted state and restores the session workspace.
+The teaching graph registers history, instructional decision and evidence
+actions, optional research, observation preparation, knowledge preparation, and
+persistence as phases. Teaching and research actions have independent caps. A
+later learner interaction starts a new invocation from persisted state and
+restores the session workspace.
 
 The service's internal `record_teaching_turn` operation accepts a
 `TeachingTurnCommit` and expected revision. It is used by orchestration and
@@ -412,65 +455,83 @@ configured predictor factory, embedding/reranking clients, tokenizers, and
 source evidence services. No transaction remains open during inference or tool
 calls.
 
-### Optional external research
-
 `research.enabled` defaults to `false`. Enabling it requires
-`research.tavily.api_key` (`KMS2_RESEARCH__TAVILY__API_KEY`). An explicit
-external expansion is available only after a phase has created a local outcome
-from owned-source and proposition search. It carries the same question, context,
-and URLs to the researcher; local findings are supplied as inspected content or
-bounded discovery previews, not as external citations. Empty local results do
-not force web use.
+`research.tavily.api_key` (`KMS_RESEARCH__TAVILY__API_KEY`). An explicit
+external expansion is available only without a source allowlist and after a
+phase has created a local outcome from owned-source and proposition search. The
+researcher receives only the question and context, then sees ordered Tavily
+titles, URLs, and snippets with stable result positions. It submits selected
+positions explicitly; no user-supplied URL is admitted.
 
-The teaching interaction graph keeps its phase module active while tool actions
-run. Each research invocation has its own `research.max_tool_calls` cap, and
-source admission runs the shared `SourceProcessingGraph` with database
-persistence disabled. `SourceAdmissionGraph` returns either an unchanged owned
-snapshot or a finalized staged snapshot. Staged blocks/images can be read and
-cited inside the session workspace but do not appear in ordinary owner-scoped
-search until publication.
-Reasoning references discovered by a proposition or reasoning read reflect
-that read only. Their registry positions remain stable for the interaction, so a
-later read can rediscover an earlier reference without carrying every prior
-discovery into the next prediction.
+Run Gotenberg locally before capturing web pages:
 
-The final turn transaction saves the session workspace, publishes cited or
-knowledge-supporting staged snapshots, and writes the teacher response,
-citations, learner observations, and instruction-derived knowledge together.
-Unused staged snapshots remain in the private workspace, not as owned sources;
-acquired owned sources still receive revision checks. The transaction locks the
-relevant source set, reloads staged winners, checks processed identity and source
-revisions, and rechecks session and knowledge revisions. A conflict rolls back
-all graph writes. Original image bytes remain in content-addressed files and are
-rehydrated when the workspace is restored. A failed turn retains the previously
-committed workspace rather than saving partially completed actions. Research
-captures are not automatically run through Source Pedagogical or Source Semantic
-and are not combined into a synthetic teaching-session source.
+```bash
+docker run --rm --name kms-gotenberg \
+  -p 127.0.0.1:3000:3000 \
+  gotenberg/gotenberg:8.39.0 gotenberg \
+  --chromium-deny-private-ips=true \
+  --api-disable-download-from=true
+```
 
-PDF retrieval reads native text for discovery and renders/OCRs only selected
-pages. Web snapshots preserve retrieved Markdown and inspected downloaded
-images. Finalized block/image UUIDs are content-derived before those records can
-be read or used as support. Snapshot identity uses captured URLs and content,
-not the page title, so a title change alone does not create another source.
-Download size, redirects, image pixels, concurrency, inference tokens, and tool
-calls have configured limits. Public media requests do not use ambient proxy
-credentials and reject non-public addresses.
+The configured endpoint defaults to `http://127.0.0.1:3000`
+(`KMS_RESEARCH__GOTENBERG_URL`); its request timeout follows
+`research.download_timeout_seconds`.
 
-Historical `CITES_EXTERNAL` citations are a separate explicit cutover. Call
-`migrate_research_sources(settings, user_uuid)` for each owner; it preserves
-retained text/media without re-fetching or inventing descriptions, rewrites
-citations to ordinary source blocks/images, and keeps shared legacy records
-until no user references them. Image-only legacy records stay readable/citable
-but are not text-searchable unless a retained description exists. Once every
-owner is migrated, `finalize_research_source_migration(settings)` checks for
-global legacy citations, deletes only orphan legacy records, and drops the old
-uniqueness constraint. Its global guard is safe to rerun after completion.
+Keep the service bound to loopback and retain both security flags. Do not set
+Chromium proxy or host-resolver flags that bypass Gotenberg's private-IP
+filtering or DNS-rebinding protection. Gotenberg receives the final public page
+URL and fetches it again to render the screenshot; the rendered page can differ
+from the initial retrieval. The screenshot service is a separate network trust
+boundary, and this configuration does not claim that page media is blocked:
+videos and other media may load.
+
+The researcher does not open or inspect results. Selected URLs are captured
+through the public-safe capture service and sent through ordinary
+`SourceAdmissionService`. The normal source-processing pipeline owns OCR and
+persistence; unselected results are never captured or OCR-processed. The
+researcher never receives OCR material or images. Source admission commits
+independently of the later teacher-turn transaction.
+
+After research, the acquisition node searches newly admitted source UUIDs with
+the original question using normal owned-source retrieval. The teacher reads
+returned blocks and images through its ordinary workspace and may inspect images
+when useful. If no sources are admitted, this scoped search does not fall back
+to the entire library.
+
+The research state is limited to the task, ordered search catalog, action
+budget, failures, and admitted-source references. `research.max_tool_calls`
+limits research actions. Source processing has an independent recursion budget.
+
+The teacher-turn transaction saves the typed reference-only session workspace
+and writes the response, citations, learner observations, and
+instruction-derived knowledge together. It validates referenced owned source
+revisions but does not create sources. A later teacher-turn failure does not undo
+a source already admitted by research.
+
+Snapshot identity separates capture and processed content. The accepted PDF and
+its origin metadata are retained as provenance; candidate artifacts are not
+durably admitted before processing.
+
+Processed source identity uses `source-content-v2`: ordered page/block text,
+crop bounds, and finalized media SHA-256 digests. Embedding vectors, model
+profile, generated UUIDs, and filesystem locations do not change content
+identity. Persisted assets carry their digest and are verified on read; a
+corrupted or missing artifact fails rather than substituting different bytes.
+The embedding profile is stored as index provenance, and profile mismatch
+requires an explicit reindex rather than silently reusing vectors.
+The processed digest and manifest describe the original processed capture.
+Pedagogical splitting records each child's immediate parent, carries normalized
+fragment positions forward, and records a separate digest of the current
+topology. The source metadata is read and updated under the source write lock.
+Reacquiring the capture reuses that source without treating its derived
+pedagogical topology as a new capture.
+
 
 Evidence registry positions persist within the session workspace; visible
 citation-candidate positions are rebuilt for each prediction. The persistence
-node maps explicitly cited positions to backend UUIDs and stores typed citation
-edges. Inspected context may separately support knowledge assertions or
-reasoning without becoming a visible turn citation. Both citations and knowledge
+node maps each segment's explicitly cited positions to backend UUIDs and stores
+typed citation edges and ordered segment metadata. The extraction request
+preserves those segment-to-evidence associations. Both citations and knowledge
 support are authorized and persisted in the same source/session-revision-locked
 transaction as the teacher turn. Image inspection is associated with the exact
 source revision.
@@ -498,51 +559,50 @@ request replay.
 The feature follows the existing model/service/repository/application layers:
 
 ```text
-src/kms2/
+src/kms/
   config/research.py
   core/model/
-    knowledge/                 # Proposition, reasoning, admission, retrieval contracts
-    source_processing/         # Typed inputs reused for source and research admission
-    teaching/                  # Session, inference, citation, and turn contracts
+    knowledge/                 # Proposition, reasoning, admission, retrieval
+    source_processing/         # Typed source inputs and processed snapshots
+    teaching/                  # Session, interaction, workspace, and citations
   module/
-    knowledge/                 # Proposition extraction and equivalence examples
+    knowledge/                 # Proposition extraction and equivalence
     teaching/                  # Prober, planner, and teacher modules/examples
   langgraph/
-    evidence_acquisition/    # One evidence action per bounded invocation
-    knowledge/               # Instruction-response knowledge preparation
-    research/                # Invocation-only external discovery
-    source_admission/        # Shared processing and staged snapshot finalization
-    teaching/                # Acyclic parent turn and bounded interaction loop
+    knowledge/                 # Instruction-response knowledge preparation
+    teaching/                  # Flat teaching and research decision phases
   node/
-    evidence_acquisition/    # Local reads, explicit external expansion, staging
-    knowledge/identity.py    # Owned proposition candidates and draft reconciliation
-    teaching/                # Context, operations, observations, admission, persistence
+    evidence_acquisition/      # Local retrieval, research, and local refresh
+    knowledge/identity.py      # Owned proposition candidates and reconciliation
+    teaching/                  # Context, operations, observations, persistence
   service/
-    knowledge.py             # Proposition/reasoning admission
-    knowledge_search.py      # User-scoped proposition/reasoning retrieval
-    learner_observations.py  # Append-only learner evidence and safe views
-    research_evidence.py     # Invocation evidence and source capture preparation
-    research_source_migration.py # Explicit legacy citation migration
-    source_admission.py      # Capture, process, and finalize unpublished snapshots
-    source_evidence.py       # Owned source block/image/statement/procedure reads
-    teaching.py              # Session transitions and atomic turn orchestration
+    knowledge.py               # Proposition/reasoning admission
+    knowledge_search.py        # User-scoped proposition and reasoning retrieval
+    learner_observations.py    # Append-only learner evidence and safe views
+    research_source_capture.py # Complete external source capture
+    source_admission.py        # Persist submitted sources after processing
+    source_workspace.py        # Graph-backed source reads and runtime registries
+    source_evidence.py         # Owned source block/image/group reads
+    teaching.py                # Session transitions and atomic turn orchestration
   database/
-    knowledge/               # Owned proposition/reasoning reads and admission writes
-    source/                  # Source snapshots, migration, blocks, and source records
-    teaching/                # Session state, turns, observations, citations, atomic commits
-  composition/               # Dependency construction for the above services/graphs
-  application.py             # Public operations and resource lifetimes
+    knowledge/                 # Owned proposition/reasoning reads and admission
+    source/                    # Owned snapshots, blocks, and source records
+    teaching/                 # Session state, turns, citations, atomic commits
+  composition/                 # Dependency construction for services and graphs
+  application.py               # Public operations and resource lifetimes
 ```
+`SourceAdmissionService` runs the shared `SourceProcessingGraph` without its
+standalone persistence node, then persists the completed submitted snapshot
+through `SourceSnapshotRepository`. After external research, the teaching
+acquisition node searches newly persisted source UUIDs using ordinary
+owned-source retrieval.
+`TeachingPersistenceNode` supplies a typed reference-only workspace, exact source
+revisions, citations, prepared observations, and optional knowledge admission to
+one `TeachingRepository.record_turn` transaction. That transaction validates
+ownership and revisions; it does not publish or create sources.
+Source processing owns its execution budget independently of the teaching and
+research action budgets.
 
-`SourceAdmissionGraph` invokes the established `SourceProcessingGraph` with
-Neo4j persistence disabled and returns a finalized staged snapshot. The
-`TeachingPersistenceNode` supplies the workspace, used staged sources, inspected
-citations, prepared observations, and optional knowledge admission to one
-`TeachingRepository.record_turn` transaction. Source ownership, teacher turn,
-workspace, learner evidence, citations, assessment links, knowledge assertions,
-and session heads either commit together or roll back together.
-Source admission gives this nested one-shot graph its own recursion budget,
-independent of the smaller evidence-action budget.
 
 Knowledge preparation is not tied to the teaching phase. A response marked as
 instruction can admit supported propositions and reasoning from any phase; a
@@ -553,36 +613,36 @@ proposition identities.
 
 ## Verification boundaries
 
-- Exercise public application operations and repository transactions against a
-  disposable Neo4j database, never the user's configured database.
-- Verify user-scoped retrieval, inspected-only citations, source/knowledge
+- Exercise public application operations and repository transactions against the
+  configured Neo4j database using isolated, explicitly cleaned-up test records.
+- Verify owner-scoped search, inspected-only citations, exact source/knowledge
   revision checks, mutation locks, and all-or-nothing teacher-turn persistence.
-- Verify source admission uses the shared processing graph and preserves text,
-  page/block ordering, image bytes, and ownership across reload.
+- Verify source admission writes a complete processed source before research
+  lists its blocks, and that an admitted source appears in ordinary local search.
+- Verify restricted source searches cannot invoke external research and that
+  unrestricted research does not transfer researcher inspection state.
+- Verify typed workspace save/restore resolves exact graph UUIDs, source
+  revisions, image bytes, and user-owned learner observations; verify compact
+  learner positions map back to the exact assessment observation UUID.
 - Verify proposition identity reuse without merging distinct claims; verify
   premise/conclusion links and turn-specific direct source support.
-- Verify legacy external citations migrate per user and global finalization
-  refuses while any citation remains, then removes only unreferenced legacy data.
-- Run configured formatting, lint, and deterministic KMS2 tests. These prove
+- Run configured formatting, lint, and deterministic KMS tests. These prove
   software behavior, not hosted model quality or instructional effectiveness.
 
-A deterministic disposable-Neo4j smoke now exercises the end-to-end boundary:
-local-first knowledge search before explicit web expansion, staged passage and
-image inspection while the source remains unpublished, successful atomic
-publication with the teacher turn, learner observation, and prepared knowledge,
-history retrieval with the original learner evidence and question, plan proposal
-and acceptance followed by a separate teaching turn, source-owned citation and
-two-premise reasoning, and rollback of a stale commit containing a second staged
-source and draft records. This verifies graph and persistence behavior with
-injected predictors, not hosted-provider quality.
+The Neo4j smoke should exercise immediate source admission, normal post-research
+search, restricted-research behavior, reference-only workspace reload (including
+read/unread learner observations), exact assessment observation UUID mapping,
+source-owned citations, knowledge, and stale teacher-turn rollback without
+undoing a previously admitted source. Use injected predictors; this verifies
+graph and persistence behavior, not hosted-provider quality.
 
 ## Existing conventions informing this design
 
-- [Vertex and strict model fields](../src/kms2/core/model/base.py).
-- [Learning service ownership](../src/kms2/service/learning.py).
-- [Repository single-row contracts](../src/kms2/database/learning/repository.py).
-- [Database-only composition](../src/kms2/composition/services.py).
-- [Application resource lifetimes](../src/kms2/application.py).
-- [Structural schema](../src/kms2/database/schema.py).
-- [Canonical source ordering](../src/kms2/database/source/queries/source_graph.py).
+- [Vertex and strict model fields](../src/kms/core/model/base.py).
+- [Learning service ownership](../src/kms/service/learning.py).
+- [Repository single-row contracts](../src/kms/database/learning/repository.py).
+- [Database-only composition](../src/kms/composition/services.py).
+- [Application resource lifetimes](../src/kms/application.py).
+- [Structural schema](../src/kms/database/schema.py).
+- [Canonical source ordering](../src/kms/database/source/queries/source_graph.py).
 - [Python style](STYLE.md).

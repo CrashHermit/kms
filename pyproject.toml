@@ -18,17 +18,12 @@ dependencies = [
   "pypdfium2>=4",
   "pillow>=10",
   "pydantic-settings>=2.15.0",
-  "faiss-cpu>=1.9.0",
   "tokenizers>=0.23.1,<0.24",
   "tavily-python>=0.8.5,<0.9",
-  "markdown-it-py>=3,<5",
-  "resvg-py>=0.5,<0.6",
 ]
 
 [project.scripts]
 kms = "kms.tui:run"
-kms2 = "kms2.tui:run"
-kms-maintenance = "kms.maintenance:run"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.9"]
@@ -46,7 +41,7 @@ select = ["E", "F", "I", "B", "UP"]
 ignore = ["E501"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["kms", "kms2"]
+known-first-party = ["kms"]
 
 [tool.ruff.format]
 quote-style = "single"
@@ -66,4 +61,4 @@ build-backend = "hatchling.build"
 
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/kms", "src/kms2"]
+packages = ["src/kms"]
