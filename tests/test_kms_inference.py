@@ -2,7 +2,6 @@ import asyncio
 
 import dspy
 
-from kms.composition.predictors import PredictorFactory
 from kms.config.inference import (
     PredictorStrategy,
     StageInferenceSettings,
@@ -11,6 +10,8 @@ from kms.config.inference import (
 from kms.config.llm import ChatGPTLLMProfile, LLMSettings
 from kms.config.runtime import LocalModelRuntimeSettings
 from kms.config.settings import Settings
+from kms.inference.predictors import PredictorFactory
+from kms.inference.tokenization.resources import LanguageModelTokenizers
 from kms.local_models.runtime import RuntimePredictor
 
 
@@ -190,9 +191,9 @@ def test_chatgpt_predictor_uses_native_responses_without_local_options(
         cloud_predictors.append(predictor)
         return predictor
 
-    monkeypatch.setattr('kms.composition.predictors.dspy.LM', _RecordingLM)
+    monkeypatch.setattr('kms.inference.predictors.dspy.LM', _RecordingLM)
     monkeypatch.setattr(
-        'kms.composition.predictors.dspy.Predict', create_predictor
+        'kms.inference.predictors.dspy.Predict', create_predictor
     )
 
     class LocalModels:
@@ -206,7 +207,12 @@ def test_chatgpt_predictor_uses_native_responses_without_local_options(
             profiles={'cloud': ChatGPTLLMProfile()},
         )
     )
-    factory = PredictorFactory(settings, LocalModels(), None)
+    factory = PredictorFactory(
+        settings,
+        LocalModels(),
+        None,
+        tokenizers=LanguageModelTokenizers(settings),
+    )
     inference = StageInferenceSettings(
         strategy=PredictorStrategy.PREDICT,
         temperature=0.1,

@@ -26,96 +26,9 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     FOR (procedure:SourceProcedure) REQUIRE procedure.uuid IS UNIQUE
     """,
     """
-    CREATE CONSTRAINT visual_asset_uuid IF NOT EXISTS
-    FOR (asset:VisualAsset) REQUIRE asset.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_entity_uuid IF NOT EXISTS
-    FOR (entity:SourceEntity) REQUIRE entity.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_entity_hub_uuid IF NOT EXISTS
-    FOR (hub:SourceEntityHub) REQUIRE hub.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_statement_hub_uuid IF NOT EXISTS
-    FOR (hub:SourceStatementHub) REQUIRE hub.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_procedure_hub_uuid IF NOT EXISTS
-    FOR (hub:SourceProcedureHub) REQUIRE hub.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_flashcard_uuid IF NOT EXISTS
-    FOR (card:SourceFlashcard) REQUIRE card.uuid IS UNIQUE
-    """,
-    """
     CREATE CONSTRAINT user_uuid IF NOT EXISTS
     FOR (user:User) REQUIRE user.uuid IS UNIQUE
     """,
-    """
-    CREATE CONSTRAINT deck_uuid IF NOT EXISTS
-    FOR (deck:Deck) REQUIRE deck.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT user_scheduler_settings_uuid IF NOT EXISTS
-    FOR (settings:UserSchedulerSettings) REQUIRE settings.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT user_card_review_uuid IF NOT EXISTS
-    FOR (review:UserCardReview) REQUIRE review.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT review_event_uuid IF NOT EXISTS
-    FOR (event:ReviewEvent) REQUIRE event.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT teaching_session_uuid IF NOT EXISTS
-    FOR (session:TeachingSession) REQUIRE session.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT teaching_turn_uuid IF NOT EXISTS
-    FOR (turn:TeachingTurn) REQUIRE turn.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT probe_assessment_uuid IF NOT EXISTS
-    FOR (assessment:ProbeAssessment) REQUIRE assessment.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT teaching_plan_uuid IF NOT EXISTS
-    FOR (plan:TeachingPlan) REQUIRE plan.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT teaching_plan_step_uuid IF NOT EXISTS
-    FOR (step:TeachingPlanStep) REQUIRE step.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT teaching_question_uuid IF NOT EXISTS
-    FOR (question:TeachingQuestion) REQUIRE question.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT proposition_uuid IF NOT EXISTS
-    FOR (proposition:Proposition) REQUIRE proposition.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT learner_observation_uuid IF NOT EXISTS
-    FOR (observation:LearnerObservation) REQUIRE observation.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT argument_uuid IF NOT EXISTS
-    FOR (argument:Argument) REQUIRE argument.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT knowledge_assertion_uuid IF NOT EXISTS
-    FOR (assertion:KnowledgeAssertion) REQUIRE assertion.uuid IS UNIQUE
-    """,
-    """
-    CREATE INDEX user_card_review_due_at IF NOT EXISTS
-    FOR (review:UserCardReview) ON (review.due_at)
-    """,
-    # Native GDS projections require these schema keys even with zero edges.
-    "CALL db.createRelationshipType('SIMILAR_TO')",
-    "CALL db.createProperty('score')",
 )
 
 
@@ -131,27 +44,17 @@ def vector_index_statements(embedding_dimension: int) -> tuple[str, ...]:
         }}}}
         """
         for index_name, label in (
-            ('argument_embedding', 'Argument'),
-            ('proposition_embedding', 'Proposition'),
             ('source_block_embedding', 'SourceBlock'),
-            ('source_entity_embedding', 'SourceEntity'),
             ('source_statement_embedding', 'SourceStatement'),
             ('source_procedure_embedding', 'SourceProcedure'),
-            ('source_statement_hub_embedding', 'SourceStatementHub'),
-            ('source_procedure_hub_embedding', 'SourceProcedureHub'),
         )
     )
 
 
 VECTOR_INDEX_NAMES = (
-    'argument_embedding',
-    'proposition_embedding',
     'source_block_embedding',
-    'source_entity_embedding',
     'source_statement_embedding',
     'source_procedure_embedding',
-    'source_statement_hub_embedding',
-    'source_procedure_hub_embedding',
 )
 AWAIT_INDEX = 'CALL db.awaitIndex($index_name, $timeout_seconds)'
 
@@ -203,17 +106,7 @@ async def ensure_schema(
             RETURN labels(node) AS labels, size(node.embedding) AS dimension
             LIMIT 1
             """,
-            labels=[
-                'Argument',
-                'SourceBlock',
-                'Proposition',
-                'SourceEntity',
-                'SourceStatement',
-                'SourceProcedure',
-                'SourceStatementHub',
-                'SourceProcedureHub',
-                'LearnerObservation',
-            ],
+            labels=['SourceBlock', 'SourceStatement', 'SourceProcedure'],
             dimension=embedding_dimension,
         )
         incompatible = await result.data()

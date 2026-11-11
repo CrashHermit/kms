@@ -1,16 +1,21 @@
 """Inclusive input budgets for estimated LLM material."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from kms.core.tokenization.material import MaterialTokenEstimator
+from kms.media.models import ImageAsset
 
 
 @dataclass(frozen=True, slots=True)
 class TokenBudget:
-    """Configured material estimator and inclusive workload limit."""
+    """Live workload limit and an optional full model-context measurement."""
 
     counter: MaterialTokenEstimator
     token_limit: int
+    format_request: Callable[[dict[str, object]], str] | None = None
+    context_token_limit: int | None = None
+    prompt_images: tuple[ImageAsset, ...] = ()
 
 
 def fits_token_budget(*, token_count: int, threshold: int) -> bool:

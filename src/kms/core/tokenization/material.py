@@ -3,9 +3,9 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from kms.core.content import ContentImage
-from kms.core.tokenization.images import ImageMetadataCache
 from kms.core.tokenization.text import TextTokenCounter
+from kms.media.metadata import ImageMetadataCache
+from kms.media.models import ImageAsset
 
 
 def estimate_image_tokens(width: int, height: int) -> int:
@@ -31,13 +31,13 @@ class MaterialTokenEstimator:
         self,
         *,
         text: str | None = None,
-        images: Sequence[ContentImage] = (),
+        images: Sequence[ImageAsset] = (),
     ) -> int:
         """Estimate payload tokens, excluding prompts and templates."""
         text_count = self.text_counter.count_texts([text])[0] if text else 0
         return text_count + self.estimate_images(images)
 
-    def estimate_images(self, images: Sequence[ContentImage]) -> int:
+    def estimate_images(self, images: Sequence[ImageAsset]) -> int:
         """Sum fixed LLM image estimates per supplied image occurrence."""
         return sum(
             estimate_image_tokens(metadata.width, metadata.height)

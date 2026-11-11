@@ -1,5 +1,7 @@
 # Multimodal retrieval components and tokenizer ownership
 
+Historical implementation plan. Dedicated reranking has since been removed entirely; source search uses vector retrieval followed by bounded native-image final selection. Its earlier IONOS choice, embedding encoder and budget layout are also superseded. See `docs/SOURCE_SEMANTICS.md` for the current behavior and configuration; this plan is not an instruction to restore obsolete components.
+
 ## Context
 
 Replace KMS's text-only embedding/reranking boundaries with reusable multimodal Protocol interfaces. Reorganize provider adapters and token accounting by capability; composition factories construct matching clients, limits, tokenizer resources and embedding identity/dimension, while the application owns their lifetime. Assume internal inputs and model outputs are valid and complete; do not add repairs, fake fallbacks or compatibility aliases.

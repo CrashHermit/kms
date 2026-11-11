@@ -1,17 +1,14 @@
 import asyncio
 import logging
 import signal
-from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
 
 from kms import tui
-from kms.application import SourceSemanticStageResult
 from kms.config.settings import Settings
-from kms.core.model.learning import DueDeckCard, ReviewRating
-from kms.core.model.source import Source
-from kms.core.model.user import Deck, User
+from kms.source.models.source import Source
+from kms.users.models import User
 
 
 class _Prompt:
@@ -20,16 +17,6 @@ class _Prompt:
 
     def execute(self):
         return self.value
-
-
-def _semantic_result() -> SourceSemanticStageResult:
-    return SourceSemanticStageResult(
-        source_statement_hub_count=0,
-        source_procedure_hub_count=0,
-        source_entity_count=0,
-        source_entity_description_count=0,
-        source_entity_hub_count=0,
-    )
 
 
 def _install_single_user(monkeypatch):
@@ -94,17 +81,12 @@ def test_tui_profile_selection_precedes_selected_inference(monkeypatch):
     )
     ingestion_profiles = []
 
-    async def list_sources(current_settings, user_uuid):
-        return []
-
     async def ingest(current_settings, user_uuid, pdf_path, pages):
         ingestion_profiles.append(current_settings.llm.default_text_profile)
         return SimpleNamespace(
             source=Source(uuid='source-1', key=pdf_path),
-            embedded_page_count=0,
         )
 
-    monkeypatch.setattr(tui, 'list_sources', list_sources)
     monkeypatch.setattr(tui, 'ingest_source', ingest)
     monkeypatch.setattr(
         tui,
@@ -143,10 +125,6 @@ def test_tui_creates_first_user_before_new_source(monkeypatch):
         users.append(user)
         return user
 
-    async def list_sources(settings, user_uuid):
-        assert user_uuid == 'user-1'
-        return []
-
     async def list_unowned_sources(settings):
         return []
 
@@ -154,7 +132,6 @@ def test_tui_creates_first_user_before_new_source(monkeypatch):
         ingested.append((user_uuid, pdf_path, pages))
         return SimpleNamespace(
             source=source,
-            embedded_page_count=1,
         )
 
     monkeypatch.setattr(
@@ -168,22 +145,12 @@ def test_tui_creates_first_user_before_new_source(monkeypatch):
     )
     monkeypatch.setattr(tui, 'list_users', list_users)
     monkeypatch.setattr(tui, 'create_user', create_user)
-    monkeypatch.setattr(tui, 'list_sources', list_sources)
     monkeypatch.setattr(tui, 'list_unowned_sources', list_unowned_sources)
     monkeypatch.setattr(tui, 'ingest_source', ingest)
 
     tui._run_tui()
 
     assert ingested == [('user-1', 'book.pdf', None)]
-    assert actions[0]['choices'] == [
-        tui.NEW_SOURCE_OPTION,
-        tui.CREATE_DECK_OPTION,
-        tui.ADD_CARD_OPTION,
-        tui.REMOVE_CARD_OPTION,
-        tui.REVIEW_CARDS_OPTION,
-        tui.REVIEW_HISTORY_OPTION,
-        tui.SELECT_LLM_PROFILE_OPTION,
-    ]
 
 
 def _record_select(calls, prompts, kwargs):
@@ -261,105 +228,6 @@ def test_multiple_users_can_select_existing_user(monkeypatch):
     assert calls[0]['message'] == 'Select a user:'
 
 
-def test_existing_source_semantics_receive_selected_user(monkeypatch):
-    user = _install_single_user(monkeypatch)
-    source = Source(uuid='source-1', key='book.pdf')
-    prompts = iter(
-        [
-            _Prompt(tui.EXISTING_SOURCE_OPTION),
-            _Prompt(source),
-            _Prompt(True),
-        ]
-    )
-    calls = []
-    choices = []
-
-    async def list_sources(settings, user_uuid):
-        assert user_uuid == user.uuid
-        return [source]
-
-    async def run_semantic(settings, user_uuid, source_uuid):
-        calls.append((user_uuid, source_uuid))
-        return _semantic_result()
-
-    monkeypatch.setattr(tui, 'list_sources', list_sources)
-    monkeypatch.setattr(tui, 'run_source_semantic_stage', run_semantic)
-    monkeypatch.setattr(
-        tui,
-        'inquirer',
-        SimpleNamespace(
-            select=lambda **kwargs: _record_select(choices, prompts, kwargs),
-            confirm=lambda **kwargs: next(prompts),
-        ),
-    )
-
-    tui._run_tui()
-
-    assert choices[0]['choices'] == [
-        tui.NEW_SOURCE_OPTION,
-        tui.CREATE_DECK_OPTION,
-        tui.ADD_CARD_OPTION,
-        tui.REMOVE_CARD_OPTION,
-        tui.REVIEW_CARDS_OPTION,
-        tui.REVIEW_HISTORY_OPTION,
-        tui.SELECT_LLM_PROFILE_OPTION,
-        tui.SOURCE_PEDAGOGICAL_OPTION,
-        tui.EXISTING_SOURCE_OPTION,
-        tui.SOURCE_LEARNING_OPTION,
-    ]
-    assert calls == [(user.uuid, source.uuid)]
-
-
-def test_existing_source_pedagogical_stage_receives_selected_user(monkeypatch):
-    user = _install_single_user(monkeypatch)
-    source = Source(uuid='source-1', key='book.pdf')
-    prompts = iter(
-        [
-            _Prompt(tui.SOURCE_PEDAGOGICAL_OPTION),
-            _Prompt(source),
-            _Prompt(True),
-        ]
-    )
-    choices = []
-    calls = []
-
-    async def list_sources(settings, user_uuid):
-        assert user_uuid == user.uuid
-        return [source]
-
-    async def run_pedagogical(settings, user_uuid, source_uuid):
-        calls.append((user_uuid, source_uuid))
-        return SimpleNamespace(
-            split_page_count=1,
-            instruction_count=1,
-            exercise_component_count=1,
-            pedagogical_component_count=0,
-            statement_count=1,
-            procedure_count=0,
-            reembedded_block_count=0,
-        )
-
-    monkeypatch.setattr(tui, 'list_sources', list_sources)
-    monkeypatch.setattr(tui, 'run_source_pedagogical_stage', run_pedagogical)
-    monkeypatch.setattr(
-        tui,
-        'inquirer',
-        SimpleNamespace(
-            select=lambda **kwargs: _record_select(choices, prompts, kwargs),
-            confirm=lambda **kwargs: next(prompts),
-        ),
-    )
-
-    tui._run_tui()
-
-    assert calls == [(user.uuid, source.uuid)]
-    assert choices[0]['choices'][7:10] == [
-        tui.SOURCE_PEDAGOGICAL_OPTION,
-        tui.EXISTING_SOURCE_OPTION,
-        tui.SOURCE_LEARNING_OPTION,
-    ]
-
-
 def test_tui_offers_explicit_adoption_only_for_unowned_sources(monkeypatch):
     user = _install_single_user(monkeypatch)
     source = Source(uuid='legacy-1', key='legacy.pdf')
@@ -367,16 +235,12 @@ def test_tui_offers_explicit_adoption_only_for_unowned_sources(monkeypatch):
     prompts = iter([_Prompt(tui.ADOPT_SOURCE_OPTION), _Prompt(source)])
     adopted = []
 
-    async def list_sources(settings, user_uuid):
-        return []
-
     async def list_unowned_sources(settings):
         return [source]
 
     async def adopt(settings, user_uuid, source_uuid):
         adopted.append((user_uuid, source_uuid))
 
-    monkeypatch.setattr(tui, 'list_sources', list_sources)
     monkeypatch.setattr(tui, 'list_unowned_sources', list_unowned_sources)
     monkeypatch.setattr(tui, 'adopt_source', adopt)
     monkeypatch.setattr(
@@ -390,17 +254,39 @@ def test_tui_offers_explicit_adoption_only_for_unowned_sources(monkeypatch):
 
     tui._run_tui()
 
-    assert actions[0]['choices'] == [
-        tui.NEW_SOURCE_OPTION,
-        tui.CREATE_DECK_OPTION,
-        tui.ADD_CARD_OPTION,
-        tui.REMOVE_CARD_OPTION,
-        tui.REVIEW_CARDS_OPTION,
-        tui.REVIEW_HISTORY_OPTION,
-        tui.SELECT_LLM_PROFILE_OPTION,
-        tui.ADOPT_SOURCE_OPTION,
-    ]
     assert adopted == [(user.uuid, source.uuid)]
+
+
+@pytest.mark.parametrize('has_results', [True, False])
+def test_tui_discovery_displays_links_without_ingestion(
+    monkeypatch, caplog, has_results
+):
+    _install_single_user(monkeypatch)
+    candidate = SimpleNamespace(
+        title='Useful', url='https://example.com', snippet='Summary'
+    )
+    questions = []
+
+    async def discover(settings, question):
+        questions.append(question)
+        return [candidate] if has_results else []
+
+    monkeypatch.setattr(tui, 'discover_sources', discover)
+    monkeypatch.setattr(
+        tui,
+        'inquirer',
+        SimpleNamespace(
+            select=lambda **kwargs: _Prompt(tui.DISCOVERY_OPTION),
+            text=lambda **kwargs: _Prompt('question'),
+        ),
+    )
+    with caplog.at_level(logging.INFO):
+        tui._run_tui(Settings(_env_file=None))
+    assert questions == ['question']
+    if has_results:
+        assert 'Useful\nhttps://example.com\nSummary' in caplog.messages
+    else:
+        assert 'No sources selected.' in caplog.messages
 
 
 def test_pdf_directory_is_created_under_working_directory(
@@ -436,63 +322,3 @@ def test_run_async_cancels_pipeline_on_sigint():
 
     with pytest.raises(asyncio.CancelledError):
         tui._run_async(pipeline())
-
-
-def test_review_due_cards_sends_selected_rating_and_utc_time(monkeypatch):
-    settings = Settings()
-    user = User(uuid='user-1', name='Alex')
-    deck = Deck(uuid='deck-1', name='Default')
-    card = DueDeckCard(
-        card_uuid='card-1',
-        question='Question',
-        answer='Answer',
-        due_at=datetime.now(UTC),
-    )
-    review_calls = []
-
-    async def due_cards(settings, user_uuid, deck_uuid, now):
-        assert user_uuid == user.uuid
-        assert deck_uuid == deck.uuid
-        assert now.tzinfo is not None
-        return [card]
-
-    async def record_review(
-        settings,
-        user_uuid,
-        deck_uuid,
-        card_uuid,
-        rating,
-        review_datetime,
-        review_duration=None,
-    ):
-        review_calls.append(
-            (
-                user_uuid,
-                deck_uuid,
-                card_uuid,
-                rating,
-                review_datetime,
-                review_duration,
-            )
-        )
-
-    monkeypatch.setattr(tui, '_select_deck', lambda *args: deck)
-    monkeypatch.setattr(tui, 'list_due_deck_cards', due_cards)
-    monkeypatch.setattr(tui, 'review_card', record_review)
-    monkeypatch.setattr(
-        tui,
-        'inquirer',
-        SimpleNamespace(
-            select=lambda **kwargs: _Prompt(ReviewRating.GOOD),
-        ),
-    )
-
-    tui._review_due_cards(settings, user)
-
-    assert review_calls[0][0:4] == (
-        user.uuid,
-        deck.uuid,
-        card.card_uuid,
-        ReviewRating.GOOD,
-    )
-    assert review_calls[0][4].utcoffset().total_seconds() == 0

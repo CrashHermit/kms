@@ -1,4 +1,3 @@
-import asyncio
 import base64
 import hashlib
 import json
@@ -10,7 +9,7 @@ import dspy
 from PIL import Image
 from pydantic import BaseModel
 
-from kms.train.recorder import Recorder, RecordingModule
+from kms.train.recorder import Recorder
 
 
 class _Request(BaseModel):
@@ -140,42 +139,3 @@ def test_recorder_stores_images_as_run_sidecars(
     assert record['outputs']['result'] == reference
     assert (run_directory / reference).read_bytes() == data
     assert len(list((run_directory / 'images').iterdir())) == 1
-
-
-def test_recording_module_preserves_sync_prediction(tmp_path: Path) -> None:
-    module = RecordingModule(
-        _Module(),
-        _Module,
-        _Signature,
-        Recorder(tmp_path),
-    )
-
-    prediction = module(
-        requests=[_Request(index=1, text='claim')],
-    )
-
-    assert prediction.decisions == [True]
-    [path] = _recording_files(tmp_path)
-    record = json.loads(path.read_text(encoding='utf-8'))
-    assert record['outputs']['decisions'] == [True]
-
-
-def test_recording_module_preserves_async_prediction(tmp_path: Path) -> None:
-    module = RecordingModule(
-        _Module(),
-        _Module,
-        _Signature,
-        Recorder(tmp_path),
-    )
-
-    async def run() -> dspy.Prediction:
-        return await module.acall(
-            requests=[_Request(index=0, text='claim')],
-        )
-
-    prediction = asyncio.run(run())
-
-    assert prediction.decisions == [False]
-    [path] = _recording_files(tmp_path)
-    record = json.loads(path.read_text(encoding='utf-8'))
-    assert record['outputs']['decisions'] == [False]

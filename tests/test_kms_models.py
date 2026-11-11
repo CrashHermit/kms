@@ -1,25 +1,17 @@
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from pydantic import ValidationError
 
-from kms.core.model.base import (
-    Edge,
-    Vertex,
-)
-from kms.core.model.block import SourceBlock
-from kms.core.model.page import SourcePage
-from kms.core.model.source import Source
-from kms.core.model.source_pedagogical.instruction import Instruction
-from kms.core.model.source_pedagogical.pedagogical import (
+from kms.core.models import Edge, Vertex
+from kms.source.models.material import (
+    Instruction,
     ProcedureDraft,
     StatementDraft,
 )
-from kms.core.model.source_processing.ocr import (
-    OCRArtifact,
-    OCRImageArtifact,
-)
-from kms.core.model.visual_asset import VisualAsset
+from kms.source.models.source import Source, SourceBlock, SourcePage
+from kms.source.processing.ocr_models import OCRArtifact
 
 
 def test_vertex_generates_uuid4_and_rejects_extra_fields():
@@ -32,21 +24,46 @@ def test_vertex_generates_uuid4_and_rejects_extra_fields():
         Vertex(label='unexpected')
 
 
-def test_edge_contains_directed_vertex_references():
-    edge = Edge(
-        uuid='edge-1',
-        source_uuid='source-1',
-        destination_uuid='destination-1',
+def test_vertex_creation_time_is_utc_and_preserved():
+    before = datetime.now(UTC)
+    vertex = Vertex()
+    after = datetime.now(UTC)
+    assert before <= vertex.created_at <= after
+    assert vertex.created_at.tzinfo == UTC
+    assert vertex.updated_at == vertex.created_at
+    assert vertex.invalidated_at is None
+    assert Vertex.model_validate_json(vertex.model_dump_json()) == vertex
+
+
+def test_edge_creation_time_is_utc_and_preserved():
+    before = datetime.now(UTC)
+    edge = Edge()
+    after = datetime.now(UTC)
+    assert before <= edge.created_at <= after
+    assert edge.created_at.tzinfo == UTC
+    assert edge.updated_at == edge.created_at
+    assert edge.invalidated_at is None
+    assert Edge.model_validate_json(edge.model_dump_json()) == edge
+
+
+@pytest.mark.parametrize('model', [Vertex, Edge])
+def test_lifecycle_defaults_follow_explicit_creation_time(model):
+    created_at = datetime(2020, 2, 3, 4, 5, tzinfo=UTC)
+    instance = model(created_at=created_at)
+    assert instance.updated_at == created_at
+    assert instance.invalidated_at is None
+
+    updated_at = datetime(2021, 2, 3, 4, 5, tzinfo=UTC)
+    invalidated_at = datetime(2022, 2, 3, 4, 5, tzinfo=UTC)
+    explicit = model(
+        created_at=created_at,
+        updated_at=updated_at,
+        invalidated_at=invalidated_at,
     )
-
-    assert edge.model_dump() == {
-        'uuid': 'edge-1',
-        'source_uuid': 'source-1',
-        'destination_uuid': 'destination-1',
-    }
+    assert model.model_validate_json(explicit.model_dump_json()) == explicit
 
 
-def test_source_content_is_a_vertex_with_default_assets():
+def test_source_content_is_a_vertex_with_default_image_fields():
     content = SourceBlock(
         uuid='source-1',
         block_type='paragraph',
@@ -55,24 +72,43 @@ def test_source_content_is_a_vertex_with_default_assets():
     assert isinstance(content, Vertex)
     assert content.content is None
     assert content.embedding is None
-    assert content.assets == []
+    assert content.image_path is None
+    assert content.image_sha256 is None
+    assert content.image_page_indexes == []
 
 
-def test_source_content_accepts_text_embedding_and_visual_assets():
-    asset = VisualAsset(path='images/block.png')
+def test_source_content_accepts_text_embedding_and_direct_image_provenance():
     content = SourceBlock(
         uuid='source-1',
-        block_type='paragraph',
+        block_type='image',
         content='canonical source text',
         embedding=[0.25, -0.5],
-        assets=[asset],
+        image_path='images/block.png',
+        image_page_indexes=[2, 3],
     )
 
-    assert isinstance(asset, Vertex)
-    assert uuid.UUID(asset.uuid).version == 4
     assert content.content == 'canonical source text'
     assert content.embedding == [0.25, -0.5]
-    assert content.assets == [asset]
+    assert content.image_path == 'images/block.png'
+    assert content.image_page_indexes == [2, 3]
+
+
+def test_source_image_requires_page_provenance_and_non_images_cannot_own_it():
+    with pytest.raises(ValidationError):
+        SourceBlock(uuid='missing-image', block_type='image')
+    with pytest.raises(ValidationError):
+        SourceBlock(
+            uuid='missing-pages',
+            block_type='image',
+            image_path='images/block.png',
+        )
+    with pytest.raises(ValidationError):
+        SourceBlock(
+            uuid='text-with-image',
+            block_type='paragraph',
+            image_path='images/block.png',
+            image_page_indexes=[0],
+        )
 
 
 def test_source_page_contains_ordered_source_blocks():
@@ -98,25 +134,21 @@ def test_source_is_the_ingestion_root_vertex():
     assert isinstance(source, Vertex)
     assert source.model_dump() == {
         'uuid': 'source-1',
+        'created_at': source.created_at,
+        'updated_at': source.updated_at,
+        'invalidated_at': None,
         'key': 'calculus-book',
         'metadata': {'title': 'Calculus'},
         'revision': 0,
     }
 
 
-def test_ocr_artifact_contains_content_and_visual_artifacts():
+def test_ocr_artifact_contains_text_and_correction_crop_provenance():
     artifact = OCRArtifact(
         page_index=2,
         block_index=4,
         block_type='paragraph',
         content='The value is x².',
-        images=[
-            OCRImageArtifact(
-                path='Documents/Document_0002/Images/Image_000.png',
-                image_id='image-1',
-                bbox=(1.0, 2.0, 30.0, 40.0),
-            )
-        ],
         crop_path='Documents/Document_0002/Blocks/Block_0004.png',
         crop_bbox=(3, 4, 50, 60),
     )
@@ -126,28 +158,22 @@ def test_ocr_artifact_contains_content_and_visual_artifacts():
         'block_index': 4,
         'block_type': 'paragraph',
         'content': 'The value is x².',
-        'images': [
-            {
-                'path': 'Documents/Document_0002/Images/Image_000.png',
-                'image_id': 'image-1',
-                'bbox': (1.0, 2.0, 30.0, 40.0),
-            }
-        ],
         'crop_path': 'Documents/Document_0002/Blocks/Block_0004.png',
         'crop_bbox': (3, 4, 50, 60),
     }
 
 
-def test_ocr_artifact_supports_image_only_blocks():
+def test_ocr_image_block_keeps_crop_provenance_without_fragment_assets():
     artifact = OCRArtifact(
         page_index=0,
         block_index=0,
         block_type='image',
-        images=[OCRImageArtifact(path='Images/Image_000.png')],
+        crop_path='Blocks/ImageBlock.png',
+        crop_bbox=(1, 2, 30, 40),
     )
 
     assert artifact.content is None
-    assert artifact.images[0].path == 'Images/Image_000.png'
+    assert artifact.crop_path == 'Blocks/ImageBlock.png'
 
 
 def test_pointer_models_preserve_ordered_uuid_lists_and_defaults():

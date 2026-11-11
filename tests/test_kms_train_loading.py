@@ -7,14 +7,14 @@ import dspy
 from PIL import Image
 from pydantic import BaseModel
 
-from kms.core.model.content import MultimodalContent
+from kms.media.models import ImageAsset, ImagePart, Material, TextPart
 from kms.train.loading import load_datasets
 from kms.train.recorder import Recorder
 
 
 class _Request(BaseModel):
     index: int
-    material: MultimodalContent
+    material: Material
 
 
 class _Decision(BaseModel):
@@ -48,6 +48,7 @@ def test_loader_reconstructs_typed_examples_and_run_relative_images(
     Image.new('RGB', (2, 2), 'red').save(stream, format='PNG')
     data = stream.getvalue()
     digest = hashlib.sha256(data).hexdigest()
+    asset = ImageAsset(('figure', digest), data)
     recorder = Recorder(tmp_path / 'recordings')
     recorder.record(
         _LoaderModule,
@@ -56,12 +57,16 @@ def test_loader_reconstructs_typed_examples_and_run_relative_images(
             'requests': [
                 _Request(
                     index=1,
-                    material=MultimodalContent(
-                        text='claim', image_positions=[0]
+                    material=Material(
+                        parts=(
+                            TextPart(text='claim'),
+                            ImagePart(asset=asset),
+                            TextPart(text='after'),
+                            ImagePart(asset=asset),
+                        )
                     ),
                 )
             ],
-            'content_images': [dspy.Image(url=_data_url(data))],
         },
         dspy.Prediction(
             decisions=[_Decision(accepted=True)],
@@ -78,18 +83,24 @@ def test_loader_reconstructs_typed_examples_and_run_relative_images(
         f'{_LoaderModule.__module__}.{_LoaderModule.__qualname__}'
     )
     assert dataset.signature is _LoaderSignature
-    assert set(example.inputs()) == {'requests', 'content_images'}
+    assert set(example.inputs()) == {'requests'}
+    sidecar = run_directory / f'images/{digest}.png'
+    restored_asset = ImageAsset(('figure', digest), sidecar)
     assert example.requests == [
         _Request(
             index=1,
-            material=MultimodalContent(text='claim', image_positions=[0]),
+            material=Material(
+                parts=(
+                    TextPart(text='claim'),
+                    ImagePart(asset=restored_asset),
+                    TextPart(text='after'),
+                    ImagePart(asset=restored_asset),
+                )
+            ),
         )
     ]
-    assert isinstance(example.content_images[0], dspy.Image)
-    sidecar = run_directory / f'images/{digest}.png'
     assert sidecar.read_bytes() == data
-    assert example.content_images[0].url == _data_url(data)
-    assert sidecar.is_file()
+    assert len(list((run_directory / 'images').iterdir())) == 1
     assert isinstance(example.preview, dspy.Image)
     assert example.preview.url == _data_url(data)
     assert example.decisions == [_Decision(accepted=True)]

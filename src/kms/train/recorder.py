@@ -12,6 +12,10 @@ import dspy
 from pydantic import BaseModel
 from pydantic_core import to_jsonable_python
 
+from kms.concurrency import run_blocking_work
+from kms.media.images import load_content_images_sync
+from kms.media.models import ImageAsset
+
 
 def _qualified_name(value: type[object]) -> str:
     """Return the import-qualified name for a class."""
@@ -22,8 +26,17 @@ def _serialize(value: object, images_directory: Path) -> object:
     """Convert a prediction value into JSON data and image sidecars."""
     if isinstance(value, dspy.Image):
         return _serialize_image(value, images_directory)
+    if isinstance(value, ImageAsset):
+        reference = _write_image(
+            load_content_images_sync([value], budget=None)[0], images_directory
+        )
+        return {'key': list(value.key), 'payload': {'$image': reference}}
     if isinstance(value, BaseModel):
-        return _serialize(value.model_dump(mode='python'), images_directory)
+        return {
+            name: _serialize(getattr(value, name), images_directory)
+            for name, field in type(value).model_fields.items()
+            if not field.exclude
+        }
     if isinstance(value, Mapping):
         return {
             key: _serialize(item, images_directory)
@@ -41,7 +54,11 @@ def _serialize_image(image: dspy.Image, images_directory: Path) -> str:
         data = base64.b64decode(encoded)
     else:
         data = Path(image.url).read_bytes()
+    return _write_image(data, images_directory)
 
+
+def _write_image(data: bytes, images_directory: Path) -> str:
+    """Store exact native bytes once and return their run-relative reference."""
     digest = hashlib.sha256(data).hexdigest()
     path = images_directory / f'{digest}.png'
     if not path.exists():
@@ -69,7 +86,11 @@ class Recorder:
         record = {
             'signature': _qualified_name(signature),
             'inputs': _serialize(
-                {name: inputs[name] for name in signature.input_fields},
+                {
+                    name: value
+                    for name, value in inputs.items()
+                    if name in signature.input_fields
+                },
                 self._run_directory / 'images',
             ),
             'outputs': _serialize(
@@ -115,5 +136,11 @@ class RecordingModule(dspy.Module):
     ) -> dspy.Prediction:
         """Run and record one asynchronous module call."""
         prediction = await self.predictor.acall(**inputs)
-        self.recorder.record(self.module, self.signature, inputs, prediction)
+        await run_blocking_work(
+            self.recorder.record,
+            self.module,
+            self.signature,
+            inputs,
+            prediction,
+        )
         return prediction

@@ -11,13 +11,9 @@ from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from kms.config.services import OCRSettings
-from kms.core.model.block_types import BlockType
-from kms.core.model.source_processing.ocr import (
-    OCRArtifact,
-    OCRImageArtifact,
-    OCRPageArtifact,
-)
 from kms.ocr.pdfium import PDFIUM_LOCK
+from kms.source.models.source import BlockType
+from kms.source.processing.ocr_models import OCRArtifact, OCRPageArtifact
 
 _TIMEOUT = httpx.Timeout(300.0, connect=30.0)
 
@@ -208,35 +204,6 @@ def ocr_pdf(
     return _request_ocr(request, settings)
 
 
-def _normalized_bbox(
-    image: OCRImage, page: OCRPage
-) -> tuple[float, float, float, float]:
-    """Normalize an image's page-space box to source-page fractions."""
-    left, top, right, bottom = image.bbox
-    width = page.dimensions.width
-    height = page.dimensions.height
-    return left / width, top / height, right / width, bottom / height
-
-
-def _overlaps(
-    first: tuple[float, float, float, float],
-    second: tuple[float, float, float, float],
-) -> bool:
-    """Return whether two page-space boxes have positive-area overlap."""
-    first_left, first_top, first_right, first_bottom = first
-    second_left, second_top, second_right, second_bottom = second
-    return max(first_left, second_left) < min(
-        first_right, second_right
-    ) and max(first_top, second_top) < min(first_bottom, second_bottom)
-
-
-def _write_image(data: str, path: Path) -> None:
-    """Decode one embedded OCR image and write it to ``path``."""
-    if data.startswith('data:'):
-        data = data.split(',', 1)[1]
-    path.write_bytes(base64.b64decode(data, validate=True))
-
-
 def _render_page(
     pdf: Any, page_index: int, path: Path, scale: float, pdf_path: Path
 ) -> tuple[int, int]:
@@ -314,7 +281,7 @@ def _materialize_page(
     pdf_path: Path,
     rendered_page: bytes | None = None,
 ) -> OCRPageArtifact:
-    """Materialize block and image crops from one OCR page."""
+    """Materialize rendered pages and canonical block crops."""
     page_path = document_dir / 'Document.png'
     if rendered_page is None:
         image_size = _render_page(
@@ -325,28 +292,11 @@ def _materialize_page(
         page_path.write_bytes(rendered_page)
         with Image.open(page_path) as rendered:
             image_size = rendered.size
-    materialized_images: list[tuple[OCRImage, Path]] = []
-    images_dir = document_dir / 'Images'
-    images_dir.mkdir(parents=True, exist_ok=True)
-    for image_index, image in enumerate(page.images):
-        image_path = images_dir / f'Image_{image_index:03d}.png'
-        _write_image(image.image_base64, image_path)
-        materialized_images.append((image, image_path))
-
     artifacts: list[OCRArtifact] = []
     with Image.open(page_path) as opened:
         page_image = opened.convert('RGB')
         for block_index, block in enumerate(page.blocks):
             block_bbox = _block_bbox(block, page, image_size)
-            attached_images = [
-                OCRImageArtifact(
-                    path=str(image_path),
-                    image_id=image.id,
-                    bbox=_normalized_bbox(image, page),
-                )
-                for image, image_path in materialized_images
-                if _overlaps(block.bbox, image.bbox)
-            ]
             path = document_dir / 'Blocks' / f'Block_{block_index:04d}.png'
             path.parent.mkdir(parents=True, exist_ok=True)
             crop = page_image.crop(block_bbox)
@@ -365,7 +315,6 @@ def _materialize_page(
                     block_index=block_index,
                     block_type=_block_type(block.type),
                     content=block.content,
-                    images=attached_images,
                     crop_path=str(path),
                     crop_bbox=block_bbox,
                 )

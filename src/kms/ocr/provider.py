@@ -2,39 +2,50 @@
 
 from pathlib import Path
 from typing import Protocol
+from uuid import UUID, uuid5
 
-from kms.core.model.block import SourceBlock
-from kms.core.model.page import SourcePage
-from kms.core.model.source_processing.ocr import OCRPageArtifact
-from kms.core.model.visual_asset import VisualAsset
+from kms.source.models.source import BlockType, SourceBlock, SourcePage
+from kms.source.processing.ocr_models import OCRPageArtifact
 
 
 def source_pages_from_ocr(
-    artifacts: list[OCRPageArtifact],
+    artifacts: list[OCRPageArtifact], *, source_uuid: str
 ) -> list[SourcePage]:
     """Map provider artifacts to canonical source pages."""
-    return [
-        SourcePage(
-            index=page.page_index,
-            markdown=page.markdown,
-            blocks=[
+    namespace = UUID(source_uuid)
+    pages: list[SourcePage] = []
+    for page_ordinal, page in enumerate(artifacts):
+        blocks: list[SourceBlock] = []
+        for block_ordinal, artifact in enumerate(
+            sorted(page.blocks, key=lambda item: item.block_index)
+        ):
+            is_image = artifact.block_type is BlockType.IMAGE
+            blocks.append(
                 SourceBlock(
+                    uuid=str(
+                        uuid5(
+                            namespace,
+                            f'ocr:block:{page_ordinal}:{block_ordinal}',
+                        )
+                    ),
                     block_type=artifact.block_type,
                     content=artifact.content,
                     crop_path=artifact.crop_path,
                     crop_bbox=artifact.crop_bbox,
-                    assets=[
-                        VisualAsset(path=image.path)
-                        for image in artifact.images
-                    ],
+                    image_path=artifact.crop_path if is_image else None,
+                    image_page_indexes=[artifact.page_index]
+                    if is_image
+                    else [],
                 )
-                for artifact in sorted(
-                    page.blocks, key=lambda item: item.block_index
-                )
-            ],
+            )
+        pages.append(
+            SourcePage(
+                index=page.page_index,
+                markdown=page.markdown,
+                blocks=blocks,
+            )
         )
-        for page in artifacts
-    ]
+    return pages
 
 
 class OCRProvider(Protocol):

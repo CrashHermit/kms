@@ -1,3 +1,0 @@
-[models.pipeline]
-base_url = "from-toml"
-model = "from-toml-model"

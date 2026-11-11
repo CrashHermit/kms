@@ -87,9 +87,21 @@ def _to_example(
         )
         for name, value in raw_outputs.items()
     }
-    return dspy.Example(**inputs, **outputs).with_inputs(
-        *signature.input_fields
-    )
+    return dspy.Example(**inputs, **outputs).with_inputs(*inputs)
+
+
+def _restore_asset_payloads(value: object, run_directory: Path) -> object:
+    """Resolve native asset sidecars without putting file paths in recordings."""
+    if isinstance(value, dict):
+        if set(value) == {'$image'}:
+            return run_directory / value['$image']
+        return {
+            key: _restore_asset_payloads(item, run_directory)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_restore_asset_payloads(item, run_directory) for item in value]
+    return value
 
 
 def _hydrate(value: object, annotation: object, run_directory: Path) -> object:
@@ -104,4 +116,6 @@ def _hydrate(value: object, annotation: object, run_directory: Path) -> object:
             dspy.Image.from_path(str(run_directory / item)) for item in value
         ]
 
-    return TypeAdapter(annotation).validate_python(value)
+    return TypeAdapter(annotation).validate_python(
+        _restore_asset_payloads(value, run_directory)
+    )

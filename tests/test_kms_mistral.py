@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from kms.config.services import OCRSettings
 from kms.ocr import mistral
+from kms.ocr.provider import source_pages_from_ocr
 
 
 class _Response:
@@ -353,25 +354,19 @@ def test_mistral_provider_materializes_ordered_artifacts(monkeypatch, tmp_path):
     assert artifacts[0].blocks[0].crop_bbox == (2, 12, 58, 108)
     assert artifacts[0].blocks[1].crop_bbox == (52, 112, 98, 188)
     assert artifacts[1].blocks[0].crop_bbox == (2, 12, 58, 108)
-    assert [image.image_id for image in artifacts[0].blocks[0].images] == [
-        'image-1'
-    ]
-    assert [image.image_id for image in artifacts[0].blocks[1].images] == [
-        'image-2'
-    ]
-    assert artifacts[1].blocks[0].images == []
-    assert artifacts[0].blocks[0].images[0].bbox == (0.2, 0.15, 0.4, 0.3)
-    assert (
-        Path(artifacts[0].blocks[0].images[0].path).read_bytes()
-        == b'first-image'
+    assert all(
+        not hasattr(block, 'images')
+        for page in artifacts
+        for block in page.blocks
     )
-    assert (
-        Path(artifacts[0].blocks[1].images[0].path).read_bytes()
-        == b'second-image'
-    )
+    assert not (
+        tmp_path / 'output' / 'Documents' / 'Document_0002' / 'Images'
+    ).exists()
 
 
-def test_ocr_runs_preserve_prior_images_and_crops(monkeypatch, tmp_path):
+def test_ocr_runs_preserve_crop_artifacts_without_fragment_files(
+    monkeypatch, tmp_path
+):
     settings = _configure_materialization(monkeypatch, tmp_path)
     pdf_path = tmp_path / 'book.pdf'
     pdf_path.write_bytes(b'%PDF')
@@ -396,16 +391,57 @@ def test_ocr_runs_preserve_prior_images_and_crops(monkeypatch, tmp_path):
         for source_uuid in ('source-1', 'source-2', 'source-1')
     ]
 
-    assert [Path(block.images[0].path).read_bytes() for block in blocks] == [
-        b'first image',
-        b'second image',
-        b'reprocessed image',
-    ]
+    crop_paths = [Path(block.crop_path) for block in blocks]
+    assert len(set(crop_paths)) == 3
+    assert all(path.is_file() for path in crop_paths)
+    assert not list((tmp_path / 'output').rglob('Images'))
     for block, expected in zip(
         blocks, [(255, 0, 0), (0, 128, 0), (0, 0, 255)], strict=True
     ):
         with Image.open(block.crop_path) as crop:
             assert crop.getpixel((0, 0)) == expected
+
+
+@pytest.mark.parametrize('fragment_count', [0, 1, 3])
+def test_image_ocr_block_uses_one_rendered_block_crop(
+    monkeypatch, tmp_path, fragment_count
+):
+    settings = _configure_materialization(monkeypatch, tmp_path)
+    pdf_path = tmp_path / 'book.pdf'
+    pdf_path.write_bytes(b'%PDF')
+    response = mistral.OCRResponse.from_raw(
+        {
+            'pages': [
+                _page_payload(
+                    index=2,
+                    blocks=[_block_payload('diagram', type='image')],
+                    images=[
+                        _image_payload('not-base64', id=f'image-{index}')
+                        for index in range(fragment_count)
+                    ],
+                )
+            ]
+        }
+    )
+    monkeypatch.setattr(mistral, 'ocr_pdf', lambda *args, **kwargs: response)
+
+    artifacts = mistral.MistralOCRProvider(settings).extract(
+        pdf_path, source_uuid='source-run'
+    )
+    pages = source_pages_from_ocr(
+        artifacts, source_uuid='00000000-0000-0000-0000-000000000001'
+    )
+    image_block = pages[0].blocks[0]
+    repeated = source_pages_from_ocr(
+        artifacts, source_uuid='00000000-0000-0000-0000-000000000001'
+    )
+
+    assert image_block.image_path == artifacts[0].blocks[0].crop_path
+    assert image_block.image_page_indexes == [2]
+    assert image_block.crop_bbox == artifacts[0].blocks[0].crop_bbox
+    assert Path(image_block.image_path).is_file()
+    assert not list((tmp_path / 'output').rglob('Images'))
+    assert image_block.uuid == repeated[0].blocks[0].uuid
 
 
 @pytest.mark.parametrize(

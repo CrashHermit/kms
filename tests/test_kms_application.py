@@ -1,26 +1,14 @@
 import asyncio
 from contextlib import asynccontextmanager
-from copy import deepcopy
 from types import SimpleNamespace
 
 import pytest
 
 from kms import application
+from kms.config.llm import LocalLLMProfile
 from kms.config.settings import Settings
 from kms.core.embedding import EmbeddingModel
-from kms.core.model.source import Source
-from kms.core.model.teaching.session import (
-    TeachingSessionSnapshot,
-    TeachingStatus,
-    TeachingTurnCommit,
-    TeachingTurnRecord,
-)
-from kms.core.model.user import Deck
-from kms.langgraph.source_learning.state import SourceLearningState
-from kms.langgraph.source_pedagogical.state import SourcePedagogicalState
-from kms.langgraph.source_processing.state import SourceProcessingState
-from kms.langgraph.source_semantic.state import SourceSemanticState
-from kms.service.teaching import TeachingService
+from kms.source.models.source import Source
 
 
 class _Runtime:
@@ -45,17 +33,11 @@ _EMBEDDINGS = SimpleNamespace(
     ),
     budget=object(),
 )
-_RERANKING = SimpleNamespace(reranker=object(), budget=object())
 
 
 @asynccontextmanager
 async def _embedding_resources(settings):
     yield _EMBEDDINGS
-
-
-@asynccontextmanager
-async def _reranking_resources(settings):
-    yield _RERANKING
 
 
 def test_application_chatgpt_login_delegates_to_provider(monkeypatch):
@@ -73,9 +55,19 @@ def test_application_chatgpt_login_delegates_to_provider(monkeypatch):
 def test_chatgpt_preflight_resolves_only_relevant_stage_settings(
     monkeypatch,
 ):
-    settings = Settings(llm={'default_text_profile': 'qwen3.8-9b-distill-text'})
-    settings.source_semantic.source_entity_extraction.profile = 'chatgpt-luna'
-    settings.source_pedagogical.statement_procedure.role_typer.profile = (
+    settings = Settings(
+        _env_file=None, llm={'default_text_profile': 'qwen3.8-9b-distill-text'}
+    )
+    for stage in (
+        settings.source_processing.content_correction,
+        settings.source_processing.image_seam,
+        settings.source_processing.image_filter,
+    ):
+        stage.inference.profile = 'gemma-vision-8k'
+    settings.source_processing.formatting.inference.profile = (
+        'qwen3.8-9b-distill-text'
+    )
+    settings.source_processing.statement_procedure.role_typer.profile = (
         'chatgpt-luna'
     )
     calls = []
@@ -90,19 +82,29 @@ def test_chatgpt_preflight_resolves_only_relevant_stage_settings(
     )
 
     asyncio.run(
-        application._preflight_chatgpt(settings, settings.source_semantic)
+        application._preflight_chatgpt(
+            settings, settings.source_processing.statement_procedure
+        )
     )
     assert calls == ['preflight']
 
     calls.clear()
     asyncio.run(
-        application._preflight_chatgpt(settings, settings.source_learning)
+        application._preflight_chatgpt(
+            settings, settings.source_processing.formatting
+        )
     )
     assert calls == []
 
 
 def test_chatgpt_preflight_skips_local_stage(monkeypatch):
-    settings = Settings(llm={'default_text_profile': 'qwen3.8-9b-distill-text'})
+    settings = Settings(
+        _env_file=None, llm={'default_text_profile': 'qwen3.8-9b-distill-text'}
+    )
+    # The named vision profile and application text default both run locally.
+    settings.llm.profiles['chatgpt-luna'] = LocalLLMProfile(
+        model_server_profile='gemma-vision-8k'
+    )
     calls = []
 
     async def ensure_authenticated():
@@ -115,39 +117,9 @@ def test_chatgpt_preflight_skips_local_stage(monkeypatch):
     )
 
     asyncio.run(
-        application._preflight_chatgpt(settings, settings.source_semantic)
+        application._preflight_chatgpt(settings, settings.source_processing)
     )
     assert calls == []
-
-
-def test_chatgpt_auth_failure_stops_before_semantic_graph_build(
-    monkeypatch,
-):
-    settings = Settings()
-    settings.source_semantic.source_entity_extraction.profile = 'chatgpt-luna'
-
-    async def fail_authentication():
-        raise RuntimeError('ChatGPT auth unavailable')
-
-    monkeypatch.setattr(
-        application,
-        'ensure_chatgpt_authenticated',
-        fail_authentication,
-    )
-    monkeypatch.setattr(
-        application,
-        'build_source_semantic_graph',
-        lambda *args, **kwargs: pytest.fail('graph must not start'),
-    )
-
-    with pytest.raises(RuntimeError, match='auth unavailable'):
-        asyncio.run(
-            application._run_source_semantic_stage(
-                settings,
-                None,
-                'source-1',
-            )
-        )
 
 
 class _Database:
@@ -184,105 +156,10 @@ class _SchemaSession:
         pass
 
 
-class _SourceProcessingGraph:
-    def __init__(self, fail=False):
-        self.initial_state = None
-        self.fail = fail
-
-    async def run(self, initial_state):
-        self.initial_state = initial_state
-        if self.fail:
-            raise RuntimeError('graph failed')
-        return SourceProcessingState.model_construct(
-            input=initial_state.input,
-            source=Source(uuid='result-source', key='book.pdf'),
-            ocr_pages=['ocr-1'],
-            corrected_pages=['corrected-1', 'corrected-2'],
-            formatted_pages=['formatted-1', 'formatted-2', 'formatted-3'],
-            text_seam_pages=['text-1'],
-            image_seam_pages=['image-1', 'image-2'],
-            image_filtered_pages=['filtered-image-1'],
-            image_described_pages=['described-1'],
-            embedded_pages=['embedded-1', 'embedded-2'],
-        )
-
-
-def test_source_processing_stage_result_counts_filtered_pages():
-    state = SourceProcessingState.model_construct(
-        source=Source(uuid='result-source', key='book.pdf'),
-        ocr_pages=[],
-        corrected_pages=[],
-        formatted_pages=[],
-        text_seam_pages=[],
-        image_seam_pages=['seam-1', 'seam-2'],
-        image_filtered_pages=['filtered-1'],
-        image_described_pages=[],
-        embedded_pages=[],
-    )
-
-    result = application._source_processing_stage_result(state)
-
-    assert result.image_seam_page_count == 2
-    assert result.image_filter_page_count == 1
-
-
-class _SourcePedagogicalGraph:
-    def __init__(self):
-        self.initial_state = None
-
-    async def run(self, initial_state):
-        self.initial_state = initial_state
-        return SourcePedagogicalState.model_construct(
-            source_uuid=initial_state.source_uuid,
-            split_pages=['page'],
-            instructions=['instruction', 'instruction'],
-            exercise_components=['exercise', 'exercise', 'exercise'],
-            pedagogical_components=['component'] * 4,
-            statements=['statement'] * 5,
-            procedures=['procedure'] * 6,
-            reembedded_block_count=7,
-        )
-
-
-class _ComposedGraph:
-    def __init__(self, graph):
-        self.graph = graph
-
-    async def run(self, initial_state):
-        return await self.graph.run(initial_state)
-
-
-class _UserService:
-    def __init__(self, database):
-        self.database = database
-
-    async def attach_new_source(self, user_uuid, source_uuid):
-        return None
-
-    async def list_sources(self, user_uuid):
-        return [Source(uuid='result-source', key='book.pdf')]
-
-    async def list_users(self):
-        return []
-
-    async def create_user(self, name):
-        return SimpleNamespace(name=name)
-
-    async def list_unowned_sources(self):
-        return []
-
-    async def adopt_source(self, user_uuid, source_uuid):
-        return None
-
-
 @pytest.fixture(autouse=True)
-def _use_fake_user_service(monkeypatch):
-    monkeypatch.setattr(application, 'build_user_service', _UserService)
+def _use_fake_resources(monkeypatch):
     monkeypatch.setattr(
         application, 'embedding_resources', _embedding_resources
-    )
-    monkeypatch.setattr(
-        application, 'reranking_resources', _reranking_resources
     )
 
 
@@ -298,13 +175,12 @@ def test_create_user_ensures_structural_schema_and_closes_database(
     async def ensure_structural_schema(session_factory):
         schema_calls.append(session_factory)
 
-    class _UserServiceSpy:
-        def __init__(self, database):
-            service_calls.append(('init', database))
+    class _UserRepositorySpy:
+        def __init__(self, session_factory):
+            service_calls.append(('init', session_factory))
 
-        async def create_user(self, name):
-            service_calls.append(('create', name))
-            return user
+        async def create_user(self, user):
+            service_calls.append(('create', user.name))
 
     monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
     monkeypatch.setattr(
@@ -312,429 +188,45 @@ def test_create_user_ensures_structural_schema_and_closes_database(
         'ensure_structural_schema',
         ensure_structural_schema,
     )
-    monkeypatch.setattr(application, 'build_user_service', _UserServiceSpy)
+    monkeypatch.setattr(application, 'UserRepository', _UserRepositorySpy)
 
-    assert asyncio.run(application.create_user(settings, 'Alex')) is user
+    created = asyncio.run(application.create_user(settings, 'Alex'))
+    assert created.name == user.name
     assert schema_calls == [database.session]
-    assert service_calls == [('init', database), ('create', 'Alex')]
+    assert service_calls == [('init', database.session), ('create', 'Alex')]
     assert database.closed is True
 
 
-def test_source_semantic_rejects_source_outside_user_before_runtime(
-    monkeypatch,
-):
-    settings = Settings()
-    database = _Database(settings.database)
-    runtime_calls = []
-
-    class _NoSources:
-        def __init__(self, database):
-            pass
-
-        async def list_sources(self, user_uuid):
-            assert user_uuid == 'user-1'
-            return []
-
-    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
-    monkeypatch.setattr(application, 'build_user_service', _NoSources)
-    monkeypatch.setattr(
-        application,
-        'LocalModelRuntime',
-        lambda _, **kwargs: runtime_calls.append(True),
-    )
-
-    with pytest.raises(ValueError, match='not owned by user'):
-        asyncio.run(
-            application.run_source_semantic_stage(
-                settings,
-                'user-1',
-                'source-foreign',
-            )
-        )
-
-    assert database.closed is True
-    assert runtime_calls == []
-
-
-def test_source_pedagogical_rejects_source_outside_user_before_runtime(
-    monkeypatch,
-):
-    settings = Settings()
-    database = _Database(settings.database)
-    runtime_calls = []
-
-    class _NoSources:
-        def __init__(self, database):
-            pass
-
-        async def list_sources(self, user_uuid):
-            assert user_uuid == 'user-1'
-            return []
-
-    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
-    monkeypatch.setattr(application, 'build_user_service', _NoSources)
-    monkeypatch.setattr(
-        application,
-        'LocalModelRuntime',
-        lambda _, **kwargs: runtime_calls.append(True),
-    )
-
-    with pytest.raises(ValueError, match='not owned by user'):
-        asyncio.run(
-            application.run_source_pedagogical_stage(
-                settings,
-                'user-1',
-                'source-foreign',
-            )
-        )
-
-    assert database.closed is True
-    assert runtime_calls == []
-
-
-def test_source_pedagogical_stage_runs_as_owned_standalone_stage(monkeypatch):
-    settings = Settings(_env_file=None)
-
-    async def ensure_authenticated():
-        return None
-
-    monkeypatch.setattr(
-        application, 'ensure_chatgpt_authenticated', ensure_authenticated
-    )
-    source = Source(uuid='source-1', key='book.pdf')
-    resources = SimpleNamespace(
-        local_models=object(),
-        embeddings=_EMBEDDINGS,
-        reranking=None,
-        tokenizers=object(),
-        database=object(),
-        recorder=None,
-    )
-    graph = _SourcePedagogicalGraph()
-
-    async def list_owned_sources(_settings, user_uuid):
-        assert user_uuid == 'user-1'
-        return [source]
-
-    monkeypatch.setattr(application, 'list_sources', list_owned_sources)
-
+def test_unknown_user_fails_before_provider_acquisition(monkeypatch):
     @asynccontextmanager
-    async def application_resources(
-        _settings,
-        *,
-        embeddings_required=True,
-        reranking_required=False,
-    ):
-        assert embeddings_required is True
-        assert reranking_required is False
-        yield resources
+    async def database_resources(settings):
+        yield SimpleNamespace(session=object())
 
-    monkeypatch.setattr(
-        application, '_application_resources', application_resources
-    )
-    monkeypatch.setattr(
-        application,
-        'build_source_pedagogical_graph',
-        lambda *args, **kwargs: _ComposedGraph(graph),
-    )
-
-    result = asyncio.run(
-        application.run_source_pedagogical_stage(
-            settings,
-            'user-1',
-            'source-1',
-        )
-    )
-
-    assert result == application.SourcePedagogicalStageResult(
-        split_page_count=1,
-        instruction_count=2,
-        exercise_component_count=3,
-        pedagogical_component_count=4,
-        statement_count=5,
-        procedure_count=6,
-        reembedded_block_count=7,
-    )
-    assert graph.initial_state.source_uuid == 'source-1'
-
-
-def test_source_learning_does_not_acquire_retrieval_resources(monkeypatch):
-    settings = Settings(_env_file=None)
-    database = _Database(settings.database)
-    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
-    monkeypatch.setattr(application, 'LocalModelRuntime', _Runtime)
-    monkeypatch.setattr(
-        application,
-        'LanguageModelTokenizers',
-        lambda settings: object(),
-    )
-
-    async def ensure_structural_schema(session_factory):
-        assert session_factory.__self__ is database
-
-    async def list_owned_sources(_settings, user_uuid):
-        assert user_uuid == 'user-1'
-        return [Source(uuid='source-1', key='book.pdf')]
-
-    async def ensure_authenticated():
-        return None
-
-    class Graph:
-        async def run(self, state):
-            return SourceLearningState.model_construct(
-                atomic_flashcard_count=2,
-                coherent_flashcard_count=3,
-            )
-
-    def tripwire(*args, **kwargs):
-        pytest.fail('source learning must not acquire retrieval resources')
-
-    monkeypatch.setattr(
-        application.schema, 'ensure_structural_schema', ensure_structural_schema
-    )
-    monkeypatch.setattr(application, 'list_sources', list_owned_sources)
-    monkeypatch.setattr(
-        application, 'ensure_chatgpt_authenticated', ensure_authenticated
-    )
-    monkeypatch.setattr(application, 'embedding_resources', tripwire)
-    monkeypatch.setattr(application, 'reranking_resources', tripwire)
-    original_resources = application._application_resources
-
-    @asynccontextmanager
-    async def application_resources(settings, **kwargs):
-        assert kwargs == {
-            'embeddings_required': False,
-            'reranking_required': False,
-        }
-        async with original_resources(settings, **kwargs) as resources:
-            assert resources.embeddings is None
-            assert resources.reranking is None
-            yield resources
-
-    monkeypatch.setattr(
-        application, '_application_resources', application_resources
-    )
-    monkeypatch.setattr(
-        application,
-        'build_source_learning_graph',
-        lambda *args, **kwargs: Graph(),
-    )
-
-    result = asyncio.run(
-        application.run_source_learning_stage(settings, 'user-1', 'source-1')
-    )
-
-    assert result == application.SourceLearningStageResult(
-        atomic_flashcard_count=2,
-        coherent_flashcard_count=3,
-    )
-    assert database.closed is True
-
-
-def test_combined_ingestion_runs_pedagogy_between_processing_and_semantics(
-    monkeypatch,
-):
-    settings = Settings(_env_file=None)
-    source = Source(uuid='result-source', key='book.pdf')
-    resources = SimpleNamespace(
-        local_models=object(),
-        embeddings=_EMBEDDINGS,
-        reranking=_RERANKING,
-        tokenizers=object(),
-        database=object(),
-        recorder=None,
-    )
-    events = []
-
-    class _StageGraph:
-        def __init__(self, stage, result):
-            self._stage = stage
-            self._result = result
-
-        async def run(self, initial_state):
-            events.append(self._stage)
-            if self._stage == 'processing':
-                return SourceProcessingState.model_construct(
-                    input=initial_state.input, **self._result
-                )
-            if self._stage == 'pedagogical':
-                return SourcePedagogicalState.model_construct(
-                    source_uuid=initial_state.source_uuid, **self._result
-                )
-            return SourceSemanticState.model_construct(
-                source_uuid=initial_state.source_uuid, **self._result
-            )
-
-    processing_graph = _StageGraph(
-        'processing',
-        {
-            'source': source,
-            'ocr_pages': [],
-            'corrected_pages': [],
-            'formatted_pages': [],
-            'text_seam_pages': [],
-            'image_seam_pages': [],
-            'image_filtered_pages': [],
-            'image_described_pages': [],
-            'embedded_pages': [],
-        },
-    )
-    pedagogical_graph = _StageGraph(
-        'pedagogical',
-        {
-            'split_pages': [],
-            'instructions': [],
-            'exercise_components': [],
-            'pedagogical_components': [],
-            'statements': [],
-            'procedures': [],
-            'reembedded_block_count': 0,
-        },
-    )
-    semantic_graph = _StageGraph(
-        'semantic',
-        {
-            'source_statement_hub_count': 0,
-            'source_procedure_hub_count': 0,
-            'source_entities': [],
-            'source_entity_description_persisted_count': 0,
-            'source_entity_hub_count': 0,
-        },
-    )
-
-    async def ensure_authenticated():
-        return None
-
-    @asynccontextmanager
-    async def application_resources(
-        _settings,
-        *,
-        embeddings_required=True,
-        reranking_required=False,
-    ):
-        assert embeddings_required is True
-        assert reranking_required is True
-        events.append('resources-open')
-        try:
-            yield resources
-        finally:
-            events.append('resources-close')
-
-    class _OwnershipService:
-        def __init__(self, _database):
+    class MissingUser:
+        def __init__(self, session):
             pass
 
-        async def attach_new_source(self, user_uuid, source_uuid):
-            events.append(('attach', user_uuid, source_uuid))
+        async def read_user(self, user_uuid):
+            raise LookupError(user_uuid)
 
-    monkeypatch.setattr(
-        application, 'ensure_chatgpt_authenticated', ensure_authenticated
-    )
-    monkeypatch.setattr(
-        application, '_application_resources', application_resources
-    )
-    monkeypatch.setattr(
-        application,
-        'build_source_processing_graph',
-        lambda *args, **kwargs: processing_graph,
-    )
-    monkeypatch.setattr(
-        application,
-        'build_source_pedagogical_graph',
-        lambda *args, **kwargs: pedagogical_graph,
-    )
-    monkeypatch.setattr(
-        application,
-        'build_source_semantic_graph',
-        lambda *args, **kwargs: semantic_graph,
-    )
-    monkeypatch.setattr(application, 'build_user_service', _OwnershipService)
+    def unexpected_resources(*args, **kwargs):
+        raise AssertionError('provider resources acquired for missing user')
 
-    result = asyncio.run(
-        application.ingest_and_run_source_semantic_stage(
-            settings,
-            'user-1',
-            'book.pdf',
+    monkeypatch.setattr(application, '_database_resources', database_resources)
+    monkeypatch.setattr(application, 'UserRepository', MissingUser)
+    monkeypatch.setattr(
+        application, '_application_resources', unexpected_resources
+    )
+    with pytest.raises(LookupError, match='missing-user'):
+        settings = Settings(_env_file=None)
+        capture = application.CapturedPDFSource(
+            data=b'pdf', retrieved_at=application.datetime.now(application.UTC)
         )
-    )
-
-    assert events == [
-        'resources-open',
-        'processing',
-        ('attach', 'user-1', 'result-source'),
-        'pedagogical',
-        'semantic',
-        'resources-close',
-    ]
-    assert result.source_pedagogical_stage.statement_count == 0
-
-
-def test_ingest_does_not_report_success_when_ownership_attach_fails(
-    monkeypatch,
-):
-    settings = Settings()
-    database = _Database(settings.database)
-    graph = _SourceProcessingGraph()
-    events = []
-
-    async def ensure_schema(session_factory, *, embedding_dimension):
-        assert embedding_dimension == _EMBEDDINGS.model.dimension
-
-    class _FailingOwnership:
-        def __init__(self, database):
-            pass
-
-        async def attach_new_source(self, user_uuid, source_uuid):
-            events.append(('attach', user_uuid, source_uuid))
-            raise RuntimeError('ownership failed')
-
-    monkeypatch.setattr(application.schema, 'ensure_schema', ensure_schema)
-    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
-    monkeypatch.setattr(application, 'LocalModelRuntime', _Runtime)
-    monkeypatch.setattr(application, 'build_user_service', _FailingOwnership)
-    monkeypatch.setattr(
-        application,
-        'build_source_processing_graph',
-        lambda *args, **kwargs: _ComposedGraph(graph),
-    )
-
-    with pytest.raises(RuntimeError, match='ownership failed'):
         asyncio.run(
-            application.ingest_source(
-                settings,
-                'user-1',
-                'fixtures/book.pdf',
+            application.ingest_captured_source(
+                settings, 'missing-user', capture
             )
         )
-
-    assert graph.initial_state is not None
-    assert events == [('attach', 'user-1', 'result-source')]
-    assert database.closed is True
-
-
-def test_ingest_source_closes_database_when_graph_fails(monkeypatch):
-    settings = Settings()
-    database = _Database(settings.database)
-    graph = _SourceProcessingGraph(fail=True)
-    monkeypatch.setattr(application, 'LocalModelRuntime', _Runtime)
-    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
-
-    async def ensure_schema(session_factory, *, embedding_dimension):
-        assert embedding_dimension == _EMBEDDINGS.model.dimension
-
-    monkeypatch.setattr(application.schema, 'ensure_schema', ensure_schema)
-    monkeypatch.setattr(
-        application,
-        'build_source_processing_graph',
-        lambda *args, **kwargs: _ComposedGraph(graph),
-    )
-
-    with pytest.raises(RuntimeError, match='graph failed'):
-        asyncio.run(
-            application.ingest_source(settings, 'user-1', 'fixtures/book.pdf')
-        )
-
-    assert database.closed is True
 
 
 def test_list_sources_closes_database_and_returns_user_sources(monkeypatch):
@@ -746,16 +238,18 @@ def test_list_sources_closes_database_and_returns_user_sources(monkeypatch):
     ]
     repository_calls = []
 
-    class _SourceService:
-        def __init__(self, database):
-            repository_calls.append(database)
+    class _SourceRepository:
+        def __init__(self, session_factory):
+            repository_calls.append(session_factory)
 
         async def list_sources(self, user_uuid):
             assert user_uuid == 'user-1'
             return sources
 
     monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
-    monkeypatch.setattr(application, 'build_user_service', _SourceService)
+    monkeypatch.setattr(
+        application, 'SourceCatalogRepository', _SourceRepository
+    )
 
     result = asyncio.run(application.list_sources(settings, 'user-1'))
 
@@ -768,7 +262,6 @@ def test_schema_failure_closes_resources_and_database(monkeypatch):
     settings = Settings()
     runtime = _Runtime(settings.local_models)
     database = _Database(settings.database)
-    graph_built = []
 
     async def fail_schema(session_factory, *, embedding_dimension):
         assert embedding_dimension == _EMBEDDINGS.model.dimension
@@ -779,338 +272,17 @@ def test_schema_failure_closes_resources_and_database(monkeypatch):
         application, 'LocalModelRuntime', lambda settings: runtime
     )
     monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
-    monkeypatch.setattr(
-        application,
-        'build_source_processing_graph',
-        lambda *args, **kwargs: graph_built.append(True),
-    )
+
+    async def acquire():
+        async with application._application_resources(settings):
+            pass
 
     with pytest.raises(RuntimeError, match='schema failed'):
-        asyncio.run(
-            application.ingest_source(settings, 'user-1', 'fixtures/book.pdf')
-        )
+        asyncio.run(acquire())
 
     assert database.closed is True
     assert runtime.entered is True
     assert runtime.closed is True
-    assert graph_built == []
-
-
-def test_semantic_cancellation_closes_resources_in_stack_order(
-    monkeypatch,
-):
-    settings = Settings()
-    events = []
-
-    @asynccontextmanager
-    async def embedding_resources(settings):
-        try:
-            yield _EMBEDDINGS
-        finally:
-            events.append('embedding-close')
-
-    @asynccontextmanager
-    async def reranking_resources(settings):
-        try:
-            yield _RERANKING
-        finally:
-            events.append('reranker-close')
-
-    monkeypatch.setattr(application, 'embedding_resources', embedding_resources)
-    monkeypatch.setattr(application, 'reranking_resources', reranking_resources)
-
-    class Runtime(_Runtime):
-        async def __aexit__(self, exc_type, exc_value, traceback):
-            events.append('runtime-close')
-
-    class Database(_Database):
-        async def close(self):
-            events.append('database-close')
-
-    runtime = Runtime(settings.local_models)
-    database = Database(settings.database)
-    started = asyncio.Event()
-
-    class BlockingGraph:
-        async def run(self, state):
-            started.set()
-            await asyncio.Future()
-
-    async def ensure_schema(session_factory, *, embedding_dimension):
-        assert embedding_dimension == _EMBEDDINGS.model.dimension
-
-    monkeypatch.setattr(application.schema, 'ensure_schema', ensure_schema)
-    monkeypatch.setattr(
-        application, 'LocalModelRuntime', lambda settings: runtime
-    )
-    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
-
-    async def list_sources(settings, user_uuid):
-        return [Source(uuid='result-source', key='book.pdf')]
-
-    monkeypatch.setattr(application, 'list_sources', list_sources)
-    monkeypatch.setattr(
-        application,
-        'build_source_semantic_graph',
-        lambda *args, **kwargs: _ComposedGraph(BlockingGraph()),
-    )
-
-    async def exercise():
-        task = asyncio.create_task(
-            application.run_source_semantic_stage(
-                settings, 'user-1', 'result-source'
-            )
-        )
-        await started.wait()
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-
-    asyncio.run(exercise())
-    assert events == [
-        'reranker-close',
-        'embedding-close',
-        'runtime-close',
-        'database-close',
-    ]
-
-
-def test_list_decks_uses_database_without_local_runtime(monkeypatch):
-    settings = Settings()
-    database = _Database(settings.database)
-    schema_calls = []
-    service_calls = []
-
-    async def ensure_structural_schema(session_factory):
-        schema_calls.append(session_factory)
-
-    class _LearningService:
-        def __init__(self, database):
-            service_calls.append(database)
-
-        async def list_decks(self, user_uuid):
-            assert user_uuid == 'user-1'
-            return [Deck(uuid='deck-1', name='Default')]
-
-    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
-    monkeypatch.setattr(
-        application.schema,
-        'ensure_structural_schema',
-        ensure_structural_schema,
-    )
-    monkeypatch.setattr(application, 'build_learning_service', _LearningService)
-
-    decks = asyncio.run(application.list_decks(settings, 'user-1'))
-
-    assert decks == [Deck(uuid='deck-1', name='Default')]
-    assert schema_calls == [database.session]
-    assert service_calls == [database]
-    assert database.closed is True
-
-
-class _ApplicationTeachingRepository:
-    def __init__(self):
-        self.snapshot = None
-
-    async def create_session(self, _user_uuid, session):
-        self.snapshot = TeachingSessionSnapshot(
-            session=session,
-            turns=[],
-            current_assessment=None,
-            current_plan=None,
-            current_plan_acceptance=None,
-            current_step_uuid=None,
-            pending_question_uuid=None,
-        )
-        return deepcopy(self.snapshot)
-
-    async def list_sessions(self, _user_uuid):
-        return [deepcopy(self.snapshot.session)]
-
-    async def load_session(self, _user_uuid, _session_uuid):
-        return deepcopy(self.snapshot)
-
-    async def append_response(
-        self,
-        _user_uuid,
-        _session_uuid,
-        expected_revision,
-        turn,
-    ):
-        assert self.snapshot.session.revision == expected_revision
-        self.snapshot.turns.append(
-            TeachingTurnRecord(
-                turn=turn,
-                question=None,
-                question_step_uuid=None,
-                responds_to_question_uuid=self.snapshot.pending_question_uuid,
-                presented_plan_uuid=None,
-                accepted_plan_uuid=None,
-            )
-        )
-        self.snapshot.session.status = TeachingStatus.AWAITING_TEACHER
-        self.snapshot.session.revision += 1
-        return deepcopy(self.snapshot)
-
-    async def record_turn(
-        self,
-        _user_uuid,
-        _session_uuid,
-        expected_revision,
-        turn,
-        commit,
-    ):
-        assert self.snapshot.session.revision == expected_revision
-        self.snapshot.turns.append(
-            TeachingTurnRecord(
-                turn=turn,
-                question=commit.new_question,
-                question_step_uuid=commit.new_question_step_uuid,
-                responds_to_question_uuid=None,
-                presented_plan_uuid=(
-                    commit.new_plan.uuid
-                    if commit.new_plan is not None
-                    else None
-                ),
-                accepted_plan_uuid=None,
-            )
-        )
-        self.snapshot.session.status = TeachingStatus.AWAITING_LEARNER
-        self.snapshot.session.phase = commit.phase
-        self.snapshot.session.revision += 1
-        return deepcopy(self.snapshot)
-
-    async def end_session(
-        self,
-        _user_uuid,
-        _session_uuid,
-        expected_revision,
-        ended_at,
-    ):
-        assert self.snapshot.session.revision == expected_revision
-        self.snapshot.pending_question_uuid = None
-        self.snapshot.session.status = TeachingStatus.ENDED
-        self.snapshot.session.updated_at = ended_at
-        self.snapshot.session.ended_at = ended_at
-        self.snapshot.session.revision += 1
-        return deepcopy(self.snapshot)
-
-
-def test_teaching_application_uses_database_only_resources_and_closes_them(
-    monkeypatch,
-):
-    settings = Settings(_env_file=None)
-    database = _Database(settings.database)
-    schema_calls = []
-    repository = _ApplicationTeachingRepository()
-    service = TeachingService(repository)
-
-    async def ensure_structural_schema(session_factory):
-        schema_calls.append(session_factory)
-
-    def tripwire(*args, **kwargs):
-        raise AssertionError('inference resource must not be acquired')
-
-    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
-    monkeypatch.setattr(
-        application.schema,
-        'ensure_structural_schema',
-        ensure_structural_schema,
-    )
-    monkeypatch.setattr(
-        application, 'build_teaching_service', lambda _: service
-    )
-    monkeypatch.setattr(application, 'LanguageModelTokenizers', tripwire)
-    monkeypatch.setattr(application, 'embedding_resources', tripwire)
-    monkeypatch.setattr(application, 'reranking_resources', tripwire)
-
-    started = asyncio.run(
-        application.start_teaching_session(
-            settings,
-            'user-1',
-            'Understand derivatives',
-        )
-    )
-    loaded = asyncio.run(
-        application.load_teaching_session(
-            settings,
-            'user-1',
-            started.session.uuid,
-        )
-    )
-    service_snapshot = asyncio.run(
-        service.record_teaching_turn(
-            'user-1',
-            started.session.uuid,
-            'Let us probe this goal.',
-            TeachingTurnCommit(
-                phase='probing',
-                current_assessment_uuid=None,
-                source_revisions=[],
-                current_plan_uuid=None,
-                current_step_uuid=None,
-                pending_question_uuid=None,
-            ),
-            expected_revision=0,
-        )
-    )
-    responded = asyncio.run(
-        application.submit_teaching_response(
-            settings,
-            'user-1',
-            started.session.uuid,
-            'I am ready.',
-            expected_revision=service_snapshot.session.revision,
-        )
-    )
-    ended = asyncio.run(
-        application.end_teaching_session(
-            settings,
-            'user-1',
-            started.session.uuid,
-            expected_revision=responded.session.revision,
-        )
-    )
-
-    assert started.session.status is TeachingStatus.AWAITING_TEACHER
-    assert loaded.session.revision == 0
-    assert responded.session.status is TeachingStatus.AWAITING_TEACHER
-    assert [turn.turn.content for turn in ended.turns] == [
-        'Let us probe this goal.',
-        'I am ready.',
-    ]
-    assert ended.session.status is TeachingStatus.ENDED
-    assert ended.session.revision == 3
-    assert len(schema_calls) == 4
-    assert database.closed is True
-
-    failure_database = _Database(settings.database)
-
-    class _FailingRepository:
-        async def load_session(self, _user_uuid, _session_uuid):
-            raise RuntimeError('teaching repository failed')
-
-    failing_service = TeachingService(_FailingRepository())
-
-    monkeypatch.setattr(
-        application,
-        'DatabaseClient',
-        lambda _: failure_database,
-    )
-    monkeypatch.setattr(
-        application,
-        'build_teaching_service',
-        lambda _: failing_service,
-    )
-    with pytest.raises(RuntimeError, match='teaching repository failed'):
-        asyncio.run(
-            application.load_teaching_session(
-                settings,
-                'user-1',
-                started.session.uuid,
-            )
-        )
-    assert failure_database.closed is True
 
 
 def test_search_sources_with_empty_allowlist_skips_application_resources(
@@ -1134,139 +306,3 @@ def test_search_sources_with_empty_allowlist_skips_application_resources(
         )
         == []
     )
-
-
-@pytest.mark.parametrize(
-    ('status', 'expected_revision'),
-    [
-        (TeachingStatus.AWAITING_LEARNER, 0),
-        (TeachingStatus.AWAITING_TEACHER, 1),
-    ],
-)
-def test_run_teaching_turn_rejects_invalid_state_before_inference_resources(
-    monkeypatch,
-    status,
-    expected_revision,
-):
-    settings = Settings(_env_file=None)
-    database = _Database(settings.database)
-    repository = _ApplicationTeachingRepository()
-    service = TeachingService(repository)
-    asyncio.run(service.start_session('user-1', 'Understand derivatives'))
-    repository.snapshot.session.status = status
-
-    async def ensure_structural_schema(session_factory):
-        assert session_factory.__self__ is database
-
-    async def fail_preflight(*_args):
-        pytest.fail('invalid session state must be rejected before inference')
-
-    def fail_resources(*_args, **_kwargs):
-        pytest.fail(
-            'invalid session state must not acquire inference resources'
-        )
-
-    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
-    monkeypatch.setattr(
-        application.schema,
-        'ensure_structural_schema',
-        ensure_structural_schema,
-    )
-    monkeypatch.setattr(
-        application,
-        'build_teaching_service',
-        lambda _: service,
-    )
-    monkeypatch.setattr(application, '_preflight_chatgpt', fail_preflight)
-    monkeypatch.setattr(application, '_application_resources', fail_resources)
-
-    with pytest.raises(
-        ValueError,
-        match='Teaching session is not awaiting teacher at expected revision',
-    ):
-        asyncio.run(
-            application.run_teaching_turn(
-                settings,
-                'user-1',
-                repository.snapshot.session.uuid,
-                expected_revision=expected_revision,
-            )
-        )
-
-    assert database.closed is True
-
-
-def test_run_teaching_turn_preflights_knowledge_before_inference_resources(
-    monkeypatch,
-):
-    settings = Settings(_env_file=None)
-    database = _Database(settings.database)
-    repository = _ApplicationTeachingRepository()
-    service = TeachingService(repository)
-    started = asyncio.run(
-        service.start_session('user-1', 'Understand eigenvalues')
-    )
-    preflight_calls = []
-    resource_lifecycle = []
-
-    async def ensure_structural_schema(session_factory):
-        assert session_factory.__self__ is database
-
-    async def preflight(*args):
-        assert database.closed is True
-        preflight_calls.append(args)
-
-    @asynccontextmanager
-    async def application_resources(*_args, **_kwargs):
-        assert database.closed is True
-        resource_lifecycle.append('entered')
-        yield SimpleNamespace(
-            local_models=object(),
-            embeddings=_EMBEDDINGS,
-            reranking=_RERANKING,
-            tokenizers=object(),
-            recorder=None,
-            database=database,
-        )
-        resource_lifecycle.append('closed')
-
-    class _Graph:
-        async def run(self, state):
-            resource_lifecycle.append('graph')
-            final_view = await service.load_session(
-                'user-1', started.session.uuid
-            )
-            return state.model_copy(update={'final_view': final_view})
-
-    monkeypatch.setattr(application, 'DatabaseClient', lambda _: database)
-    monkeypatch.setattr(
-        application.schema,
-        'ensure_structural_schema',
-        ensure_structural_schema,
-    )
-    monkeypatch.setattr(
-        application, 'build_teaching_service', lambda _: service
-    )
-    monkeypatch.setattr(application, '_preflight_chatgpt', preflight)
-    monkeypatch.setattr(
-        application, '_application_resources', application_resources
-    )
-    monkeypatch.setattr(
-        application, 'build_teaching_graph', lambda *_args, **_kwargs: _Graph()
-    )
-
-    asyncio.run(
-        application.run_teaching_turn(
-            settings,
-            'user-1',
-            started.session.uuid,
-            expected_revision=started.session.revision,
-            source_uuids=['source-allowed'],
-        )
-    )
-
-    assert preflight_calls == [
-        (settings, settings.knowledge.extraction, settings.knowledge.identity)
-    ]
-    assert resource_lifecycle == ['entered', 'graph', 'closed']
-    assert database.closed is True

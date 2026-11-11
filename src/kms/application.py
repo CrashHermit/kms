@@ -1,84 +1,16 @@
 """Application entry points for running KMS pipelines."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import BaseModel
 
-from kms.composition.embedding import (
-    EmbeddingResources,
-    embedding_resources,
-)
-from kms.composition.predictors import PredictorFactory
-from kms.composition.reranking import (
-    RerankingResources,
-    reranking_resources,
-)
-from kms.composition.research import (
-    research_resources as open_research_resources,
-)
-from kms.composition.search_selection import build_search_selection_service
-from kms.composition.services import (
-    build_knowledge_search_service,
-    build_knowledge_service,
-    build_learner_observation_search_service,
-    build_learner_observation_service,
-    build_learning_service,
-    build_source_evidence_service,
-    build_source_search_service,
-    build_teaching_service,
-    build_user_service,
-)
-from kms.composition.source_learning import build_source_learning_graph
-from kms.composition.source_pedagogical import (
-    build_source_pedagogical_graph,
-)
-from kms.composition.source_processing import build_source_processing_graph
-from kms.composition.source_semantic import build_source_semantic_graph
-from kms.composition.teaching import build_teaching_graph
-from kms.composition.tokenization import LanguageModelTokenizers
 from kms.config.inference import StageInferenceSettings
 from kms.config.settings import Settings
-from kms.core.model.knowledge.argument import ArgumentRecord
-from kms.core.model.knowledge.proposition import PropositionRecord
-from kms.core.model.knowledge.retrieval import (
-    ArgumentSearchHit,
-    PropositionSearchHit,
-)
-from kms.core.model.learning import (
-    DeckCard,
-    DueDeckCard,
-    ReviewEvent,
-    ReviewRating,
-    ReviewReceipt,
-)
-from kms.core.model.source import Source
-from kms.core.model.source_evidence import (
-    SourceImage,
-    SourcePassage,
-    SourceProcedurePassage,
-    SourceProcedureSearchHit,
-    SourceSearchHit,
-    SourceStatementPassage,
-    SourceStatementSearchHit,
-)
-from kms.core.model.source_processing.input import PDFSourceInput
-from kms.core.model.teaching.evidence import (
-    TeachingCitationMedia,
-    TeachingCitationView,
-    TeachingEvidenceReference,
-)
-from kms.core.model.teaching.observation import LearnerObservationView
-from kms.core.model.teaching.session import (
-    TeachingSession,
-    TeachingSessionView,
-    TeachingStatus,
-)
-from kms.core.model.teaching.workflow import TeachingTurnRequest
-from kms.core.model.user import Deck, User
 from kms.database import schema
 from kms.database.client import DatabaseClient
 from kms.inference.chatgpt import (
@@ -87,70 +19,41 @@ from kms.inference.chatgpt import (
 from kms.inference.chatgpt import (
     login_chatgpt as _login_chatgpt,
 )
-from kms.langgraph.source_learning.state import SourceLearningState
-from kms.langgraph.source_pedagogical.state import SourcePedagogicalState
-from kms.langgraph.source_processing.state import SourceProcessingState
-from kms.langgraph.source_semantic.state import SourceSemanticState
-from kms.langgraph.teaching.state import TeachingTurnState
+from kms.inference.embedding.resources import (
+    EmbeddingResources,
+    embedding_resources,
+)
+from kms.inference.predictors import PredictorFactory
+from kms.inference.tokenization.resources import LanguageModelTokenizers
 from kms.local_models.runtime import LocalModelRuntime
-from kms.service.source_artifacts import SourceArtifactStore
+from kms.source.capture.models import PDFCandidate
+from kms.source.capture.resources import capture_resources
+from kms.source.composition import build_source_ingestion_service
+from kms.source.discovery.composition import build_source_discovery
+from kms.source.discovery.models import SourceCandidate
+from kms.source.discovery.resources import discovery_resources
+from kms.source.models.inputs import CapturedPDFSource
+from kms.source.models.snapshot import SourceSnapshot
+from kms.source.models.source import Source
+from kms.source.retrieval.composition import (
+    build_search_selection_service,
+    build_source_reader,
+    build_source_search_service,
+)
+from kms.source.retrieval.models import (
+    SourceImage,
+    SourcePassage,
+    SourceProcedurePassage,
+    SourceProcedureSearchHit,
+    SourceSearchHit,
+    SourceStatementPassage,
+    SourceStatementSearchHit,
+)
+from kms.source.storage.catalog import SourceCatalogRepository
 from kms.train.recorder import Recorder
-
-
-@dataclass(frozen=True, slots=True)
-class SourceProcessingStageResult:
-    """Counts materialized by one complete source processing stage."""
-
-    source: Source
-    ocr_page_count: int
-    corrected_page_count: int
-    formatted_page_count: int
-    text_seam_page_count: int
-    image_seam_page_count: int
-    image_filter_page_count: int
-    image_description_page_count: int
-    embedded_page_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class SourcePedagogicalStageResult:
-    """Counts persisted by one complete source pedagogical stage."""
-
-    split_page_count: int
-    instruction_count: int
-    exercise_component_count: int
-    pedagogical_component_count: int
-    statement_count: int
-    procedure_count: int
-    reembedded_block_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class SourceSemanticStageResult:
-    """Counts persisted by one complete source semantic stage."""
-
-    source_statement_hub_count: int
-    source_procedure_hub_count: int
-    source_entity_count: int
-    source_entity_description_count: int
-    source_entity_hub_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class SourceLearningStageResult:
-    """Counts persisted by one complete source-learning stage."""
-
-    atomic_flashcard_count: int
-    coherent_flashcard_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class SourcePipelineResult:
-    """Summary of source processing, pedagogical, and semantic stages."""
-
-    source_processing_stage: SourceProcessingStageResult
-    source_pedagogical_stage: SourcePedagogicalStageResult
-    source_semantic_stage: SourceSemanticStageResult
+from kms.users.models import User
+from kms.users.repository import UserRepository
+from kms.users.service import UserService
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,7 +62,6 @@ class _ApplicationResources:
 
     local_models: LocalModelRuntime
     embeddings: EmbeddingResources | None
-    reranking: RerankingResources | None
     tokenizers: LanguageModelTokenizers
     database: DatabaseClient
     recorder: Recorder | None
@@ -170,7 +72,6 @@ async def _application_resources(
     settings: Settings,
     *,
     embeddings_required: bool = True,
-    reranking_required: bool = False,
 ) -> AsyncIterator[_ApplicationResources]:
     """Own invocation resources and acquire retrieval only when requested."""
     database = DatabaseClient(settings.database)
@@ -190,11 +91,6 @@ async def _application_resources(
                 if embeddings_required
                 else None
             )
-            reranking = (
-                await stack.enter_async_context(reranking_resources(settings))
-                if reranking_required
-                else None
-            )
             if embeddings is None:
                 await schema.ensure_structural_schema(database.session)
             else:
@@ -205,7 +101,6 @@ async def _application_resources(
             yield _ApplicationResources(
                 local_models=local_models,
                 embeddings=embeddings,
-                reranking=reranking,
                 tokenizers=tokenizers,
                 database=database,
                 recorder=recorder,
@@ -267,68 +162,11 @@ async def _database_resources(
         await database.close()
 
 
-def _source_processing_stage_result(
-    final_state: SourceProcessingState,
-) -> SourceProcessingStageResult:
-    """Convert the final source processing graph state to its public result."""
-    return SourceProcessingStageResult(
-        source=final_state.source,
-        ocr_page_count=len(final_state.ocr_pages),
-        corrected_page_count=len(final_state.corrected_pages),
-        formatted_page_count=len(final_state.formatted_pages),
-        text_seam_page_count=len(final_state.text_seam_pages),
-        image_seam_page_count=len(final_state.image_seam_pages),
-        image_filter_page_count=len(final_state.image_filtered_pages),
-        image_description_page_count=len(final_state.image_described_pages),
-        embedded_page_count=len(final_state.embedded_pages),
-    )
-
-
-def _source_pedagogical_stage_result(
-    final_state: SourcePedagogicalState,
-) -> SourcePedagogicalStageResult:
-    """Convert the final source pedagogical graph state to its result."""
-    return SourcePedagogicalStageResult(
-        split_page_count=len(final_state.split_pages),
-        instruction_count=len(final_state.instructions),
-        exercise_component_count=len(final_state.exercise_components),
-        pedagogical_component_count=len(final_state.pedagogical_components),
-        statement_count=len(final_state.statements),
-        procedure_count=len(final_state.procedures),
-        reembedded_block_count=final_state.reembedded_block_count,
-    )
-
-
-def _source_semantic_stage_result(
-    final_state: SourceSemanticState,
-) -> SourceSemanticStageResult:
-    """Convert the final source semantic graph state to its public result."""
-    return SourceSemanticStageResult(
-        source_statement_hub_count=final_state.source_statement_hub_count,
-        source_procedure_hub_count=final_state.source_procedure_hub_count,
-        source_entity_count=len(final_state.source_entities),
-        source_entity_description_count=(
-            final_state.source_entity_description_persisted_count
-        ),
-        source_entity_hub_count=final_state.source_entity_hub_count,
-    )
-
-
-def _source_learning_stage_result(
-    final_state: SourceLearningState,
-) -> SourceLearningStageResult:
-    """Convert the final source-learning graph state to its public result."""
-    return SourceLearningStageResult(
-        atomic_flashcard_count=final_state.atomic_flashcard_count,
-        coherent_flashcard_count=final_state.coherent_flashcard_count,
-    )
-
-
 async def list_users(settings: Settings) -> list[User]:
     """Return users for terminal onboarding and selection."""
     database = DatabaseClient(settings.database)
     try:
-        return await build_user_service(database).list_users()
+        return await UserService(UserRepository(database.session)).list_users()
     finally:
         await database.close()
 
@@ -338,7 +176,9 @@ async def create_user(settings: Settings, name: str) -> User:
     database = DatabaseClient(settings.database)
     try:
         await schema.ensure_structural_schema(database.session)
-        return await build_user_service(database).create_user(name)
+        return await UserService(UserRepository(database.session)).create_user(
+            name
+        )
     finally:
         await database.close()
 
@@ -347,7 +187,9 @@ async def list_unowned_sources(settings: Settings) -> list[Source]:
     """Return legacy sources available for explicit adoption."""
     database = DatabaseClient(settings.database)
     try:
-        return await build_user_service(database).list_unowned_sources()
+        return await SourceCatalogRepository(
+            database.session
+        ).list_unowned_sources()
     finally:
         await database.close()
 
@@ -360,7 +202,7 @@ async def adopt_source(
     """Explicitly associate an unowned source with a user."""
     database = DatabaseClient(settings.database)
     try:
-        await build_user_service(database).adopt_source(
+        await SourceCatalogRepository(database.session).adopt_source(
             user_uuid,
             source_uuid,
         )
@@ -372,7 +214,9 @@ async def list_sources(settings: Settings, user_uuid: str) -> list[Source]:
     """Return persisted sources owned by one user."""
     database = DatabaseClient(settings.database)
     try:
-        return await build_user_service(database).list_sources(user_uuid)
+        return await SourceCatalogRepository(database.session).list_sources(
+            user_uuid
+        )
     finally:
         await database.close()
 
@@ -384,19 +228,18 @@ async def search_sources(
     *,
     source_uuids: list[str] | None = None,
 ) -> list[SourceSearchHit]:
-    """Search a user's source blocks with the configured embedding and reranker."""
+    """Search a user's source blocks with the configured embedding."""
 
     if source_uuids == []:
         return []
     await _preflight_chatgpt(settings, settings.search_selection)
-    async with _application_resources(
-        settings,
-        reranking_required=True,
-    ) as resources:
+    async with _application_resources(settings) as resources:
         assert resources.embeddings is not None
-        assert resources.reranking is not None
         predictors = PredictorFactory(
-            settings, resources.local_models, resources.recorder
+            settings,
+            resources.local_models,
+            resources.recorder,
+            tokenizers=resources.tokenizers,
         )
         selection = build_search_selection_service(
             settings, predictors=predictors, tokenizers=resources.tokenizers
@@ -404,7 +247,6 @@ async def search_sources(
         service = build_source_search_service(
             resources.database,
             embedder=resources.embeddings.embedder,
-            reranker=resources.reranking.reranker,
             settings=settings.source_search,
             selection=selection,
         )
@@ -424,7 +266,7 @@ async def read_source_passages(
 ) -> list[SourcePassage]:
     """Read authorized source passages and their direct evidence groups."""
     async with _database_resources(settings) as database:
-        service = build_source_evidence_service(database)
+        service = build_source_reader(database)
         return await service.read_passages(
             user_uuid,
             block_uuids,
@@ -437,12 +279,12 @@ async def read_source_passages(
 async def read_source_images(
     settings: Settings,
     user_uuid: str,
-    asset_uuids: list[str],
+    block_uuids: list[str],
 ) -> list[SourceImage]:
-    """Read original image bytes attached to a user's source blocks."""
+    """Read verified image bytes owned by the requested source blocks."""
     async with _database_resources(settings) as database:
-        service = build_source_evidence_service(database)
-        return await service.read_images(user_uuid, asset_uuids)
+        service = build_source_reader(database)
+        return await service.read_images(user_uuid, block_uuids)
 
 
 async def search_source_statements(
@@ -457,13 +299,13 @@ async def search_source_statements(
     if source_uuids == []:
         return []
     await _preflight_chatgpt(settings, settings.search_selection)
-    async with _application_resources(
-        settings, reranking_required=True
-    ) as resources:
+    async with _application_resources(settings) as resources:
         assert resources.embeddings is not None
-        assert resources.reranking is not None
         predictors = PredictorFactory(
-            settings, resources.local_models, resources.recorder
+            settings,
+            resources.local_models,
+            resources.recorder,
+            tokenizers=resources.tokenizers,
         )
         selection = build_search_selection_service(
             settings, predictors=predictors, tokenizers=resources.tokenizers
@@ -471,7 +313,6 @@ async def search_source_statements(
         service = build_source_search_service(
             resources.database,
             embedder=resources.embeddings.embedder,
-            reranker=resources.reranking.reranker,
             settings=settings.source_search,
             selection=selection,
         )
@@ -494,13 +335,13 @@ async def search_source_procedures(
     if source_uuids == []:
         return []
     await _preflight_chatgpt(settings, settings.search_selection)
-    async with _application_resources(
-        settings, reranking_required=True
-    ) as resources:
+    async with _application_resources(settings) as resources:
         assert resources.embeddings is not None
-        assert resources.reranking is not None
         predictors = PredictorFactory(
-            settings, resources.local_models, resources.recorder
+            settings,
+            resources.local_models,
+            resources.recorder,
+            tokenizers=resources.tokenizers,
         )
         selection = build_search_selection_service(
             settings, predictors=predictors, tokenizers=resources.tokenizers
@@ -508,7 +349,6 @@ async def search_source_procedures(
         service = build_source_search_service(
             resources.database,
             embedder=resources.embeddings.embedder,
-            reranker=resources.reranking.reranker,
             settings=settings.source_search,
             selection=selection,
         )
@@ -522,7 +362,7 @@ async def read_source_statements(
 ) -> list[SourceStatementPassage]:
     """Read statements with their original member evidence and instructions."""
     async with _database_resources(settings) as database:
-        return await build_source_evidence_service(database).read_statements(
+        return await build_source_reader(database).read_statements(
             user_uuid, statement_uuids
         )
 
@@ -532,214 +372,9 @@ async def read_source_procedures(
 ) -> list[SourceProcedurePassage]:
     """Read procedures with their ordinary source passages."""
     async with _database_resources(settings) as database:
-        return await build_source_evidence_service(database).read_procedures(
+        return await build_source_reader(database).read_procedures(
             user_uuid, procedure_uuids
         )
-
-
-async def search_propositions(
-    settings: Settings, user_uuid: str, query: str
-) -> list[PropositionSearchHit]:
-    """Search canonical claims across the user's learned knowledge."""
-    await _preflight_chatgpt(settings, settings.search_selection)
-    async with _application_resources(
-        settings, reranking_required=True
-    ) as resources:
-        assert resources.embeddings is not None
-        assert resources.reranking is not None
-        predictors = PredictorFactory(
-            settings, resources.local_models, resources.recorder
-        )
-        selection = build_search_selection_service(
-            settings, predictors=predictors, tokenizers=resources.tokenizers
-        )
-        service = build_knowledge_search_service(
-            resources.database,
-            embedder=resources.embeddings.embedder,
-            reranker=resources.reranking.reranker,
-            settings=settings.knowledge.search,
-            selection=selection,
-        )
-        return await service.search_propositions(user_uuid, query)
-
-
-async def search_arguments(
-    settings: Settings, user_uuid: str, query: str
-) -> list[ArgumentSearchHit]:
-    """Search owned arguments using complete argument relevance."""
-    await _preflight_chatgpt(settings, settings.search_selection)
-    async with _application_resources(
-        settings, reranking_required=True
-    ) as resources:
-        assert resources.embeddings is not None
-        assert resources.reranking is not None
-        predictors = PredictorFactory(
-            settings, resources.local_models, resources.recorder
-        )
-        selection = build_search_selection_service(
-            settings, predictors=predictors, tokenizers=resources.tokenizers
-        )
-        service = build_knowledge_search_service(
-            resources.database,
-            embedder=resources.embeddings.embedder,
-            reranker=resources.reranking.reranker,
-            settings=settings.knowledge.search,
-            selection=selection,
-        )
-        return await service.search_arguments(user_uuid, query)
-
-
-async def read_propositions(
-    settings: Settings, user_uuid: str, proposition_uuids: list[str]
-) -> list[PropositionRecord]:
-    """Read claims and their bounded per-turn support references."""
-    async with _database_resources(settings) as database:
-        return await build_knowledge_service(database).read_propositions(
-            user_uuid, proposition_uuids
-        )
-
-
-async def search_learner_observations(
-    settings: Settings,
-    user_uuid: str,
-    query: str,
-) -> list[LearnerObservationView]:
-    """Search user-owned learner evidence with embedding and reranking."""
-    await _preflight_chatgpt(settings, settings.search_selection)
-    async with _application_resources(
-        settings,
-        reranking_required=True,
-    ) as resources:
-        assert resources.embeddings is not None
-        assert resources.reranking is not None
-        predictors = PredictorFactory(
-            settings, resources.local_models, resources.recorder
-        )
-        selection = build_search_selection_service(
-            settings, predictors=predictors, tokenizers=resources.tokenizers
-        )
-        search_service = build_learner_observation_search_service(
-            resources.database,
-            embedder=resources.embeddings.embedder,
-            reranker=resources.reranking.reranker,
-            settings=settings.teaching.learner_observation_search,
-            selection=selection,
-        )
-        view_service = build_learner_observation_service(resources.database)
-        hits = await search_service.search(user_uuid, query)
-        return [view_service.view(hit.record) for hit in hits]
-
-
-async def read_learner_observations(
-    settings: Settings,
-    user_uuid: str,
-    observation_uuids: list[str],
-) -> list[LearnerObservationView]:
-    """Read learner-safe views of selected user-owned observations."""
-    async with _database_resources(settings) as database:
-        service = build_learner_observation_service(database)
-        records = await service.read(user_uuid, observation_uuids)
-        return [service.view(record) for record in records]
-
-
-async def read_arguments(
-    settings: Settings, user_uuid: str, argument_uuids: list[str]
-) -> list[ArgumentRecord]:
-    """Read selected joint-premise arguments without recursive expansion."""
-    async with _database_resources(settings) as database:
-        return await build_knowledge_service(database).read_arguments(
-            user_uuid, argument_uuids
-        )
-
-
-async def _run_source_processing_stage(
-    settings: Settings,
-    resources: _ApplicationResources,
-    pdf_path: str,
-    pages: list[int] | None,
-) -> SourceProcessingStageResult:
-    """Run the source processing graph and return its stage summary."""
-    await _preflight_chatgpt(settings, settings.source_processing)
-    initial_state = SourceProcessingState(
-        input=PDFSourceInput(pdf_path=pdf_path, pages=pages),
-        source=Source(key=Path(pdf_path).name),
-    )
-    assert resources.embeddings is not None
-    graph = build_source_processing_graph(
-        settings,
-        resources.local_models,
-        resources.database,
-        artifacts=SourceArtifactStore(
-            settings.source_processing.source_directory
-        ),
-        embeddings=resources.embeddings,
-        tokenizers=resources.tokenizers,
-        recorder=resources.recorder,
-    )
-    final_state = await graph.run(initial_state)
-    return _source_processing_stage_result(final_state)
-
-
-async def _run_source_pedagogical_stage(
-    settings: Settings,
-    resources: _ApplicationResources,
-    source_uuid: str,
-) -> SourcePedagogicalStageResult:
-    """Run one complete source pedagogical graph."""
-    await _preflight_chatgpt(settings, settings.source_pedagogical)
-    assert resources.embeddings is not None
-    graph = build_source_pedagogical_graph(
-        settings,
-        resources.local_models,
-        resources.database,
-        embedder=resources.embeddings.embedder,
-        tokenizers=resources.tokenizers,
-        recorder=resources.recorder,
-    )
-    final_state = await graph.run(
-        SourcePedagogicalState(source_uuid=source_uuid)
-    )
-    return _source_pedagogical_stage_result(final_state)
-
-
-async def _run_source_semantic_stage(
-    settings: Settings,
-    resources: _ApplicationResources,
-    source_uuid: str,
-) -> SourceSemanticStageResult:
-    """Run one complete source semantic graph in dependency order."""
-    await _preflight_chatgpt(settings, settings.source_semantic)
-    assert resources.embeddings is not None
-    assert resources.reranking is not None
-    graph = build_source_semantic_graph(
-        settings,
-        resources.local_models,
-        resources.database,
-        embedder=resources.embeddings.embedder,
-        reranker=resources.reranking.reranker,
-        tokenizers=resources.tokenizers,
-        recorder=resources.recorder,
-    )
-    final_state = await graph.run(SourceSemanticState(source_uuid=source_uuid))
-    return _source_semantic_stage_result(final_state)
-
-
-async def _run_source_learning_stage(
-    settings: Settings,
-    resources: _ApplicationResources,
-    source_uuid: str,
-) -> SourceLearningStageResult:
-    """Run one complete source-learning graph in dependency order."""
-    await _preflight_chatgpt(settings, settings.source_learning)
-    graph = build_source_learning_graph(
-        settings,
-        resources.local_models,
-        resources.database,
-        tokenizers=resources.tokenizers,
-        recorder=resources.recorder,
-    )
-    final_state = await graph.run(SourceLearningState(source_uuid=source_uuid))
-    return _source_learning_stage_result(final_state)
 
 
 async def ingest_source(
@@ -747,414 +382,81 @@ async def ingest_source(
     user_uuid: str,
     pdf_path: str,
     pages: list[int] | None = None,
-) -> SourceProcessingStageResult:
-    """Process and attach a new source to its user."""
-    async with _application_resources(
-        settings, reranking_required=False
-    ) as resources:
-        result = await _run_source_processing_stage(
-            settings,
-            resources,
-            pdf_path,
-            pages,
-        )
-        await build_user_service(resources.database).attach_new_source(
-            user_uuid,
-            result.source.uuid,
-        )
-        return result
+) -> SourceSnapshot:
+    """Ingest one local PDF as a complete immutable owned source."""
+    data = await asyncio.to_thread(Path(pdf_path).read_bytes)
+    capture = CapturedPDFSource(
+        data=data,
+        title=Path(pdf_path).name,
+        url=None,
+        retrieved_at=datetime.now(UTC),
+    )
+    return await ingest_captured_source(
+        settings, user_uuid, capture, pages=pages
+    )
 
 
-async def run_source_pedagogical_stage(
+async def ingest_captured_source(
     settings: Settings,
     user_uuid: str,
-    source_uuid: str,
-) -> SourcePedagogicalStageResult:
-    """Run source pedagogy only for a source owned by the user."""
-    sources = await list_sources(settings, user_uuid)
-    if source_uuid not in {source.uuid for source in sources}:
-        raise ValueError(
-            f'Source {source_uuid} is not owned by user {user_uuid}'
-        )
-    async with _application_resources(
-        settings, reranking_required=False
-    ) as resources:
-        return await _run_source_pedagogical_stage(
-            settings,
-            resources,
-            source_uuid,
-        )
-
-
-async def run_source_semantic_stage(
-    settings: Settings,
-    user_uuid: str,
-    source_uuid: str,
-) -> SourceSemanticStageResult:
-    """Run source semantics only for a source owned by the user."""
-    sources = await list_sources(settings, user_uuid)
-    if source_uuid not in {source.uuid for source in sources}:
-        raise ValueError(
-            f'Source {source_uuid} is not owned by user {user_uuid}'
-        )
-    async with _application_resources(
-        settings, reranking_required=True
-    ) as resources:
-        return await _run_source_semantic_stage(
-            settings,
-            resources,
-            source_uuid,
-        )
-
-
-async def run_source_learning_stage(
-    settings: Settings,
-    user_uuid: str,
-    source_uuid: str,
-) -> SourceLearningStageResult:
-    """Run source learning only for a source owned by the user."""
-    sources = await list_sources(settings, user_uuid)
-    if source_uuid not in {source.uuid for source in sources}:
-        raise ValueError(
-            f'Source {source_uuid} is not owned by user {user_uuid}'
-        )
-    async with _application_resources(
-        settings,
-        embeddings_required=False,
-        reranking_required=False,
-    ) as resources:
-        return await _run_source_learning_stage(
-            settings,
-            resources,
-            source_uuid,
-        )
-
-
-async def ingest_and_run_source_semantic_stage(
-    settings: Settings,
-    user_uuid: str,
-    pdf_path: str,
+    capture: CapturedPDFSource,
+    *,
     pages: list[int] | None = None,
-) -> SourcePipelineResult:
-    """Ingest, attach, then run pedagogy and semantics in one session."""
-    async with _application_resources(
-        settings, reranking_required=True
-    ) as resources:
-        source_processing_stage = await _run_source_processing_stage(
-            settings,
-            resources,
-            pdf_path,
-            pages,
-        )
-        await build_user_service(resources.database).attach_new_source(
-            user_uuid,
-            source_processing_stage.source.uuid,
-        )
-        source_pedagogical_stage = await _run_source_pedagogical_stage(
-            settings,
-            resources,
-            source_processing_stage.source.uuid,
-        )
-        source_semantic_stage = await _run_source_semantic_stage(
-            settings,
-            resources,
-            source_processing_stage.source.uuid,
-        )
-
-    return SourcePipelineResult(
-        source_processing_stage=source_processing_stage,
-        source_pedagogical_stage=source_pedagogical_stage,
-        source_semantic_stage=source_semantic_stage,
-    )
-
-
-async def start_teaching_session(
-    settings: Settings,
-    user_uuid: str,
-    goal: str,
-) -> TeachingSessionView:
-    """Start one goal-driven teaching session without inference resources."""
+) -> SourceSnapshot:
+    """Process and publish a captured PDF as an owned source."""
     async with _database_resources(settings) as database:
-        return await build_teaching_service(database).start_session(
-            user_uuid,
-            goal,
-        )
-
-
-async def list_teaching_sessions(
-    settings: Settings,
-    user_uuid: str,
-) -> list[TeachingSession]:
-    """List a user's teaching sessions without loading their transcripts."""
-    async with _database_resources(settings) as database:
-        return await build_teaching_service(database).list_sessions(user_uuid)
-
-
-async def load_teaching_session(
-    settings: Settings,
-    user_uuid: str,
-    session_uuid: str,
-) -> TeachingSessionView:
-    """Load one goal-driven teaching session for display resumption."""
-    async with _database_resources(settings) as database:
-        return await build_teaching_service(database).load_session(
-            user_uuid,
-            session_uuid,
-        )
-
-
-async def read_teaching_citations(
-    settings: Settings,
-    user_uuid: str,
-    session_uuid: str,
-    references: list[TeachingEvidenceReference],
-) -> list[TeachingCitationView]:
-    """Read safe evidence views cited in one owned teaching session."""
-    async with _database_resources(settings) as database:
-        return await build_teaching_service(database).read_teaching_citations(
-            user_uuid, session_uuid, references
-        )
-
-
-async def read_teaching_citation_media(
-    settings: Settings,
-    user_uuid: str,
-    session_uuid: str,
-    asset_uuid: str,
-) -> TeachingCitationMedia:
-    """Read an original image cited in one owned teaching session."""
-    async with _database_resources(settings) as database:
-        return await build_teaching_service(
-            database
-        ).read_teaching_citation_media(user_uuid, session_uuid, asset_uuid)
-
-
-async def submit_teaching_response(
-    settings: Settings,
-    user_uuid: str,
-    session_uuid: str,
-    content: str,
-    *,
-    expected_revision: int,
-) -> TeachingSessionView:
-    """Append one learner response through the teaching service."""
-    async with _database_resources(settings) as database:
-        return await build_teaching_service(database).submit_response(
-            user_uuid,
-            session_uuid,
-            content,
-            expected_revision=expected_revision,
-        )
-
-
-async def run_teaching_turn(
-    settings: Settings,
-    user_uuid: str,
-    session_uuid: str,
-    *,
-    expected_revision: int,
-    source_uuids: list[str] | None = None,
-) -> TeachingSessionView:
-    """Run one bounded teacher turn for an awaiting-teacher session.
-
-    The session is ownership-checked before inference resources are acquired.
-    Source identifiers, when provided, restrict local search to that allowlist.
-    """
-    async with _database_resources(settings) as database:
-        teaching = build_teaching_service(database)
-        snapshot = await teaching.load_snapshot(user_uuid, session_uuid)
-        if (
-            snapshot.session.status != TeachingStatus.AWAITING_TEACHER
-            or snapshot.session.revision != expected_revision
-        ):
-            raise ValueError(
-                'Teaching session is not awaiting teacher at expected revision'
-            )
-
-    await _preflight_chatgpt(
-        settings, settings.knowledge.extraction, settings.knowledge.identity
-    )
-    if settings.research.enabled:
-        await _preflight_chatgpt(
-            settings,
-            settings.research.inference,
-            settings.source_processing.formatting.inference,
-            settings.source_processing,
-        )
-    async with AsyncExitStack() as stack:
-        research = (
-            await stack.enter_async_context(open_research_resources(settings))
-            if settings.research.enabled
-            else None
-        )
-        resources = await stack.enter_async_context(
-            _application_resources(
-                settings,
-                reranking_required=True,
-            )
-        )
+        await UserRepository(database.session).read_user(user_uuid)
+    await _preflight_chatgpt(settings, settings.source_processing)
+    async with _application_resources(settings) as resources:
         assert resources.embeddings is not None
-        assert resources.reranking is not None
-        graph = build_teaching_graph(
+        predictors = PredictorFactory(
             settings,
             resources.local_models,
-            resources.database,
-            embeddings=resources.embeddings,
-            reranker=resources.reranking.reranker,
+            resources.recorder,
             tokenizers=resources.tokenizers,
-            research_resources=research,
-            recorder=resources.recorder,
         )
-        state = await graph.run(
-            TeachingTurnState(
-                request=TeachingTurnRequest(
-                    user_uuid=user_uuid,
-                    session_uuid=session_uuid,
-                    expected_revision=expected_revision,
-                    snapshot=snapshot,
-                    source_uuids=(
-                        None if source_uuids is None else list(source_uuids)
-                    ),
-                )
-            )
+        ingestion = build_source_ingestion_service(
+            settings,
+            resources.database,
+            predictors=predictors,
+            embeddings=resources.embeddings,
+            tokenizers=resources.tokenizers,
         )
-        assert state.final_view is not None
-        return state.final_view
+        return await ingestion.ingest(user_uuid, capture, pages=pages)
 
 
-async def end_teaching_session(
-    settings: Settings,
-    user_uuid: str,
-    session_uuid: str,
-    *,
-    expected_revision: int,
-) -> TeachingSessionView:
-    """End one teaching session while retaining its interaction history."""
-    async with _database_resources(settings) as database:
-        return await build_teaching_service(database).end_session(
-            user_uuid,
-            session_uuid,
-            expected_revision=expected_revision,
+async def discover_sources(
+    settings: Settings, question: str
+) -> list[SourceCandidate]:
+    """Search and select useful links without capturing or ingesting them."""
+    await _preflight_chatgpt(settings, settings.source_discovery.inference)
+    recorder = (
+        None
+        if settings.training.examples_directory is None
+        else Recorder(settings.training.examples_directory)
+    )
+    async with AsyncExitStack() as stack:
+        local_models = await stack.enter_async_context(
+            LocalModelRuntime(settings.local_models)
         )
-
-
-async def list_decks(settings: Settings, user_uuid: str) -> list[Deck]:
-    """List decks owned by one user without starting local models."""
-    async with _database_resources(settings) as database:
-        return await build_learning_service(database).list_decks(user_uuid)
-
-
-async def create_deck(
-    settings: Settings,
-    user_uuid: str,
-    name: str,
-) -> Deck:
-    """Create one deck for a user."""
-    async with _database_resources(settings) as database:
-        return await build_learning_service(database).create_deck(
-            user_uuid,
-            name,
+        web = await stack.enter_async_context(
+            discovery_resources(settings.source_discovery)
         )
-
-
-async def list_assignable_cards(
-    settings: Settings,
-    user_uuid: str,
-) -> list[DeckCard]:
-    """List source cards the user may add to decks."""
-    async with _database_resources(settings) as database:
-        return await build_learning_service(database).list_assignable_cards(
-            user_uuid
+        predictors = PredictorFactory(
+            settings,
+            local_models,
+            recorder,
+            tokenizers=LanguageModelTokenizers(settings),
         )
-
-
-async def add_card_to_deck(
-    settings: Settings,
-    user_uuid: str,
-    deck_uuid: str,
-    card_uuid: str,
-) -> DeckCard:
-    """Add one source card to a user's deck."""
-    async with _database_resources(settings) as database:
-        return await build_learning_service(database).add_card_to_deck(
-            user_uuid,
-            deck_uuid,
-            card_uuid,
+        discovery = build_source_discovery(
+            settings, web=web, predictors=predictors
         )
+        return await discovery.discover(question)
 
 
-async def remove_card_from_deck(
-    settings: Settings,
-    user_uuid: str,
-    deck_uuid: str,
-    card_uuid: str,
-) -> None:
-    """Remove one card from one deck."""
-    async with _database_resources(settings) as database:
-        await build_learning_service(database).remove_card_from_deck(
-            user_uuid,
-            deck_uuid,
-            card_uuid,
-        )
-
-
-async def list_deck_cards(
-    settings: Settings,
-    user_uuid: str,
-    deck_uuid: str,
-) -> list[DeckCard]:
-    """List cards currently in one deck."""
-    async with _database_resources(settings) as database:
-        return await build_learning_service(database).list_deck_cards(
-            user_uuid,
-            deck_uuid,
-        )
-
-
-async def list_due_deck_cards(
-    settings: Settings,
-    user_uuid: str,
-    deck_uuid: str,
-    now: datetime,
-) -> list[DueDeckCard]:
-    """List due cards in one deck at the supplied UTC time."""
-    async with _database_resources(settings) as database:
-        return await build_learning_service(database).list_due_deck_cards(
-            user_uuid,
-            deck_uuid,
-            now,
-        )
-
-
-async def review_card(
-    settings: Settings,
-    user_uuid: str,
-    deck_uuid: str,
-    card_uuid: str,
-    rating: ReviewRating,
-    review_datetime: datetime,
-    review_duration: int | None = None,
-) -> ReviewReceipt:
-    """Submit one card rating through the learning service."""
-    async with _database_resources(settings) as database:
-        return await build_learning_service(database).review_card(
-            user_uuid,
-            deck_uuid,
-            card_uuid,
-            rating,
-            review_datetime,
-            review_duration,
-        )
-
-
-async def list_review_events(
-    settings: Settings,
-    user_uuid: str,
-    card_uuid: str,
-) -> list[ReviewEvent]:
-    """List immutable review history for one user/card association."""
-    async with _database_resources(settings) as database:
-        return await build_learning_service(database).list_review_events(
-            user_uuid,
-            card_uuid,
-        )
+async def capture_source(
+    settings: Settings, url: str, *, title: str | None = None
+) -> CapturedPDFSource | PDFCandidate:
+    """Capture a web page as a PDF, or return a PDF link for manual handling."""
+    async with capture_resources(settings.source_capture) as capture:
+        return await capture.capture(url, title=title)

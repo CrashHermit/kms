@@ -5,80 +5,71 @@ from kms.config.inference import TextInferenceSettings, VisionInferenceSettings
 from kms.config.llm import ChatGPTLLMProfile, LLMSettings, LocalLLMProfile
 from kms.config.settings import Settings
 
-_SOURCE_PEDAGOGICAL_ENVIRONMENT = {
-    'KMS_SOURCE_PEDAGOGICAL__INSTRUCTION_FINDER__START_ROUTER__PROFILE': (
+_SOURCE_PROCESSING_ENVIRONMENT = {
+    'KMS_SOURCE_PROCESSING__INSTRUCTION_FINDER__START_ROUTER__PROFILE': (
         'custom-instruction-start-profile'
     ),
-    'KMS_SOURCE_PEDAGOGICAL__PEDAGOGICAL_FINDER__START_ROUTER__PROFILE': (
+    'KMS_SOURCE_PROCESSING__PEDAGOGICAL_FINDER__START_ROUTER__PROFILE': (
         'custom-pedagogical-start-profile'
     ),
-    'KMS_SOURCE_PEDAGOGICAL__PEDAGOGICAL_FINDER__BOUNDARY_ROUTER__PROFILE': (
+    'KMS_SOURCE_PROCESSING__PEDAGOGICAL_FINDER__BOUNDARY_ROUTER__PROFILE': (
         'custom-pedagogical-boundary-profile'
     ),
-    'KMS_SOURCE_PEDAGOGICAL__STATEMENT_PROCEDURE__ROLE_TYPER__PROFILE': (
+    'KMS_SOURCE_PROCESSING__STATEMENT_PROCEDURE__ROLE_TYPER__PROFILE': (
         'custom-role-profile'
     ),
-    'KMS_SOURCE_PEDAGOGICAL__STATEMENT_PROCEDURE__STATEMENT_PARTITIONER__PROFILE': (
+    'KMS_SOURCE_PROCESSING__STATEMENT_PROCEDURE__STATEMENT_PARTITIONER__PROFILE': (
         'custom-statement-profile'
     ),
-    'KMS_SOURCE_PEDAGOGICAL__STATEMENT_PROCEDURE__PROCEDURE_PARTITIONER__PROFILE': (
+    'KMS_SOURCE_PROCESSING__STATEMENT_PROCEDURE__PROCEDURE_PARTITIONER__PROFILE': (
         'custom-procedure-profile'
     ),
-    'KMS_SOURCE_PEDAGOGICAL__EXERCISE_FINDER__START_ROUTER__PROFILE': (
+    'KMS_SOURCE_PROCESSING__EXERCISE_FINDER__START_ROUTER__PROFILE': (
         'custom-exercise-start-profile'
     ),
-    'KMS_SOURCE_PEDAGOGICAL__EXERCISE_FINDER__BOUNDARY_ROUTER__PROFILE': (
+    'KMS_SOURCE_PROCESSING__EXERCISE_FINDER__BOUNDARY_ROUTER__PROFILE': (
         'custom-exercise-boundary-profile'
     ),
 }
 
 
-def test_kms_defaults_include_source_pedagogical_stages(monkeypatch):
+def test_kms_defaults_include_source_processing_stages(monkeypatch):
     for name in (
-        *_SOURCE_PEDAGOGICAL_ENVIRONMENT,
+        *_SOURCE_PROCESSING_ENVIRONMENT,
         'KMS_EMBEDDING__API_KEY',
         'KMS_EMBEDDING__MODEL',
-        'KMS_EMBEDDING__BATCH_TOKEN_BUDGET',
-        'KMS_RERANKER__API_KEY',
-        'KMS_RERANKER__MODEL',
-        'KMS_RERANKER__BATCH_TOKEN_BUDGET',
+        'KMS_EMBEDDING__BATCH_TARGET_TOKENS',
     ):
         monkeypatch.delenv(name, raising=False)
 
     settings = Settings(_env_file=None)
-    assert settings.embedding.model == 'voyage/voyage-multimodal-3.5'
-    assert settings.embedding.batch_token_budget == 8192
-    assert settings.reranker.model == 'Qwen/Qwen3-VL-Reranker-8B'
-    assert settings.reranker.batch_token_budget == 32768
 
     zero_context_windows = [
-        settings.source_pedagogical.instruction_finder.start_context_window,
-        settings.source_pedagogical.exercise_finder.start_context_window,
-        settings.source_pedagogical.exercise_finder.boundary_context_window,
+        settings.source_processing.instruction_finder.start_context_window,
+        settings.source_processing.exercise_finder.start_context_window,
+        settings.source_processing.exercise_finder.boundary_context_window,
     ]
     assert all(
         window.backward_budget == 0 and window.forward_budget == 0
         for window in zero_context_windows
     )
     instruction_boundary_window = (
-        settings.source_pedagogical.instruction_finder.boundary_context_window
+        settings.source_processing.instruction_finder.boundary_context_window
     )
     assert instruction_boundary_window.backward_budget == 300
     assert instruction_boundary_window.forward_budget == 0
     context_windows = [
-        settings.source_pedagogical.pedagogical_finder.start_context_window,
-        settings.source_pedagogical.pedagogical_finder.boundary_context_window,
+        settings.source_processing.pedagogical_finder.start_context_window,
+        settings.source_processing.pedagogical_finder.boundary_context_window,
     ]
     assert all(
         window.backward_budget == 300 and window.forward_budget == 300
         for window in context_windows
     )
     assert (
-        settings.source_pedagogical.instruction_governance.context_window.forward_budget
+        settings.source_processing.instruction_governance.context_window.forward_budget
         == 500
     )
-    assert settings.source_learning.context_window.backward_budget == 400
-    assert settings.source_learning.context_window.forward_budget == 400
 
 
 def test_content_correction_settings_use_nested_inference_and_budgets(
@@ -146,90 +137,45 @@ def test_image_seam_uses_nested_inference_and_batch_environment(monkeypatch):
     assert image_seam.safety_margin_tokens == 32
 
 
-def test_kms_source_pedagogical_uses_nested_environment(monkeypatch):
-    for name, value in _SOURCE_PEDAGOGICAL_ENVIRONMENT.items():
+def test_kms_source_processing_includes_pedagogical_nested_environment(
+    monkeypatch,
+):
+    for name, value in _SOURCE_PROCESSING_ENVIRONMENT.items():
         monkeypatch.setenv(name, value)
 
     settings = Settings()
 
     assert (
-        settings.source_pedagogical.instruction_finder.start_router.profile
+        settings.source_processing.instruction_finder.start_router.profile
         == ('custom-instruction-start-profile')
     )
     assert (
-        settings.source_pedagogical.pedagogical_finder.start_router.profile
+        settings.source_processing.pedagogical_finder.start_router.profile
         == ('custom-pedagogical-start-profile')
     )
     assert (
-        settings.source_pedagogical.pedagogical_finder.boundary_router.profile
+        settings.source_processing.pedagogical_finder.boundary_router.profile
         == ('custom-pedagogical-boundary-profile')
     )
     assert (
-        settings.source_pedagogical.statement_procedure.role_typer.profile
+        settings.source_processing.statement_procedure.role_typer.profile
         == ('custom-role-profile')
     )
     assert (
-        settings.source_pedagogical.statement_procedure.statement_partitioner.profile
+        settings.source_processing.statement_procedure.statement_partitioner.profile
         == 'custom-statement-profile'
     )
     assert (
-        settings.source_pedagogical.statement_procedure.procedure_partitioner.profile
+        settings.source_processing.statement_procedure.procedure_partitioner.profile
         == 'custom-procedure-profile'
     )
     assert (
-        settings.source_pedagogical.exercise_finder.start_router.profile
+        settings.source_processing.exercise_finder.start_router.profile
         == 'custom-exercise-start-profile'
     )
     assert (
-        settings.source_pedagogical.exercise_finder.boundary_router.profile
+        settings.source_processing.exercise_finder.boundary_router.profile
         == 'custom-exercise-boundary-profile'
-    )
-
-
-def test_kms_source_hub_settings_are_independent(monkeypatch):
-    names = (
-        'KMS_SOURCE_SEMANTIC__SOURCE_ENTITY_HUBS__JUDGE__PROFILE',
-        'KMS_SOURCE_SEMANTIC__SOURCE_STATEMENT_HUBS__CANDIDATE_LIMIT',
-    )
-    for name in names:
-        monkeypatch.delenv(name, raising=False)
-
-    monkeypatch.setenv(names[0], 'entity-hub-profile')
-    monkeypatch.setenv(names[1], '17')
-    settings = Settings()
-
-    assert (
-        settings.source_semantic.source_entity_hubs.judge.profile
-        == 'entity-hub-profile'
-    )
-    assert settings.source_semantic.source_statement_hubs.candidate_limit == 17
-
-
-def test_kms_source_hub_filtering_settings_are_independent(monkeypatch):
-    monkeypatch.setenv(
-        'KMS_SOURCE_SEMANTIC__SOURCE_ENTITY_HUBS__JUDGE__PROFILE',
-        'entity-judge',
-    )
-    monkeypatch.setenv(
-        'KMS_RERANKER__BATCH_TOKEN_BUDGET',
-        '2048',
-    )
-    monkeypatch.setenv(
-        'KMS_SOURCE_SEMANTIC__SOURCE_STATEMENT_HUBS__JUDGE_TOKEN_BUDGET',
-        '16384',
-    )
-
-    settings = Settings()
-
-    assert (
-        settings.source_semantic.source_entity_hubs.judge.profile
-        == 'entity-judge'
-    )
-    assert settings.source_semantic.source_entity_hubs.judge.num_retries == 0
-    assert settings.reranker.batch_token_budget == 2048
-    assert (
-        settings.source_semantic.source_statement_hubs.judge_token_budget
-        == 16384
     )
 
 
@@ -255,29 +201,15 @@ def test_kms_training_examples_use_nested_environment(monkeypatch, tmp_path):
     assert settings.training.examples_directory == tmp_path
 
 
-def test_kms_entity_processing_defaults_survive_nested_environment(
-    monkeypatch,
-):
-    monkeypatch.setenv(
-        'KMS_SOURCE_SEMANTIC__SOURCE_ENTITY_EXTRACTION__MAX_TOKENS',
-        '2048',
-    )
-
-    settings = Settings()
-
-    assert settings.source_semantic.source_entity_extraction.max_tokens == 2048
-    assert settings.source_semantic.source_entity_extraction.num_retries == 0
-
-
 def test_explicit_stage_selection_overrides_subscription_default(monkeypatch):
     monkeypatch.setenv('KMS_LLM__DEFAULT_TEXT_PROFILE', 'chatgpt-luna')
     monkeypatch.setenv(
-        'KMS_SOURCE_SEMANTIC__SOURCE_ENTITY_EXTRACTION__PROFILE',
+        'KMS_SOURCE_PROCESSING__FORMATTING__INFERENCE__PROFILE',
         'gemma-text-32k',
     )
     settings = Settings(_env_file=None)
     entity = settings.llm.resolve(
-        settings.source_semantic.source_entity_extraction
+        settings.source_processing.formatting.inference
     )
     assert isinstance(entity, LocalLLMProfile)
     assert entity.model_server_profile == 'gemma-text-32k'
@@ -336,83 +268,40 @@ def test_kms_source_search_limits_have_defaults(monkeypatch):
     assert settings.source_search.result_limit == 8
 
 
-def test_teaching_settings_use_nested_environment_and_safe_defaults(
-    monkeypatch,
-):
-    for name in (
-        'KMS_TEACHING__INFERENCE__PROFILE',
-        'KMS_TEACHING__INPUT_TOKEN_BUDGET',
-        'KMS_TEACHING__SAFETY_MARGIN_TOKENS',
-        'KMS_TEACHING__MAX_TOOL_CALLS',
-    ):
-        monkeypatch.delenv(name, raising=False)
-
-    defaults = Settings(_env_file=None).teaching
-    assert defaults.inference.profile == 'chatgpt-luna'
-    assert defaults.inference.num_retries == 0
-    assert defaults.input_token_budget == 16384
-    assert defaults.safety_margin_tokens == 256
-    assert defaults.max_tool_calls == 8
-
-    monkeypatch.setenv('KMS_TEACHING__INFERENCE__PROFILE', 'custom-teacher')
-    monkeypatch.setenv('KMS_TEACHING__INPUT_TOKEN_BUDGET', '12000')
-    monkeypatch.setenv('KMS_TEACHING__SAFETY_MARGIN_TOKENS', '128')
-    monkeypatch.setenv('KMS_TEACHING__MAX_TOOL_CALLS', '3')
-
-    configured = Settings(_env_file=None).teaching
-    assert configured.inference.profile == 'custom-teacher'
-    assert configured.input_token_budget == 12000
-    assert configured.safety_margin_tokens == 128
-    assert configured.max_tool_calls == 3
-
-
-def test_research_settings_are_opt_in_and_environment_configurable(monkeypatch):
-    for name in (
-        'KMS_RESEARCH__ENABLED',
-        'KMS_RESEARCH__TAVILY__API_KEY',
-        'KMS_RESEARCH__INFERENCE__PROFILE',
-        'KMS_RESEARCH__MAX_CONCURRENCY',
-        'KMS_SOURCE_PROCESSING__SOURCE_DIRECTORY',
-    ):
-        monkeypatch.delenv(name, raising=False)
-
-    settings = Settings(_env_file=None)
-    defaults = settings.research
-    assert not defaults.enabled
-    assert defaults.tavily.api_key is None
-    assert defaults.inference.num_retries == 0
-    assert defaults.max_concurrency == 4
-    assert defaults.max_tool_calls == 12
-    assert (
-        settings.source_processing.source_directory.as_posix()
-        == 'output/sources'
+def test_discovery_and_capture_settings_use_nested_environment(monkeypatch):
+    monkeypatch.delenv('KMS_SOURCE_DISCOVERY__TAVILY__API_KEY', raising=False)
+    defaults = Settings(_env_file=None)
+    assert defaults.source_discovery.tavily.api_key.get_secret_value() == ''
+    assert defaults.source_discovery.inference.num_retries == 0
+    assert isinstance(
+        defaults.source_discovery.inference, TextInferenceSettings
     )
 
-    monkeypatch.setenv('KMS_RESEARCH__ENABLED', 'true')
-    monkeypatch.setenv('KMS_RESEARCH__TAVILY__API_KEY', 'test-secret')
+    monkeypatch.setenv('KMS_SOURCE_DISCOVERY__TAVILY__API_KEY', 'test-secret')
     monkeypatch.setenv(
-        'KMS_RESEARCH__INFERENCE__PROFILE',
-        'vision-research',
+        'KMS_SOURCE_DISCOVERY__INFERENCE__PROFILE', 'text-research'
     )
-    monkeypatch.setenv('KMS_RESEARCH__MAX_CONCURRENCY', '2')
-    monkeypatch.setenv(
-        'KMS_SOURCE_PROCESSING__SOURCE_DIRECTORY',
-        '/tmp/kms-research-sources',
-    )
-
+    monkeypatch.setenv('KMS_SOURCE_DISCOVERY__TAVILY__RESULT_LIMIT', '7')
+    monkeypatch.setenv('KMS_SOURCE_CAPTURE__TIMEOUT_SECONDS', '23')
     configured = Settings(_env_file=None)
-    assert configured.research.enabled
     assert (
-        configured.research.tavily.api_key.get_secret_value() == 'test-secret'
+        configured.source_discovery.tavily.api_key.get_secret_value()
+        == 'test-secret'
     )
-    assert configured.research.inference.profile == 'vision-research'
-    assert configured.research.max_concurrency == 2
-    assert (
-        configured.source_processing.source_directory.as_posix()
-        == '/tmp/kms-research-sources'
-    )
+    assert configured.source_discovery.inference.profile == 'text-research'
+    assert configured.source_discovery.tavily.result_limit == 7
+    assert configured.source_capture.timeout_seconds == 23
 
 
-def test_research_settings_reject_unknown_fields():
+@pytest.mark.parametrize('root', ['source_discovery', 'source_capture'])
+def test_source_capability_settings_reject_unknown_fields(root):
     with pytest.raises(ValidationError, match='extra_forbidden'):
-        Settings.model_validate({'research': {'unknown': True}})
+        Settings.model_validate({root: {'unknown': True}})
+
+
+def test_embedding_batching_uses_nested_environment(monkeypatch):
+    monkeypatch.setenv('KMS_EMBEDDING__BATCH_TARGET_ITEMS', '2000')
+    monkeypatch.setenv('KMS_EMBEDDING__BATCH_TARGET_TOKENS', '400000')
+    settings = Settings(_env_file=None)
+    assert settings.embedding.batch_target_items == 2000
+    assert settings.embedding.batch_target_tokens == 400000

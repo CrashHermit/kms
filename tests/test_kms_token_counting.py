@@ -7,18 +7,18 @@ import pytest
 from PIL import Image
 from tokenizers import Tokenizer, models, pre_tokenizers, processors
 
-from kms.composition.predictors import build_token_budget
-from kms.composition.tokenization import LanguageModelTokenizers
 from kms.config.inference import TextInferenceSettings
 from kms.config.llm import ChatGPTLLMProfile, LLMSettings, LocalLLMProfile
 from kms.config.settings import Settings
-from kms.core.content import ContentImage
-from kms.core.tokenization.images import ImageMetadataCache
 from kms.core.tokenization.material import (
     MaterialTokenEstimator,
     estimate_image_tokens,
 )
+from kms.inference.predictors import build_token_budget
+from kms.inference.tokenization.resources import LanguageModelTokenizers
 from kms.inference.tokenization.text import HuggingFaceTextTokenCounter
+from kms.media.metadata import ImageMetadataCache
+from kms.media.models import ImageAsset
 
 
 class _WordCounter:
@@ -49,8 +49,8 @@ def test_combined_counter_counts_text_and_native_image_material(tmp_path):
     payload = _image_bytes((64, 64))
     path = tmp_path / 'figure.png'
     path.write_bytes(payload)
-    path_image = ContentImage(('path', str(path)), path)
-    bytes_image = ContentImage(('bytes', 'figure'), payload)
+    path_image = ImageAsset(('path', str(path)), path)
+    bytes_image = ImageAsset(('bytes', 'figure'), payload)
     image_metadata = ImageMetadataCache()
     text_counter = _WordCounter()
     counter = MaterialTokenEstimator(text_counter, image_metadata)
@@ -73,7 +73,7 @@ def test_image_token_counter_propagates_missing_and_invalid_image_errors(
     with pytest.raises(FileNotFoundError):
         counter.estimate_images(
             [
-                ContentImage(
+                ImageAsset(
                     ('path', str(tmp_path / 'missing.png')),
                     tmp_path / 'missing.png',
                 )
@@ -81,7 +81,7 @@ def test_image_token_counter_propagates_missing_and_invalid_image_errors(
         )
     with pytest.raises(OSError):
         counter.estimate_images(
-            [ContentImage(('bytes', 'invalid'), b'not an image')]
+            [ImageAsset(('bytes', 'invalid'), b'not an image')]
         )
 
 
@@ -184,7 +184,8 @@ def test_chatgpt_counter_and_budget_do_not_load_local_tokenizers():
         safety_margin_tokens=50,
     )
     assert budget.counter is counter
-    assert budget.token_limit == 300
+    assert budget.token_limit == 10_000
+    assert budget.context_token_limit == 300
 
 
 def test_unknown_stage_profile_is_a_configuration_error():

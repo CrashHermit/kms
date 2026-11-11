@@ -5,12 +5,12 @@ import hashlib
 
 import pytest
 
-from kms.core.content import ContentImage
-from kms.service.artifacts import (
+from kms.artifacts import (
     ArtifactIntegrityError,
     ContentAddressedArtifactStore,
 )
-from kms.service.content import load_content_images
+from kms.media.images import load_content_images
+from kms.media.models import ImageAsset
 
 
 def test_artifact_store_deduplicates_and_rejects_corrupted_content(
@@ -38,7 +38,7 @@ def test_artifact_store_deduplicates_and_rejects_corrupted_content(
     with pytest.raises(ArtifactIntegrityError):
         asyncio.run(
             load_content_images(
-                [ContentImage(('path', str(first)), first)],
+                [ImageAsset(('path', str(first)), first)],
                 budget=None,
             )
         )
