@@ -6,7 +6,7 @@ from langgraph.types import Send
 
 from kms.core.tokenization.budget import TokenBudget
 from kms.inference.batching import pack_content_batches
-from kms.source.models.source import BlockType, SourceBlock, SourcePage
+from kms.source.models.source import BlockType, SourceBlock
 from kms.source.processing.formatting.inference import FormatterModule
 from kms.source.processing.formatting.models import (
     FormattingInput,
@@ -46,13 +46,11 @@ class FormattingNode:
         }
         requests = [
             FormattingRequest(
-                page_index=page.index,
-                block_position=block_position,
+                block_uuid=source_block.uuid,
                 content=source_block.content,
                 cleanup_instructions=directions_by_uuid[source_block.uuid],
             )
-            for page in state.corrected_pages
-            for block_position, source_block in enumerate(page.blocks)
+            for source_block in state.corrected_blocks
             if source_block.content
             and source_block.block_type is not BlockType.IMAGE
         ]
@@ -91,7 +89,7 @@ class FormattingNode:
         self,
         state: FormattingWorkerState,
     ) -> dict[str, list[FormattingResult]]:
-        """Format a batch and restore each result's original source location."""
+        """Format a batch and restore each result's source block UUID."""
         requests = state['formatting_requests']
         formatted_blocks = await self._formatter.acall(
             **self._project(requests)
@@ -103,8 +101,7 @@ class FormattingNode:
         return {
             'formatting_results': [
                 FormattingResult(
-                    page_index=request.page_index,
-                    block_position=request.block_position,
+                    block_uuid=request.block_uuid,
                     formatted_content=formatted_by_position[position],
                 )
                 for position, request in enumerate(requests)
@@ -113,32 +110,21 @@ class FormattingNode:
 
     def collect(
         self, state: SourceProcessingState
-    ) -> dict[str, list[SourcePage]]:
-        """Collect formatting results while preserving page structure."""
-        formatted_by_location = {
-            (result.page_index, result.block_position): result.formatted_content
+    ) -> dict[str, list[SourceBlock]]:
+        """Apply formatting by UUID without shifting removed block targets."""
+        formatted_by_uuid = {
+            result.block_uuid: result.formatted_content
             for result in state.formatting_results
         }
-        formatted_pages: list[SourcePage] = []
-        for page in state.corrected_pages:
-            formatted_blocks: list[SourceBlock] = []
-            for block_position, source_block in enumerate(page.blocks):
-                if (
-                    not source_block.content
-                    or source_block.block_type is BlockType.IMAGE
-                ):
-                    formatted_blocks.append(source_block)
-                    continue
-                location = (page.index, block_position)
-                formatted_blocks.append(
-                    source_block.model_copy(
-                        update={
-                            'content': formatted_by_location[location],
-                        }
-                    )
+        return {
+            'formatted_blocks': [
+                source_block.model_copy(
+                    update={
+                        'content': formatted_by_uuid[source_block.uuid],
+                    }
                 )
-            formatted_pages.append(
-                page.model_copy(update={'blocks': formatted_blocks})
-            )
-
-        return {'formatted_pages': formatted_pages}
+                if source_block.uuid in formatted_by_uuid
+                else source_block
+                for source_block in state.corrected_blocks
+            ]
+        }

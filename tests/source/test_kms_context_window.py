@@ -17,7 +17,6 @@ def _block(
         crop_path=f'crop-{index}.png',
         crop_bbox=(index, index + 1, index + 2, index + 3),
         image_path=image_path,
-        image_page_indexes=[index] if image_path is not None else [],
     )
 
 
@@ -54,7 +53,6 @@ def test_select_window_retains_direct_image_and_crop_metadata():
 
     assert window.target == [visual]
     assert window.target[0].image_path == 'figure.png'
-    assert window.target[0].image_page_indexes == [1]
     assert window.target[0].crop_path == visual.crop_path
     assert window.context_before == [blocks[0]]
     assert window.context_after == [blocks[2]]

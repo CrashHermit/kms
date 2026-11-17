@@ -1,19 +1,24 @@
-"""Real Neo4j coverage for indexed and scoped semantic retrieval."""
+"""Real Neo4j coverage for indexed and scoped block/unit search."""
 
 import asyncio
 import os
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
 
 from kms.config.services import DatabaseSettings
 from kms.config.settings import Settings
+from kms.core.tokenization.budget import TokenBudget
+from kms.core.tokenization.material import MaterialTokenEstimator
 from kms.database import schema
 from kms.database.client import DatabaseClient
 from kms.inference.embedding.limits import VOYAGE_EMBEDDING_DIMENSION
-from kms.source.models.material import ProcedureDraft, StatementDraft
+from kms.media.budget import ImagePayloadBudget
 from kms.source.models.snapshot import finalize_snapshot_identities
-from kms.source.models.source import BlockType, Source, SourceBlock, SourcePage
+from kms.source.models.source import BlockType, Source, SourceBlock
+from kms.source.models.unit import SourceUnit, SourceUnitKind
+from kms.source.retrieval.read import SourceReader
 from kms.source.storage.retrieval import SourceRetrievalRepository
 from kms.source.storage.snapshots import SourceSnapshotRepository
 
@@ -25,12 +30,17 @@ _REQUIRED = (
 )
 
 
+class _TextCounter:
+    def count_texts(self, texts: list[str]) -> list[int]:
+        return [len(text) for text in texts]
+
+
 @pytest.mark.skipif(
     os.getenv('KMS_NEO4J_IT') != '1'
     or not all(os.getenv(name) for name in _REQUIRED),
     reason='KMS Neo4j integration environment is not enabled',
 )
-def test_indexed_search_and_exact_filtered_search_preserve_ownership():
+def test_indexed_block_and_unit_search_preserve_ownership_and_filters():
     async def exercise() -> None:
         settings = Settings(
             _env_file=None,
@@ -49,45 +59,40 @@ def test_indexed_search_and_exact_filtered_search_preserve_ownership():
         vector = [1.0, *([0.0] * (dimension - 1))]
         near = [0.8, 0.6, *([0.0] * (dimension - 2))]
         profile = {'model': 'integration-test', 'dimension': dimension}
-        sources = [
-            Source(
-                uuid=str(uuid4()),
-                key=f'{prefix}-{label}',
-                metadata={'embedding_profile': profile},
-            )
-            for label in ('owned', 'foreign')
-        ]
         snapshots = []
-        for source, embedding in zip(sources, (near, vector), strict=True):
+        for label, embedding in (('owned', near), ('foreign', vector)):
             block = SourceBlock(
                 block_type=BlockType.MARKDOWN,
                 content='source passage',
                 embedding=embedding,
             )
-            snapshot = finalize_snapshot_identities(
-                source,
-                [SourcePage(index=0, blocks=[block])],
-                [],
-                [
-                    StatementDraft(
-                        uuid=f'{prefix}-{source.key}-statement',
-                        content='statement',
-                        is_exercise=True,
-                        embedding=embedding,
-                        member_block_uuids=[block.uuid],
-                    )
-                ],
-                [
-                    ProcedureDraft(
-                        content='procedure',
-                        embedding=embedding,
-                        member_block_uuids=[block.uuid],
-                    )
-                ],
+            unit = SourceUnit(
+                kind=SourceUnitKind.EXERCISE,
+                blocks=[block],
+                embedding=embedding,
             )
-            snapshots.append(snapshot)
+            source = Source(
+                uuid=str(uuid4()),
+                key=f'{prefix}-{label}',
+                metadata={'embedding_profile': profile},
+            )
+            snapshots.append(finalize_snapshot_identities(source, [unit]))
+
+        context_snapshot = finalize_snapshot_identities(
+            Source(uuid=str(uuid4()), key=f'{prefix}-context'),
+            [
+                SourceUnit(
+                    kind=SourceUnitKind.CONTENT,
+                    blocks=[
+                        SourceBlock(block_type=BlockType.MARKDOWN, content=text)
+                    ],
+                )
+                for text in ('before', 'target', 'after')
+            ],
+        )
 
         source_uuids = [snapshot.source.uuid for snapshot in snapshots]
+        source_uuids.append(context_snapshot.source.uuid)
         try:
             await schema.ensure_schema(
                 database.session, embedding_dimension=dimension
@@ -99,64 +104,144 @@ def test_indexed_search_and_exact_filtered_search_preserve_ownership():
                     other=other,
                 )
                 await result.consume()
-            repository = SourceSnapshotRepository(database.session)
-            await repository.create_owned_snapshot(owner, snapshots[0])
-            await repository.create_owned_snapshot(other, snapshots[1])
+            snapshot_repository = SourceSnapshotRepository(database.session)
+            await snapshot_repository.create_owned_snapshot(owner, snapshots[0])
+            await snapshot_repository.create_owned_snapshot(
+                owner, context_snapshot
+            )
+            await snapshot_repository.create_owned_snapshot(other, snapshots[1])
 
-            sources_repository = SourceRetrievalRepository(database.session)
-            blocks = await sources_repository.search_owned_blocks(
+            repository = SourceRetrievalRepository(database.session)
+            reader = SourceReader(repository)
+            target_uuid = context_snapshot.units[1].uuid
+            window = await reader.read_unit_window(
+                owner,
+                target_uuid,
+                before_tokens=100,
+                after_tokens=100,
+                budget=TokenBudget(
+                    counter=MaterialTokenEstimator(_TextCounter()),
+                    token_limit=10000,
+                ),
+                image_budget=ImagePayloadBudget(
+                    max_images=5, max_bytes=10000, max_pixels=10000
+                ),
+                request_inputs=lambda window: {
+                    'before': window.before,
+                    'target': window.target,
+                    'after': window.after,
+                },
+            )
+            assert window is not None
+            assert window.source.uuid == context_snapshot.source.uuid
+            assert [unit.uuid for unit in window.before] == [
+                context_snapshot.units[0].uuid
+            ]
+            assert window.target.uuid == target_uuid
+            assert [unit.uuid for unit in window.after] == [
+                context_snapshot.units[2].uuid
+            ]
+            assert (
+                await reader.read_unit_window(
+                    other,
+                    target_uuid,
+                    before_tokens=100,
+                    after_tokens=100,
+                    budget=TokenBudget(
+                        counter=MaterialTokenEstimator(_TextCounter()),
+                        token_limit=10000,
+                    ),
+                    image_budget=ImagePayloadBudget(
+                        max_images=5, max_bytes=10000, max_pixels=10000
+                    ),
+                    request_inputs=lambda window: {'target': window.target},
+                )
+                is None
+            )
+            blocks = await repository.search_owned_blocks(
                 owner, vector, candidate_limit=10
             )
-            statements = await sources_repository.search_owned_statements(
-                owner, vector, candidate_limit=10
-            )
-            procedures = await sources_repository.search_owned_procedures(
+            units = await repository.search_owned_units(
                 owner, vector, candidate_limit=10
             )
             assert [item.block.uuid for item in blocks] == [
-                snapshots[0].pages[0].blocks[0].uuid
+                snapshots[0].units[0].blocks[0].uuid
             ]
-            assert blocks[0].page_indexes == [0]
-            assert [item.statement.uuid for item in statements] == [
-                snapshots[0].statements[0].uuid
+            assert blocks[0].unit_uuid == snapshots[0].units[0].uuid
+            assert [item.unit.uuid for item in units] == [
+                snapshots[0].units[0].uuid
             ]
-            assert [item.procedure.uuid for item in procedures] == [
-                snapshots[0].procedures[0].uuid
+            assert units[0].unit.kind is SourceUnitKind.EXERCISE
+            assert [block.uuid for block in units[0].unit.blocks] == [
+                snapshots[0].units[0].blocks[0].uuid
+            ]
+            assert units[0].unit.invalidated_at is None
+            active = await repository.read_units(
+                owner, [snapshots[0].units[0].uuid]
+            )
+            assert active[0].unit.invalidated_at is None
+            foreign_blocks = await repository.search_owned_blocks(
+                other, vector, candidate_limit=10
+            )
+            foreign_units = await repository.search_owned_units(
+                other, vector, candidate_limit=10
+            )
+            assert [hit.block.uuid for hit in foreign_blocks] == [
+                snapshots[1].units[0].blocks[0].uuid
+            ]
+            assert [hit.unit.uuid for hit in foreign_units] == [
+                snapshots[1].units[0].uuid
             ]
 
             scoped = [snapshots[0].source.uuid]
-            filtered_blocks = await sources_repository.search_owned_blocks(
+            filtered_blocks = await repository.search_owned_blocks(
                 owner, vector, candidate_limit=1, source_uuids=scoped
             )
-            filtered_statements = (
-                await sources_repository.search_owned_statements(
-                    owner, vector, candidate_limit=1, is_exercise=True
-                )
-            )
-            filtered_procedures = (
-                await sources_repository.search_owned_procedures(
-                    owner, vector, candidate_limit=1, source_uuids=scoped
-                )
+            filtered_units = await repository.search_owned_units(
+                owner,
+                vector,
+                candidate_limit=1,
+                source_uuids=scoped,
+                kind=SourceUnitKind.EXERCISE,
             )
             assert [item.block.uuid for item in filtered_blocks] == [
-                snapshots[0].pages[0].blocks[0].uuid
+                snapshots[0].units[0].blocks[0].uuid
             ]
-            assert [item.statement.uuid for item in filtered_statements] == [
-                snapshots[0].statements[0].uuid
+            assert [item.unit.uuid for item in filtered_units] == [
+                snapshots[0].units[0].uuid
             ]
-            assert [item.procedure.uuid for item in filtered_procedures] == [
-                snapshots[0].procedures[0].uuid
-            ]
+            assert filtered_units[0].unit.invalidated_at is None
+
+            invalidated_at = datetime(2026, 1, 2, tzinfo=UTC)
+            async with database.session() as session:
+                result = await session.run(
+                    'MATCH (unit:SourceUnit {uuid: $uuid}) '
+                    'SET unit.invalidated_at = $invalidated_at',
+                    uuid=snapshots[0].units[0].uuid,
+                    invalidated_at=invalidated_at,
+                )
+                await result.consume()
+            invalidated = await repository.read_units(
+                owner, [snapshots[0].units[0].uuid]
+            )
+            assert invalidated[0].unit.invalidated_at == invalidated_at
+            filtered_units = await repository.search_owned_units(
+                owner, vector, candidate_limit=1, source_uuids=scoped
+            )
+            assert filtered_units[0].unit.invalidated_at == invalidated_at
+            units = await repository.search_owned_units(
+                owner, vector, candidate_limit=10
+            )
+            assert units[0].unit.invalidated_at == invalidated_at
         finally:
             async with database.session() as session:
                 result = await session.run(
                     """
                     UNWIND $source_uuids AS uuid
                     MATCH (source:Source {uuid: uuid})
-                    OPTIONAL MATCH (source)-[:HAS_PAGE]->(page:SourcePage)
-                    OPTIONAL MATCH (page)-[:CONTAINS_BLOCK]->(block:SourceBlock)
-                    OPTIONAL MATCH (block)-[:MEMBER_OF]->(material)
-                    DETACH DELETE material, block, page, source
+                    OPTIONAL MATCH (source)-[:HAS_UNIT]->(unit:SourceUnit)
+                    OPTIONAL MATCH (unit)-[:HAS_BLOCK]->(block:SourceBlock)
+                    DETACH DELETE block, unit, source
                     """,
                     source_uuids=source_uuids,
                 )

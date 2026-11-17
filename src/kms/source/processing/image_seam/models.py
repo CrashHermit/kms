@@ -3,21 +3,21 @@
 from pydantic import BaseModel, Field
 
 from kms.media.models import Material
-from kms.source.models.source import SourcePage
+from kms.source.models.source import SourceBlock
 
 
 class ImageSeamRequest(BaseModel):
-    """One adjacent page-pair candidate in the complete ordered candidate list."""
+    """One adjacent physical-page candidate edge."""
 
-    position: int = Field(ge=0, strict=True)
-    top_page: SourcePage
-    bottom_page: SourcePage
+    top_block: SourceBlock
+    bottom_block: SourceBlock
 
 
 class ImageSeamResult(BaseModel):
-    """Continuation decision for one original adjacent page-pair candidate."""
+    """Continuation decision addressed to the original block pair."""
 
-    position: int = Field(ge=0, strict=True)
+    top_uuid: str
+    bottom_uuid: str
     is_continuation: bool
 
 

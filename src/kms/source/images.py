@@ -65,7 +65,8 @@ def _fuse_image_bytes(
 ) -> Path:
     page_offsets: dict[int, int] = {}
     offset = 0
-    for page_index, _ in parts:
+    page_indexes = list(dict.fromkeys(page_index for page_index, _ in parts))
+    for page_index in page_indexes:
         page_path = Path(page_images[page_index])
         page_offsets[page_index] = offset
         with Image.open(page_path) as page_image:
@@ -120,6 +121,5 @@ async def fuse_image_blocks(
         update={
             'image_path': str(image_path),
             'image_sha256': None,
-            'image_page_indexes': [page_index for page_index, _ in parts],
         }
     )

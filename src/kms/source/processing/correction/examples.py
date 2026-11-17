@@ -132,4 +132,34 @@ def content_correction_examples() -> list[dspy.Example]:
                 )
             ],
         ).with_inputs('blocks'),
+        dspy.Example(
+            blocks=[
+                _input(
+                    0,
+                    BlockType.HEADER,
+                    'CHAPTER 3     ALGEBRA     42',
+                    'running_header.png',
+                ),
+                _input(
+                    1,
+                    BlockType.HEADER,
+                    '3.2 Quadratic functions',
+                    'section_heading.png',
+                ),
+            ],
+            corrected_blocks=[
+                ContentCorrectionOutput(
+                    position=0,
+                    keep=False,
+                    corrected_content=None,
+                    cleanup_instructions=[],
+                ),
+                ContentCorrectionOutput(
+                    position=1,
+                    keep=True,
+                    corrected_content='3.2 Quadratic functions',
+                    cleanup_instructions=[],
+                ),
+            ],
+        ).with_inputs('blocks'),
     ]

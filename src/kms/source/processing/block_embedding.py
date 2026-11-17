@@ -1,69 +1,63 @@
-"""Final source-block embedding node and page helper."""
+"""Embed final source blocks and record vector provenance."""
 
 from kms.core.embedding import Embedder, EmbeddingRequest
 from kms.source.context import project_source_block
-from kms.source.models.source import SourcePage
+from kms.source.models.unit import SourceUnit
 from kms.source.processing.state import SourceProcessingState
 
 
-async def embed_source_pages(
-    embedder: Embedder,
-    pages: list[SourcePage],
-) -> list[SourcePage]:
-    """Embed missing source block text and native images in page order."""
-    target_positions = [
-        (page_index, block_index)
-        for page_index, page in enumerate(pages)
-        for block_index, block in enumerate(page.blocks)
+async def embed_source_blocks(
+    embedder: Embedder, units: list[SourceUnit]
+) -> list[SourceUnit]:
+    """Embed readable blocks in their unit and block encounter order."""
+    positions = [
+        (unit_index, block_index)
+        for unit_index, unit in enumerate(units)
+        for block_index, block in enumerate(unit.blocks)
         if block.embedding is None
         and (
             (block.content is not None and block.content.strip())
             or block.image_path
         )
     ]
-    if not target_positions:
-        return pages
-
-    materials = [
-        project_source_block(pages[page_index].blocks[block_index]).material
-        for page_index, block_index in target_positions
-    ]
-    embeddings = await embedder.embed(
-        EmbeddingRequest(materials=materials, input_type='document')
-    )
-    vectors_by_position = dict(zip(target_positions, embeddings, strict=True))
-    embedded_pages: list[SourcePage] = []
-    for page_index, page in enumerate(pages):
-        embedded_blocks = []
-        for block_index, block in enumerate(page.blocks):
-            position = (page_index, block_index)
-            embedded_blocks.append(
-                block.model_copy(
-                    update={'embedding': vectors_by_position[position]}
-                )
-                if position in vectors_by_position
-                else block
-            )
-        embedded_pages.append(
-            page.model_copy(update={'blocks': embedded_blocks})
-            if any(
-                (page_index, block_index) in vectors_by_position
-                for block_index in range(len(page.blocks))
-            )
-            else page
+    if not positions:
+        return units
+    vectors = await embedder.embed(
+        EmbeddingRequest(
+            materials=[
+                project_source_block(
+                    units[unit_index].blocks[block_index]
+                ).material
+                for unit_index, block_index in positions
+            ],
+            input_type='document',
         )
-    return embedded_pages
+    )
+    by_position = dict(zip(positions, vectors, strict=True))
+    return [
+        unit.model_copy(
+            update={
+                'blocks': [
+                    block.model_copy(
+                        update={
+                            'embedding': by_position[(unit_index, block_index)]
+                        }
+                    )
+                    if (unit_index, block_index) in by_position
+                    else block
+                    for block_index, block in enumerate(unit.blocks)
+                ]
+            }
+        )
+        for unit_index, unit in enumerate(units)
+    ]
 
 
 class SourceBlockEmbeddingNode:
     """Embed source blocks and record the identity of their vector model."""
 
     def __init__(
-        self,
-        embedder: Embedder,
-        *,
-        model: str,
-        dimension: int,
+        self, embedder: Embedder, *, model: str, dimension: int
     ) -> None:
         self._embedder = embedder
         self._model = model
@@ -84,7 +78,5 @@ class SourceBlockEmbeddingNode:
         )
         return {
             'source': source,
-            'split_pages': await embed_source_pages(
-                self._embedder, state.split_pages
-            ),
+            'units': await embed_source_blocks(self._embedder, state.units),
         }

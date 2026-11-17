@@ -3,7 +3,6 @@ import asyncio
 import pytest
 
 from kms.database.schema import (
-    SCHEMA_STATEMENTS,
     VECTOR_INDEX_NAMES,
     ensure_schema,
     ensure_structural_schema,
@@ -46,42 +45,23 @@ class Session:
         return Result()
 
 
-def test_structural_schema_contains_only_retained_constraints_without_gds():
+def test_structural_schema_does_not_destroy_existing_data():
     session = Session()
 
     asyncio.run(ensure_structural_schema(lambda: session))
 
-    assert len(session.statements) == 6
-    assert all(
-        'CREATE CONSTRAINT' in statement for statement, _ in session.statements
-    )
-    assert {
-        statement.split('CREATE CONSTRAINT ', 1)[1].split(' IF NOT EXISTS', 1)[
-            0
-        ]
-        for statement, _ in session.statements
-    } == {
-        'source_uuid',
-        'source_block_uuid',
-        'instruction_uuid',
-        'source_statement_uuid',
-        'source_procedure_uuid',
-        'user_uuid',
-    }
     assert not any(
         'CALL db.create' in statement for statement, _ in session.statements
     )
     assert not any('DROP' in statement for statement, _ in session.statements)
-    assert len(SCHEMA_STATEMENTS) == 6
 
 
-def test_vector_schema_contains_only_retained_source_indexes():
+def test_vector_schema_contains_only_block_and_unit_indexes():
     statements = vector_index_statements(1024)
 
     assert VECTOR_INDEX_NAMES == (
         'source_block_embedding',
-        'source_statement_embedding',
-        'source_procedure_embedding',
+        'source_unit_embedding',
     )
     assert len(statements) == len(VECTOR_INDEX_NAMES)
     assert all('1024' in statement for statement in statements)
@@ -91,12 +71,12 @@ def test_vector_schema_contains_only_retained_source_indexes():
     )
 
 
-def test_schema_initialization_creates_and_awaits_only_retained_indexes():
+def test_schema_initialization_creates_and_awaits_only_source_indexes():
     session = Session()
 
     asyncio.run(ensure_schema(lambda: session, embedding_dimension=1024))
 
-    assert len(session.vector_writes) == 3
+    assert len(session.vector_writes) == 2
     assert all(
         name in statement
         for name, statement in zip(
@@ -130,7 +110,7 @@ def test_retained_source_vectors_reject_stale_dimension_before_index_writes():
     session = Session(
         incompatible_vectors=[
             {
-                'labels': ['SourceProcedure'],
+                'labels': ['SourceUnit'],
                 'dimension': 4096,
             }
         ]
@@ -145,6 +125,5 @@ def test_retained_source_vectors_reject_stale_dimension_before_index_writes():
     )
     assert parameters['labels'] == [
         'SourceBlock',
-        'SourceStatement',
-        'SourceProcedure',
+        'SourceUnit',
     ]

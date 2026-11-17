@@ -71,4 +71,17 @@ def image_filter_examples() -> list[dspy.Example]:
             ],
             decisions=[ImageFilterDecision(position=0, keep=True)],
         ).with_inputs('items'),
+        dspy.Example(
+            items=[item('running_header.png', [])],
+            decisions=[ImageFilterDecision(position=0, keep=False)],
+        ).with_inputs('items'),
+        dspy.Example(
+            items=[
+                item(
+                    'figure_with_page_number.png',
+                    context('The graph shows change over time.'),
+                )
+            ],
+            decisions=[ImageFilterDecision(position=0, keep=True)],
+        ).with_inputs('items'),
     ]

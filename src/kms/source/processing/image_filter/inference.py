@@ -15,13 +15,13 @@ class ImageFilterSignature(dspy.Signature):
     read-only and may contain text or neighboring images. Keep diagrams, charts,
     photographs relevant to the source, equation images, screenshots,
     substantive illustrations, and uncertain images. Remove clear website
-    decoration, unrelated logos or icons, advertisements, and interface
-    artifacts. Retain an advertisement when the surrounding text studies it as
-    instructional subject matter. Do not filter by a particular teaching goal,
-    judge truth, describe or transcribe images, edit pixels, or stitch images.
-    A decision applies only to its target, never to neighboring blocks, and
-    must not reject a useful mixed figure because it contains a small artifact.
-
+    decoration, unrelated logos or icons, advertisements, page-number or
+    repeated-header/footer furniture stored as a standalone image, and interface
+    artifacts. Incidental labels or small page furniture inside a substantive
+    figure do not make that figure removable. Retain an advertisement when the
+    surrounding text studies it as instructional subject matter. Do not filter
+    by a particular teaching goal, judge truth, describe or transcribe images,
+    edit pixels, or stitch images.
     Return exactly one Boolean decision per input, preserving each zero-based
     position.
     """

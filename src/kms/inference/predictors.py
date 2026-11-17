@@ -76,6 +76,21 @@ class PredictorFactory:
     ) -> dspy.Module:
         """Compose prompt-aware capacity, native preparation and backend execution."""
         profile = self._settings.llm.resolve(inference)
+        resolved_image_budget = resolve_image_budget(self._settings, inference)
+        if image_budget is None:
+            image_budget = resolved_image_budget
+        else:
+            image_budget = ImagePayloadBudget(
+                max_images=min(
+                    image_budget.max_images, resolved_image_budget.max_images
+                ),
+                max_bytes=min(
+                    image_budget.max_bytes, resolved_image_budget.max_bytes
+                ),
+                max_pixels=min(
+                    image_budget.max_pixels, resolved_image_budget.max_pixels
+                ),
+            )
         if budget is None:
             budget = build_token_budget(
                 self._settings,
@@ -135,6 +150,29 @@ class PredictorFactory:
                 prepared, module, signature, self._recorder
             )
         return _BoundedPredictor(prepared, self._semaphore)
+
+
+def resolve_image_budget(
+    settings: Settings, *inferences: StageInferenceSettings
+) -> ImagePayloadBudget:
+    """Combine operational limits with known selected-model hard limits."""
+    operational = settings.llm.image_payload
+    profiles = [settings.llm.resolve(inference) for inference in inferences]
+
+    def capped(name: str) -> int:
+        values = [getattr(operational, name)]
+        values.extend(
+            value
+            for profile in profiles
+            if (value := getattr(profile.image_limits, name)) is not None
+        )
+        return min(values)
+
+    return ImagePayloadBudget(
+        max_images=capped('max_images'),
+        max_bytes=capped('max_bytes'),
+        max_pixels=capped('max_pixels'),
+    )
 
 
 def _build_strategy(

@@ -15,32 +15,19 @@ from kms.source.processing.formatting import composition as formatting
 from kms.source.processing.graph import SourceProcessingGraph
 from kms.source.processing.image_filter import composition as image_filter
 from kms.source.processing.image_seam import composition as image_seam
-from kms.source.processing.instruction_finder import (
-    composition as instruction_finder,
-)
-from kms.source.processing.instruction_governance import (
-    composition as instruction_governance,
+from kms.source.processing.instruction_redistribution import (
+    composition as instruction_redistribution,
 )
 from kms.source.processing.ocr import OCRNode
-from kms.source.processing.pedagogical_finder import (
-    composition as pedagogical_finder,
+from kms.source.processing.procedure_finder import (
+    composition as procedure_finder,
 )
-from kms.source.processing.procedure_reconstruction import (
-    composition as procedure_reconstruction,
-)
-from kms.source.processing.procedure_reconstruction.embedding import (
-    SourceProcedureEmbeddingNode,
-)
-from kms.source.processing.statement_procedure import (
-    composition as statement_procedure,
-)
-from kms.source.processing.statement_reconstruction import (
-    composition as statement_reconstruction,
-)
-from kms.source.processing.statement_reconstruction.embedding import (
-    SourceStatementEmbeddingNode,
+from kms.source.processing.procedure_splitter import (
+    composition as procedure_splitter,
 )
 from kms.source.processing.text_seam import composition as text_seam
+from kms.source.processing.unit_assembly import SourceUnitAssemblyNode
+from kms.source.processing.unit_embedding import SourceUnitEmbeddingNode
 
 
 def build_source_processing_graph(
@@ -71,40 +58,23 @@ def build_source_processing_graph(
         exercise_splitter=exercise_splitter.build_node(
             settings, predictors=predictors, tokenizers=tokenizers
         ),
-        instruction_finder=instruction_finder.build_node(
+        procedure_splitter=procedure_splitter.build_node(
+            settings, predictors=predictors, tokenizers=tokenizers
+        ),
+        instruction_redistribution=instruction_redistribution.build_node(
             settings, predictors=predictors, tokenizers=tokenizers
         ),
         exercise_finder=exercise_finder.build_node(
             settings, predictors=predictors, tokenizers=tokenizers
         ),
-        pedagogical_finder=pedagogical_finder.build_node(
+        procedure_finder=procedure_finder.build_node(
             settings, predictors=predictors, tokenizers=tokenizers
         ),
-        statement_procedure=statement_procedure.build_node(
-            settings, predictors=predictors, tokenizers=tokenizers
-        ),
-        instruction_governance=instruction_governance.build_node(
-            settings, predictors=predictors, tokenizers=tokenizers
-        ),
-        source_statement_reconstruction=(
-            statement_reconstruction.build_node(
-                settings, predictors=predictors, tokenizers=tokenizers
-            )
-        ),
-        source_procedure_reconstruction=(
-            procedure_reconstruction.build_node(
-                settings, predictors=predictors, tokenizers=tokenizers
-            )
-        ),
-        source_statement_embedding=SourceStatementEmbeddingNode(
-            embeddings.embedder
-        ),
-        source_procedure_embedding=SourceProcedureEmbeddingNode(
-            embeddings.embedder
-        ),
-        embedding=SourceBlockEmbeddingNode(
+        unit_assembly=SourceUnitAssemblyNode(),
+        block_embedding=SourceBlockEmbeddingNode(
             embeddings.embedder,
             model=embeddings.model.model,
             dimension=embeddings.model.dimension,
         ),
+        unit_embedding=SourceUnitEmbeddingNode(embeddings.embedder),
     )

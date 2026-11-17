@@ -18,12 +18,11 @@ class OCRArtifact(BaseModel):
     crop_bbox: tuple[int, int, int, int] | None = None
 
 
-class OCRPageArtifact(BaseModel):
-    """One OCR page, its rendered image path, and ordered block artifacts."""
+class OCRExtraction(BaseModel):
+    """Flat OCR artifacts with independent physical-page capture metadata."""
 
     model_config = ConfigDict(extra='forbid')
 
-    page_index: int
-    page_image_path: str
-    markdown: str
     blocks: list[OCRArtifact] = Field(default_factory=list)
+    page_indexes: list[int] = Field(default_factory=list)
+    page_images: dict[int, str] = Field(default_factory=dict)

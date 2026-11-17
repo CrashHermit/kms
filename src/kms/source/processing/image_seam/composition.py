@@ -1,7 +1,10 @@
 from kms.config.settings import Settings
-from kms.inference.predictors import PredictorFactory, build_token_budget
+from kms.inference.predictors import (
+    PredictorFactory,
+    build_token_budget,
+    resolve_image_budget,
+)
 from kms.inference.tokenization.resources import LanguageModelTokenizers
-from kms.media.budget import ImagePayloadBudget
 from kms.source.processing.image_seam.examples import image_seam_examples
 from kms.source.processing.image_seam.inference import (
     ImageSeamJudgeModule,
@@ -27,7 +30,7 @@ def build_node(
         signature=ImageSeamSignature,
         examples=examples,
     )
-    image_budget = ImagePayloadBudget(**source.image_payload.model_dump())
+    image_budget = resolve_image_budget(settings, source.inference)
     judge = ImageSeamJudgeModule(
         predictors.create(
             ImageSeamJudgeModule,

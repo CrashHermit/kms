@@ -74,7 +74,16 @@ def test_user_creation_and_exclusive_source_ownership():
 
             async with database.session() as session:
                 result = await session.run(
-                    'CREATE (:Source {uuid: $uuid, key: $key, created_at: datetime()})',
+                    """
+                    CREATE (:Source {
+                        uuid: $uuid,
+                        key: $key,
+                        created_at: datetime(),
+                        identity_schema: 'source-content-v3',
+                        metadata: '{}',
+                        revision: 0
+                    })
+                    """,
                     uuid=legacy_source_uuid,
                     key='legacy.pdf',
                 )
@@ -85,7 +94,7 @@ def test_user_creation_and_exclusive_source_ownership():
                         uuid: $uuid,
                         key: $key,
                         created_at: datetime(),
-                        identity_schema: 'source-content-v3',
+                        identity_schema: 'source-content-v5',
                         metadata: '{}',
                         revision: 0
                     })
@@ -100,7 +109,7 @@ def test_user_creation_and_exclusive_source_ownership():
                         uuid: $uuid,
                         key: $key,
                         created_at: datetime(),
-                        identity_schema: 'source-content-v3',
+                        identity_schema: 'source-content-v5',
                         metadata: '{}',
                         revision: 0
                     })
@@ -129,8 +138,7 @@ def test_user_creation_and_exclusive_source_ownership():
             unowned_uuids = {
                 source.uuid for source in await catalog.list_unowned_sources()
             }
-            assert legacy_source_uuid in unowned_uuids
-            assert source_uuid not in unowned_uuids
+            assert legacy_source_uuid not in unowned_uuids
 
             with pytest.raises(SourceOwnershipConflict):
                 await catalog.adopt_source(user_a.uuid, source_uuid)

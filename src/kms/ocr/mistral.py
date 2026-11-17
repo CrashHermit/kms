@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 from kms.config.services import OCRSettings
 from kms.ocr.pdfium import PDFIUM_LOCK
 from kms.source.models.source import BlockType
-from kms.source.processing.ocr_models import OCRArtifact, OCRPageArtifact
+from kms.source.processing.ocr_models import OCRArtifact, OCRExtraction
 
 _TIMEOUT = httpx.Timeout(300.0, connect=30.0)
 
@@ -280,8 +280,8 @@ def _materialize_page(
     block_crop_scale: float,
     pdf_path: Path,
     rendered_page: bytes | None = None,
-) -> OCRPageArtifact:
-    """Materialize rendered pages and canonical block crops."""
+) -> tuple[list[OCRArtifact], str]:
+    """Materialize one provider page as ordered blocks and rendered image."""
     page_path = document_dir / 'Document.png'
     if rendered_page is None:
         image_size = _render_page(
@@ -320,12 +320,7 @@ def _materialize_page(
                 )
             )
     page_image.close()
-    return OCRPageArtifact(
-        page_index=page.index,
-        page_image_path=str(page_path),
-        markdown=page.markdown,
-        blocks=artifacts,
-    )
+    return artifacts, str(page_path)
 
 
 def materialize_ocr_artifacts(
@@ -336,8 +331,8 @@ def materialize_ocr_artifacts(
     block_crop_scale: float,
     *,
     rendered_pages: dict[int, bytes] | None = None,
-) -> list[OCRPageArtifact]:
-    """Materialize OCR response pages as provider-neutral artifacts."""
+) -> OCRExtraction:
+    """Materialize OCR response pages as flat provider-neutral artifacts."""
     source_path = Path(pdf_path)
     output_root = Path(output_dir)
     pdf = None
@@ -345,27 +340,32 @@ def materialize_ocr_artifacts(
         with PDFIUM_LOCK:
             pdf = pdfium.PdfDocument(str(source_path))
     try:
-        pages: list[OCRPageArtifact] = []
+        blocks: list[OCRArtifact] = []
+        page_images: dict[int, str] = {}
+        page_indexes = []
         for page in response.pages:
             document_dir = (
                 output_root / 'Documents' / f'Document_{page.index:04d}'
             )
-            pages.append(
-                _materialize_page(
-                    page,
-                    document_dir,
-                    pdf,
-                    render_scale,
-                    block_crop_scale,
-                    source_path,
-                    rendered_page=(
-                        rendered_pages.get(page.index)
-                        if rendered_pages is not None
-                        else None
-                    ),
-                )
+            page_blocks, page_image = _materialize_page(
+                page,
+                document_dir,
+                pdf,
+                render_scale,
+                block_crop_scale,
+                source_path,
+                rendered_page=(
+                    rendered_pages.get(page.index)
+                    if rendered_pages is not None
+                    else None
+                ),
             )
-        return pages
+            blocks.extend(page_blocks)
+            page_indexes.append(page.index)
+            page_images[page.index] = page_image
+        return OCRExtraction(
+            blocks=blocks, page_indexes=page_indexes, page_images=page_images
+        )
     finally:
         if pdf is not None:
             with PDFIUM_LOCK:
@@ -374,7 +374,7 @@ def materialize_ocr_artifacts(
 
 
 class MistralOCRProvider:
-    """Adapt Mistral OCR responses to KMS2 correction artifacts."""
+    """Adapt Mistral OCR responses to flat KMS2 artifacts."""
 
     def __init__(self, settings: OCRSettings) -> None:
         self._settings = settings
@@ -385,8 +385,8 @@ class MistralOCRProvider:
         *,
         source_uuid: str,
         pages: list[int] | None = None,
-    ) -> list[OCRPageArtifact]:
-        """OCR a PDF and materialize its ordered page artifacts."""
+    ) -> OCRExtraction:
+        """OCR a PDF and materialize its flat block artifacts."""
         source_path = Path(pdf_path)
         response = ocr_pdf(
             source_path.read_bytes(),

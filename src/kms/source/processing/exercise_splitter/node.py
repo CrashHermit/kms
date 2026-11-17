@@ -1,4 +1,4 @@
-"""LangGraph node for routed source-block exercise splitting."""
+"""LangGraph node for routed source exercise splitting."""
 
 from functools import partial
 from typing import Literal, TypedDict
@@ -18,21 +18,22 @@ from kms.source.context import (
     project_source_window,
     select_window,
 )
-from kms.source.models.source import BlockType, SourceBlock, SourcePage
+from kms.source.models.source import BlockType, SourceBlock
 from kms.source.processing.exercise_splitter.inference import (
+    ExerciseSplitRouterModule,
     ExerciseSplitterModule,
-    ExerciseStripRouterModule,
 )
 from kms.source.processing.exercise_splitter.models import (
     SplitCandidate,
     SplitRequest,
     SplitResult,
 )
+from kms.source.processing.splitting import apply_block_splits
 from kms.source.processing.state import SourceProcessingState
 
 
 class ExerciseSplitterWorkerState(TypedDict):
-    """State supplied to one dispatched exercise splitter worker."""
+    """State supplied to one dispatched splitter worker."""
 
     split_request: SplitRequest
 
@@ -42,7 +43,7 @@ class ExerciseSplitterNode:
 
     def __init__(
         self,
-        router: ExerciseStripRouterModule,
+        router: ExerciseSplitRouterModule,
         exercise_splitter: ExerciseSplitterModule,
         context_window: ContextWindowSettings,
         *,
@@ -75,8 +76,7 @@ class ExerciseSplitterNode:
 
     @staticmethod
     def _splitter_inputs(
-        window: SourceBlockWindow,
-        candidate_positions: set[int],
+        window: SourceBlockWindow, candidate_positions: set[int]
     ) -> dict[str, object]:
         projected = project_source_window(window)
         return {
@@ -99,12 +99,13 @@ class ExerciseSplitterNode:
     def _splitter_capacity_inputs(
         cls, window: SourceBlockWindow
     ) -> dict[str, object]:
-        eligible_positions = {
+        eligible = {
             position
             for position, block in enumerate(window.target)
-            if block.block_type != BlockType.IMAGE and block.image_path is None
+            if block.block_type is not BlockType.IMAGE
+            and block.image_path is None
         }
-        inputs = cls._splitter_inputs(window, eligible_positions)
+        inputs = cls._splitter_inputs(window, eligible)
         projected = project_source_window(window)
         inputs['reference_blocks'] = [
             PositionedSourceBlock(position=position, source_block=block)
@@ -116,12 +117,12 @@ class ExerciseSplitterNode:
         self, flat_blocks: list[SourceBlock]
     ) -> list[SourceBlockWindow]:
         token_counts = count_source_tokens(flat_blocks, self._token_counters)
-        windows = []
+        windows: list[SourceBlockWindow] = []
         flat_position = 0
         while flat_position < len(flat_blocks):
             target_positions: list[int] = []
             target_cost = 0
-            best_window: SourceBlockWindow | None = None
+            best_window = None
             for position in range(
                 flat_position,
                 min(
@@ -141,10 +142,9 @@ class ExerciseSplitterNode:
                     and target_cost + cost > self._context_window.target_budget
                 ):
                     break
-                candidate_positions = [*target_positions, position]
                 candidate_window = select_window(
                     flat_blocks,
-                    candidate_positions,
+                    [*target_positions, position],
                     token_counts=token_counts,
                     backward_budget=self._context_window.backward_budget,
                     forward_budget=self._context_window.forward_budget,
@@ -175,17 +175,10 @@ class ExerciseSplitterNode:
     async def dispatch(
         self, state: SourceProcessingState
     ) -> list[Send] | Literal['exercise_splitter_collect']:
-        """Dispatch largest contiguous windows fitting both complete tasks."""
-        flat_blocks = [
-            block
-            for page in state.image_filtered_pages
-            for block in page.blocks
-        ]
-        if not flat_blocks:
+        blocks = state.image_filtered_blocks
+        if not blocks:
             return 'exercise_splitter_collect'
-        windows = await run_blocking_work(
-            partial(self._select_windows, flat_blocks)
-        )
+        windows = await run_blocking_work(partial(self._select_windows, blocks))
         flat_position = 0
         sends = []
         for window in windows:
@@ -203,45 +196,39 @@ class ExerciseSplitterNode:
         return sends
 
     async def worker(
-        self,
-        state: ExerciseSplitterWorkerState,
+        self, state: ExerciseSplitterWorkerState
     ) -> dict[str, list[SplitResult]]:
-        """Route and split one indivisible canonical source window."""
         request = state['split_request']
         window = request.window
-        eligible_positions = {
+        eligible = {
             position
             for position, block in enumerate(window.target)
-            if block.block_type != BlockType.IMAGE and block.image_path is None
+            if block.block_type is not BlockType.IMAGE
+            and block.image_path is None
         }
-        if not eligible_positions:
+        if not eligible:
             return {
-                'split_results': [
+                'exercise_split_results': [
                     SplitResult(flat_position=request.flat_position)
                 ]
             }
-
-        router_inputs = self._router_inputs(window)
-        decisions = await self._router.acall(**router_inputs)
-        candidate_positions = sorted(
+        decisions = await self._router.acall(**self._router_inputs(window))
+        candidates = {
             decision.position
             for decision in decisions
-            if decision.contains_multiple_exercises
-            and decision.position in eligible_positions
-        )
-        if not candidate_positions:
+            if decision.requires_split
+        }
+        if not candidates:
             return {
-                'split_results': [
+                'exercise_split_results': [
                     SplitResult(flat_position=request.flat_position)
                 ]
             }
-
-        splitter_inputs = self._splitter_inputs(
-            window, set(candidate_positions)
+        splits = await self._exercise_splitter.acall(
+            **self._splitter_inputs(window, candidates)
         )
-        splits = await self._exercise_splitter.acall(**splitter_inputs)
         return {
-            'split_results': [
+            'exercise_split_results': [
                 SplitResult(
                     flat_position=request.flat_position + decision.position,
                     pieces=decision.pieces,
@@ -252,31 +239,14 @@ class ExerciseSplitterNode:
 
     def collect(
         self, state: SourceProcessingState
-    ) -> dict[str, list[SourcePage]]:
-        """Collect split results while preserving page and block order."""
+    ) -> dict[str, list[SourceBlock]]:
         replacements = {
-            result.flat_position: result.pieces
-            for result in state.split_results
+            result.flat_position: [piece.content for piece in result.pieces]
+            for result in state.exercise_split_results
             if result.pieces is not None
         }
-        split_pages: list[SourcePage] = []
-        flat_position = 0
-        for page in state.image_filtered_pages:
-            split_blocks: list[SourceBlock] = []
-            for source_block in page.blocks:
-                pieces = replacements.get(flat_position)
-                if pieces is None:
-                    split_blocks.append(source_block)
-                else:
-                    split_blocks.extend(
-                        SourceBlock(
-                            block_type=source_block.block_type,
-                            content=piece.content,
-                            origin_uuid=source_block.uuid,
-                        )
-                        for piece in pieces
-                    )
-                flat_position += 1
-            split_pages.append(page.model_copy(update={'blocks': split_blocks}))
-
-        return {'split_pages': split_pages}
+        return {
+            'exercise_split_blocks': apply_block_splits(
+                state.image_filtered_blocks, replacements
+            )
+        }

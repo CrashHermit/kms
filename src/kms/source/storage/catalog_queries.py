@@ -2,6 +2,7 @@
 
 READ_SOURCES = """
 MATCH (:User {uuid: $user_uuid})-[:OWNS_SOURCE]->(source:Source)
+WHERE source.identity_schema = $identity_schema
 RETURN source.uuid AS uuid,
        source.key AS key,
        source.created_at AS created_at,
@@ -13,7 +14,8 @@ ORDER BY source.key, source.uuid
 
 READ_UNOWNED_SOURCES = """
 MATCH (source:Source)
-WHERE NOT EXISTS {
+WHERE source.identity_schema = $identity_schema
+  AND NOT EXISTS {
     MATCH (:User)-[:OWNS_SOURCE]->(source)
 }
 RETURN source.uuid AS uuid,
@@ -34,7 +36,7 @@ RETURN source.identity_schema AS identity_schema
 """
 
 ADOPT_SOURCE = """
-MATCH (source:Source {uuid: $source_uuid, identity_schema: 'source-content-v3'})
+MATCH (source:Source {uuid: $source_uuid, identity_schema: $identity_schema})
 SET source._ownership_lock = randomUUID()
 REMOVE source._ownership_lock
 WITH source

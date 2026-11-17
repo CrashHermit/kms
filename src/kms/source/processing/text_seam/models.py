@@ -3,25 +3,45 @@
 from pydantic import BaseModel, Field
 
 from kms.source.context import SourceBlockContext
-from kms.source.models.source import SourcePage
+from kms.source.models.source import SourceBlock
 
 
 class TextSeamRequest(BaseModel):
-    """One adjacent source-page pair awaiting seam judgment."""
+    """One original physical-boundary candidate."""
 
-    top_page: SourcePage
-    bottom_page: SourcePage
+    tail: SourceBlock
+    head: SourceBlock
+    top_context: SourceBlock | None = None
+    bottom_context: SourceBlock | None = None
 
 
 class TextSeamResult(BaseModel):
-    """One adjacent source-page pair after seam processing."""
+    """Split decision addressed to its original block pair."""
 
-    top_page: SourcePage
-    bottom_page: SourcePage
+    tail_uuid: str
+    head_uuid: str
+    is_split: bool
+
+
+class TextSeamRewriteRequest(BaseModel):
+    """One accepted maximal chain awaiting rewrite."""
+
+    blocks: list[SourceBlock]
+    top_context: SourceBlock | None = None
+    bottom_context: SourceBlock | None = None
+
+
+class TextSeamRewriteInput(BaseModel):
+    """One request-local, ordered interrupted-block chain."""
+
+    position: int = Field(ge=0, strict=True)
+    blocks: list[SourceBlockContext]
+    top_context: SourceBlockContext | None = None
+    bottom_context: SourceBlockContext | None = None
 
 
 class TextSeamInput(BaseModel):
-    """One interrupted-block candidate with reference-only structural neighbors."""
+    """One independent adjacent-block seam judgment."""
 
     position: int = Field(ge=0, strict=True)
     tail: SourceBlockContext
@@ -38,7 +58,14 @@ class TextSeamDecision(BaseModel):
 
 
 class TextSeamRewriteOutput(BaseModel):
-    """Rejoined text retaining the original judge-packet position."""
+    """Rejoined text retaining its packet-local chain position."""
 
     position: int = Field(ge=0, strict=True)
+    merged: str
+
+
+class TextSeamRewriteResult(BaseModel):
+    """Merged chain content addressed by its original block UUIDs."""
+
+    block_uuids: list[str]
     merged: str

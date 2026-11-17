@@ -1,4 +1,4 @@
-"""Independent seam judgments and sparse positive-only rewrite examples."""
+"""Independent seam judgments and ordered positive-chain rewrites."""
 
 import dspy
 
@@ -8,8 +8,17 @@ from kms.source.models.source import BlockType
 from kms.source.processing.text_seam.models import (
     TextSeamDecision,
     TextSeamInput,
+    TextSeamRewriteInput,
     TextSeamRewriteOutput,
 )
+
+
+def _context(
+    text: str, kind: BlockType = BlockType.PARAGRAPH
+) -> SourceBlockContext:
+    return SourceBlockContext(
+        block_type=kind, material=Material.from_text(text)
+    )
 
 
 def _item(
@@ -21,19 +30,15 @@ def _item(
 ) -> TextSeamInput:
     return TextSeamInput(
         position=position,
-        tail=SourceBlockContext(
-            block_type=kind, material=Material.from_text(tail)
-        ),
-        head=SourceBlockContext(
-            block_type=kind, material=Material.from_text(head)
-        ),
+        tail=_context(tail, kind),
+        head=_context(head, kind),
         top_context=None,
         bottom_context=None,
     )
 
 
 def text_seam_judge_examples() -> list[dspy.Example]:
-    """Contrast interrupted blocks with already complete neighboring sentences."""
+    """Contrast interrupted blocks with complete neighboring structures."""
     return [
         dspy.Example(
             items=[
@@ -51,41 +56,32 @@ def text_seam_judge_examples() -> list[dspy.Example]:
 
 
 def text_seam_rewrite_examples() -> list[dspy.Example]:
-    """Repair seam structure without rewriting authored content or index gaps."""
+    """Rejoin faithful multi-block chains without changing authored text."""
     cases = [
-        (0, 'espe', 'cially', 'especially'),
-        (2, 'sub-', 'graph', 'subgraph'),
+        (0, ['espe', 'cially'], 'especially'),
+        (2, ['sub-', 'graph'], 'subgraph'),
         (
             4,
-            'every vertex of',
-            '$G$ is a vertex',
+            ['every vertex of', '$G$ is a vertex'],
             'every vertex of $G$ is a vertex',
         ),
-        (5, '$$x + y', '= 4$$', '$$x + y = 4$$'),
-        (7, '$$x + y$$', '$$= 4$$', '$$x + y = 4$$'),
-        (9, '$x +', 'y$', '$x + y$'),
-        (
-            10,
-            '```python\nif p:',
-            '    return p\n```',
-            '```python\nif p:\n    return p\n```',
-        ),
-        (
-            12,
-            r'\begin{aligned} a &= b \\',
-            r'\begin{aligned} c &= d \end{aligned}',
-            r'\begin{aligned} a &= b \\ c &= d \end{aligned}',
-        ),
+        (5, ['$$x + y', '= 4$$'], '$$x + y = 4$$'),
+        (7, ['$$x + y$$', '$$= 4$$', 'z$$'], '$$x + y = 4z$$'),
     ]
     return [
         dspy.Example(
             items=[
-                _item(position, tail, head)
-                for position, tail, head, _merged in cases
+                TextSeamRewriteInput(
+                    position=position,
+                    blocks=[_context(text) for text in fragments],
+                    top_context=None,
+                    bottom_context=None,
+                )
+                for position, fragments, _merged in cases
             ],
             rewrites=[
                 TextSeamRewriteOutput(position=position, merged=merged)
-                for position, _tail, _head, merged in cases
+                for position, _fragments, merged in cases
             ],
         ).with_inputs('items')
     ]

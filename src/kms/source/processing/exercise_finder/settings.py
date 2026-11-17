@@ -4,19 +4,18 @@ from pydantic import BaseModel, Field
 
 from kms.config.inference import (
     ContextWindowSettings,
-    ImagePayloadSettings,
-    VisionInferenceSettings,
+    NoRetryVisionInferenceSettings,
 )
 
 
 class ExerciseFinderSettings(BaseModel):
     """Language model and context-window settings for exercise discovery."""
 
-    start_router: VisionInferenceSettings = Field(
-        default_factory=VisionInferenceSettings
+    start_router: NoRetryVisionInferenceSettings = Field(
+        default_factory=NoRetryVisionInferenceSettings
     )
-    boundary_router: VisionInferenceSettings = Field(
-        default_factory=VisionInferenceSettings
+    boundary_router: NoRetryVisionInferenceSettings = Field(
+        default_factory=NoRetryVisionInferenceSettings
     )
     start_batch_size: int = Field(default=16, gt=0)
     boundary_batch_size: int = Field(default=16, gt=0)
@@ -32,7 +31,4 @@ class ExerciseFinderSettings(BaseModel):
         default_factory=lambda: ContextWindowSettings(
             backward_budget=0, forward_budget=0
         )
-    )
-    image_payload: ImagePayloadSettings = Field(
-        default_factory=lambda: ImagePayloadSettings(max_images=6)
     )

@@ -16,7 +16,7 @@ from kms.source.context import (
     project_source_window,
     select_window,
 )
-from kms.source.models.source import BlockType, SourceBlock, SourcePage
+from kms.source.models.source import BlockType, SourceBlock
 from kms.source.processing.image_filter.inference import ImageFilterModule
 from kms.source.processing.image_filter.models import (
     ImageFilterInput,
@@ -56,9 +56,7 @@ class ImageFilterNode:
         self, state: SourceProcessingState
     ) -> list[Send] | Literal['image_filter_collect']:
         """Dispatch image targets with bounded source windows and payloads."""
-        flat_blocks = [
-            block for page in state.image_seam_pages for block in page.blocks
-        ]
+        flat_blocks = state.image_seam_blocks
         target_positions = [
             position
             for position, block in enumerate(flat_blocks)
@@ -124,15 +122,16 @@ class ImageFilterNode:
         self, state: ImageFilterWorkerState
     ) -> dict[str, list[ImageFilterResult]]:
         requests = state['image_filter_requests']
-        items = self._project_items(requests)
-        decisions = await self._module.acall(items=items)
+        decisions = await self._module.acall(
+            items=self._project_items(requests)
+        )
         by_position = {
             decision.position: decision.keep for decision in decisions
         }
         return {
             'image_filter_results': [
                 ImageFilterResult(
-                    flat_position=request.flat_position,
+                    block_uuid=request.source_block.uuid,
                     keep=by_position[position],
                 )
                 for position, request in enumerate(requests)
@@ -141,25 +140,20 @@ class ImageFilterNode:
 
     def collect(
         self, state: SourceProcessingState
-    ) -> dict[str, list[SourcePage]]:
-        """Remove only rejected image targets and preserve page structure."""
+    ) -> dict[str, list[SourceBlock]]:
+        """Remove rejected image targets by stable block UUID."""
         decisions = {
-            result.flat_position: result.keep
+            result.block_uuid: result.keep
             for result in state.image_filter_results
         }
-        filtered_pages: list[SourcePage] = []
-        flat_position = 0
-        for page in state.image_seam_pages:
-            blocks: list[SourceBlock] = []
-            for block in page.blocks:
-                keep = (
-                    decisions[flat_position]
-                    if block.block_type is BlockType.IMAGE and block.image_path
-                    else True
+        return {
+            'image_filtered_blocks': [
+                block
+                for block in state.image_seam_blocks
+                if not (
+                    block.block_type is BlockType.IMAGE
+                    and block.image_path
+                    and not decisions[block.uuid]
                 )
-                if keep:
-                    blocks.append(block)
-                flat_position += 1
-            filtered_pages.append(page.model_copy(update={'blocks': blocks}))
-
-        return {'image_filtered_pages': filtered_pages}
+            ]
+        }

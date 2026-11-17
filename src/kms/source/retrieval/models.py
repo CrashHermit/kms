@@ -1,12 +1,13 @@
 """Source retrieval and evidence contracts."""
 
 from dataclasses import dataclass
-from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
-from kms.source.models.material import SourceProcedure, SourceStatement
+from kms.media.models import Material
+from kms.source.context import project_source_block, project_source_unit
 from kms.source.models.source import Source, SourceBlock
+from kms.source.models.unit import SourceUnit, SourceUnitKind
 
 
 class SourceImageReference(BaseModel):
@@ -16,72 +17,61 @@ class SourceImageReference(BaseModel):
 
     block_uuid: str
     image_path: str
-
     image_sha256: str
 
 
-class SourceEvidenceBlock(BaseModel):
-    """One source block with its containing page locations."""
+class SourceBlockRead(BaseModel):
+    """An owned source block and its containing unit identity."""
 
+    source: Source
+    unit_uuid: str
     block: SourceBlock
-    page_indexes: list[int]
+
+    @property
+    def material(self) -> Material:
+        """Project block text and native image without image I/O."""
+        return project_source_block(self.block).material
 
 
-class SourceSearchHit(SourceEvidenceBlock):
-    """An owned source block with embedding similarity and page provenance."""
+class SourceSearchHit(SourceBlockRead):
+    """An owned source block with embedding similarity."""
 
-    source: Source
     similarity: float
 
 
-class SourceStatementSearchHit(BaseModel):
-    """An owned statement with embedding similarity and page provenance."""
+class SourceUnitRead(BaseModel):
+    """An owned source unit with its complete ordered blocks."""
 
-    statement: SourceStatement
     source: Source
-    page_indexes: list[int]
-    similarity: float
+    unit: SourceUnit
+
+    @property
+    def material(self) -> Material:
+        """Project ordered unit text and native images without image I/O."""
+        return project_source_unit(self.unit)
 
 
-class SourceProcedureSearchHit(BaseModel):
-    """An owned procedure with embedding similarity and page provenance."""
-
-    procedure: SourceProcedure
-    source: Source
-    page_indexes: list[int]
-    similarity: float
-
-
-class SourceEvidenceGroup(BaseModel):
-    """A direct statement, procedure, or instruction membership boundary."""
+class SourceUnitMaterial(BaseModel):
+    """A unit's identity and complete ordered multimodal material."""
 
     uuid: str
-    kind: Literal['statement', 'procedure', 'instruction']
-    member_block_uuids: list[str]
-    governed_statement_uuids: list[str] = Field(default_factory=list)
+    kind: SourceUnitKind
+    material: Material
 
 
-class SourcePassage(BaseModel):
-    """Selected blocks and directly related pedagogical group boundaries."""
+class SourceUnitWindow(BaseModel):
+    """Owned source material in order around one target unit."""
 
     source: Source
-    selected_block_uuids: list[str]
-    blocks: list[SourceEvidenceBlock]
-    groups: list[SourceEvidenceGroup]
+    before: list[SourceUnitMaterial]
+    target: SourceUnitMaterial
+    after: list[SourceUnitMaterial]
 
 
-class SourceStatementPassage(BaseModel):
-    """A reconstructed statement with its complete source passages."""
+class SourceUnitSearchHit(SourceUnitRead):
+    """An owned source unit with embedding similarity."""
 
-    statement: SourceStatement
-    passages: list[SourcePassage]
-
-
-class SourceProcedurePassage(BaseModel):
-    """A reconstructed procedure with its complete source passages."""
-
-    procedure: SourceProcedure
-    passages: list[SourcePassage]
+    similarity: float
 
 
 @dataclass(frozen=True, slots=True)

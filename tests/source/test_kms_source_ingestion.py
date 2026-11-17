@@ -12,7 +12,8 @@ from kms.core.tokenization.budget import InputBudgetExceeded
 from kms.source.ingestion import SourceIngestionService
 from kms.source.models.inputs import CapturedPDFSource, PDFSourceInput
 from kms.source.models.snapshot import SourceSnapshot
-from kms.source.models.source import BlockType, SourceBlock, SourcePage
+from kms.source.models.source import BlockType, SourceBlock
+from kms.source.models.unit import SourceUnit, SourceUnitKind
 from kms.source.processing.state import SourceProcessingState
 from kms.source.storage.artifacts import SourceArtifactStore
 
@@ -36,8 +37,11 @@ class _Repository:
 
 
 class _ProcessingGraph:
-    def __init__(self, pages=None, error=None) -> None:
-        self.pages = pages or []
+    def __init__(
+        self, units=None, selected_page_indexes=None, error=None
+    ) -> None:
+        self.units = units or []
+        self.selected_page_indexes = selected_page_indexes or []
         self.error = error
         self.calls = []
 
@@ -58,10 +62,8 @@ class _ProcessingGraph:
         )
         return SimpleNamespace(
             source=source,
-            split_pages=self.pages,
-            instructions=[],
-            statements=[],
-            procedures=[],
+            units=self.units,
+            selected_page_indexes=self.selected_page_indexes,
         )
 
 
@@ -113,19 +115,19 @@ def test_exact_page_selector_and_owner_define_capture_identity(tmp_path):
 
 def test_ingestion_preserves_full_original_pdf_and_page_selection(tmp_path):
     data = b'%PDF-1.7\ncomplete source'
-    page = SourcePage(
-        index=2,
-        markdown='Source text',
+    unit = SourceUnit(
+        kind=SourceUnitKind.CONTENT,
+        embedding=[0.25, 0.75],
         blocks=[
             SourceBlock(
                 block_type=BlockType.PARAGRAPH,
                 content='Source text',
                 embedding=[0.25, 0.75],
-            )
+            ),
         ],
     )
     repository = _Repository()
-    graph = _ProcessingGraph([page])
+    graph = _ProcessingGraph([unit], [2, 0])
     service = _service(tmp_path / 'store', repository, graph)
     capture = _capture(data=data)
 
@@ -133,7 +135,7 @@ def test_ingestion_preserves_full_original_pdf_and_page_selection(tmp_path):
 
     assert isinstance(graph.calls[0].input, PDFSourceInput)
     assert graph.calls[0].input.pages == [2, 0]
-    assert result.source.metadata['identity_schema'] == 'source-content-v3'
+    assert result.source.metadata['identity_schema'] == 'source-content-v5'
     assert (
         result.source.metadata['captures']['original_pdf_sha256']
         == hashlib.sha256(data).hexdigest()
@@ -144,16 +146,19 @@ def test_ingestion_preserves_full_original_pdf_and_page_selection(tmp_path):
         ).read_bytes()
         == data
     )
-    assert result.source.metadata['page_indexes'] == [2]
+    serialized = result.model_dump(mode='json')
+    assert 'page_indexes' not in serialized['source']['metadata']
+    assert 'page_count' not in serialized['source']['metadata']
+    assert 'page_indexes' not in serialized['units'][0]['blocks'][0]
+    assert 'page_count' not in serialized['units'][0]['blocks'][0]
+
     assert repository.created == [('owner', result)]
     assert not Path(graph.calls[0].input.pdf_path).exists()
+    assert result.units[0].blocks[0].content == 'Source text'
 
 
 def test_local_capture_has_no_fake_url_and_records_local_origin(tmp_path):
-    page = SourcePage(index=0, markdown='', blocks=[])
-    service = _service(
-        tmp_path / 'store', processing_graph=_ProcessingGraph([page])
-    )
+    service = _service(tmp_path / 'store')
     capture = _capture(url=None)
     result = asyncio.run(service.ingest('owner', capture))
     assert result.source.metadata['origin'] == 'local'
@@ -195,20 +200,20 @@ def test_ingestion_reuses_existing_owned_snapshot_without_processing(tmp_path):
     asyncio.run(scenario())
 
 
-def test_ingestion_publishes_complete_v3_snapshot(tmp_path):
-    page = SourcePage(
-        index=3,
-        markdown='Complete source material.',
+def test_ingestion_publishes_complete_v5_snapshot(tmp_path):
+    unit = SourceUnit(
+        kind=SourceUnitKind.CONTENT,
+        embedding=[0.25, 0.75],
         blocks=[
             SourceBlock(
                 block_type=BlockType.PARAGRAPH,
                 content='Complete source material.',
                 embedding=[0.25, 0.75],
-            )
+            ),
         ],
     )
     repository = _Repository()
-    graph = _ProcessingGraph([page])
+    graph = _ProcessingGraph([unit], [3, 1])
     service = _service(tmp_path / 'store', repository, graph)
     persisted = asyncio.run(
         service.ingest('owner', _capture(data=b'%PDF complete'))
@@ -216,10 +221,13 @@ def test_ingestion_publishes_complete_v3_snapshot(tmp_path):
     assert len(graph.calls) == 1
     assert graph.calls[0].input.pages is None
     assert repository.created == [('owner', persisted)]
-    assert persisted.pages[0].blocks[0].content == 'Complete source material.'
-    assert persisted.pages[0].blocks[0].embedding == [0.25, 0.75]
+    assert persisted.units[0].kind is SourceUnitKind.CONTENT
+    assert persisted.units[0].blocks[0].content == 'Complete source material.'
+    assert persisted.units[0].blocks[0].embedding == [0.25, 0.75]
     assert persisted.source.metadata['processed_manifest_path']
-    assert persisted.source.metadata['identity_schema'] == 'source-content-v3'
+    assert persisted.source.metadata['identity_schema'] == 'source-content-v5'
+    assert 'page_indexes' not in persisted.source.metadata
+    assert 'page_count' not in persisted.source.metadata
 
 
 def test_cancellation_during_processing_cleans_only_temporary_pdf(tmp_path):

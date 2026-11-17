@@ -34,6 +34,12 @@ class TextInferenceSettings(StageInferenceSettings):
     max_tokens: int = 16384
 
 
+class NoRetryTextInferenceSettings(TextInferenceSettings):
+    """Text-stage inference settings that default to no retries."""
+
+    num_retries: int = 0
+
+
 class VisionInferenceSettings(StageInferenceSettings):
     """Request-time inference settings for vision model-server stages."""
 
@@ -41,13 +47,23 @@ class VisionInferenceSettings(StageInferenceSettings):
 
 
 class ImagePayloadSettings(BaseModel):
-    """Aggregate image limits for one native-image inference request."""
+    """Application-wide operational image payload limits."""
 
     model_config = ConfigDict(extra='forbid')
 
-    max_images: int = Field(default=4, ge=0)
+    max_images: int = Field(default=9, ge=0)
     max_bytes: int = Field(default=26214400, gt=0)
     max_pixels: int = Field(default=40000000, gt=0)
+
+
+class ModelImageLimits(BaseModel):
+    """Known provider or model hard limits; None means unspecified."""
+
+    model_config = ConfigDict(extra='forbid')
+
+    max_images: int | None = Field(default=None, ge=0)
+    max_bytes: int | None = Field(default=None, gt=0)
+    max_pixels: int | None = Field(default=None, gt=0)
 
 
 class NoRetryVisionInferenceSettings(VisionInferenceSettings):

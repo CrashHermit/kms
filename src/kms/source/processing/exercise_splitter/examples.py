@@ -154,8 +154,8 @@ def exercise_splitter_examples() -> list[dspy.Example]:
     ]
 
 
-def exercise_strip_router_examples() -> list[dspy.Example]:
-    """Return fresh demonstrations for exercise strip routing."""
+def exercise_split_router_examples() -> list[dspy.Example]:
+    """Return fresh demonstrations for routing exercise boundaries."""
     return [
         dspy.Example(
             context_before=[_context('Earlier source material.')],
@@ -188,18 +188,10 @@ def exercise_strip_router_examples() -> list[dspy.Example]:
             ],
             context_after=[_context('Later source material.')],
             decisions=[
-                SplitRouteDecision(
-                    position=0, contains_multiple_exercises=False
-                ),
-                SplitRouteDecision(
-                    position=1, contains_multiple_exercises=True
-                ),
-                SplitRouteDecision(
-                    position=2, contains_multiple_exercises=False
-                ),
-                SplitRouteDecision(
-                    position=3, contains_multiple_exercises=True
-                ),
+                SplitRouteDecision(position=0, requires_split=False),
+                SplitRouteDecision(position=1, requires_split=True),
+                SplitRouteDecision(position=2, requires_split=True),
+                SplitRouteDecision(position=3, requires_split=True),
             ],
         ).with_inputs('context_before', 'targets', 'context_after'),
         dspy.Example(
@@ -210,11 +202,7 @@ def exercise_strip_router_examples() -> list[dspy.Example]:
                 )
             ],
             context_after=[],
-            decisions=[
-                SplitRouteDecision(
-                    position=0, contains_multiple_exercises=False
-                )
-            ],
+            decisions=[SplitRouteDecision(position=0, requires_split=False)],
         ).with_inputs('context_before', 'targets', 'context_after'),
         dspy.Example(
             context_before=[
@@ -244,12 +232,8 @@ def exercise_strip_router_examples() -> list[dspy.Example]:
             ],
             context_after=[],
             decisions=[
-                SplitRouteDecision(
-                    position=0, contains_multiple_exercises=False
-                ),
-                SplitRouteDecision(
-                    position=1, contains_multiple_exercises=True
-                ),
+                SplitRouteDecision(position=0, requires_split=False),
+                SplitRouteDecision(position=1, requires_split=True),
             ],
         ).with_inputs('context_before', 'targets', 'context_after'),
     ]

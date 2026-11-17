@@ -1,4 +1,4 @@
-"""LangGraph node for discovering exercise components."""
+"""LangGraph node for discovering ordered exercise units."""
 
 from kms.config.inference import ContextWindowSettings
 from kms.core.tokenization.budget import TokenBudget
@@ -12,8 +12,8 @@ from kms.source.context import (
     project_source_window,
     select_window,
 )
-from kms.source.models.material import ExerciseComponent
 from kms.source.models.source import SourceBlock
+from kms.source.models.unit import SourceUnit, SourceUnitKind
 from kms.source.processing.exercise_finder.inference import (
     ExerciseBoundaryRouterModule,
     ExerciseStartRouterModule,
@@ -28,7 +28,7 @@ from kms.source.processing.state import SourceProcessingState
 
 
 class ExerciseFinderNode:
-    """Find ordered exercise components without mutating source blocks."""
+    """Find exercise tasks without consuming reserved support blocks."""
 
     def __init__(
         self,
@@ -42,188 +42,185 @@ class ExerciseFinderNode:
         boundary_token_counters: tuple[MaterialTokenEstimator, ...],
         image_budget: ImagePayloadBudget,
     ) -> None:
-        self._start_router = start_router
-        self._boundary_router = boundary_router
-        self._settings = settings
-        self._start_budget = start_budget
-        self._boundary_budget = boundary_budget
-        self._start_token_counters = start_token_counters
-        self._boundary_token_counters = boundary_token_counters
+        self._start_router, self._boundary_router = (
+            start_router,
+            boundary_router,
+        )
+        self._settings, self._start_budget, self._boundary_budget = (
+            settings,
+            start_budget,
+            boundary_budget,
+        )
+        self._start_token_counters, self._boundary_token_counters = (
+            start_token_counters,
+            boundary_token_counters,
+        )
         self._image_budget = image_budget
 
     async def run(
         self, state: SourceProcessingState
-    ) -> dict[str, list[ExerciseComponent]]:
-        """Discover exercise components across the unclaimed source stream."""
-        blocks = [block for page in state.split_pages for block in page.blocks]
-        instruction_members = {
-            block_uuid
-            for instruction in state.instructions
-            for block_uuid in instruction.member_block_uuids
+    ) -> dict[str, list[SourceUnit]]:
+        blocks = state.procedure_split_blocks
+        reserved = {
+            uuid
+            for group in state.exercise_support_groups
+            for uuid in group.block_uuids
         }
-        eligible_blocks = [
-            block for block in blocks if block.uuid not in instruction_members
+        eligible = [
+            position
+            for position, block in enumerate(blocks)
+            if block.uuid not in reserved
         ]
-        start_token_counts = count_source_tokens(
-            eligible_blocks, self._start_token_counters
+        starts_costs = count_source_tokens(blocks, self._start_token_counters)
+        boundaries_costs = count_source_tokens(
+            blocks, self._boundary_token_counters
         )
-        boundary_token_counts = count_source_tokens(
-            eligible_blocks, self._boundary_token_counters
-        )
-        components: list[ExerciseComponent] = []
-        cursor = 0
-        while cursor < len(eligible_blocks):
-            stop = min(
-                cursor + self._settings.start_batch_size, len(eligible_blocks)
-            )
-            windows = {
-                position: self._select_window(
-                    eligible_blocks,
-                    start_token_counts,
-                    position,
-                    self._settings.start_context_window,
-                )
-                for position in range(cursor, stop)
-            }
-
-            def project_start(
-                positions: list[int],
-                *,
-                windows_by_position: dict[int, SourceBlockWindow] = windows,
-            ) -> dict[str, object]:
-                return {
-                    'items': [
-                        self._project_item(
-                            local_position,
-                            windows_by_position[candidate_position],
-                        )
-                        for local_position, candidate_position in enumerate(
-                            positions
-                        )
-                    ]
-                }
-
-            batches = await pack_content_batches(
-                [list(windows)],
-                project=project_start,
-                budget=self._start_budget,
-                image_budget=self._image_budget,
-            )
-            batch = batches[0]
-            projected = project_start(batch)
-            decisions = await self._start_router.acall(**projected)
-            starts = [
-                batch[decision.position]
-                for decision in decisions
-                if decision.is_exercise_start
-            ]
-            if not starts:
-                cursor = batch[-1] + 1
-                continue
-
-            start_position = min(starts)
-            start_block = eligible_blocks[start_position]
-            candidate = start_position + 1
-            while candidate < len(eligible_blocks):
-                stop = min(
-                    candidate + self._settings.boundary_batch_size,
-                    len(eligible_blocks),
-                )
-                boundary_windows = {
-                    position: self._select_window(
-                        eligible_blocks,
-                        boundary_token_counts,
+        units: list[SourceUnit] = []
+        for run in self._runs(eligible):
+            cursor = 0
+            while cursor < len(run):
+                stop = min(cursor + self._settings.start_batch_size, len(run))
+                targets = run[cursor:stop]
+                windows = {
+                    position: self._window(
+                        blocks,
+                        starts_costs,
                         position,
-                        self._settings.boundary_context_window,
+                        self._settings.start_context_window,
                     )
-                    for position in range(candidate, stop)
+                    for position in targets
                 }
 
-                def project_boundary(
-                    positions: list[int],
-                    *,
-                    boundary_start_block: SourceBlock = start_block,
-                    windows_by_position: dict[
-                        int, SourceBlockWindow
-                    ] = boundary_windows,
+                def project_starts(
+                    packet: list[int], windows=windows
                 ) -> dict[str, object]:
                     return {
-                        'start_block': project_source_block(
-                            boundary_start_block
-                        ),
                         'items': [
-                            self._project_item(
-                                local_position,
-                                windows_by_position[candidate_position],
-                            )
-                            for local_position, candidate_position in enumerate(
-                                positions
-                            )
-                        ],
+                            self._item(local, windows[position])
+                            for local, position in enumerate(packet)
+                        ]
                     }
 
-                batches = await pack_content_batches(
-                    [list(boundary_windows)],
-                    project=project_boundary,
-                    budget=self._boundary_budget,
-                    image_budget=self._image_budget,
+                packet = (
+                    await pack_content_batches(
+                        [targets],
+                        project=project_starts,
+                        budget=self._start_budget,
+                        image_budget=self._image_budget,
+                    )
+                )[0]
+                decisions = await self._start_router.acall(
+                    **project_starts(packet)
                 )
-                batch = batches[0]
-                projected = project_boundary(batch)
-                decisions = await self._boundary_router.acall(**projected)
-                boundaries = [
-                    batch[decision.position]
-                    for decision in decisions
-                    if decision.is_exercise_boundary
+                matches = [
+                    packet[item.position]
+                    for item in decisions
+                    if item.is_exercise_start
                 ]
-                if boundaries:
-                    boundary = min(boundaries)
-                    components.append(
-                        ExerciseComponent(
-                            member_block_uuids=[
-                                eligible_blocks[position].uuid
-                                for position in range(start_position, boundary)
-                            ]
+                if not matches:
+                    cursor += len(packet)
+                    continue
+                start = min(matches)
+                anchor = blocks[start]
+                candidate = run.index(start) + 1
+                run_end = len(run)
+                while candidate < run_end:
+                    candidate_targets = run[
+                        candidate : min(
+                            candidate + self._settings.boundary_batch_size,
+                            run_end,
+                        )
+                    ]
+                    boundary_windows = {
+                        position: self._window(
+                            blocks,
+                            boundaries_costs,
+                            position,
+                            self._settings.boundary_context_window,
+                        )
+                        for position in candidate_targets
+                    }
+
+                    def project_boundaries(
+                        values: list[int],
+                        anchor=anchor,
+                        boundary_windows=boundary_windows,
+                    ) -> dict[str, object]:
+                        return {
+                            'start_block': project_source_block(anchor),
+                            'items': [
+                                self._item(local, boundary_windows[position])
+                                for local, position in enumerate(values)
+                            ],
+                        }
+
+                    packet = (
+                        await pack_content_batches(
+                            [candidate_targets],
+                            project=project_boundaries,
+                            budget=self._boundary_budget,
+                            image_budget=self._image_budget,
+                        )
+                    )[0]
+                    decisions = await self._boundary_router.acall(
+                        **project_boundaries(packet)
+                    )
+                    boundaries = [
+                        packet[item.position]
+                        for item in decisions
+                        if item.is_exercise_boundary
+                    ]
+                    if boundaries:
+                        boundary = min(boundaries)
+                        units.append(
+                            SourceUnit(
+                                kind=SourceUnitKind.EXERCISE,
+                                blocks=blocks[start:boundary],
+                            )
+                        )
+                        cursor = run.index(boundary)
+                        break
+                    candidate += len(packet)
+                else:
+                    boundary = run[-1] + 1
+                    units.append(
+                        SourceUnit(
+                            kind=SourceUnitKind.EXERCISE,
+                            blocks=blocks[start:boundary],
                         )
                     )
-                    cursor = boundary
-                    break
-                candidate = batch[-1] + 1
+                    cursor = len(run)
+        return {'exercise_units': units}
+
+    @staticmethod
+    def _runs(positions: list[int]) -> list[list[int]]:
+        runs: list[list[int]] = []
+        for position in positions:
+            if not runs or position != runs[-1][-1] + 1:
+                runs.append([position])
             else:
-                components.append(
-                    ExerciseComponent(
-                        member_block_uuids=[
-                            eligible_blocks[position].uuid
-                            for position in range(
-                                start_position, len(eligible_blocks)
-                            )
-                        ]
-                    )
-                )
-                cursor = len(eligible_blocks)
+                runs[-1].append(position)
+        return runs
 
-        return {'exercise_components': components}
-
-    def _select_window(
+    def _window(
         self,
         blocks: list[SourceBlock],
-        token_counts: list[int],
+        costs: list[int],
         position: int,
-        context_window: ContextWindowSettings,
+        settings: ContextWindowSettings,
     ) -> SourceBlockWindow:
         return select_window(
             blocks,
             [position],
-            token_counts=token_counts,
-            backward_budget=context_window.backward_budget,
-            forward_budget=context_window.forward_budget,
-            target_budget=context_window.target_budget,
+            token_counts=costs,
+            backward_budget=settings.backward_budget,
+            forward_budget=settings.forward_budget,
+            target_budget=settings.target_budget,
         )
 
     @staticmethod
-    def _project_item(
-        position: int,
-        window: SourceBlockWindow,
+    def _item(
+        position: int, window: SourceBlockWindow
     ) -> ExerciseClassificationInput:
         projected = project_source_window(window)
         return ExerciseClassificationInput(

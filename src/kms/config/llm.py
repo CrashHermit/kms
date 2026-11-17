@@ -4,7 +4,11 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from kms.config.inference import StageInferenceSettings
+from kms.config.inference import (
+    ImagePayloadSettings,
+    ModelImageLimits,
+    StageInferenceSettings,
+)
 
 
 class LocalLLMProfile(BaseModel):
@@ -14,6 +18,7 @@ class LocalLLMProfile(BaseModel):
 
     backend: Literal['local'] = 'local'
     model_server_profile: str = Field(min_length=1)
+    image_limits: ModelImageLimits = Field(default_factory=ModelImageLimits)
 
 
 class ChatGPTLLMProfile(BaseModel):
@@ -33,6 +38,7 @@ class ChatGPTLLMProfile(BaseModel):
     ] = 'low'
     context_size: int = Field(default=1_050_000, gt=0)
     max_input_tokens: int = Field(default=922_000, gt=0)
+    image_limits: ModelImageLimits = Field(default_factory=ModelImageLimits)
     tokenizer_encoding: str = Field(default='o200k_base', min_length=1)
 
 
@@ -46,6 +52,9 @@ class LLMSettings(BaseModel):
 
     model_config = ConfigDict(extra='forbid')
     max_concurrency: int = Field(default=4, gt=0)
+    image_payload: ImagePayloadSettings = Field(
+        default_factory=ImagePayloadSettings
+    )
 
     default_text_profile: str = Field(default='chatgpt-luna', min_length=1)
     profiles: dict[str, LLMProfile] = Field(

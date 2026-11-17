@@ -5,7 +5,10 @@ from collections.abc import Callable
 from neo4j import AsyncSession
 
 from kms.core.models import Edge
-from kms.source.models.snapshot import require_source_schema
+from kms.source.models.snapshot import (
+    SOURCE_CONTENT_SCHEMA,
+    require_source_schema,
+)
 from kms.source.models.source import Source
 from kms.source.storage.catalog_queries import (
     ADOPT_SOURCE,
@@ -27,9 +30,13 @@ class SourceCatalogRepository:
         self._session_factory = session_factory
 
     async def list_sources(self, user_uuid: str) -> list[Source]:
-        """Load one user's sources in stable display order."""
+        """Load one user's current-schema sources in stable display order."""
         async with self._session_factory() as session:
-            result = await session.run(READ_SOURCES, user_uuid=user_uuid)
+            result = await session.run(
+                READ_SOURCES,
+                user_uuid=user_uuid,
+                identity_schema=SOURCE_CONTENT_SCHEMA,
+            )
             rows = await result.data()
         return [
             Source(
@@ -46,9 +53,12 @@ class SourceCatalogRepository:
         ]
 
     async def list_unowned_sources(self) -> list[Source]:
-        """Load sources that have no user owner."""
+        """Load current-schema sources that have no user owner."""
         async with self._session_factory() as session:
-            result = await session.run(READ_UNOWNED_SOURCES)
+            result = await session.run(
+                READ_UNOWNED_SOURCES,
+                identity_schema=SOURCE_CONTENT_SCHEMA,
+            )
             rows = await result.data()
         return [
             Source(
@@ -65,7 +75,7 @@ class SourceCatalogRepository:
         ]
 
     async def adopt_source(self, user_uuid: str, source_uuid: str) -> None:
-        """Claim an unowned v3 source, rejecting concurrent or prior claims."""
+        """Claim an unowned current-schema source, rejecting prior claims."""
         async with self._session_factory() as session:
             result = await session.run(
                 READ_UNOWNED_SOURCE_SCHEMA,
@@ -79,6 +89,7 @@ class SourceCatalogRepository:
                 ADOPT_SOURCE,
                 user_uuid=user_uuid,
                 source_uuid=source_uuid,
+                identity_schema=SOURCE_CONTENT_SCHEMA,
                 edge_created_at=Edge().created_at,
             )
             rows = await result.data()

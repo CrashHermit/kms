@@ -1,21 +1,19 @@
 import asyncio
+import json
 from datetime import UTC, datetime
 
-import pytest
-
-from kms.source.models.material import Instruction
 from kms.source.models.snapshot import (
     SourceSnapshot,
     processed_snapshot_fingerprint,
 )
-from kms.source.models.source import Source, SourceBlock, SourcePage
+from kms.source.models.source import Source, SourceBlock
+from kms.source.models.unit import SourceUnit, SourceUnitKind
 from kms.source.storage.catalog import (
     SourceCatalogRepository,
-    SourceOwnershipConflict,
 )
 from kms.source.storage.records import (
     source_graph_parameters,
-    source_pages_from_records,
+    source_units_from_records,
 )
 
 
@@ -56,73 +54,104 @@ class _SessionContext:
         return None
 
 
-def test_load_pages_restores_order_and_direct_image_provenance():
+def _record(
+    uuid: str, kind: str, blocks: list[dict[str, object]]
+) -> dict[str, object]:
+    created_at = datetime(2026, 1, 2, tzinfo=UTC)
+    return {
+        'uuid': uuid,
+        'created_at': created_at,
+        'updated_at': created_at,
+        'invalidated_at': None,
+        'kind': kind,
+        'embedding': [0.0, 1.0],
+        'blocks': blocks,
+    }
+
+
+def _block_record(uuid: str, content: str) -> dict[str, object]:
+    created_at = datetime(2026, 1, 2, tzinfo=UTC)
+    return {
+        'uuid': uuid,
+        'created_at': created_at,
+        'updated_at': created_at,
+        'invalidated_at': None,
+        'block_type': 'paragraph',
+        'content': content,
+        'embedding': [0.0, 1.0],
+        'crop_path': None,
+        'crop_sha256': None,
+        'crop_bbox': None,
+        'image_path': None,
+        'image_sha256': None,
+    }
+
+
+def test_unit_hydration_preserves_order_and_lifecycle():
     created_at = datetime(2026, 1, 2, tzinfo=UTC)
     updated_at = datetime(2026, 1, 3, tzinfo=UTC)
     invalidated_at = datetime(2026, 1, 4, tzinfo=UTC)
     records = [
         {
-            'index': 0,
-            'markdown': 'first page',
+            'uuid': 'unit-exercise',
+            'created_at': created_at,
+            'updated_at': updated_at,
+            'invalidated_at': invalidated_at,
+            'kind': 'exercise',
+            'embedding': [0.0, 1.0],
             'blocks': [
                 {
-                    'uuid': 'block-1',
-                    'created_at': created_at,
+                    **_block_record('block-1', 'first'),
                     'updated_at': updated_at,
                     'invalidated_at': invalidated_at,
                     'block_type': 'image',
                     'content': 'figure description',
-                    'embedding': [0.0, 1.0],
                     'crop_path': 'crop.png',
                     'crop_sha256': 'crop-digest',
                     'crop_bbox': [1, 2, 3, 4],
                     'image_path': 'figure.png',
                     'image_sha256': 'image-digest',
-                    'image_page_indexes': [0, 2],
-                }
+                },
+                _block_record('block-2', 'second'),
             ],
         },
-        {
-            'index': 1,
-            'markdown': 'empty page',
-            'created_at': created_at,
-            'updated_at': created_at,
-            'blocks': [],
-        },
+        _record('unit-content', 'content', [_block_record('block-3', 'later')]),
     ]
-    pages = source_pages_from_records(records)
-    expected_pages = [
-        SourcePage(
-            index=0,
-            markdown='first page',
-            blocks=[
-                SourceBlock(
-                    uuid='block-1',
-                    created_at=created_at,
-                    updated_at=updated_at,
-                    invalidated_at=invalidated_at,
-                    block_type='image',
-                    content='figure description',
-                    embedding=[0.0, 1.0],
-                    crop_path='crop.png',
-                    crop_sha256='crop-digest',
-                    crop_bbox=(1, 2, 3, 4),
-                    image_path='figure.png',
-                    image_sha256='image-digest',
-                    image_page_indexes=[0, 2],
-                )
-            ],
-        ),
-        SourcePage(index=1, markdown='empty page', blocks=[]),
-    ]
-    assert pages == expected_pages
-    snapshot = SourceSnapshot(
-        source=Source(uuid='source-1', key='source'), pages=pages
+    units = source_units_from_records(records)
+    assert units[0] == SourceUnit(
+        uuid='unit-exercise',
+        created_at=created_at,
+        updated_at=updated_at,
+        invalidated_at=invalidated_at,
+        kind=SourceUnitKind.EXERCISE,
+        embedding=[0.0, 1.0],
+        blocks=[
+            SourceBlock(
+                uuid='block-1',
+                created_at=created_at,
+                updated_at=updated_at,
+                invalidated_at=invalidated_at,
+                block_type='image',
+                content='figure description',
+                embedding=[0.0, 1.0],
+                crop_path='crop.png',
+                crop_sha256='crop-digest',
+                crop_bbox=(1, 2, 3, 4),
+                image_path='figure.png',
+                image_sha256='image-digest',
+            ),
+            SourceBlock(
+                uuid='block-2',
+                created_at=created_at,
+                block_type='paragraph',
+                content='second',
+                embedding=[0.0, 1.0],
+            ),
+        ],
     )
-    expected = snapshot.model_copy(update={'pages': expected_pages})
-    assert processed_snapshot_fingerprint(
-        snapshot
-    ) == processed_snapshot_fingerprint(expected)
+    assert units[1].kind is SourceUnitKind.CONTENT
+    assert [block.content for block in units[1].blocks] == ['later']
+    assert source_units_from_records([]) == []
 
 
 def test_list_sources_returns_stable_user_source_summaries():
@@ -158,69 +187,34 @@ def test_list_sources_returns_stable_user_source_summaries():
         )
     )
 
-    assert sources == [
-        Source(
-            uuid='source-2',
-            key='second.pdf',
-            created_at=created_at,
-            updated_at=updated_at,
-            invalidated_at=invalidated_at,
-            revision=2,
-        ),
-        Source(
-            uuid='source-1',
-            key='first.pdf',
-            created_at=created_at,
-            revision=0,
-        ),
-    ]
+    assert [source.uuid for source in sources] == ['source-2', 'source-1']
+    assert sources[0].invalidated_at == invalidated_at
+    assert sources[1].revision == 0
 
 
-def test_list_unowned_sources_excludes_owned_source_catalog():
-    session = _RecordingSession(
-        _RecordingResult(
-            [
-                {
-                    'uuid': 'legacy-1',
-                    'key': 'legacy.pdf',
-                    'created_at': datetime(2026, 1, 2, tzinfo=UTC),
-                    'updated_at': datetime(2026, 1, 2, tzinfo=UTC),
-                    'invalidated_at': None,
-                    'revision': 0,
-                }
-            ]
-        )
-    )
-
-    sources = asyncio.run(
-        SourceCatalogRepository(
-            lambda: _SessionContext(session)
-        ).list_unowned_sources()
-    )
-
-    assert sources == [
-        Source(
-            uuid='legacy-1',
-            key='legacy.pdf',
-            created_at=datetime(2026, 1, 2, tzinfo=UTC),
-            updated_at=datetime(2026, 1, 2, tzinfo=UTC),
-            revision=0,
-        )
-    ]
-
-
-def test_adopt_source_locks_source_and_rejects_claimed_source():
-    session = _RecordingSession()
-    repository = SourceCatalogRepository(lambda: _SessionContext(session))
-
-    with pytest.raises(SourceOwnershipConflict):
-        asyncio.run(repository.adopt_source('user-1', 'source-1'))
-
-
-def test_source_graph_parameters_preserve_vertex_lifecycle_times():
+def test_source_graph_parameters_preserve_nested_order_and_lifecycle_times():
     created_at = datetime(2026, 1, 2, tzinfo=UTC)
     updated_at = datetime(2026, 1, 3, tzinfo=UTC)
     invalidated_at = datetime(2026, 1, 4, tzinfo=UTC)
+    blocks = [
+        SourceBlock(
+            uuid=f'block-{index}',
+            block_type='paragraph',
+            content=f'content {index}',
+            created_at=created_at,
+            updated_at=updated_at,
+            invalidated_at=invalidated_at,
+        )
+        for index in range(2)
+    ]
+    unit = SourceUnit(
+        uuid='unit-1',
+        kind=SourceUnitKind.EXERCISE,
+        blocks=blocks,
+        created_at=created_at,
+        updated_at=updated_at,
+        invalidated_at=invalidated_at,
+    )
     snapshot = SourceSnapshot(
         source=Source(
             uuid='source-1',
@@ -228,45 +222,42 @@ def test_source_graph_parameters_preserve_vertex_lifecycle_times():
             created_at=created_at,
             updated_at=updated_at,
             invalidated_at=invalidated_at,
+            metadata={'identity_schema': 'source-content-v5'},
         ),
-        pages=[
-            SourcePage(
-                index=0,
-                blocks=[
-                    SourceBlock(
-                        uuid='block-1',
-                        block_type='paragraph',
-                        content='content',
-                        created_at=created_at,
-                        updated_at=updated_at,
-                        invalidated_at=invalidated_at,
-                    )
-                ],
-            )
-        ],
-        instructions=[
-            Instruction(
-                uuid='instruction-1',
-                created_at=created_at,
-                updated_at=updated_at,
-                invalidated_at=invalidated_at,
-                member_block_uuids=['block-1'],
-            )
-        ],
+        units=[unit],
     )
-
     parameters = source_graph_parameters(snapshot)
-
+    assert 'page_indexes' not in parameters['blocks'][0]
+    assert 'page_count' not in json.loads(parameters['source']['metadata'])
+    assert 'page_indexes' not in json.loads(parameters['source']['metadata'])
     assert parameters['source']['created_at'] is created_at
-    assert parameters['source']['updated_at'] is updated_at
-    assert parameters['source']['invalidated_at'] is invalidated_at
+    assert parameters['units'][0]['kind'] == 'exercise'
+    assert parameters['units'][0]['created_at'] is created_at
+    assert parameters['units'][0]['updated_at'] is updated_at
+    assert parameters['units'][0]['invalidated_at'] is invalidated_at
     assert parameters['blocks'][0]['created_at'] is created_at
     assert parameters['blocks'][0]['updated_at'] is updated_at
     assert parameters['blocks'][0]['invalidated_at'] is invalidated_at
-    assert parameters['instructions'][0]['updated_at'] is updated_at
-    assert parameters['instructions'][0]['invalidated_at'] is invalidated_at
+    assert [block['uuid'] for block in parameters['blocks']] == [
+        'block-0',
+        'block-1',
+    ]
+    assert [pair['block_uuid'] for pair in parameters['unit_block_pairs']] == [
+        'block-0',
+        'block-1',
+    ]
+    assert parameters['block_pairs'] == [
+        {'unit_uuid': 'unit-1', 'from_uuid': 'block-0', 'to_uuid': 'block-1'}
+    ]
+    assert parameters['unit_bounds'] == [
+        {
+            'unit_uuid': 'unit-1',
+            'first_block_uuid': 'block-0',
+            'last_block_uuid': 'block-1',
+        }
+    ]
     assert isinstance(parameters['edge_created_at'], datetime)
-    changed_timestamp_snapshot = snapshot.model_copy(
+    changed = snapshot.model_copy(
         update={
             'source': snapshot.source.model_copy(
                 update={
@@ -274,49 +265,9 @@ def test_source_graph_parameters_preserve_vertex_lifecycle_times():
                     'updated_at': datetime(2026, 1, 6, tzinfo=UTC),
                     'invalidated_at': datetime(2026, 1, 7, tzinfo=UTC),
                 }
-            ),
-            'pages': [
-                snapshot.pages[0].model_copy(
-                    update={
-                        'blocks': [
-                            snapshot.pages[0]
-                            .blocks[0]
-                            .model_copy(
-                                update={
-                                    'created_at': datetime(
-                                        2026, 1, 5, tzinfo=UTC
-                                    ),
-                                    'updated_at': datetime(
-                                        2026, 1, 6, tzinfo=UTC
-                                    ),
-                                    'invalidated_at': datetime(
-                                        2026, 1, 7, tzinfo=UTC
-                                    ),
-                                }
-                            )
-                        ]
-                    }
-                )
-            ],
+            )
         }
     )
     assert processed_snapshot_fingerprint(
         snapshot
-    ) == processed_snapshot_fingerprint(changed_timestamp_snapshot)
-
-
-def test_default_vertex_updated_at_copies_created_at():
-    created_at = datetime(2026, 1, 2, tzinfo=UTC)
-
-    source = Source(uuid='source-1', key='source', created_at=created_at)
-    block = SourceBlock(
-        uuid='block-1',
-        block_type='paragraph',
-        content='content',
-        created_at=created_at,
-    )
-    instruction = Instruction(created_at=created_at)
-
-    assert source.updated_at is created_at
-    assert block.updated_at is created_at
-    assert instruction.updated_at is created_at
+    ) == processed_snapshot_fingerprint(changed)

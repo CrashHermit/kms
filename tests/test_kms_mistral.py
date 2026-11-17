@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from kms.config.services import OCRSettings
 from kms.ocr import mistral
-from kms.ocr.provider import source_pages_from_ocr
+from kms.ocr.provider import source_blocks_from_ocr
 
 
 class _Response:
@@ -272,7 +272,9 @@ def test_rendered_pages_materialize_without_pdfium_lock(monkeypatch, tmp_path):
         rendered_pages={0: image_bytes.getvalue()},
     )
 
-    assert len(artifacts) == 1
+    assert artifacts.blocks == []
+    assert artifacts.page_indexes == [0]
+    assert Path(artifacts.page_images[0]).is_file()
 
 
 def test_mistral_provider_materializes_ordered_artifacts(monkeypatch, tmp_path):
@@ -332,33 +334,23 @@ def test_mistral_provider_materializes_ordered_artifacts(monkeypatch, tmp_path):
         lambda data, settings, pages=None: response,
     )
 
-    artifacts = mistral.MistralOCRProvider(ocr_settings).extract(
+    extraction = mistral.MistralOCRProvider(ocr_settings).extract(
         pdf_path, source_uuid='source-1'
     )
 
-    assert [page.page_index for page in artifacts] == [2, 0]
-    assert [page.markdown for page in artifacts] == ['## Second', '## First']
-    assert [block.content for page in artifacts for block in page.blocks] == [
+    assert extraction.page_indexes == [2, 0]
+    assert [block.content for block in extraction.blocks] == [
         'first',
         'second',
         'third',
     ]
-    assert artifacts[0].blocks[0].block_type.value == 'aside_text'
-    assert [
-        block.page_index for page in artifacts for block in page.blocks
-    ] == [
-        2,
-        2,
-        0,
-    ]
-    assert artifacts[0].blocks[0].crop_bbox == (2, 12, 58, 108)
-    assert artifacts[0].blocks[1].crop_bbox == (52, 112, 98, 188)
-    assert artifacts[1].blocks[0].crop_bbox == (2, 12, 58, 108)
-    assert all(
-        not hasattr(block, 'images')
-        for page in artifacts
-        for block in page.blocks
-    )
+    assert [block.page_index for block in extraction.blocks] == [2, 2, 0]
+    assert extraction.blocks[0].block_type.value == 'aside_text'
+    assert extraction.blocks[0].crop_bbox == (2, 12, 58, 108)
+    assert extraction.blocks[1].crop_bbox == (52, 112, 98, 188)
+    assert extraction.blocks[2].crop_bbox == (2, 12, 58, 108)
+    assert all(not hasattr(block, 'images') for block in extraction.blocks)
+    assert list(extraction.page_images) == [2, 0]
     assert not (
         tmp_path / 'output' / 'Documents' / 'Document_0002' / 'Images'
     ).exists()
@@ -387,7 +379,7 @@ def test_ocr_runs_preserve_crop_artifacts_without_fragment_files(
     )
     provider = mistral.MistralOCRProvider(settings)
     blocks = [
-        provider.extract(pdf_path, source_uuid=source_uuid)[0].blocks[0]
+        provider.extract(pdf_path, source_uuid=source_uuid).blocks[0]
         for source_uuid in ('source-1', 'source-2', 'source-1')
     ]
 
@@ -428,20 +420,19 @@ def test_image_ocr_block_uses_one_rendered_block_crop(
     artifacts = mistral.MistralOCRProvider(settings).extract(
         pdf_path, source_uuid='source-run'
     )
-    pages = source_pages_from_ocr(
+    source_blocks = source_blocks_from_ocr(
         artifacts, source_uuid='00000000-0000-0000-0000-000000000001'
     )
-    image_block = pages[0].blocks[0]
-    repeated = source_pages_from_ocr(
+    image_block = source_blocks[0]
+    repeated = source_blocks_from_ocr(
         artifacts, source_uuid='00000000-0000-0000-0000-000000000001'
     )
 
-    assert image_block.image_path == artifacts[0].blocks[0].crop_path
-    assert image_block.image_page_indexes == [2]
-    assert image_block.crop_bbox == artifacts[0].blocks[0].crop_bbox
+    assert image_block.image_path == artifacts.blocks[0].crop_path
+    assert image_block.crop_bbox == artifacts.blocks[0].crop_bbox
     assert Path(image_block.image_path).is_file()
     assert not list((tmp_path / 'output').rglob('Images'))
-    assert image_block.uuid == repeated[0].blocks[0].uuid
+    assert image_block.uuid == repeated[0].uuid
 
 
 @pytest.mark.parametrize(

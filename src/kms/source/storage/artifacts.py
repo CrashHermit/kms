@@ -6,13 +6,13 @@ import hashlib
 from pathlib import Path
 
 from kms.artifacts import ContentAddressedArtifactStore
-from kms.source.models.source import SourcePage
+from kms.source.models.unit import SourceUnit
 
 
 class SourceArtifactStore(ContentAddressedArtifactStore):
     """Store source artifacts and finalize block media references."""
 
-    def finalize_pages(self, pages: list[SourcePage]) -> list[SourcePage]:
+    def finalize_units(self, units: list[SourceUnit]) -> list[SourceUnit]:
         """Durably store block crops and canonical images with digest caching."""
         finalized_paths: dict[str, tuple[Path, str]] = {}
         stored_paths: dict[tuple[str, str], Path] = {}
@@ -28,24 +28,38 @@ class SourceArtifactStore(ContentAddressedArtifactStore):
                 finalized_paths[raw_path] = stored_paths[key], digest
             return finalized_paths[raw_path]
 
-        finalized_pages = []
-        for page in pages:
+        finalized_units = []
+        for unit in units:
             blocks = []
-            for block in page.blocks:
+            for block in unit.blocks:
                 updates: dict[str, object] = {}
                 if block.crop_path is not None:
                     crop_path, crop_sha256 = finalize_path(block.crop_path)
+                    if (
+                        block.crop_sha256 is not None
+                        and block.crop_sha256 != crop_sha256
+                    ):
+                        raise ValueError(
+                            'Source crop content does not match its recorded digest'
+                        )
                     updates.update(
                         crop_path=str(crop_path), crop_sha256=crop_sha256
                     )
                 if block.image_path is not None:
                     image_path, image_sha256 = finalize_path(block.image_path)
+                    if (
+                        block.image_sha256 is not None
+                        and block.image_sha256 != image_sha256
+                    ):
+                        raise ValueError(
+                            'Source image content does not match its recorded digest'
+                        )
                     updates.update(
                         image_path=str(image_path), image_sha256=image_sha256
                     )
                 blocks.append(block.model_copy(update=updates))
-            finalized_pages.append(page.model_copy(update={'blocks': blocks}))
-        return finalized_pages
+            finalized_units.append(unit.model_copy(update={'blocks': blocks}))
+        return finalized_units
 
 
 def read_image_bytes(image_path: str, image_sha256: str) -> bytes:

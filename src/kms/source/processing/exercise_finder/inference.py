@@ -18,10 +18,11 @@ class ExerciseStartRouterSignature(dspy.Signature):
     lists are its own context; never use another item in `items` as context.
     Return one decision for every input position, preserving those positions.
 
-    Mark a target True only when it begins one distinct individual exercise.
-    Adjacent exercises are separate even when they share a topic or shared
-    instructions. Do not mark shared instructions, continuations, attached
-    equations, images, tables, lists, explanatory blocks, or subparts as starts.
+    Mark a target True only when it begins one distinct individual exercise,
+    including the problem posed in a worked example. Adjacent exercises are
+    separate even when they share a topic or shared instructions. Do not mark
+    shared instructions, continuations, attached equations, images, tables,
+    lists, explanatory blocks, or subparts as starts.
 
     An individual exercise may be labeled as an activity or have no number.
     Its setup can introduce a graph, function, object, or scenario and ask
@@ -89,15 +90,14 @@ class ExerciseBoundaryRouterSignature(dspy.Signature):
     rest of the same exercise. Such layout blocks remain inside the contiguous
     span; False does not claim that they are mathematical exercise content.
 
-    Mark True for the start of another exercise (including a labeled activity
-    or an unlabeled independent task), a new shared instruction, a genuine new
-    section introducing different material, or unrelated exposition. Do not
-    treat every header as a new section: distinguish running titles/page numbers
-    from headings that introduce new subject matter. A new numbered exercise
-    is a boundary even when its topic is similar.
-
-    The boundary is exclusive: a True target is not part of this exercise
-    and must not be consumed.
+    Mark True for the start of another exercise (including an unlabeled
+    independent task), the authored solution/proof/method for the current
+    task, a new shared instruction, a genuine new section introducing different
+    material, or unrelated exposition. Do not treat every header as a new
+    section: distinguish running titles/page numbers from headings that
+    introduce new subject matter. A new task is a boundary even when its topic
+    is similar. The boundary is exclusive: a True target is not part of this
+    exercise and must not be consumed.
 
     Return decisions only; do not include reasons, spans, or text.
     """

@@ -9,6 +9,7 @@ from kms.core.tokenization.material import MaterialTokenEstimator
 from kms.core.tokenization.text import count_text_tokens
 from kms.media.models import ImageAsset, ImagePart, Material, TextPart
 from kms.source.models.source import BlockType, SourceBlock
+from kms.source.models.unit import SourceUnit
 
 
 class SourceBlockContext(BaseModel):
@@ -85,23 +86,13 @@ def project_source_block(block: SourceBlock) -> SourceBlockContext:
     )
 
 
-def project_source_material(
-    content: str,
-    blocks: Sequence[SourceBlock],
-) -> Material:
-    """Project annotation text followed by images from ordered evidence."""
+def project_source_unit(unit: SourceUnit) -> Material:
+    """Project the ordered native material of every block in a unit."""
     return Material(
-        parts=(
-            TextPart(text=content),
-            *(
-                ImagePart(
-                    asset=ImageAsset(
-                        ('path', block.image_path), Path(block.image_path)
-                    )
-                )
-                for block in blocks
-                if block.image_path is not None
-            ),
+        parts=tuple(
+            part
+            for block in unit.blocks
+            for part in project_source_block(block).material.parts
         )
     )
 

@@ -1,0 +1,1 @@
+"""Atomic target decomposition."""

@@ -34,8 +34,6 @@ class ContentCorrectionOutput(BaseModel):
 class ContentCorrectionRequest(BaseModel):
     """One source block awaiting visual OCR correction."""
 
-    page_index: int
-    block_position: int
     source_block: SourceBlock
     context_image: bytes
     context_digest: str
@@ -43,10 +41,8 @@ class ContentCorrectionRequest(BaseModel):
 
 
 class ContentCorrectionResult(BaseModel):
-    """Corrected source block and cleanup decision at its page location."""
+    """Corrected source block and cleanup decision."""
 
-    page_index: int
-    block_position: int
     source_block: SourceBlock
     keep: bool
     cleanup_instructions: list[str]

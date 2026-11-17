@@ -11,15 +11,16 @@ from kms.inference.batching import pack_content_batches
 from kms.media.budget import ImagePayloadBudget
 from kms.media.content import collect_image_assets
 from kms.media.images import load_content_images
-from kms.media.models import ImageAsset
+from kms.media.models import ImageAsset, ImagePart, TextPart
 from kms.source.context import (
     SourceBlockWindow,
     count_source_tokens,
-    project_source_material,
+    project_source_unit,
     project_source_window,
     select_window,
 )
 from kms.source.models.source import BlockType, SourceBlock
+from kms.source.models.unit import SourceUnit, SourceUnitKind
 
 
 def _png(path: Path, color: tuple[int, int, int]) -> None:
@@ -35,7 +36,6 @@ def _block(
         block_type=block_type if image_path is None else BlockType.IMAGE,
         content=content,
         image_path=image_path,
-        image_page_indexes=[0] if image_path is not None else [],
     )
 
 
@@ -47,6 +47,52 @@ def _pixel(payload: bytes) -> tuple[int, int, int]:
 class _LengthCounter:
     def count_texts(self, texts: list[str]) -> list[int]:
         return [len(text) for text in texts]
+
+
+def test_project_source_unit_preserves_order_and_repeated_native_images(
+    tmp_path,
+):
+    red = tmp_path / 'red.png'
+    blue = tmp_path / 'blue.png'
+    _png(red, (255, 0, 0))
+    _png(blue, (0, 0, 255))
+    unit = SourceUnit(
+        kind=SourceUnitKind.EXERCISE,
+        blocks=[
+            _block('before'),
+            _block(None, str(red)),
+            _block('middle'),
+            _block(None, str(red)),
+            _block(None, str(blue)),
+            _block('after'),
+        ],
+    )
+
+    material = project_source_unit(unit)
+
+    assert [part.type for part in material.parts] == [
+        'text',
+        'image',
+        'text',
+        'image',
+        'image',
+        'text',
+    ]
+    assert [
+        part.text for part in material.parts if isinstance(part, TextPart)
+    ] == [
+        'before',
+        'middle',
+        'after',
+    ]
+    assert len(material.images) == 3
+    assert [
+        part.asset.key for part in material.parts if isinstance(part, ImagePart)
+    ] == [
+        ('path', str(red)),
+        ('path', str(red)),
+        ('path', str(blue)),
+    ]
 
 
 def test_source_projection_preserves_block_order_and_image_provenance(tmp_path):
@@ -73,7 +119,9 @@ def test_source_projection_preserves_block_order_and_image_provenance(tmp_path):
     assert _pixel(_read(str(before.images[0].payload))) == (255, 0, 0)
 
 
-def test_source_material_keeps_evidence_image_occurrences_in_order(tmp_path):
+def test_source_unit_projection_ignores_crop_only_paths_and_keeps_images(
+    tmp_path,
+):
     red_path = tmp_path / 'red.png'
     blue_path = tmp_path / 'blue.png'
     _png(red_path, (255, 0, 0))
@@ -89,15 +137,20 @@ def test_source_material_keeps_evidence_image_occurrences_in_order(tmp_path):
         _block('duplicate path', str(red_path)),
     ]
 
-    material = project_source_material('exact annotation text', blocks)
-
-    assert material.text == 'exact annotation text'
-    assert material.images == (
-        ImageAsset(('path', str(red_path)), red_path),
-        ImageAsset(('path', str(blue_path)), blue_path),
-        ImageAsset(('path', str(red_path)), red_path),
+    material = project_source_unit(
+        SourceUnit(kind=SourceUnitKind.CONTENT, blocks=blocks)
     )
-    assert collect_image_assets(material) == list(material.images[:2])
+
+    assert material.text == 'firstcrop-only textsecondduplicate path'
+    assert [asset.key for asset in material.images] == [
+        ('path', str(red_path)),
+        ('path', str(blue_path)),
+        ('path', str(red_path)),
+    ]
+    assert [asset.key for asset in collect_image_assets(material)] == [
+        ('path', str(red_path)),
+        ('path', str(blue_path)),
+    ]
 
 
 def _read(path: str) -> bytes:
@@ -120,7 +173,6 @@ def test_source_window_costs_include_direct_images_but_not_crop_paths(tmp_path):
             content=None,
             crop_path=str(tmp_path / 'missing-image-crop.png'),
             image_path=str(image_path),
-            image_page_indexes=[0],
         ),
         SourceBlock(
             uuid='target',
@@ -142,7 +194,6 @@ def test_source_window_costs_include_direct_images_but_not_crop_paths(tmp_path):
                 content='x',
                 crop_path=str(tmp_path / 'missing-mixed-crop.png'),
                 image_path=str(image_path),
-                image_page_indexes=[0],
             )
         ],
         (MaterialTokenEstimator(_LengthCounter()),),

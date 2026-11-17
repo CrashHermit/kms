@@ -1,33 +1,28 @@
-"""Opt-in Neo4j integration coverage for current KMS2 persistence contracts."""
+"""Opt-in Neo4j coverage for v5 source publication and retrieval."""
 
 import asyncio
 import hashlib
 import os
-from io import BytesIO
+from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 from PIL import Image
 
-from kms.config.services import DatabaseSettings
 from kms.config.settings import Settings
 from kms.database import schema
 from kms.database.client import DatabaseClient
 from kms.inference.embedding.limits import VOYAGE_EMBEDDING_DIMENSION
-from kms.media.budget import ImagePayloadBudget
-from kms.media.content import collect_image_assets
-from kms.media.images import load_content_images
-from kms.source.context import SourceBlockWindow, project_source_window
-from kms.source.models.material import (
-    Instruction,
-    ProcedureDraft,
-    StatementDraft,
-)
-from kms.source.models.snapshot import (
-    SourceSnapshotConflict,
-    finalize_snapshot_identities,
-)
-from kms.source.models.source import BlockType, Source, SourceBlock, SourcePage
+from kms.source.ingestion import SourceIngestionService
+from kms.source.models.inputs import CapturedPDFSource
+from kms.source.models.snapshot import SourceSnapshotConflict
+from kms.source.models.source import BlockType, SourceBlock
+from kms.source.models.unit import SourceUnit, SourceUnitKind
+from kms.source.processing.state import SourceProcessingState
+from kms.source.retrieval.read import SourceReader
+from kms.source.storage.artifacts import SourceArtifactStore
+from kms.source.storage.retrieval import SourceRetrievalRepository
 from kms.source.storage.snapshots import SourceSnapshotRepository
 
 _REQUIRED_ENVIRONMENT = (
@@ -42,459 +37,249 @@ def _embedding(first: float, second: float, dimension: int) -> list[float]:
     return [first, second, *([0.0] * (dimension - 2))]
 
 
+class _ProcessedGraph:
+    def __init__(self, image_path: str, image_digest: str, vector: list[float]):
+        self.image_path = image_path
+        self.image_digest = image_digest
+        self.vector = vector
+
+    async def run(self, state: SourceProcessingState):
+        def text(content: str) -> SourceBlock:
+            return SourceBlock(
+                block_type=BlockType.PARAGRAPH,
+                content=content,
+                embedding=self.vector,
+            )
+
+        def image() -> SourceBlock:
+            return SourceBlock(
+                block_type=BlockType.IMAGE,
+                content=None,
+                embedding=self.vector,
+                image_path=self.image_path,
+                image_sha256=self.image_digest,
+            )
+
+        units = [
+            SourceUnit(
+                kind=SourceUnitKind.EXERCISE,
+                embedding=self.vector,
+                blocks=[
+                    text('Use the shared diagram.'),
+                    image(),
+                    text('Calculate the determinant.'),
+                    text(' from the given matrix.'),
+                ],
+            ),
+            SourceUnit(
+                kind=SourceUnitKind.EXERCISE,
+                embedding=self.vector,
+                blocks=[
+                    text('Use the shared diagram.'),
+                    image(),
+                    text('Find the inverse.'),
+                ],
+            ),
+            SourceUnit(
+                kind=SourceUnitKind.PROCEDURE,
+                embedding=self.vector,
+                blocks=[text('Compute the determinant by row reduction.')],
+            ),
+        ]
+        source = state.source.model_copy(
+            update={
+                'metadata': {
+                    **state.source.metadata,
+                    'embedding_profile': {
+                        'model': 'integration-test',
+                        'dimension': len(self.vector),
+                    },
+                }
+            }
+        )
+        return SimpleNamespace(
+            source=source,
+            units=units,
+            selected_page_indexes=[0, 1],
+        )
+
+
 @pytest.mark.skipif(
     os.getenv('KMS_NEO4J_IT') != '1'
     or not all(os.getenv(name) for name in _REQUIRED_ENVIRONMENT),
     reason='KMS Neo4j integration environment is not enabled',
 )
-def test_kms_neo4j_pedagogical_source_round_trip():
+def test_graph_ingestion_publication_and_unit_retrieval_round_trip(tmp_path):
     async def exercise() -> None:
         settings = Settings()
         database = DatabaseClient(settings.database)
         user_uuid = str(uuid4())
-        source = Source(
-            uuid=str(uuid4()),
-            key='pedagogical-source.pdf',
-            metadata={
-                'embedding_profile': {
-                    'model': 'integration-test',
-                    'dimension': VOYAGE_EMBEDDING_DIMENSION,
-                }
-            },
+        other_user_uuid = str(uuid4())
+        dimension = VOYAGE_EMBEDDING_DIMENSION
+        vector = _embedding(1.0, 0.0, dimension)
+        profile_model = 'integration-test'
+        image_source_path = tmp_path / 'shared-diagram.png'
+        Image.new('RGB', (8, 8), (0, 0, 255)).save(
+            image_source_path, format='PNG'
         )
-        vector = _embedding(1.0, 0.0, VOYAGE_EMBEDDING_DIMENSION)
-        blocks = [
-            SourceBlock(
-                block_type=BlockType.MARKDOWN,
-                content=content,
-                embedding=vector,
-            )
-            for content in (
-                'A real square matrix is invertible exactly when its determinant is nonzero.',
-                'The matrix A has real entries.',
-                'The argument continues after the definition.',
-            )
-        ]
-        source_pages = [SourcePage(index=0, blocks=blocks)]
-        snapshot = finalize_snapshot_identities(
-            source,
-            source_pages,
-            [
-                Instruction(
-                    member_block_uuids=[block.uuid for block in blocks],
-                    governed_statement_uuids=['statement'],
-                )
-            ],
-            [
-                StatementDraft(
-                    uuid='statement',
-                    content='An exercise about the real matrix A.',
-                    embedding=_embedding(0.1, 0.0, VOYAGE_EMBEDDING_DIMENSION),
-                    member_block_uuids=[blocks[1].uuid, blocks[2].uuid],
-                    is_exercise=True,
-                )
-            ],
-            [
-                ProcedureDraft(
-                    content='Read the matrix and determine its dimensions.',
-                    embedding=_embedding(0.2, 0.0, VOYAGE_EMBEDDING_DIMENSION),
-                    member_block_uuids=[blocks[0].uuid],
-                )
-            ],
-        )
+        image_bytes = image_source_path.read_bytes()
+        image_digest = hashlib.sha256(image_bytes).hexdigest()
         snapshots = SourceSnapshotRepository(database.session)
-        rollback_source_uuid: str | None = None
-
+        retrieval = SourceRetrievalRepository(database.session)
+        reader = SourceReader(retrieval)
+        artifact_store = SourceArtifactStore(tmp_path / 'artifacts')
+        source_uuid: str | None = None
+        published = None
+        ingestion = SourceIngestionService(
+            snapshots,
+            artifact_store,
+            _ProcessedGraph(str(image_source_path), image_digest, vector),
+            embedding_model=profile_model,
+            embedding_dimension=dimension,
+        )
         try:
             await schema.ensure_schema(
-                database.session,
-                embedding_dimension=VOYAGE_EMBEDDING_DIMENSION,
+                database.session, embedding_dimension=dimension
             )
             async with database.session() as session:
                 result = await session.run(
-                    'CREATE (:User {uuid: $uuid})', uuid=user_uuid
+                    'CREATE (:User {uuid: $uuid}), (:User {uuid: $other_uuid})',
+                    uuid=user_uuid,
+                    other_uuid=other_user_uuid,
                 )
                 await result.consume()
 
-            persisted = await snapshots.create_owned_snapshot(
-                user_uuid, snapshot
+            capture = CapturedPDFSource(
+                url='https://example.test/matrix.pdf',
+                title='matrix.pdf',
+                retrieved_at=datetime(2026, 1, 1, tzinfo=UTC),
+                capture_id=f'capture-{uuid4()}',
+                data=b'%PDF-1.7\nsynthetic integration capture',
             )
-            loaded = await snapshots.load_owned_snapshot(user_uuid, source.uuid)
-            assert loaded == persisted
-            assert loaded.source.created_at == snapshot.source.created_at
-            assert [
-                block.created_at
-                for page in loaded.pages
-                for block in page.blocks
-            ] == [
-                block.created_at
-                for page in snapshot.pages
-                for block in page.blocks
-            ]
-            async with database.session() as session:
-                result = await session.run(
-                    """
-                    MATCH (user:User {uuid: $user_uuid})
-                          -[ownership:OWNS_SOURCE]->(source:Source {uuid: $source_uuid})
-                    MATCH (source)-[has_page:HAS_PAGE]->(page:SourcePage)
-                    MATCH (page)-[contains_block:CONTAINS_BLOCK]->(
-                        block:SourceBlock {uuid: $block_uuid}
-                    )
-                    RETURN source.created_at AS source_created_at,
-                           page.created_at AS page_created_at,
-                           block.created_at AS block_created_at,
-                           ownership.created_at AS ownership_created_at,
-                           has_page.created_at AS has_page_created_at,
-                           contains_block.created_at AS contains_block_created_at
-                    """,
-                    user_uuid=user_uuid,
-                    source_uuid=source.uuid,
-                    block_uuid=snapshot.pages[0].blocks[0].uuid,
+            published = await ingestion.ingest(user_uuid, capture)
+            reused = await asyncio.gather(
+                snapshots.create_owned_snapshot(user_uuid, published),
+                snapshots.create_owned_snapshot(user_uuid, published),
+            )
+            assert reused == [published, published]
+            source_uuid = published.source.uuid
+            assert (
+                published.source.metadata['identity_schema']
+                == 'source-content-v5'
+            )
+            assert (
+                published.units[0].blocks[1].uuid
+                != published.units[1].blocks[1].uuid
+            )
+            assert (
+                published.units[0].blocks[1].image_path
+                == published.units[1].blocks[1].image_path
+            )
+            assert published.units[0].blocks[1].image_sha256 == image_digest
+
+            loaded = await snapshots.load_owned_snapshot(user_uuid, source_uuid)
+            assert loaded == published
+            assert (
+                await snapshots.load_owned_snapshot(
+                    other_user_uuid, source_uuid
                 )
-                timestamps = await result.single(strict=True)
+                is None
+            )
+            assert [unit.kind for unit in loaded.units] == [
+                SourceUnitKind.EXERCISE,
+                SourceUnitKind.EXERCISE,
+                SourceUnitKind.PROCEDURE,
+            ]
+            assert [block.content for block in loaded.units[0].blocks[:1]] == [
+                'Use the shared diagram.'
+            ]
             assert (
-                timestamps['source_created_at'].to_native()
-                == snapshot.source.created_at
+                ''.join(
+                    block.content or '' for block in loaded.units[0].blocks[2:]
+                )
+                == 'Calculate the determinant. from the given matrix.'
             )
-            assert timestamps['page_created_at'] is not None
+            assert loaded.units[0].blocks[1].image_sha256 == image_digest
             assert (
-                timestamps['block_created_at'].to_native()
-                == snapshot.pages[0].blocks[0].created_at
+                loaded.units[0].blocks[1].image_path
+                == loaded.units[1].blocks[1].image_path
             )
-            assert timestamps['ownership_created_at'] is not None
-            assert timestamps['has_page_created_at'] is not None
-            assert timestamps['contains_block_created_at'] is not None
-            assert loaded.instructions[0].member_block_uuids == [
-                block.uuid for block in loaded.pages[0].blocks
-            ]
-            assert loaded.instructions[0].governed_statement_uuids == [
-                loaded.statements[0].uuid
-            ]
-            assert loaded.statements[0].member_block_uuids == [
-                loaded.pages[0].blocks[1].uuid,
-                loaded.pages[0].blocks[2].uuid,
-            ]
-            assert loaded.procedures[0].member_block_uuids == [
-                loaded.pages[0].blocks[0].uuid
-            ]
-            rollback_source_uuid = str(uuid4())
-            rollback_source = Source(
-                uuid=rollback_source_uuid,
-                key='rollback-source.pdf',
-                metadata={
-                    'embedding_profile': {
-                        'model': 'integration-test',
-                        'dimension': VOYAGE_EMBEDDING_DIMENSION,
-                    }
-                },
+
+            block = loaded.units[0].blocks[1]
+            image_reads = await reader.read_images(user_uuid, [block.uuid])
+            assert [item.block_uuid for item in image_reads] == [block.uuid]
+            assert image_reads[0].data == image_bytes
+            assert await reader.read_images(other_user_uuid, [block.uuid]) == []
+
+            block_hits = await retrieval.search_owned_blocks(
+                user_uuid, vector, candidate_limit=30
             )
-            rollback_snapshot = finalize_snapshot_identities(
-                rollback_source,
-                [
-                    SourcePage(
-                        index=0,
-                        blocks=[
-                            SourceBlock(
-                                block_type=BlockType.MARKDOWN,
-                                content='This write must roll back.',
-                                embedding=vector,
-                            )
-                        ],
-                    )
-                ],
-                [],
-                [],
-                [],
+            assert any(hit.block.uuid == block.uuid for hit in block_hits)
+            assert all(hit.source.uuid == source_uuid for hit in block_hits)
+            unit_hits = await retrieval.search_owned_units(
+                user_uuid,
+                vector,
+                candidate_limit=10,
+                kind=SourceUnitKind.EXERCISE,
             )
-            rollback_snapshot = rollback_snapshot.model_copy(
+            assert [hit.unit.kind for hit in unit_hits] == [
+                SourceUnitKind.EXERCISE,
+                SourceUnitKind.EXERCISE,
+            ]
+            assert {hit.source.uuid for hit in unit_hits} == {source_uuid}
+
+            exercise_uuid = loaded.units[1].uuid
+            neighbors = await reader.read_units(
+                user_uuid, [exercise_uuid], after_units=1
+            )
+            assert [item.unit.uuid for item in neighbors] == [
+                loaded.units[1].uuid,
+                loaded.units[2].uuid,
+            ]
+            assert [item.unit.kind for item in neighbors] == [
+                SourceUnitKind.EXERCISE,
+                SourceUnitKind.PROCEDURE,
+            ]
+            assert (
+                await reader.read_units(other_user_uuid, [exercise_uuid]) == []
+            )
+
+            # A failed first publication must roll back its source and children.
+            bad = published.model_copy(
                 update={
-                    'source': rollback_snapshot.source.model_copy(
+                    'source': published.source.model_copy(
                         update={
+                            'uuid': str(uuid4()),
                             'metadata': {
-                                **rollback_snapshot.source.metadata,
+                                **published.source.metadata,
                                 'processed_digest': '0' * 64,
-                            }
+                            },
                         }
                     )
                 }
             )
             with pytest.raises(SourceSnapshotConflict):
-                await snapshots.create_owned_snapshot(
-                    user_uuid, rollback_snapshot
-                )
+                await snapshots.create_owned_snapshot(user_uuid, bad)
             assert (
-                await snapshots.load_owned_snapshot(
-                    user_uuid, rollback_source.uuid
-                )
+                await snapshots.load_owned_snapshot(user_uuid, bad.source.uuid)
                 is None
             )
-
         finally:
             async with database.session() as session:
                 result = await session.run(
                     """
-                    UNWIND $uuids AS uuid
-                    MATCH (source:Source {uuid: uuid})
-                    OPTIONAL MATCH (source)-[:HAS_PAGE]->(page:SourcePage)
-                    OPTIONAL MATCH (page)-[:CONTAINS_BLOCK]->(block:SourceBlock)
-                    OPTIONAL MATCH (block)-[:MEMBER_OF]->(material)
-                    DETACH DELETE material, block, page, source
+                    UNWIND $source_uuids AS source_uuid
+                    MATCH (source:Source {uuid: source_uuid})
+                    OPTIONAL MATCH (source)-[:HAS_UNIT]->(unit:SourceUnit)
+                    OPTIONAL MATCH (unit)-[:HAS_BLOCK]->(block:SourceBlock)
+                    DETACH DELETE block, unit, source
                     """,
-                    uuids=[
-                        source.uuid,
-                        *(
-                            [rollback_source_uuid]
-                            if rollback_source_uuid is not None
-                            else []
-                        ),
-                    ],
+                    source_uuids=[source_uuid] if source_uuid else [],
                 )
                 await result.consume()
                 result = await session.run(
-                    'MATCH (user:User {uuid: $uuid}) DETACH DELETE user',
-                    uuid=user_uuid,
-                )
-                await result.consume()
-            await database.close()
-
-    asyncio.run(exercise())
-
-
-@pytest.mark.skipif(
-    os.getenv('KMS_NEO4J_IT') != '1'
-    or not all(os.getenv(name) for name in _REQUIRED_ENVIRONMENT),
-    reason='KMS Neo4j integration environment is not enabled',
-)
-def test_kms_statement_procedure_material_round_trip():
-    async def exercise() -> None:
-        settings = Settings()
-        database = DatabaseClient(settings.database)
-        user_uuid = str(uuid4())
-        source = Source(
-            uuid=str(uuid4()),
-            key='source-material.pdf',
-            metadata={
-                'embedding_profile': {
-                    'model': 'integration-test',
-                    'dimension': VOYAGE_EMBEDDING_DIMENSION,
-                }
-            },
-        )
-        blocks = [
-            SourceBlock(
-                block_type=BlockType.MARKDOWN,
-                content=f'Source block {index}.',
-                embedding=_embedding(
-                    1.0, index / 100, VOYAGE_EMBEDDING_DIMENSION
-                ),
-            )
-            for index in range(2)
-        ]
-        statements = [
-            StatementDraft(
-                content=f'A real square matrix statement {index}.',
-                embedding=_embedding(
-                    1.0, index / 100, VOYAGE_EMBEDDING_DIMENSION
-                ),
-                member_block_uuids=[block.uuid for block in blocks[:index]],
-            )
-            for index in (1, 2)
-        ]
-        procedures = [
-            ProcedureDraft(
-                content=f'Procedure step sequence {index}.',
-                embedding=_embedding(
-                    1.0, index / 100, VOYAGE_EMBEDDING_DIMENSION
-                ),
-                member_block_uuids=[block.uuid for block in blocks[:index]],
-            )
-            for index in (1, 2)
-        ]
-        snapshot = finalize_snapshot_identities(
-            source,
-            [SourcePage(index=0, blocks=blocks)],
-            [],
-            statements,
-            procedures,
-        )
-        snapshots = SourceSnapshotRepository(database.session)
-        try:
-            await schema.ensure_schema(
-                database.session,
-                embedding_dimension=VOYAGE_EMBEDDING_DIMENSION,
-            )
-            async with database.session() as session:
-                result = await session.run(
-                    'CREATE (:User {uuid: $uuid})', uuid=user_uuid
-                )
-                await result.consume()
-            await snapshots.create_owned_snapshot(user_uuid, snapshot)
-            loaded = await snapshots.load_owned_snapshot(user_uuid, source.uuid)
-            assert loaded is not None
-            assert [item.uuid for item in loaded.statements] == [
-                item.uuid for item in snapshot.statements
-            ]
-            assert [item.member_block_uuids for item in loaded.statements] == [
-                [loaded.pages[0].blocks[0].uuid],
-                [
-                    loaded.pages[0].blocks[0].uuid,
-                    loaded.pages[0].blocks[1].uuid,
-                ],
-            ]
-            assert [item.uuid for item in loaded.procedures] == [
-                item.uuid for item in snapshot.procedures
-            ]
-            assert [item.member_block_uuids for item in loaded.procedures] == [
-                [loaded.pages[0].blocks[0].uuid],
-                [
-                    loaded.pages[0].blocks[0].uuid,
-                    loaded.pages[0].blocks[1].uuid,
-                ],
-            ]
-            assert 'source_uuid' not in loaded.statements[0].model_dump()
-            assert 'source_uuid' not in loaded.procedures[0].model_dump()
-        finally:
-            async with database.session() as session:
-                result = await session.run(
-                    """
-                    MATCH (source:Source {uuid: $uuid})
-                    OPTIONAL MATCH (source)-[:HAS_PAGE]->(page:SourcePage)
-                    OPTIONAL MATCH (page)-[:CONTAINS_BLOCK]->(block:SourceBlock)
-                    OPTIONAL MATCH (block)-[:MEMBER_OF]->(material)
-                    DETACH DELETE material, block, page, source
-                    """,
-                    uuid=source.uuid,
-                )
-                await result.consume()
-                result = await session.run(
-                    'MATCH (user:User {uuid: $uuid}) DETACH DELETE user',
-                    uuid=user_uuid,
-                )
-                await result.consume()
-            await database.close()
-
-    asyncio.run(exercise())
-
-
-@pytest.mark.skipif(
-    os.getenv('KMS_NEO4J_IT') != '1'
-    or not all(os.getenv(name) for name in _REQUIRED_ENVIRONMENT),
-    reason='KMS Neo4j integration environment is not enabled',
-)
-def test_kms_source_direct_images_round_trip(tmp_path):
-    async def exercise() -> None:
-        settings = Settings(
-            _env_file=None,
-            database=DatabaseSettings(
-                uri=os.environ['KMS_DATABASE__URI'],
-                username=os.environ['KMS_DATABASE__USERNAME'],
-                password=os.environ['KMS_DATABASE__PASSWORD'],
-                database=os.environ['KMS_DATABASE__DATABASE'],
-            ),
-        )
-        database = DatabaseClient(settings.database)
-        user_uuid = str(uuid4())
-        source = Source(
-            uuid=str(uuid4()),
-            key='direct-images.pdf',
-            metadata={
-                'embedding_profile': {
-                    'model': 'integration-test',
-                    'dimension': VOYAGE_EMBEDDING_DIMENSION,
-                }
-            },
-        )
-        red_path = tmp_path / 'red.png'
-        blue_path = tmp_path / 'blue.png'
-        Image.new('RGB', (8, 8), (255, 0, 0)).save(red_path, format='PNG')
-        Image.new('RGB', (8, 8), (0, 0, 255)).save(blue_path, format='PNG')
-        image_blocks = [
-            SourceBlock(
-                block_type=BlockType.IMAGE,
-                content='Red figure.',
-                image_path=str(red_path),
-                image_sha256=hashlib.sha256(red_path.read_bytes()).hexdigest(),
-                image_page_indexes=[0],
-            ),
-            SourceBlock(
-                block_type=BlockType.IMAGE,
-                content='Blue figure.',
-                image_path=str(blue_path),
-                image_sha256=hashlib.sha256(blue_path.read_bytes()).hexdigest(),
-                image_page_indexes=[0],
-            ),
-        ]
-        text_block = SourceBlock(
-            block_type=BlockType.MARKDOWN,
-            content='The figure has a red circle and a blue square.',
-        )
-        snapshot = finalize_snapshot_identities(
-            source,
-            [SourcePage(index=0, blocks=[*image_blocks, text_block])],
-            [],
-            [],
-            [],
-        )
-        snapshots = SourceSnapshotRepository(database.session)
-        try:
-            await schema.ensure_schema(
-                database.session,
-                embedding_dimension=VOYAGE_EMBEDDING_DIMENSION,
-            )
-            async with database.session() as session:
-                result = await session.run(
-                    'CREATE (:User {uuid: $uuid})', uuid=user_uuid
-                )
-                await result.consume()
-            await snapshots.create_owned_snapshot(user_uuid, snapshot)
-            loaded = await snapshots.load_owned_snapshot(user_uuid, source.uuid)
-            assert loaded is not None
-            assert [
-                (block.image_path, block.image_sha256, block.image_page_indexes)
-                for block in loaded.pages[0].blocks
-            ] == [
-                (
-                    block.image_path,
-                    block.image_sha256,
-                    block.image_page_indexes,
-                )
-                for block in snapshot.pages[0].blocks
-            ]
-
-            projected = project_source_window(
-                SourceBlockWindow(target=loaded.pages[0].blocks)
-            )
-            assert [
-                len(block.material.images) for block in projected.target
-            ] == [1, 1, 0]
-            native_images = await load_content_images(
-                collect_image_assets(projected),
-                budget=ImagePayloadBudget(
-                    max_images=2,
-                    max_bytes=1_000_000,
-                    max_pixels=128,
-                ),
-            )
-            with Image.open(BytesIO(native_images[0])) as image:
-                assert image.getpixel((0, 0)) == (255, 0, 0)
-            with Image.open(BytesIO(native_images[1])) as image:
-                assert image.getpixel((0, 0)) == (0, 0, 255)
-        finally:
-            async with database.session() as session:
-                result = await session.run(
-                    """
-                    MATCH (source:Source {uuid: $uuid})
-                    OPTIONAL MATCH (source)-[:HAS_PAGE]->(page:SourcePage)
-                    OPTIONAL MATCH (page)-[:CONTAINS_BLOCK]->(block:SourceBlock)
-                    OPTIONAL MATCH (block)-[:MEMBER_OF]->(material)
-                    DETACH DELETE material, block, page, source
-                    """,
-                    uuid=source.uuid,
-                )
-                await result.consume()
-                result = await session.run(
-                    'MATCH (user:User {uuid: $uuid}) DETACH DELETE user',
-                    uuid=user_uuid,
+                    'MATCH (user:User) WHERE user.uuid IN $uuids DETACH DELETE user',
+                    uuids=[user_uuid, other_user_uuid],
                 )
                 await result.consume()
             await database.close()

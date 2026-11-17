@@ -32,7 +32,7 @@ class ImageFilterDecision(BaseModel):
 
 
 class ImageFilterResult(BaseModel):
-    """One image decision restored to its flat source position."""
+    """One image decision addressed to its target block UUID."""
 
-    flat_position: int
+    block_uuid: str
     keep: bool

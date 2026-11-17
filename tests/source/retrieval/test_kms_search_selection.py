@@ -12,17 +12,18 @@ from kms.config.inference import VisionInferenceSettings
 from kms.config.settings import Settings
 from kms.core.tokenization.budget import InputBudgetExceeded, TokenBudget
 from kms.core.tokenization.material import MaterialTokenEstimator
+from kms.inference.generation import project_generation_inputs
 from kms.inference.predictors import build_token_budget
 from kms.media.budget import ImagePayloadBudget
 from kms.media.metadata import ImageMetadataCache
-from kms.media.models import ImageAsset, ImagePart, Material
-from kms.source.retrieval.selection.inference import SearchSelectionModule
-from kms.source.retrieval.selection.models import (
+from kms.media.models import ImageAsset, ImagePart, Material, TextPart
+from kms.retrieval.selection.inference import SearchSelectionModule
+from kms.retrieval.selection.models import (
     SearchMaterialKind,
     SearchSelectionCandidate,
     SearchSelectionInput,
 )
-from kms.source.retrieval.selection.service import SearchSelectionService
+from kms.retrieval.selection.selector import SearchSelector
 
 
 class _Tokenizers:
@@ -69,7 +70,7 @@ def _candidates() -> list[SearchSelectionCandidate]:
 
 
 def _serialized_size(
-    query: str, candidates: list[SearchSelectionCandidate]
+    query: Material, candidates: list[SearchSelectionCandidate]
 ) -> int:
     request = SearchSelectionInput(
         query=query,
@@ -84,10 +85,8 @@ def _serialized_size(
     )
 
 
-def _service(
-    module: _SelectionModule, *, token_limit: int
-) -> SearchSelectionService:
-    return SearchSelectionService(
+def _service(module: _SelectionModule, *, token_limit: int) -> SearchSelector:
+    return SearchSelector(
         module,
         TokenBudget(counter=_estimator(), token_limit=token_limit),
         image_budget=ImagePayloadBudget(
@@ -99,11 +98,14 @@ def _service(
 
 
 async def _select_with_budget(
-    *, budget: int, candidates: list[SearchSelectionCandidate]
+    *,
+    budget: int,
+    candidates: list[SearchSelectionCandidate],
+    query: Material | None = None,
 ) -> tuple[list[int], _SelectionModule]:
     module = _SelectionModule([1, 0])
     selected = await _service(module, token_limit=budget).select(
-        query='why?',
+        query=query or Material.from_text('why?'),
         material_kind=SearchMaterialKind.SOURCE_BLOCK,
         candidates=candidates,
     )
@@ -112,13 +114,16 @@ async def _select_with_budget(
 
 async def _test_select_uses_largest_whole_prefix_and_preserves_positions():
     candidates = _candidates()
-    budget = _serialized_size('why?', candidates[:2])
+    query = Material.from_text('why?')
+    budget = _serialized_size(query, candidates[:2])
     selected, module = await _select_with_budget(
         budget=budget,
         candidates=candidates,
+        query=query,
     )
 
     assert selected == [1, 0]
+    assert module.requests[0].query == query
     assert [
         candidate.position for candidate in module.requests[0].candidates
     ] == [
@@ -136,9 +141,11 @@ def test_select_uses_largest_whole_prefix_and_preserves_positions():
 
 async def _test_exact_budget_is_inclusive_and_singletons_are_judged():
     candidates = _candidates()[:1]
+    query = Material.from_text('why?')
     selected, module = await _select_with_budget(
-        budget=_serialized_size('why?', candidates),
+        budget=_serialized_size(query, candidates),
         candidates=candidates,
+        query=query,
     )
     assert selected == [1, 0]
     assert len(module.requests) == 1
@@ -157,13 +164,13 @@ async def _test_oversized_query_or_first_candidate_fails_before_inference():
         match='configured input budget',
     ):
         await service.select(
-            query='query that cannot fit',
+            query=Material.from_text('query that cannot fit'),
             material_kind=SearchMaterialKind.SOURCE_BLOCK,
             candidates=_candidates(),
         )
     assert module.requests == []
 
-    query = 'q'
+    query = Material.from_text('q')
     first = SearchSelectionCandidate(
         position=0, material=Material.from_text('oversized')
     )
@@ -188,7 +195,7 @@ async def _test_empty_candidates_skip_inference_and_failures_propagate():
     service = _service(module, token_limit=1000)
     assert (
         await service.select(
-            query='anything',
+            query=Material.from_text('anything'),
             material_kind=SearchMaterialKind.SOURCE_BLOCK,
             candidates=[],
         )
@@ -198,7 +205,7 @@ async def _test_empty_candidates_skip_inference_and_failures_propagate():
 
     with pytest.raises(RuntimeError, match='provider unavailable'):
         await service.select(
-            query='why?',
+            query=Material.from_text('why?'),
             material_kind=SearchMaterialKind.SOURCE_BLOCK,
             candidates=_candidates()[:1],
         )
@@ -221,13 +228,13 @@ def test_selection_module_accepts_domain_request_inputs():
             )
 
     request = SearchSelectionInput(
-        query='query',
-        material_kind=SearchMaterialKind.STATEMENT,
+        query=Material.from_text('query'),
+        material_kind=SearchMaterialKind.SOURCE_UNIT,
         candidates=[
             SearchSelectionCandidate(
                 position=0,
                 material=Material.from_text('solve the exercise'),
-                is_exercise=True,
+                unit_kind='exercise',
             )
         ],
     )
@@ -237,13 +244,61 @@ def test_selection_module_accepts_domain_request_inputs():
     assert asyncio.run(module.acall(request=request)) == [0]
 
 
+def test_selection_module_preserves_image_only_and_mixed_query_material():
+    output = BytesIO()
+    Image.new('RGB', (2, 2), color='blue').save(output, format='PNG')
+    asset = ImageAsset(('query',), output.getvalue())
+
+    class Predictor(dspy.Module):
+        def __init__(self):
+            super().__init__()
+            self.requests: list[SearchSelectionInput] = []
+
+        def forward(self, *, request: SearchSelectionInput):
+            self.requests.append(request)
+            return dspy.Prediction(selected_positions=[0])
+
+        async def aforward(self, *, request: SearchSelectionInput):
+            self.requests.append(request)
+            return dspy.Prediction(selected_positions=[0])
+
+    queries = [
+        Material.from_image(asset),
+        Material(
+            parts=(TextPart(text='compare this with '), ImagePart(asset=asset))
+        ),
+    ]
+    predictor = Predictor()
+    module = SearchSelectionModule(predictor)
+    candidate = SearchSelectionCandidate(
+        position=0, material=Material.from_text('candidate')
+    )
+
+    for query in queries:
+        request = SearchSelectionInput(
+            query=query,
+            material_kind=SearchMaterialKind.SOURCE_BLOCK,
+            candidates=[candidate],
+        )
+        assert module(request=request) == [0]
+        assert asyncio.run(module.acall(request=request)) == [0]
+        projected = project_generation_inputs({'request': request})
+        assert projected.images == [asset]
+        projected_parts = projected.inputs['request']['query']['parts']
+        assert sum(part['type'] == 'image' for part in projected_parts) == 1
+        assert projected_parts[-1]['image_position'] == 0
+
+    assert [request.query for request in predictor.requests] == [
+        query for query in queries for _ in range(2)
+    ]
+
+
 def test_default_search_selection_settings_are_constructible():
     selection = Settings(_env_file=None).search_selection
     assert selection.inference.max_tokens == 1024
     assert selection.inference.num_retries == 0
     assert selection.input_token_budget == 16384
     assert selection.safety_margin_tokens == 256
-    assert selection.image_payload.max_images == 4
 
 
 def test_selection_budget_respects_vision_context_and_output_reserve():
@@ -281,7 +336,7 @@ def test_selection_budget_respects_vision_context_and_output_reserve():
         input_token_budget=16384,
         safety_margin_tokens=256,
     )
-    service = SearchSelectionService(
+    service = SearchSelector(
         _SelectionModule([0]),
         impossible_budget,
         image_budget=ImagePayloadBudget(
@@ -293,7 +348,7 @@ def test_selection_budget_respects_vision_context_and_output_reserve():
     with pytest.raises(InputBudgetExceeded):
         asyncio.run(
             service.select(
-                query='too much output reserved',
+                query=Material.from_text('too much output reserved'),
                 material_kind=SearchMaterialKind.SOURCE_BLOCK,
                 candidates=_candidates()[:1],
             )
@@ -304,7 +359,7 @@ def test_selector_keeps_only_the_fitting_native_evidence_prefix():
     output = BytesIO()
     Image.new('RGB', (2, 2), color='red').save(output, format='PNG')
     payload = output.getvalue()
-    assets = [ImageAsset((str(index),), payload) for index in range(5)]
+    assets = [ImageAsset((str(index),), payload) for index in range(6)]
     candidates = [
         SearchSelectionCandidate(
             position=0,
@@ -319,16 +374,19 @@ def test_selector_keeps_only_the_fitting_native_evidence_prefix():
             ),
         ),
     ]
+    query = Material.from_image(assets[5])
     module = _SelectionModule([0])
     selected = asyncio.run(
         _service(module, token_limit=10000).select(
-            query='figure?',
+            query=query,
             material_kind=SearchMaterialKind.SOURCE_BLOCK,
             candidates=candidates,
         )
     )
 
     assert selected == [0]
+    assert module.requests[0].query == query
+    assert module.requests[0].query.images[0].key == ('5',)
     assert [
         image.key for image in module.requests[0].candidates[0].material.images
     ] == [('0',), ('1',), ('2',)]

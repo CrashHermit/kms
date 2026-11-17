@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime
 from types import SimpleNamespace
 
 import pytest
@@ -8,7 +9,27 @@ from kms import application
 from kms.config.llm import LocalLLMProfile
 from kms.config.settings import Settings
 from kms.core.embedding import EmbeddingModel
-from kms.source.models.source import Source
+from kms.core.tokenization.budget import TokenBudget
+from kms.core.tokenization.material import MaterialTokenEstimator
+from kms.knowledge.candidates import (
+    ExistingPropositionReference,
+    NewArgument,
+    NewProposition,
+    NewPropositionReference,
+)
+from kms.knowledge.commit import KnowledgeCommitter
+from kms.knowledge.extraction.models import UnitExtractionCandidates
+from kms.knowledge.extraction.node import UnitKnowledgeExtractionNode
+from kms.knowledge.identity.models import AuditResult
+from kms.knowledge.models import KnowledgeContext, Proposition
+from kms.knowledge.sufficiency.models import SufficientKnowledge
+from kms.knowledge.sufficiency.node import KnowledgeSufficiencyNode
+from kms.media.budget import ImagePayloadBudget
+from kms.media.models import Material
+from kms.source.models.source import BlockType, Source, SourceBlock
+from kms.source.models.unit import SourceUnit, SourceUnitKind
+from kms.source.retrieval.models import SourceUnitRead
+from kms.source.retrieval.read import SourceReader
 
 
 class _Runtime:
@@ -52,6 +73,15 @@ def test_application_chatgpt_login_delegates_to_provider(monkeypatch):
     assert calls == ['login']
 
 
+def test_due_reviews_reject_naive_time_before_database_access():
+    with pytest.raises(ValueError, match='timezone-aware'):
+        asyncio.run(
+            application.list_due_reviews(
+                Settings(_env_file=None), 'owner', datetime(2025, 1, 1)
+            )
+        )
+
+
 def test_chatgpt_preflight_resolves_only_relevant_stage_settings(
     monkeypatch,
 ):
@@ -67,7 +97,7 @@ def test_chatgpt_preflight_resolves_only_relevant_stage_settings(
     settings.source_processing.formatting.inference.profile = (
         'qwen3.8-9b-distill-text'
     )
-    settings.source_processing.statement_procedure.role_typer.profile = (
+    settings.source_processing.procedure_finder.start_router.profile = (
         'chatgpt-luna'
     )
     calls = []
@@ -83,7 +113,7 @@ def test_chatgpt_preflight_resolves_only_relevant_stage_settings(
 
     asyncio.run(
         application._preflight_chatgpt(
-            settings, settings.source_processing.statement_procedure
+            settings, settings.source_processing.procedure_finder
         )
     )
     assert calls == ['preflight']
@@ -300,9 +330,335 @@ def test_search_sources_with_empty_allowlist_skips_application_resources(
             application.search_sources(
                 settings,
                 'user-1',
-                'query',
+                Material.from_text('query'),
                 source_uuids=[],
             )
         )
         == []
     )
+
+
+def test_search_source_units_with_empty_allowlist_skips_application_resources(
+    monkeypatch,
+) -> None:
+    settings = Settings(_env_file=None)
+
+    def fail_resources(*_args, **_kwargs):
+        pytest.fail('empty source scope must not acquire resources')
+
+    monkeypatch.setattr(application, '_application_resources', fail_resources)
+
+    assert (
+        asyncio.run(
+            application.search_source_units(
+                settings,
+                'user-1',
+                Material.from_text('query'),
+                source_uuids=[],
+            )
+        )
+        == []
+    )
+
+
+def test_extract_then_store_commits_only_at_the_public_storage_boundary(
+    monkeypatch,
+):
+    settings = Settings(_env_file=None)
+    events = []
+    acquisitions = []
+    preflights = []
+    premise = Proposition(
+        uuid='premise', name='Premise', statement='The premise is true.'
+    )
+    candidates = UnitExtractionCandidates(
+        new_propositions=[
+            NewProposition(
+                id='conclusion-local',
+                name='Conclusion',
+                statement='The conclusion follows.',
+            )
+        ],
+        existing_proposition_uuids=[premise.uuid],
+        new_arguments=[
+            NewArgument(
+                premises=[ExistingPropositionReference(uuid=premise.uuid)],
+                conclusion=NewPropositionReference(id='conclusion-local'),
+            )
+        ],
+        existing_argument_uuids=[],
+    )
+
+    class _SourceRepository:
+        async def read_units(
+            self, user_uuid, unit_uuids, *, before_units=0, after_units=0
+        ):
+            assert user_uuid == 'owner'
+            assert unit_uuids == ['unit']
+            assert before_units in (0, 1)
+            assert after_units in (0, 1)
+            unit = SourceUnit(
+                uuid='unit',
+                kind=SourceUnitKind.CONTENT,
+                blocks=[
+                    SourceBlock(
+                        block_type=BlockType.PARAGRAPH,
+                        content='The source passage.',
+                    )
+                ],
+            )
+            return [
+                SourceUnitRead(
+                    source=Source(uuid='source', key='source.pdf'),
+                    unit=unit,
+                )
+            ]
+
+    class _Extraction:
+        async def acall(self, *, request):
+            events.append('inference')
+            assert request.understanding == 'Understand the conclusion'
+            assert request.target.uuid == 'unit'
+            assert request.existing_propositions == [premise]
+            assert request.existing_arguments == []
+            return candidates
+
+    module = _Extraction()
+
+    class _LengthCounter:
+        def count_texts(self, texts):
+            return [len(text) for text in texts]
+
+    def build_extraction_node(settings, database, *, predictors, tokenizers):
+        return UnitKnowledgeExtractionNode(
+            SourceReader(_SourceRepository()),
+            module,
+            TokenBudget(MaterialTokenEstimator(_LengthCounter()), 100000),
+            ImagePayloadBudget(4, 100000, 100000),
+            before_tokens=1024,
+            after_tokens=1024,
+        )
+
+    class _Repository:
+        @asynccontextmanager
+        async def serialized(self, user_uuid):
+            assert user_uuid == 'owner'
+            yield object()
+
+        async def save(
+            self,
+            user_uuid,
+            propositions,
+            embeddings,
+            arguments,
+            *,
+            source_uuid,
+            target_unit_uuid,
+            existing_proposition_uuids,
+            existing_argument_uuids,
+            embedding_model,
+            transaction,
+        ):
+            events.append('save')
+            assert user_uuid == 'owner'
+            assert source_uuid == 'source'
+            assert target_unit_uuid == 'unit'
+            assert existing_proposition_uuids == ['premise']
+            assert existing_argument_uuids == []
+            assert embedding_model == 'test-model'
+            assert transaction is not None
+            assert len(propositions) == len(embeddings) == 1
+            self.arguments = arguments
+            return arguments
+
+    class _Embedder:
+        async def embed(self, request):
+            events.append('embed')
+            assert request.input_type == 'document'
+            return [[1.0, 0.0] for _ in request.materials]
+
+    class _Auditor:
+        async def audit(self, user_uuid, new_propositions):
+            events.append('audit')
+            assert user_uuid == 'owner'
+            [candidate] = new_propositions
+            canonical = Proposition(
+                uuid='canonical-conclusion',
+                name=candidate.name,
+                statement=candidate.statement,
+            )
+            return AuditResult(
+                canonical={candidate.id: canonical},
+                new_propositions=[canonical],
+            )
+
+    repository = _Repository()
+    committer = KnowledgeCommitter(
+        repository,
+        _Embedder(),
+        'test-model',
+        auditor=_Auditor(),
+    )
+
+    @asynccontextmanager
+    async def application_resources(settings, *, embeddings_required=True):
+        acquisitions.append(embeddings_required)
+        yield SimpleNamespace(
+            local_models=object(),
+            embeddings=_EMBEDDINGS if embeddings_required else None,
+            tokenizers=object(),
+            database=object(),
+            recorder=None,
+        )
+
+    async def preflight(settings, *stages):
+        preflights.append(stages)
+
+    monkeypatch.setattr(application, '_preflight_chatgpt', preflight)
+
+    monkeypatch.setattr(
+        application, '_application_resources', application_resources
+    )
+    monkeypatch.setattr(
+        application,
+        'PredictorFactory',
+        lambda *args, **kwargs: object(),
+    )
+    monkeypatch.setattr(
+        application.extraction, 'build_node', build_extraction_node
+    )
+    monkeypatch.setattr(
+        application, 'build_committer', lambda *args, **kwargs: committer
+    )
+
+    extracted = asyncio.run(
+        application.extract_unit_knowledge(
+            settings,
+            'owner',
+            'unit',
+            'Understand the conclusion',
+            existing_propositions=[premise],
+            existing_arguments=[],
+        )
+    )
+
+    assert extracted is not None
+    assert extracted.source_uuid == 'source'
+    assert extracted.target_unit_uuid == 'unit'
+    assert extracted.candidates == candidates
+    assert [item.id for item in extracted.candidates.new_propositions] == [
+        'conclusion-local'
+    ]
+    assert events == ['inference']
+    assert acquisitions == [False]
+    assert preflights == [(settings.knowledge_extraction.inference,)]
+
+    stored = asyncio.run(
+        application.store_unit_knowledge(settings, 'owner', extracted)
+    )
+
+    [conclusion] = stored.propositions
+    [argument] = stored.arguments
+    assert conclusion.uuid == 'canonical-conclusion'
+    assert argument.premise_uuids == [premise.uuid]
+    assert argument.conclusion_uuid == conclusion.uuid
+    assert events == ['inference', 'audit', 'embed', 'save']
+    assert acquisitions == [False, True]
+    assert preflights == [
+        (settings.knowledge_extraction.inference,),
+        (settings.knowledge_identity.inference,),
+    ]
+
+
+def test_sufficiency_uses_inference_resources_without_database_or_embeddings(
+    monkeypatch, tmp_path
+):
+    settings = Settings(
+        _env_file=None,
+        training={'examples_directory': tmp_path},
+    )
+    runtime = _Runtime(settings.local_models)
+    tokenizers = object()
+    predictors = object()
+    recorder = object()
+    recorder_paths = []
+    context = KnowledgeContext(
+        matched=[],
+        propositions=[
+            Proposition(
+                uuid='proposition',
+                name='Claim',
+                statement='A supplied claim.',
+            )
+        ],
+        arguments=[],
+    )
+    judgment = SufficientKnowledge(
+        explanation='The claim addresses the request.'
+    )
+    calls = []
+    preflight_calls = []
+
+    class _Module:
+        async def acall(self, *, request):
+            calls.append(request)
+            return judgment
+
+    def build_node(actual_settings, *, predictors, tokenizers):
+        assert actual_settings is settings
+        assert predictors is expected_predictors
+        assert tokenizers is expected_tokenizers
+        return KnowledgeSufficiencyNode(_Module())
+
+    expected_predictors = predictors
+    expected_tokenizers = tokenizers
+
+    def make_predictor_factory(
+        actual_settings, actual_runtime, actual_recorder, *, tokenizers
+    ):
+        assert actual_settings is settings
+        assert actual_runtime is runtime
+        assert actual_recorder is recorder
+        assert tokenizers is expected_tokenizers
+        return predictors
+
+    async def preflight(settings, *stages):
+        preflight_calls.append(stages)
+
+    def unavailable(*_args, **_kwargs):
+        pytest.fail(
+            'inference-only sufficiency acquired database or embeddings'
+        )
+
+    monkeypatch.setattr(application, '_preflight_chatgpt', preflight)
+    monkeypatch.setattr(
+        application, 'LocalModelRuntime', lambda settings: runtime
+    )
+    monkeypatch.setattr(
+        application, 'LanguageModelTokenizers', lambda settings: tokenizers
+    )
+    monkeypatch.setattr(application, 'PredictorFactory', make_predictor_factory)
+    monkeypatch.setattr(application.sufficiency, 'build_node', build_node)
+    monkeypatch.setattr(
+        application,
+        'Recorder',
+        lambda directory: recorder_paths.append(directory) or recorder,
+    )
+    monkeypatch.setattr(application, '_application_resources', unavailable)
+    monkeypatch.setattr(application, 'DatabaseClient', unavailable)
+    monkeypatch.setattr(application, 'embedding_resources', unavailable)
+
+    result = asyncio.run(
+        application.judge_knowledge_sufficiency(
+            settings, 'Understand the claim', context
+        )
+    )
+
+    assert result == judgment
+    assert len(calls) == 1
+    assert calls[0].understanding == 'Understand the claim'
+    assert calls[0].context == context
+    assert preflight_calls == [(settings.knowledge_sufficiency.inference,)]
+    assert runtime.entered is True
+    assert runtime.closed is True
+    assert recorder_paths == [tmp_path]

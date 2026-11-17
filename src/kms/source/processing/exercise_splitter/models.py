@@ -1,4 +1,4 @@
-"""Source splitting boundary models for KMS2."""
+"""Source exercise-splitting boundary models."""
 
 from pydantic import BaseModel, Field
 
@@ -13,10 +13,10 @@ class SplitRequest(BaseModel):
 
 
 class SplitRouteDecision(BaseModel):
-    """Whether one target-local source block contains multiple exercises."""
+    """Whether a target block contains exercise entry/exit boundaries."""
 
     position: int = Field(ge=0, strict=True)
-    contains_multiple_exercises: bool
+    requires_split: bool
 
 
 class SplitCandidate(BaseModel):

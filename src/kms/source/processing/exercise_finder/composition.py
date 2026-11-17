@@ -1,9 +1,12 @@
 """Construction for exercise discovery."""
 
 from kms.config.settings import Settings
-from kms.inference.predictors import PredictorFactory, build_token_budget
+from kms.inference.predictors import (
+    PredictorFactory,
+    build_token_budget,
+    resolve_image_budget,
+)
 from kms.inference.tokenization.resources import LanguageModelTokenizers
-from kms.media.budget import ImagePayloadBudget
 from kms.source.processing.exercise_finder.examples import (
     exercise_boundary_examples,
     exercise_start_examples,
@@ -25,7 +28,9 @@ def build_node(
 ) -> ExerciseFinderNode:
     source = settings.source_processing
     stage = source.exercise_finder
-    image_budget = ImagePayloadBudget(**stage.image_payload.model_dump())
+    image_budget = resolve_image_budget(
+        settings, stage.start_router, stage.boundary_router
+    )
     start_examples = exercise_start_examples()
     start_budget = build_token_budget(
         settings,

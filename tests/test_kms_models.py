@@ -5,12 +5,8 @@ import pytest
 from pydantic import ValidationError
 
 from kms.core.models import Edge, Vertex
-from kms.source.models.material import (
-    Instruction,
-    ProcedureDraft,
-    StatementDraft,
-)
-from kms.source.models.source import Source, SourceBlock, SourcePage
+from kms.source.models.source import Source, SourceBlock
+from kms.source.models.unit import SourceUnit, SourceUnitKind
 from kms.source.processing.ocr_models import OCRArtifact
 
 
@@ -63,65 +59,45 @@ def test_lifecycle_defaults_follow_explicit_creation_time(model):
     assert model.model_validate_json(explicit.model_dump_json()) == explicit
 
 
-def test_source_content_is_a_vertex_with_default_image_fields():
-    content = SourceBlock(
-        uuid='source-1',
-        block_type='paragraph',
+def test_source_block_defaults_and_image_ownership():
+    text = SourceBlock(uuid='text-1', block_type='paragraph')
+    image = SourceBlock(
+        uuid='image-1',
+        block_type='image',
+        image_path='images/block.png',
     )
 
-    assert isinstance(content, Vertex)
-    assert content.content is None
-    assert content.embedding is None
-    assert content.image_path is None
-    assert content.image_sha256 is None
-    assert content.image_page_indexes == []
+    assert isinstance(text, Vertex)
+    assert text.content is None
+    assert text.embedding is None
+    assert text.crop_path is None
+    assert text.image_path is None
+    assert 'page_indexes' not in text.model_dump()
+    assert 'page_indexes' not in image.model_dump()
+    assert image.image_path == 'images/block.png'
 
 
-def test_source_content_accepts_text_embedding_and_direct_image_provenance():
-    content = SourceBlock(
-        uuid='source-1',
-        block_type='image',
+def test_source_blocks_accept_content_and_embedding():
+    block = SourceBlock(
+        uuid='block-1',
+        block_type='paragraph',
         content='canonical source text',
         embedding=[0.25, -0.5],
-        image_path='images/block.png',
-        image_page_indexes=[2, 3],
     )
 
-    assert content.content == 'canonical source text'
-    assert content.embedding == [0.25, -0.5]
-    assert content.image_path == 'images/block.png'
-    assert content.image_page_indexes == [2, 3]
+    assert block.content == 'canonical source text'
+    assert block.embedding == [0.25, -0.5]
 
 
-def test_source_image_requires_page_provenance_and_non_images_cannot_own_it():
+def test_image_blocks_require_image_path_and_non_images_cannot_own_one():
     with pytest.raises(ValidationError):
         SourceBlock(uuid='missing-image', block_type='image')
-    with pytest.raises(ValidationError):
-        SourceBlock(
-            uuid='missing-pages',
-            block_type='image',
-            image_path='images/block.png',
-        )
     with pytest.raises(ValidationError):
         SourceBlock(
             uuid='text-with-image',
             block_type='paragraph',
             image_path='images/block.png',
-            image_page_indexes=[0],
         )
-
-
-def test_source_page_contains_ordered_source_blocks():
-    block = SourceBlock(
-        uuid='block-1',
-        block_type='paragraph',
-        content='page text',
-    )
-
-    page = SourcePage(index=2, blocks=[block])
-
-    assert page.index == 2
-    assert page.blocks == [block]
 
 
 def test_source_is_the_ingestion_root_vertex():
@@ -143,7 +119,29 @@ def test_source_is_the_ingestion_root_vertex():
     }
 
 
-def test_ocr_artifact_contains_text_and_correction_crop_provenance():
+def test_source_unit_has_one_canonical_ordered_block_hierarchy():
+    blocks = [
+        SourceBlock(uuid='block-1', block_type='paragraph', content='first'),
+        SourceBlock(uuid='block-2', block_type='equation', content='second'),
+    ]
+    unit = SourceUnit(
+        uuid='unit-1', kind=SourceUnitKind.EXERCISE, blocks=blocks
+    )
+
+    assert isinstance(unit, Vertex)
+    assert unit.kind is SourceUnitKind.EXERCISE
+    assert unit.blocks == blocks
+    assert unit.embedding is None
+    assert set(SourceUnitKind) == {
+        SourceUnitKind.CONTENT,
+        SourceUnitKind.EXERCISE,
+        SourceUnitKind.PROCEDURE,
+    }
+    with pytest.raises(ValidationError):
+        SourceUnit(uuid='missing-blocks', kind='content')
+
+
+def test_ocr_artifact_contains_text_and_crop_provenance():
     artifact = OCRArtifact(
         page_index=2,
         block_index=4,
@@ -174,19 +172,3 @@ def test_ocr_image_block_keeps_crop_provenance_without_fragment_assets():
 
     assert artifact.content is None
     assert artifact.crop_path == 'Blocks/ImageBlock.png'
-
-
-def test_pointer_models_preserve_ordered_uuid_lists_and_defaults():
-    instruction = Instruction(
-        uuid='instruction-1',
-        member_block_uuids=['block-1', 'block-2'],
-        governed_statement_uuids=['statement-1'],
-    )
-    statement = StatementDraft(member_block_uuids=['block-3', 'block-4'])
-    procedure = ProcedureDraft(member_block_uuids=['block-5', 'block-6'])
-
-    assert instruction.member_block_uuids == ['block-1', 'block-2']
-    assert instruction.governed_statement_uuids == ['statement-1']
-    assert statement.is_exercise is False
-    assert statement.member_block_uuids == ['block-3', 'block-4']
-    assert procedure.member_block_uuids == ['block-5', 'block-6']

@@ -23,8 +23,7 @@ class FormattingOutput(BaseModel):
 class FormattingRequest(BaseModel):
     """One source block awaiting representation formatting."""
 
-    page_index: int
-    block_position: int
+    block_uuid: str
     content: str
     cleanup_instructions: list[str] = Field(default_factory=list)
 
@@ -32,6 +31,5 @@ class FormattingRequest(BaseModel):
 class FormattingResult(BaseModel):
     """One source block's representation-formatting result."""
 
-    page_index: int
-    block_position: int
+    block_uuid: str
     formatted_content: str

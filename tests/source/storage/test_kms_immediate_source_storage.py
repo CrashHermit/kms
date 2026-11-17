@@ -1,4 +1,4 @@
-"""Opt-in Neo4j checks for immediately searchable ingested sources."""
+"""Opt-in Neo4j checks for immediately searchable v5 source snapshots."""
 
 import asyncio
 import hashlib
@@ -13,7 +13,8 @@ from kms.database import schema
 from kms.database.client import DatabaseClient
 from kms.inference.embedding.limits import VOYAGE_EMBEDDING_DIMENSION
 from kms.source.models.snapshot import finalize_snapshot_identities
-from kms.source.models.source import BlockType, Source, SourceBlock, SourcePage
+from kms.source.models.source import BlockType, Source, SourceBlock
+from kms.source.models.unit import SourceUnit, SourceUnitKind
 from kms.source.retrieval.read import SourceReader
 from kms.source.storage.retrieval import SourceRetrievalRepository
 from kms.source.storage.snapshots import SourceSnapshotRepository
@@ -31,42 +32,39 @@ _REQUIRED_ENVIRONMENT = (
     or not all(os.getenv(name) for name in _REQUIRED_ENVIRONMENT),
     reason='KMS Neo4j integration environment is not enabled',
 )
-def test_ingested_sources_are_searchable_and_images_are_block_owned(tmp_path):
+def test_owned_v5_units_are_searchable_and_images_remain_block_owned(tmp_path):
     async def exercise() -> None:
         settings = Settings()
         database = DatabaseClient(settings.database)
         snapshots = SourceSnapshotRepository(database.session)
-        blocks = SourceRetrievalRepository(database.session)
-        evidence = SourceReader(blocks)
+        repository = SourceRetrievalRepository(database.session)
+        reader = SourceReader(repository)
         user_uuid = str(uuid4())
         dimension = VOYAGE_EMBEDDING_DIMENSION
         vector = [1.0, *([0.0] * (dimension - 1))]
+        profile = {'model': 'integration-test', 'dimension': dimension}
 
         image_path = tmp_path / 'diagram.png'
         with Image.new('RGB', (2, 2), 'blue') as image:
             image.save(image_path)
         image_bytes = image_path.read_bytes()
         image_hash = hashlib.sha256(image_bytes).hexdigest()
-        profile = {'model': 'integration-test', 'dimension': dimension}
         first = finalize_snapshot_identities(
             Source(
                 uuid=str(uuid4()),
                 key='first source',
-                metadata={'embedding_profile': profile},
+                metadata={
+                    'embedding_profile': profile,
+                },
             ),
             [
-                SourcePage(
-                    index=0,
-                    markdown='First text. Second text. Diagram.',
+                SourceUnit(
+                    kind=SourceUnitKind.EXERCISE,
+                    embedding=vector,
                     blocks=[
                         SourceBlock(
-                            block_type=BlockType.MARKDOWN,
+                            block_type=BlockType.PARAGRAPH,
                             content='First relevant text.',
-                            embedding=vector,
-                        ),
-                        SourceBlock(
-                            block_type=BlockType.MARKDOWN,
-                            content='Second relevant text.',
                             embedding=vector,
                         ),
                         SourceBlock(
@@ -75,37 +73,32 @@ def test_ingested_sources_are_searchable_and_images_are_block_owned(tmp_path):
                             embedding=vector,
                             image_path=str(image_path),
                             image_sha256=image_hash,
-                            image_page_indexes=[0],
                         ),
                     ],
                 )
             ],
-            [],
-            [],
-            [],
         )
         second = finalize_snapshot_identities(
             Source(
                 uuid=str(uuid4()),
                 key='second source',
-                metadata={'embedding_profile': profile},
+                metadata={
+                    'embedding_profile': profile,
+                },
             ),
             [
-                SourcePage(
-                    index=0,
-                    markdown='Another source.',
+                SourceUnit(
+                    kind=SourceUnitKind.CONTENT,
+                    embedding=vector,
                     blocks=[
                         SourceBlock(
-                            block_type=BlockType.MARKDOWN,
+                            block_type=BlockType.PARAGRAPH,
                             content='Another relevant source.',
                             embedding=vector,
-                        )
+                        ),
                     ],
                 )
             ],
-            [],
-            [],
-            [],
         )
         source_uuids = [first.source.uuid, second.source.uuid]
         try:
@@ -122,14 +115,17 @@ def test_ingested_sources_are_searchable_and_images_are_block_owned(tmp_path):
                 await snapshots.create_owned_snapshot(user_uuid, snapshot)
                 for snapshot in (first, second)
             ]
-            reused = await snapshots.create_owned_snapshot(user_uuid, first)
-            assert reused == persisted[0]
+            assert (
+                await snapshots.create_owned_snapshot(user_uuid, first)
+                == persisted[0]
+            )
             loaded = await snapshots.load_owned_snapshot(
                 user_uuid, first.source.uuid
             )
             assert loaded == persisted[0]
+            assert loaded.units[0].kind is SourceUnitKind.EXERCISE
 
-            found = await blocks.search_owned_blocks(
+            found = await repository.search_owned_blocks(
                 user_uuid,
                 vector,
                 candidate_limit=10,
@@ -137,29 +133,36 @@ def test_ingested_sources_are_searchable_and_images_are_block_owned(tmp_path):
             assert {hit.source.uuid for hit in found} == set(source_uuids)
             assert {hit.block.content for hit in found} >= {
                 'First relevant text.',
-                'Second relevant text.',
                 'Diagram of the topic.',
                 'Another relevant source.',
             }
-
-            persisted_image_block = first.pages[0].blocks[2]
-            images = await evidence.read_images(
-                user_uuid, [persisted_image_block.uuid]
+            unit_hits = await repository.search_owned_units(
+                user_uuid,
+                vector,
+                candidate_limit=10,
+                kind=SourceUnitKind.EXERCISE,
             )
-            assert [image.block_uuid for image in images] == [
-                persisted_image_block.uuid
+            assert [(hit.source.uuid, hit.unit.kind) for hit in unit_hits] == [
+                (first.source.uuid, SourceUnitKind.EXERCISE)
             ]
+
+            image_block = loaded.units[0].blocks[1]
+            images = await reader.read_images(user_uuid, [image_block.uuid])
+            assert [image.block_uuid for image in images] == [image_block.uuid]
             assert images[0].data == image_bytes
+            assert (
+                await reader.read_images('foreign-user', [image_block.uuid])
+                == []
+            )
         finally:
             async with database.session() as session:
                 result = await session.run(
                     """
                     UNWIND $sources AS uuid
                     MATCH (source:Source {uuid: uuid})
-                    OPTIONAL MATCH (source)-[:HAS_PAGE]->(page:SourcePage)
-                    OPTIONAL MATCH (page)-[:CONTAINS_BLOCK]->(block:SourceBlock)
-                    OPTIONAL MATCH (block)-[:MEMBER_OF]->(material)
-                    DETACH DELETE material, block, page, source
+                    OPTIONAL MATCH (source)-[:HAS_UNIT]->(unit:SourceUnit)
+                    OPTIONAL MATCH (unit)-[:HAS_BLOCK]->(block:SourceBlock)
+                    DETACH DELETE block, unit, source
                     """,
                     sources=source_uuids,
                 )

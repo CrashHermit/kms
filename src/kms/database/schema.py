@@ -10,24 +10,60 @@ SCHEMA_STATEMENTS: tuple[str, ...] = (
     FOR (source:Source) REQUIRE source.uuid IS UNIQUE
     """,
     """
+    CREATE CONSTRAINT source_unit_uuid IF NOT EXISTS
+    FOR (unit:SourceUnit) REQUIRE unit.uuid IS UNIQUE
+    """,
+    """
     CREATE CONSTRAINT source_block_uuid IF NOT EXISTS
     FOR (block:SourceBlock) REQUIRE block.uuid IS UNIQUE
     """,
     """
-    CREATE CONSTRAINT instruction_uuid IF NOT EXISTS
-    FOR (instruction:Instruction) REQUIRE instruction.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_statement_uuid IF NOT EXISTS
-    FOR (statement:SourceStatement) REQUIRE statement.uuid IS UNIQUE
-    """,
-    """
-    CREATE CONSTRAINT source_procedure_uuid IF NOT EXISTS
-    FOR (procedure:SourceProcedure) REQUIRE procedure.uuid IS UNIQUE
-    """,
-    """
     CREATE CONSTRAINT user_uuid IF NOT EXISTS
     FOR (user:User) REQUIRE user.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT proposition_uuid IF NOT EXISTS
+    FOR (proposition:Proposition) REQUIRE proposition.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT argument_uuid IF NOT EXISTS
+    FOR (argument:Argument) REQUIRE argument.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT learning_session_uuid IF NOT EXISTS
+    FOR (session:LearningSession) REQUIRE session.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT learning_session_step_uuid IF NOT EXISTS
+    FOR (step:LearningSessionStep) REQUIRE step.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT task_response_uuid IF NOT EXISTS
+    FOR (response:TaskResponse) REQUIRE response.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT task_assessment_uuid IF NOT EXISTS
+    FOR (assessment:TaskAssessment) REQUIRE assessment.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT learning_task_uuid IF NOT EXISTS
+    FOR (task:Task) REQUIRE task.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT learning_solution_uuid IF NOT EXISTS
+    FOR (solution:Solution) REQUIRE solution.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT learning_memory_uuid IF NOT EXISTS
+    FOR (memory:LearningMemory) REQUIRE memory.uuid IS UNIQUE
+    """,
+    """
+    CREATE CONSTRAINT memory_review_uuid IF NOT EXISTS
+    FOR (review:MemoryReview) REQUIRE review.uuid IS UNIQUE
+    """,
+    """
+    CREATE RANGE INDEX learning_memory_due IF NOT EXISTS
+    FOR (memory:LearningMemory) ON (memory.due_at)
     """,
 )
 
@@ -45,16 +81,14 @@ def vector_index_statements(embedding_dimension: int) -> tuple[str, ...]:
         """
         for index_name, label in (
             ('source_block_embedding', 'SourceBlock'),
-            ('source_statement_embedding', 'SourceStatement'),
-            ('source_procedure_embedding', 'SourceProcedure'),
+            ('source_unit_embedding', 'SourceUnit'),
         )
     )
 
 
 VECTOR_INDEX_NAMES = (
     'source_block_embedding',
-    'source_statement_embedding',
-    'source_procedure_embedding',
+    'source_unit_embedding',
 )
 AWAIT_INDEX = 'CALL db.awaitIndex($index_name, $timeout_seconds)'
 
@@ -106,7 +140,7 @@ async def ensure_schema(
             RETURN labels(node) AS labels, size(node.embedding) AS dimension
             LIMIT 1
             """,
-            labels=['SourceBlock', 'SourceStatement', 'SourceProcedure'],
+            labels=['SourceBlock', 'SourceUnit'],
             dimension=embedding_dimension,
         )
         incompatible = await result.data()

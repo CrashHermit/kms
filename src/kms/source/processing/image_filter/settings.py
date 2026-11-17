@@ -1,10 +1,6 @@
 from pydantic import BaseModel, Field
 
-from kms.config.inference import (
-    ContextWindowSettings,
-    ImagePayloadSettings,
-    VisionInferenceSettings,
-)
+from kms.config.inference import ContextWindowSettings, VisionInferenceSettings
 
 
 class ImageFilterSettings(BaseModel):
@@ -17,9 +13,6 @@ class ImageFilterSettings(BaseModel):
         default_factory=lambda: ContextWindowSettings(
             backward_budget=1024, forward_budget=1024
         )
-    )
-    image_payload: ImagePayloadSettings = Field(
-        default_factory=lambda: ImagePayloadSettings(max_images=9)
     )
     batch_size: int = Field(default=4, gt=0)
     input_token_budget: int = Field(default=2048, gt=0)

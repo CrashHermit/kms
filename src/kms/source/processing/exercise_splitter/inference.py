@@ -1,11 +1,8 @@
-"""DSPy module for splitting packed source exercises."""
+"""DSPy modules for routing and splitting exercise boundaries."""
 
 import dspy
 
-from kms.source.context import (
-    PositionedSourceBlock,
-    SourceBlockContext,
-)
+from kms.source.context import PositionedSourceBlock, SourceBlockContext
 from kms.source.processing.exercise_splitter.models import (
     SplitCandidate,
     SplitDecision,
@@ -15,63 +12,26 @@ from kms.source.processing.exercise_splitter.models import (
 
 class ExerciseSplitterSignature(dspy.Signature):
     r"""
-    Use ordered native image parts in the supplied blocks; never borrow images
-    from another batch item.
-    Normalize routed packed source blocks for the exercise layer.
-
-    For every supplied candidate that packs TWO OR MORE numbered exercises,
-    return its target-local position and its exercises in source order. Each
-    piece must contain its own leading number and complete statement text,
-    copied VERBATIM: preserve wording, LaTeX, mathematics, subparts, and
-    incidental markers such as a leading check mark. Do not paraphrase,
-    reflow, solve, or drop text.
-
-    Preserve a leading fragment when the candidate begins with text belonging
-    to a previous exercise, such as trailing subparts before the first
-    numbered exercise. Keep that fragment as the first verbatim piece without
-    inventing a number, so no source text is lost.
-
-    Every character of each candidate must land in exactly one piece, in
-    order. When whitespace separates pieces, assign that boundary whitespace
-    to the preceding piece. A candidate holding only one exercise is not a
-    split. Worked examples, definitions, theorems, prose, and headers are
-    never split.
-    Candidates and reference_blocks are a disjoint cover of the target window.
-    Their original positions recover target order; reference_blocks are
-    read-only and must never receive replacements.
-
-    Return one decision for each listed candidate, preserving target-local
-    positions. Context blocks are reference-only and must not be returned.
-    Return only structured split decisions.
+    Split each candidate into ordered source fragments at exercise entry and
+    exit boundaries. Include learner tasks and worked-example problems, but
+    keep a task's shared setup and lettered subparts together. Separate its
+    authored solution/proof, another independent task, a new shared directive,
+    or unrelated exposition. Preserve every character exactly once and in
+    order; boundary whitespace belongs to the preceding piece. Do not rewrite,
+    answer, paraphrase, or repeat content. Keep structural source evidence and
+    use reference blocks only for context.
     """
 
-    context_before: list[SourceBlockContext] = dspy.InputField(
-        description='Outer source blocks before the target window, for context only.'
-    )
-    candidates: list[SplitCandidate] = dspy.InputField(
-        description='Target blocks selected for splitting, with target-local positions.'
-    )
-    reference_blocks: list[PositionedSourceBlock] = dspy.InputField(
-        description='Other target blocks with positions, for reference only.'
-    )
-    content_images: list[dspy.Image] = dspy.InputField(
-        description='Native images referenced by candidate and reference blocks.'
-    )
-    context_after: list[SourceBlockContext] = dspy.InputField(
-        description='Outer source blocks after the target window, for context only.'
-    )
-    splits: list[SplitDecision] = dspy.OutputField(
-        description=(
-            'Return one decision only for each listed candidate, preserving its '
-            'target-local position. Pieces must contain exact source text in '
-            'source order, with no paraphrase or dropped text; context blocks '
-            'must not be returned.'
-        )
-    )
+    context_before: list[SourceBlockContext] = dspy.InputField()
+    candidates: list[SplitCandidate] = dspy.InputField()
+    reference_blocks: list[PositionedSourceBlock] = dspy.InputField()
+    content_images: list[dspy.Image] = dspy.InputField()
+    context_after: list[SourceBlockContext] = dspy.InputField()
+    splits: list[SplitDecision] = dspy.OutputField()
 
 
 class ExerciseSplitterModule(dspy.Module):
-    """Split routed packed-exercise blocks into independent pieces."""
+    """Split routed exercise-bearing blocks."""
 
     def __init__(self, predictor: dspy.Module) -> None:
         super().__init__()
@@ -85,14 +45,12 @@ class ExerciseSplitterModule(dspy.Module):
         reference_blocks: list[PositionedSourceBlock],
         context_after: list[SourceBlockContext],
     ) -> list[SplitDecision]:
-        """Split routed candidates synchronously."""
-        prediction = self.predictor(
+        return self.predictor(
             context_before=context_before,
             candidates=candidates,
             reference_blocks=reference_blocks,
             context_after=context_after,
-        )
-        return prediction.splits
+        ).splits
 
     async def aforward(
         self,
@@ -102,7 +60,6 @@ class ExerciseSplitterModule(dspy.Module):
         reference_blocks: list[PositionedSourceBlock],
         context_after: list[SourceBlockContext],
     ) -> list[SplitDecision]:
-        """Split routed candidates asynchronously."""
         prediction = await self.predictor.acall(
             context_before=context_before,
             candidates=candidates,
@@ -112,49 +69,26 @@ class ExerciseSplitterModule(dspy.Module):
         return prediction.splits
 
 
-class ExerciseStripRouterSignature(dspy.Signature):
+class ExerciseSplitRouterSignature(dspy.Signature):
     r"""
-    Use ordered native image parts in each source block. Use only images
-    referenced by these target/context blocks; never borrow from another item.
-    Classify only the supplied `targets`; before and after lists are reference
-    context. Return one indexed decision for every target, in its supplied
-    position, and never classify a context block.
-
-    Mark a target True only when it visibly packs TWO OR MORE distinct
-    numbered exercises or problems that must become separate source blocks.
-    Use ordered native image parts in supplied source blocks; never borrow
-    images from other batch items. Classify only the supplied `targets`;
-    before and after lists are reference context. Return one indexed decision
-    for every target, in its supplied position, and never classify a context
-    block.
+    Classify every supplied target independently using its own native text/image
+    context. Set requires_split when the block contains any boundary needed to
+    isolate an exercise task from shared setup, other tasks, authored solutions,
+    proofs, or unrelated exposition. A task with common setup or lettered
+    subparts is one exercise. Include unnumbered tasks and worked-example
+    problems. Image blocks are indivisible: always return false for them.
+    Return a decision for each target position.
     """
 
-    context_before: list[SourceBlockContext] = dspy.InputField(
-        description=(
-            'Source blocks immediately before the targets, reference context only.'
-        )
-    )
-    targets: list[PositionedSourceBlock] = dspy.InputField(
-        description='Indexed target blocks; classify every listed block only.'
-    )
-    context_after: list[SourceBlockContext] = dspy.InputField(
-        description=(
-            'Source blocks immediately after the targets, reference context only.'
-        )
-    )
-    content_images: list[dspy.Image] = dspy.InputField(
-        description='Request-local native images referenced by target and context parts.'
-    )
-    decisions: list[SplitRouteDecision] = dspy.OutputField(
-        description=(
-            'One decision for every supplied target, preserving each target '
-            'position. Context blocks are reference-only and must not be returned.'
-        )
-    )
+    context_before: list[SourceBlockContext] = dspy.InputField()
+    targets: list[PositionedSourceBlock] = dspy.InputField()
+    context_after: list[SourceBlockContext] = dspy.InputField()
+    content_images: list[dspy.Image] = dspy.InputField()
+    decisions: list[SplitRouteDecision] = dspy.OutputField()
 
 
-class ExerciseStripRouterModule(dspy.Module):
-    """Route only source blocks that visibly contain multiple exercises."""
+class ExerciseSplitRouterModule(dspy.Module):
+    """Route blocks needing exercise boundary splitting."""
 
     def __init__(self, predictor: dspy.Module) -> None:
         super().__init__()
@@ -167,13 +101,11 @@ class ExerciseStripRouterModule(dspy.Module):
         targets: list[PositionedSourceBlock],
         context_after: list[SourceBlockContext],
     ) -> list[SplitRouteDecision]:
-        """Classify indexed target blocks synchronously."""
-        prediction = self.predictor(
+        return self.predictor(
             context_before=context_before,
             targets=targets,
             context_after=context_after,
-        )
-        return prediction.decisions
+        ).decisions
 
     async def aforward(
         self,
@@ -182,7 +114,6 @@ class ExerciseStripRouterModule(dspy.Module):
         targets: list[PositionedSourceBlock],
         context_after: list[SourceBlockContext],
     ) -> list[SplitRouteDecision]:
-        """Classify indexed target blocks asynchronously."""
         prediction = await self.predictor.acall(
             context_before=context_before,
             targets=targets,

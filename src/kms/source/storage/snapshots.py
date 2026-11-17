@@ -1,4 +1,4 @@
-"""Create and load complete v3 user-owned source snapshots."""
+"""Create and load complete v4 user-owned source snapshots."""
 
 import json
 from collections.abc import Callable
@@ -6,12 +6,8 @@ from typing import Any
 
 from neo4j import AsyncSession, AsyncTransaction
 
-from kms.source.models.material import (
-    Instruction,
-    SourceProcedure,
-    SourceStatement,
-)
 from kms.source.models.snapshot import (
+    SOURCE_CONTENT_SCHEMA,
     SourceSnapshot,
     assert_matching_snapshot,
     require_source_schema,
@@ -20,14 +16,13 @@ from kms.source.models.source import Source
 from kms.source.storage.records import (
     native_datetime,
     source_graph_parameters,
-    source_pages_from_records,
+    source_units_from_records,
 )
 from kms.source.storage.snapshot_queries import (
     CREATE_OWNED_SNAPSHOT,
-    LOAD_SOURCE_PAGES,
     LOCK_SNAPSHOT_OWNER,
     READ_OWNED_SNAPSHOT,
-    READ_SOURCE_MATERIAL,
+    READ_SOURCE_UNITS,
 )
 
 
@@ -93,16 +88,15 @@ class SourceSnapshotRepository:
     async def _load_snapshot(
         executor: Any, record: dict[str, Any]
     ) -> SourceSnapshot:
-        uuid = record['uuid']
-        page_result = await executor.run(LOAD_SOURCE_PAGES, source_uuid=uuid)
-        page_record = await page_result.single(strict=True)
-        material_result = await executor.run(
-            READ_SOURCE_MATERIAL, source_uuid=uuid
+        result = await executor.run(
+            READ_SOURCE_UNITS,
+            source_uuid=record['uuid'],
+            identity_schema=SOURCE_CONTENT_SCHEMA,
         )
-        material = await material_result.single(strict=True)
+        unit_record = await result.single(strict=True)
         metadata = record['metadata']
         source = Source(
-            uuid=uuid,
+            uuid=record['uuid'],
             key=record['key'],
             created_at=native_datetime(record['created_at']),
             updated_at=native_datetime(record['updated_at']),
@@ -116,28 +110,7 @@ class SourceSnapshotRepository:
         )
         return SourceSnapshot(
             source=source,
-            pages=source_pages_from_records(page_record['pages']),
-            instructions=[
-                Instruction(
-                    **{
-                        **item,
-                        'created_at': native_datetime(item['created_at']),
-                        'updated_at': native_datetime(item['updated_at']),
-                        'invalidated_at': native_datetime(
-                            item['invalidated_at']
-                        )
-                        if item['invalidated_at'] is not None
-                        else None,
-                    }
-                )
-                for item in material['instructions']
-            ],
-            statements=[
-                SourceStatement(**item) for item in material['statements']
-            ],
-            procedures=[
-                SourceProcedure(**item) for item in material['procedures']
-            ],
+            units=source_units_from_records(unit_record['units']),
         )
 
     @staticmethod
@@ -171,9 +144,8 @@ def _assert_embedding_write(
     if not first_write:
         return
     vectors = [
-        [block.embedding for page in part.pages for block in page.blocks]
-        + [item.embedding for item in part.statements]
-        + [item.embedding for item in part.procedures]
+        [unit.embedding for unit in part.units]
+        + [block.embedding for unit in part.units for block in unit.blocks]
         for part in (submitted, persisted)
     ]
     if vectors[0] != vectors[1]:

@@ -6,7 +6,8 @@ from typing import Any
 
 from kms.core.models import Edge
 from kms.source.models.snapshot import SourceSnapshot
-from kms.source.models.source import SourceBlock, SourcePage
+from kms.source.models.source import SourceBlock
+from kms.source.models.unit import SourceUnit
 
 
 def native_datetime(value: Any) -> datetime:
@@ -16,8 +17,8 @@ def native_datetime(value: Any) -> datetime:
 
 def source_graph_parameters(snapshot: SourceSnapshot) -> dict[str, object]:
     """Serialize a complete source snapshot for one structural transaction."""
-    source, pages = snapshot.source, snapshot.pages
-    blocks = [block for page in pages for block in page.blocks]
+    source, units = snapshot.source, snapshot.units
+    blocks = [block for unit in units for block in unit.blocks]
     return {
         'edge_created_at': Edge().created_at,
         'source': {
@@ -29,8 +30,16 @@ def source_graph_parameters(snapshot: SourceSnapshot) -> dict[str, object]:
             'updated_at': source.updated_at,
             'invalidated_at': source.invalidated_at,
         },
-        'pages': [
-            {'index': page.index, 'markdown': page.markdown} for page in pages
+        'units': [
+            {
+                'uuid': unit.uuid,
+                'kind': unit.kind.value,
+                'embedding': unit.embedding,
+                'created_at': unit.created_at,
+                'updated_at': unit.updated_at,
+                'invalidated_at': unit.invalidated_at,
+            }
+            for unit in units
         ],
         'blocks': [
             {
@@ -40,7 +49,6 @@ def source_graph_parameters(snapshot: SourceSnapshot) -> dict[str, object]:
                 'invalidated_at': block.invalidated_at,
                 'block_type': block.block_type.value,
                 'content': block.content,
-                'origin_uuid': block.origin_uuid,
                 'embedding': block.embedding,
                 'crop_path': block.crop_path,
                 'crop_sha256': block.crop_sha256,
@@ -49,134 +57,75 @@ def source_graph_parameters(snapshot: SourceSnapshot) -> dict[str, object]:
                 else None,
                 'image_path': block.image_path,
                 'image_sha256': block.image_sha256,
-                'image_page_indexes': block.image_page_indexes,
             }
             for block in blocks
         ],
-        'page_block_pairs': [
-            {'page_index': page.index, 'block_uuid': block.uuid}
-            for page in pages
-            for block in page.blocks
+        'unit_block_pairs': [
+            {'unit_uuid': unit.uuid, 'block_uuid': block.uuid}
+            for unit in units
+            for block in unit.blocks
         ],
-        'page_pairs': [
-            {'from_index': page.index, 'to_index': nxt.index}
-            for page, nxt in zip(pages, pages[1:], strict=False)
+        'unit_pairs': [
+            {'from_uuid': unit.uuid, 'to_uuid': nxt.uuid}
+            for unit, nxt in zip(units, units[1:], strict=False)
         ],
         'block_pairs': [
-            {'from_uuid': block.uuid, 'to_uuid': nxt.uuid}
-            for block, nxt in zip(blocks, blocks[1:], strict=False)
-        ],
-        'page_bounds': [
             {
-                'page_index': page.index,
-                'first_block_uuid': page.blocks[0].uuid,
-                'last_block_uuid': page.blocks[-1].uuid,
+                'unit_uuid': unit.uuid,
+                'from_uuid': block.uuid,
+                'to_uuid': nxt.uuid,
             }
-            for page in pages
-            if page.blocks
+            for unit in units
+            for block, nxt in zip(unit.blocks, unit.blocks[1:], strict=False)
         ],
-        'first_page_index': pages[0].index if pages else None,
-        'first_block_uuid': blocks[0].uuid if blocks else None,
-        'last_block_uuid': blocks[-1].uuid if blocks else None,
-        'instructions': [
+        'unit_bounds': [
             {
-                'uuid': item.uuid,
-                'ordinal': ordinal,
-                'created_at': item.created_at,
-                'updated_at': item.updated_at,
-                'invalidated_at': item.invalidated_at,
+                'unit_uuid': unit.uuid,
+                'first_block_uuid': unit.blocks[0].uuid,
+                'last_block_uuid': unit.blocks[-1].uuid,
             }
-            for ordinal, item in enumerate(snapshot.instructions)
+            for unit in units
         ],
-        'statements': [
-            {
-                'uuid': item.uuid,
-                'content': item.content,
-                'is_exercise': item.is_exercise,
-                'embedding': item.embedding,
-                'ordinal': ordinal,
-            }
-            for ordinal, item in enumerate(snapshot.statements)
-        ],
-        'procedures': [
-            {
-                'uuid': item.uuid,
-                'content': item.content,
-                'embedding': item.embedding,
-                'ordinal': ordinal,
-            }
-            for ordinal, item in enumerate(snapshot.procedures)
-        ],
-        'instruction_member_pairs': [
-            {
-                'instruction_uuid': item.uuid,
-                'block_uuid': block_uuid,
-                'position': position,
-            }
-            for item in snapshot.instructions
-            for position, block_uuid in enumerate(item.member_block_uuids)
-        ],
-        'statement_member_pairs': [
-            {
-                'statement_uuid': item.uuid,
-                'block_uuid': block_uuid,
-                'position': position,
-            }
-            for item in snapshot.statements
-            for position, block_uuid in enumerate(item.member_block_uuids)
-        ],
-        'procedure_member_pairs': [
-            {
-                'procedure_uuid': item.uuid,
-                'block_uuid': block_uuid,
-                'position': position,
-            }
-            for item in snapshot.procedures
-            for position, block_uuid in enumerate(item.member_block_uuids)
-        ],
-        'instruction_governance_pairs': [
-            {
-                'instruction_uuid': item.uuid,
-                'statement_uuid': statement_uuid,
-                'position': position,
-            }
-            for item in snapshot.instructions
-            for position, statement_uuid in enumerate(
-                item.governed_statement_uuids
-            )
-        ],
+        'first_unit_uuid': units[0].uuid if units else None,
+        'last_unit_uuid': units[-1].uuid if units else None,
     }
 
 
-def source_pages_from_records(
+def source_units_from_records(
     records: list[dict[str, object]],
-) -> list[SourcePage]:
-    """Hydrate ordered source pages and nested direct-image blocks."""
-    return [
-        SourcePage(
-            index=page['index'],
-            markdown=page['markdown'],
-            blocks=[
-                SourceBlock(
-                    uuid=block['uuid'],
-                    created_at=native_datetime(block['created_at']),
-                    updated_at=native_datetime(block['updated_at']),
-                    invalidated_at=native_datetime(block['invalidated_at'])
-                    if block['invalidated_at'] is not None
-                    else None,
-                    block_type=block['block_type'],
-                    content=block['content'],
-                    origin_uuid=block.get('origin_uuid'),
-                    embedding=block.get('embedding'),
-                    crop_path=block.get('crop_path'),
-                    crop_sha256=block.get('crop_sha256'),
-                    crop_bbox=block.get('crop_bbox'),
-                    image_path=block.get('image_path'),
-                    image_sha256=block.get('image_sha256'),
-                    image_page_indexes=block.get('image_page_indexes', []),
-                )
-                for block in page['blocks']
-            ],
+) -> list[SourceUnit]:
+    """Hydrate ordered units and their ordered direct-containment blocks."""
+    units: list[SourceUnit] = []
+    for unit in records:
+        units.append(
+            SourceUnit(
+                uuid=unit['uuid'],
+                created_at=native_datetime(unit['created_at']),
+                updated_at=native_datetime(unit['updated_at']),
+                invalidated_at=native_datetime(unit['invalidated_at'])
+                if unit['invalidated_at'] is not None
+                else None,
+                kind=unit['kind'],
+                embedding=unit.get('embedding'),
+                blocks=[
+                    SourceBlock(
+                        uuid=block['uuid'],
+                        created_at=native_datetime(block['created_at']),
+                        updated_at=native_datetime(block['updated_at']),
+                        invalidated_at=native_datetime(block['invalidated_at'])
+                        if block['invalidated_at'] is not None
+                        else None,
+                        block_type=block['block_type'],
+                        content=block.get('content'),
+                        embedding=block.get('embedding'),
+                        crop_path=block.get('crop_path'),
+                        crop_sha256=block.get('crop_sha256'),
+                        crop_bbox=block.get('crop_bbox'),
+                        image_path=block.get('image_path'),
+                        image_sha256=block.get('image_sha256'),
+                    )
+                    for block in unit['blocks']
+                ],
+            )
         )
-        for page in records
-    ]
+    return units

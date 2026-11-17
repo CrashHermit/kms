@@ -90,15 +90,12 @@ class SourceIngestionService:
                     source=source,
                 )
             )
-            durable_pages = await run_blocking_work(
-                self._artifact_store.finalize_pages, processed.split_pages
+            durable_units = await run_blocking_work(
+                self._artifact_store.finalize_units, processed.units
             )
             snapshot = finalize_snapshot_identities(
                 processed.source,
-                durable_pages,
-                processed.instructions,
-                processed.statements,
-                processed.procedures,
+                durable_units,
             )
             assert_source_embedding_profile(
                 snapshot,
@@ -116,8 +113,6 @@ class SourceIngestionService:
                         capture.data
                     ).hexdigest(),
                 },
-                'page_count': len(snapshot.pages),
-                'page_indexes': [page.index for page in snapshot.pages],
             }
             snapshot = snapshot.model_copy(
                 update={
@@ -166,7 +161,7 @@ def _source_uuid(user_uuid: str, capture_digest: str) -> str:
 def _capture_digest(capture: CapturedPDFSource, pages: list[int] | None) -> str:
     canonical = json.dumps(
         {
-            'schema': 'source-capture-v3',
+            'schema': 'source-capture-v5',
             'pdf_sha256': hashlib.sha256(capture.data).hexdigest(),
             'url': capture.url,
             'pages': pages,

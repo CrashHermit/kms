@@ -11,7 +11,7 @@ from kms.media.budget import ImagePayloadBudget
 from kms.media.models import ImagePart, Material
 from kms.source.context import project_source_block
 from kms.source.images import fuse_image_blocks
-from kms.source.models.source import BlockType, SourceBlock, SourcePage
+from kms.source.models.source import BlockType, SourceBlock
 from kms.source.processing.image_seam.inference import ImageSeamJudgeModule
 from kms.source.processing.image_seam.models import (
     ImageSeamInput,
@@ -31,7 +31,6 @@ _APPARATUS = {BlockType.BIBLIOGRAPHIC, BlockType.NOTE}
 
 
 def _image_mergeable(block: SourceBlock) -> bool:
-    """Return whether a blank IMAGE block owns one canonical image."""
     return bool(
         block.block_type is BlockType.IMAGE
         and block.image_path
@@ -39,19 +38,18 @@ def _image_mergeable(block: SourceBlock) -> bool:
     )
 
 
-def _edge_index(blocks: list[SourceBlock], *, reverse: bool) -> int | None:
-    """Return the nearest eligible image edge, skipping apparatus blocks."""
+def _edge(blocks: list[SourceBlock], *, reverse: bool) -> SourceBlock | None:
     indices = range(len(blocks) - 1, -1, -1) if reverse else range(len(blocks))
     for index in indices:
         block = blocks[index]
         if block.block_type in _APPARATUS:
             continue
-        return index if _image_mergeable(block) else None
+        return block if _image_mergeable(block) else None
     return None
 
 
 class ImageSeamNode:
-    """Judge original adjacent-page seams, then fuse accepted image chains."""
+    """Judge original physical edges, then fuse accepted image chains."""
 
     def __init__(
         self,
@@ -67,53 +65,53 @@ class ImageSeamNode:
         self._batch_size = batch_size
 
     @staticmethod
-    def _pairs(pages: list[SourcePage]) -> list[ImageSeamRequest]:
+    def _anchored(
+        blocks: list[SourceBlock],
+        block_pages: dict[str, int],
+        page_index: int,
+    ) -> list[SourceBlock]:
+        return [
+            block for block in blocks if block_pages[block.uuid] == page_index
+        ]
+
+    @classmethod
+    def _pairs(cls, state: SourceProcessingState) -> list[ImageSeamRequest]:
+        blocks = state.text_seam_blocks
         requests = []
-        for index in range(len(pages) - 1):
-            top, bottom = pages[index], pages[index + 1]
-            if (
-                bottom.index == top.index + 1
-                and _edge_index(top.blocks, reverse=True) is not None
-                and _edge_index(bottom.blocks, reverse=False) is not None
-            ):
+        for top_page, bottom_page in zip(
+            state.selected_page_indexes,
+            state.selected_page_indexes[1:],
+            strict=False,
+        ):
+            if bottom_page != top_page + 1:
+                continue
+            top = _edge(
+                cls._anchored(blocks, state.ocr_block_pages, top_page),
+                reverse=True,
+            )
+            bottom = _edge(
+                cls._anchored(blocks, state.ocr_block_pages, bottom_page),
+                reverse=False,
+            )
+            if top is not None and bottom is not None:
                 requests.append(
-                    ImageSeamRequest(
-                        position=len(requests),
-                        top_page=top,
-                        bottom_page=bottom,
-                    )
+                    ImageSeamRequest(top_block=top, bottom_block=bottom)
                 )
         return requests
 
-    @staticmethod
-    def _edge_positions(request: ImageSeamRequest) -> tuple[int, int]:
-        return (
-            cast(int, _edge_index(request.top_page.blocks, reverse=True)),
-            cast(int, _edge_index(request.bottom_page.blocks, reverse=False)),
-        )
-
     def _project(self, requests: list[ImageSeamRequest]) -> dict[str, object]:
         items = []
-        for local_position, request in enumerate(requests):
-            top_position, bottom_position = self._edge_positions(request)
-            top = project_source_block(
-                request.top_page.blocks[top_position]
-            ).material
-            bottom = project_source_block(
-                request.bottom_page.blocks[bottom_position]
-            ).material
+        for position, request in enumerate(requests):
+            top = project_source_block(request.top_block).material
+            bottom = project_source_block(request.bottom_block).material
             items.append(
                 ImageSeamInput(
-                    position=local_position,
+                    position=position,
                     top=Material(
-                        parts=tuple(
-                            ImagePart(asset=asset) for asset in top.images
-                        )
+                        parts=tuple(ImagePart(asset=a) for a in top.images)
                     ),
                     bottom=Material(
-                        parts=tuple(
-                            ImagePart(asset=asset) for asset in bottom.images
-                        )
+                        parts=tuple(ImagePart(asset=a) for a in bottom.images)
                     ),
                 )
             )
@@ -122,18 +120,17 @@ class ImageSeamNode:
     async def dispatch(
         self, state: SourceProcessingState
     ) -> list[Send] | Literal['image_seam_collect']:
-        """Dispatch all eligible original adjacent pairs without mutation."""
-        requests = self._pairs(state.text_seam_pages)
+        requests = self._pairs(state)
         if not requests:
             return 'image_seam_collect'
-        coarse_batches = pack_items(
+        coarse = pack_items(
             requests,
             token_counts=[1] * len(requests),
             token_budget=self._batch_size,
             max_items=self._batch_size,
         )
         batches = await pack_content_batches(
-            coarse_batches,
+            coarse,
             project=self._project,
             budget=self._budget,
             image_budget=self._image_budget,
@@ -146,75 +143,57 @@ class ImageSeamNode:
     async def worker(
         self, state: ImageSeamWorkerState
     ) -> dict[str, list[ImageSeamResult]]:
-        """Judge one packet and map packet-local decisions to candidate positions."""
         requests = state['image_seam_requests']
         items = cast(list[ImageSeamInput], self._project(requests)['items'])
         decisions = await self._judge.acall(items=items)
-        decision_by_position = {
-            decision.position: decision.is_continuation
-            for decision in decisions
-        }
+        by_position = {d.position: d.is_continuation for d in decisions}
         return {
             'image_seam_results': [
                 ImageSeamResult(
-                    position=request.position,
-                    is_continuation=decision_by_position[local_position],
+                    top_uuid=request.top_block.uuid,
+                    bottom_uuid=request.bottom_block.uuid,
+                    is_continuation=by_position[position],
                 )
-                for local_position, request in enumerate(requests)
+                for position, request in enumerate(requests)
             ]
         }
 
     async def collect(
         self, state: SourceProcessingState
-    ) -> dict[str, list[SourcePage]]:
-        """Fold accepted original edges into maximal chains and fuse each once."""
-        pages = state.text_seam_pages
-        requests = self._pairs(pages)
-        decisions = {
-            result.position: result.is_continuation
+    ) -> dict[str, list[SourceBlock]]:
+        requests = self._pairs(state)
+        accepted = {
+            (result.top_uuid, result.bottom_uuid)
             for result in state.image_seam_results
+            if result.is_continuation
         }
-        chains: list[list[tuple[int, SourceBlock]]] = []
-        chain_locations: list[list[tuple[int, int]]] = []
+        by_uuid = {block.uuid: block for block in state.text_seam_blocks}
+        chains: list[list[SourceBlock]] = []
         for request in requests:
-            if not decisions[request.position]:
+            pair = (request.top_block.uuid, request.bottom_block.uuid)
+            if pair not in accepted:
                 continue
-            top_position, bottom_position = self._edge_positions(request)
-            top_block = request.top_page.blocks[top_position]
-            bottom_block = request.bottom_page.blocks[bottom_position]
-            first = (request.top_page.index, top_position)
-            second = (request.bottom_page.index, bottom_position)
-            part_pair = [
-                (request.top_page.index, top_block),
-                (request.bottom_page.index, bottom_block),
-            ]
-            if chain_locations and chain_locations[-1][-1] == first:
-                chain_locations[-1].append(second)
-                chains[-1].append(part_pair[-1])
+            if chains and chains[-1][-1].uuid == pair[0]:
+                chains[-1].append(request.bottom_block)
             else:
-                chain_locations.append([first, second])
-                chains.append(part_pair)
+                chains.append([request.top_block, request.bottom_block])
 
-        replacements: dict[tuple[int, int], SourceBlock] = {}
-        removed: set[tuple[int, int]] = set()
-        for locations, parts in zip(chain_locations, chains, strict=True):
-            if len(parts) < 2:
-                continue
-            fused = await fuse_image_blocks(
+        replacements: dict[str, SourceBlock] = {}
+        removed: set[str] = set()
+        for chain in chains:
+            parts = [
+                (state.ocr_block_pages[block.uuid], block) for block in chain
+            ]
+            replacements[chain[0].uuid] = await fuse_image_blocks(
                 parts,
                 page_images=state.ocr_page_images,
                 budget=self._image_budget,
             )
-            replacements[locations[0]] = fused
-            removed.update(locations[1:])
+            removed.update(block.uuid for block in chain[1:])
 
-        output_pages = []
-        for page in pages:
-            blocks = []
-            for block_position, block in enumerate(page.blocks):
-                location = (page.index, block_position)
-                if location in removed:
-                    continue
-                blocks.append(replacements.get(location, block))
-            output_pages.append(page.model_copy(update={'blocks': blocks}))
-        return {'image_seam_pages': output_pages}
+        output = []
+        for block in state.text_seam_blocks:
+            if block.uuid in removed:
+                continue
+            output.append(replacements.get(block.uuid, by_uuid[block.uuid]))
+        return {'image_seam_blocks': output}

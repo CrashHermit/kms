@@ -14,7 +14,7 @@ from kms.inference.batching import pack_content_batches
 from kms.media.budget import ImagePayloadBudget
 from kms.media.models import ImageAsset, ImagePart, Material, TextPart
 from kms.source.images import stitch_positioned_crops
-from kms.source.models.source import BlockType, SourceBlock, SourcePage
+from kms.source.models.source import BlockType, SourceBlock
 from kms.source.processing.correction.inference import (
     ContentCorrectorModule,
 )
@@ -52,62 +52,82 @@ class ContentCorrectionNode:
     def _requests(
         self, state: SourceProcessingState
     ) -> list[ContentCorrectionRequest]:
-        """Build one positioned neighboring-block image per text target."""
+        """Build positioned neighboring-crop context for each text block."""
         page_offsets: dict[int, int] = {}
         page_groups: dict[int, int] = {}
+
+        consecutive_pages = {
+            (first, second)
+            for first, second in zip(
+                state.selected_page_indexes,
+                state.selected_page_indexes[1:],
+                strict=False,
+            )
+            if second == first + 1
+        }
         offset = 0
         group = 0
         previous_index = None
-        for page in state.ocr_pages:
-            if previous_index is not None and page.index != previous_index + 1:
+        for page_index in state.selected_page_indexes:
+            if previous_index is not None and page_index != previous_index + 1:
                 offset = 0
                 group += 1
-            page_offsets[page.index] = offset
-            page_groups[page.index] = group
-            with Image.open(state.ocr_page_images[page.index]) as image:
+            page_offsets[page_index] = offset
+            page_groups[page_index] = group
+            with Image.open(state.ocr_page_images[page_index]) as image:
                 offset += image.height
-            previous_index = page.index
+            previous_index = page_index
 
-        blocks = [
-            (page.index, position, block)
-            for page in state.ocr_pages
-            for position, block in enumerate(page.blocks)
-        ]
+        blocks = state.ocr_blocks
+        block_pages = state.ocr_block_pages
         requests = []
-        for index, (page_index, position, block) in enumerate(blocks):
+        for index, block in enumerate(blocks):
             if block.block_type is BlockType.IMAGE:
                 continue
+            page_index = block_pages[block.uuid]
             neighbors = [
-                item
-                for item in blocks[max(0, index - 1) : index + 2]
-                if page_groups[item[0]] == page_groups[page_index]
+                neighbor
+                for neighbor in blocks[max(0, index - 1) : index + 2]
+                if page_groups[block_pages[neighbor.uuid]]
+                == page_groups[page_index]
+                and (
+                    block_pages[neighbor.uuid] == page_index
+                    or (
+                        page_index,
+                        block_pages[neighbor.uuid],
+                    )
+                    in consecutive_pages
+                    or (
+                        block_pages[neighbor.uuid],
+                        page_index,
+                    )
+                    in consecutive_pages
+                )
             ]
+
             target_index = next(
-                i
-                for i, item in enumerate(neighbors)
-                if item[0] == page_index and item[1] == position
+                i for i, neighbor in enumerate(neighbors) if neighbor is block
             )
             payload, bounds = stitch_positioned_crops(
                 [
                     (
-                        Path(state.ocr_page_images[neighbor_page]),
+                        Path(state.ocr_page_images[block_pages[neighbor.uuid]]),
                         cast(tuple[int, int, int, int], neighbor.crop_bbox),
-                        page_offsets[neighbor_page],
+                        page_offsets[block_pages[neighbor.uuid]],
                     )
-                    for neighbor_page, _, neighbor in neighbors
+                    for neighbor in neighbors
                 ],
                 budget=self._image_budget,
             )
             requests.append(
                 ContentCorrectionRequest(
-                    page_index=page_index,
-                    block_position=position,
                     source_block=block,
                     context_image=payload,
                     context_digest=hashlib.sha256(payload).hexdigest(),
                     target_bounds=bounds[target_index],
                 )
             )
+
         return requests
 
     @staticmethod
@@ -154,8 +174,7 @@ class ContentCorrectionNode:
         """Dispatch non-image crops in whole-item batches."""
         if not any(
             block.block_type is not BlockType.IMAGE
-            for page in state.ocr_pages
-            for block in page.blocks
+            for block in state.ocr_blocks
         ):
             return 'content_correction_collect'
         requests = await asyncio.to_thread(self._requests, state)
@@ -186,7 +205,7 @@ class ContentCorrectionNode:
         self,
         state: ContentCorrectionWorkerState,
     ) -> dict[str, list[ContentCorrectionResult]]:
-        """Correct a batch and restore each result's original source location."""
+        """Correct a batch and address results to original block UUIDs."""
         requests = state['content_correction_requests']
         blocks = self._build_inputs(requests)
         corrected_blocks = await self._corrector.acall(blocks=blocks)
@@ -196,8 +215,6 @@ class ContentCorrectionNode:
         return {
             'correction_results': [
                 ContentCorrectionResult(
-                    page_index=request.page_index,
-                    block_position=request.block_position,
                     source_block=request.source_block.model_copy(
                         update={
                             'content': corrected_by_position[
@@ -217,23 +234,18 @@ class ContentCorrectionNode:
     def collect(
         self,
         state: SourceProcessingState,
-    ) -> dict[str, list[SourcePage]]:
-        """Apply explicit rejection while preserving original page structure."""
-        corrected_by_location = {
-            (result.page_index, result.block_position): result
+    ) -> dict[str, list[SourceBlock]]:
+        """Apply correction and rejection while preserving flat source order."""
+        corrected_by_uuid = {
+            result.source_block.uuid: result
             for result in state.correction_results
         }
-        corrected_pages: list[SourcePage] = []
-        for page in state.ocr_pages:
-            corrected_blocks: list[SourceBlock] = []
-            for block_position, source_block in enumerate(page.blocks):
-                if source_block.block_type is BlockType.IMAGE:
-                    corrected_blocks.append(source_block)
-                    continue
-                result = corrected_by_location[(page.index, block_position)]
-                if result.keep:
-                    corrected_blocks.append(result.source_block)
-            corrected_pages.append(
-                page.model_copy(update={'blocks': corrected_blocks})
-            )
-        return {'corrected_pages': corrected_pages}
+        corrected_blocks = []
+        for source_block in state.ocr_blocks:
+            if source_block.block_type is BlockType.IMAGE:
+                corrected_blocks.append(source_block)
+                continue
+            result = corrected_by_uuid[source_block.uuid]
+            if result.keep:
+                corrected_blocks.append(result.source_block)
+        return {'corrected_blocks': corrected_blocks}

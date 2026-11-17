@@ -6,23 +6,14 @@ from kms.config.llm import ChatGPTLLMProfile, LLMSettings, LocalLLMProfile
 from kms.config.settings import Settings
 
 _SOURCE_PROCESSING_ENVIRONMENT = {
-    'KMS_SOURCE_PROCESSING__INSTRUCTION_FINDER__START_ROUTER__PROFILE': (
+    'KMS_SOURCE_PROCESSING__INSTRUCTION_REDISTRIBUTION__DETECTION__START_ROUTER__PROFILE': (
         'custom-instruction-start-profile'
     ),
-    'KMS_SOURCE_PROCESSING__PEDAGOGICAL_FINDER__START_ROUTER__PROFILE': (
-        'custom-pedagogical-start-profile'
+    'KMS_SOURCE_PROCESSING__PROCEDURE_FINDER__START_ROUTER__PROFILE': (
+        'custom-procedure-start-profile'
     ),
-    'KMS_SOURCE_PROCESSING__PEDAGOGICAL_FINDER__BOUNDARY_ROUTER__PROFILE': (
-        'custom-pedagogical-boundary-profile'
-    ),
-    'KMS_SOURCE_PROCESSING__STATEMENT_PROCEDURE__ROLE_TYPER__PROFILE': (
-        'custom-role-profile'
-    ),
-    'KMS_SOURCE_PROCESSING__STATEMENT_PROCEDURE__STATEMENT_PARTITIONER__PROFILE': (
-        'custom-statement-profile'
-    ),
-    'KMS_SOURCE_PROCESSING__STATEMENT_PROCEDURE__PROCEDURE_PARTITIONER__PROFILE': (
-        'custom-procedure-profile'
+    'KMS_SOURCE_PROCESSING__PROCEDURE_FINDER__BOUNDARY_ROUTER__PROFILE': (
+        'custom-procedure-boundary-profile'
     ),
     'KMS_SOURCE_PROCESSING__EXERCISE_FINDER__START_ROUTER__PROFILE': (
         'custom-exercise-start-profile'
@@ -45,7 +36,7 @@ def test_kms_defaults_include_source_processing_stages(monkeypatch):
     settings = Settings(_env_file=None)
 
     zero_context_windows = [
-        settings.source_processing.instruction_finder.start_context_window,
+        settings.source_processing.instruction_redistribution.detection.start_context_window,
         settings.source_processing.exercise_finder.start_context_window,
         settings.source_processing.exercise_finder.boundary_context_window,
     ]
@@ -53,21 +44,19 @@ def test_kms_defaults_include_source_processing_stages(monkeypatch):
         window.backward_budget == 0 and window.forward_budget == 0
         for window in zero_context_windows
     )
-    instruction_boundary_window = (
-        settings.source_processing.instruction_finder.boundary_context_window
-    )
+    instruction_boundary_window = settings.source_processing.instruction_redistribution.detection.boundary_context_window
     assert instruction_boundary_window.backward_budget == 300
     assert instruction_boundary_window.forward_budget == 0
     context_windows = [
-        settings.source_processing.pedagogical_finder.start_context_window,
-        settings.source_processing.pedagogical_finder.boundary_context_window,
+        settings.source_processing.procedure_finder.start_context_window,
+        settings.source_processing.procedure_finder.boundary_context_window,
     ]
     assert all(
         window.backward_budget == 300 and window.forward_budget == 300
         for window in context_windows
     )
     assert (
-        settings.source_processing.instruction_governance.context_window.forward_budget
+        settings.source_processing.instruction_redistribution.applicability.context_window.forward_budget
         == 500
     )
 
@@ -137,7 +126,7 @@ def test_image_seam_uses_nested_inference_and_batch_environment(monkeypatch):
     assert image_seam.safety_margin_tokens == 32
 
 
-def test_kms_source_processing_includes_pedagogical_nested_environment(
+def test_kms_source_processing_includes_unit_stage_nested_environment(
     monkeypatch,
 ):
     for name, value in _SOURCE_PROCESSING_ENVIRONMENT.items():
@@ -146,28 +135,16 @@ def test_kms_source_processing_includes_pedagogical_nested_environment(
     settings = Settings()
 
     assert (
-        settings.source_processing.instruction_finder.start_router.profile
-        == ('custom-instruction-start-profile')
+        settings.source_processing.instruction_redistribution.detection.start_router.profile
+        == 'custom-instruction-start-profile'
     )
     assert (
-        settings.source_processing.pedagogical_finder.start_router.profile
-        == ('custom-pedagogical-start-profile')
+        settings.source_processing.procedure_finder.start_router.profile
+        == 'custom-procedure-start-profile'
     )
     assert (
-        settings.source_processing.pedagogical_finder.boundary_router.profile
-        == ('custom-pedagogical-boundary-profile')
-    )
-    assert (
-        settings.source_processing.statement_procedure.role_typer.profile
-        == ('custom-role-profile')
-    )
-    assert (
-        settings.source_processing.statement_procedure.statement_partitioner.profile
-        == 'custom-statement-profile'
-    )
-    assert (
-        settings.source_processing.statement_procedure.procedure_partitioner.profile
-        == 'custom-procedure-profile'
+        settings.source_processing.procedure_finder.boundary_router.profile
+        == 'custom-procedure-boundary-profile'
     )
     assert (
         settings.source_processing.exercise_finder.start_router.profile
@@ -305,3 +282,57 @@ def test_embedding_batching_uses_nested_environment(monkeypatch):
     settings = Settings(_env_file=None)
     assert settings.embedding.batch_target_items == 2000
     assert settings.embedding.batch_target_tokens == 400000
+
+
+def test_knowledge_stage_limits_use_independent_environment(monkeypatch):
+    monkeypatch.setenv(
+        'KMS_KNOWLEDGE_EXTRACTION__INFERENCE__PROFILE', 'vision-test'
+    )
+    monkeypatch.setenv('KMS_KNOWLEDGE_EXTRACTION__BEFORE_TOKENS', '512')
+    monkeypatch.setenv('KMS_KNOWLEDGE_EXTRACTION__AFTER_TOKENS', '768')
+    monkeypatch.setenv('KMS_KNOWLEDGE_SUFFICIENCY__INFERENCE__PROFILE', 'judge')
+    monkeypatch.setenv('KMS_KNOWLEDGE_SUFFICIENCY__INPUT_TOKEN_BUDGET', '4096')
+    monkeypatch.setenv('KMS_KNOWLEDGE_SEARCH__CANDIDATE_LIMIT', '12')
+    monkeypatch.setenv('KMS_KNOWLEDGE_SEARCH__RESULT_LIMIT', '6')
+    monkeypatch.setenv('KMS_KNOWLEDGE_SEARCH__ARGUMENT_LIMIT', '9')
+    monkeypatch.setenv('KMS_KNOWLEDGE_REASONING__CANDIDATE_LIMIT', '3')
+    monkeypatch.setenv('KMS_KNOWLEDGE_REASONING__ARGUMENT_LIMIT', '4')
+
+    settings = Settings(_env_file=None)
+
+    assert settings.knowledge_extraction.inference.profile == 'vision-test'
+    assert settings.knowledge_extraction.before_tokens == 512
+    assert settings.knowledge_extraction.after_tokens == 768
+    assert settings.knowledge_extraction.input_token_budget == 16384
+    assert settings.knowledge_extraction.safety_margin_tokens == 256
+    assert settings.knowledge_extraction.inference.num_retries == 0
+    assert settings.knowledge_sufficiency.inference.profile == 'judge'
+    assert settings.knowledge_sufficiency.input_token_budget == 4096
+    assert settings.knowledge_sufficiency.safety_margin_tokens == 256
+    assert settings.knowledge_sufficiency.inference.num_retries == 0
+    assert settings.knowledge_search.candidate_limit == 12
+    assert settings.knowledge_search.result_limit == 6
+    assert settings.knowledge_search.argument_limit == 9
+    assert settings.knowledge_reasoning.candidate_limit == 3
+    assert settings.knowledge_reasoning.argument_limit == 4
+    assert settings.knowledge_reasoning.input_token_budget == 8192
+
+
+def test_teaching_generation_uses_nested_environment(monkeypatch):
+    monkeypatch.setenv('KMS_TEACHING_GENERATION__INPUT_TOKEN_BUDGET', '4096')
+    settings = Settings(_env_file=None)
+    assert settings.teaching_generation.input_token_budget == 4096
+    assert settings.teaching_generation.inference.num_retries == 0
+
+
+def test_learning_planning_uses_nested_environment(monkeypatch):
+    monkeypatch.setenv('KMS_LEARNING_PLANNING__INPUT_TOKEN_BUDGET', '4096')
+    settings = Settings(_env_file=None)
+    assert settings.learning_planning.input_token_budget == 4096
+    assert settings.learning_planning.inference.num_retries == 0
+
+
+def test_memory_retention_uses_nested_environment(monkeypatch):
+    monkeypatch.setenv('KMS_MEMORY__DESIRED_RETENTION', '0.85')
+    settings = Settings(_env_file=None)
+    assert settings.memory.desired_retention == 0.85

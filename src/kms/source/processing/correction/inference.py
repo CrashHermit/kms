@@ -26,13 +26,14 @@ class ContentCorrectorSignature(dspy.Signature):
     signs, labels, and text. Preserve wording, values, subparts, line order,
     and intentional answer spaces. Never solve, simplify, infer answers, or
     add explanation.
-    Reject only clearly non-source interface controls, advertisements, or
-    extraction artifacts. Keep uncertain material, titles, captions, citations,
-    intentional blanks, exercises, and instructional discussion of ads, URLs,
-    or interfaces. For a wholly irrelevant block, return keep=false,
-    corrected_content=null, cleanup_instructions=[]. For a retained block,
-    return a faithful corrected transcription including any mixed artifact.
-    Put exact, narrow removal directions for those artifacts in
+    Reject only clear non-source interface controls, advertisements, extraction
+    artifacts, page numbers, and repeated running headers or footers. Keep
+    genuine section headings, captions, notes, citations, equations, intentional
+    blanks, exercises, and instructional discussion even when their wording
+    resembles page furniture.
+    For a wholly irrelevant block, return keep=false,
+    corrected_content=null, cleanup_instructions=[]. For retained mixed
+    content, put exact, narrow removal directions for only the artifacts in
     cleanup_instructions; use [] for clean content. Null or blank text never
     signals deletion.
 
