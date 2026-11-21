@@ -18,6 +18,9 @@ from kms.source.processing.exercise_finder.node import ExerciseFinderNode
 from kms.source.processing.exercise_finder.settings import (
     ExerciseFinderSettings,
 )
+from kms.source.processing.instruction_redistribution.models import (
+    ExerciseSupportGroup,
+)
 from kms.source.processing.state import SourceProcessingState
 
 
@@ -137,3 +140,97 @@ def test_unlabeled_following_task_ends_previous_exercise_exclusively():
         ['b2'],
     ]
     assert all(unit.kind is SourceUnitKind.EXERCISE for unit in units)
+
+
+def test_default_windows_include_shared_instruction_for_each_task():
+    instruction = 'Rewrite each statement as a biconditional.'
+    state = _state(instruction, '1. A implies B.', '2. C implies D.')
+    state.exercise_support_groups = [ExerciseSupportGroup(block_uuids=['b0'])]
+    seen_boundaries = []
+
+    class StartRouter:
+        async def acall(self, *, items):
+            return [
+                ExerciseStartDecision(
+                    position=item.position,
+                    is_exercise_start=(
+                        item.target_block.material.text.startswith(('1.', '2.'))
+                        and any(
+                            block.material.text == instruction
+                            for block in item.context_before
+                        )
+                    ),
+                )
+                for item in items
+            ]
+
+    class BoundaryRouter:
+        async def acall(self, *, start_block, items):
+            seen_boundaries.extend(items)
+            return [
+                ExerciseBoundaryDecision(
+                    position=item.position,
+                    is_exercise_boundary=item.target_block.material.text.startswith(
+                        '2.'
+                    ),
+                )
+                for item in items
+            ]
+
+    counter = MaterialTokenEstimator(_Counter())
+    budget = TokenBudget(counter=counter, token_limit=100_000)
+    node = ExerciseFinderNode(
+        StartRouter(),
+        BoundaryRouter(),
+        ExerciseFinderSettings(),
+        start_budget=budget,
+        boundary_budget=budget,
+        start_token_counters=(counter,),
+        boundary_token_counters=(counter,),
+        image_budget=ImagePayloadBudget(4, 26_214_400, 40_000_000),
+    )
+
+    units = asyncio.run(node.run(state))['exercise_units']
+
+    assert [[block.uuid for block in unit.blocks] for unit in units] == [
+        ['b1'],
+        ['b2'],
+    ]
+    assert any(
+        block.material.text == instruction
+        for block in seen_boundaries[0].context_before
+    )
+
+
+def test_previously_classified_starts_survive_later_boundaries():
+    state = _state('Task 1', 'Task 2', 'Task 3', 'Task 4')
+
+    class ChangingStartRouter:
+        def __init__(self):
+            self.seen = set()
+
+        async def acall(self, *, items):
+            decisions = []
+            for item in items:
+                text = item.target_block.material.text
+                decisions.append(
+                    ExerciseStartDecision(
+                        position=item.position,
+                        is_exercise_start=text not in self.seen,
+                    )
+                )
+                self.seen.add(text)
+            return decisions
+
+    node = _node(set(), {'Task 2', 'Task 3', 'Task 4'})
+    node._settings.start_batch_size = 4
+    node._start_router = ChangingStartRouter()
+
+    units = asyncio.run(node.run(state))['exercise_units']
+
+    assert [[block.content for block in unit.blocks] for unit in units] == [
+        ['Task 1'],
+        ['Task 2'],
+        ['Task 3'],
+        ['Task 4'],
+    ]

@@ -16,20 +16,26 @@ class ExerciseStartRouterSignature(dspy.Signature):
     and context blocks. Never borrow visual evidence from another item.
     Classify every indexed target independently. Each item's before and after
     lists are its own context; never use another item in `items` as context.
-    Return one decision for every input position, preserving those positions.
+    Return exactly one decision for each position in the current `items` list.
+    Positions are local to this request, not exercise numbers. Never return a
+    decision for a block found only in `context_before` or `context_after`.
+    Include a False decision for every non-exercise target; an empty decision
+    list is correct only when the current `items` list is empty.
 
     Mark a target True only when it begins one distinct individual exercise,
     including the problem posed in a worked example. Adjacent exercises are
     separate even when they share a topic or shared instructions. Do not mark
     shared instructions, continuations, attached equations, images, tables,
-    lists, explanatory blocks, or subparts as starts.
+    explanatory blocks, or subparts as starts.
 
-    An individual exercise may be labeled as an activity or have no number.
-    Its setup can introduce a graph, function, object, or scenario and ask
-    several related questions. Mark that setup True: lettered subparts under
-    one setup are one exercise, not separate exercises or a shared instruction.
-    A shared instruction instead governs multiple independent exercises.
-
+    A list block is not automatically a continuation: a numbered item that
+    states an independently answerable task can begin an exercise. Do not mark
+    a numbered step or list subpart that continues one task. An individual
+    exercise may be labeled as an activity or have no number. Its setup can
+    introduce a graph, function, object, or scenario and ask several related
+    questions. Mark that setup True: lettered subparts under one setup are one
+    exercise, not separate exercises or a shared instruction. A shared
+    instruction instead governs multiple independent exercises.
     Page numbers, running headers, and section headings are not exercise starts.
 
     Return decisions only; do not include reasons, spans, or text.
@@ -79,25 +85,33 @@ class ExerciseBoundaryRouterSignature(dspy.Signature):
     Each item's ordered text and native image parts come only from its target
     and context blocks. Never borrow visual evidence from another item.
     Classify each indexed target relative to `start_block`. Each item's context
-    lists are independent; do not use another item as context. Return one
-    decision for every input position, preserving those positions.
+    lists are independent; do not use another item as context. Return exactly
+    one decision for each position in the current `items` list. Positions are
+    local to this request, not exercise numbers. Never return a decision for a
+    block found only in `context_before`, `context_after`, or `start_block`.
+    Include a False decision for every non-boundary target; an empty decision
+    list is correct only when the current `items` list is empty.
 
     Mark False when the exercise continues through the target, including its
-    equations, images, tables, lists, explanatory blocks, and subparts.
+    equations, images, tables, list steps, explanatory blocks, and subparts.
+    A list block's format alone does not determine its boundary.
 
     A page number or repeated running chapter/section title is page furniture,
     not a semantic boundary. Mark False so scanning continues across it to the
     rest of the same exercise. Such layout blocks remain inside the contiguous
     span; False does not claim that they are mathematical exercise content.
 
-    Mark True for the start of another exercise (including an unlabeled
-    independent task), the authored solution/proof/method for the current
-    task, a new shared instruction, a genuine new section introducing different
-    material, or unrelated exposition. Do not treat every header as a new
-    section: distinguish running titles/page numbers from headings that
-    introduce new subject matter. A new task is a boundary even when its topic
-    is similar. The boundary is exclusive: a True target is not part of this
-    exercise and must not be consumed.
+    Mark True for the start of another exercise, including a self-contained
+    numbered list item, the authored solution/proof/method for the current task,
+    a new shared instruction, a genuine new section introducing different
+    material, or unrelated exposition. Separate numbered statements remain
+    separate exercises when a shared instruction asks the learner to transform
+    each statement; their context does not make them subparts of the first.
+    Do not treat every header as a new section:
+    distinguish running titles/page numbers from headings that introduce new
+    subject matter. A new task is a boundary even when its topic is similar.
+    The boundary is exclusive: a True target is not part of this exercise and
+    must not be consumed.
 
     Return decisions only; do not include reasons, spans, or text.
     """

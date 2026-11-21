@@ -24,11 +24,11 @@ class ExerciseFinderSettings(BaseModel):
     safety_margin_tokens: int = Field(default=256, ge=0)
     start_context_window: ContextWindowSettings = Field(
         default_factory=lambda: ContextWindowSettings(
-            backward_budget=0, forward_budget=0
+            backward_budget=500, forward_budget=200
         )
     )
     boundary_context_window: ContextWindowSettings = Field(
         default_factory=lambda: ContextWindowSettings(
-            backward_budget=0, forward_budget=0
+            backward_budget=500, forward_budget=200
         )
     )

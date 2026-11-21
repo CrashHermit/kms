@@ -333,6 +333,118 @@ def exercise_start_examples() -> list[dspy.Example]:
                 ExerciseStartDecision(position=3, is_exercise_start=False),
             ],
         ).with_inputs('items'),
+        dspy.Example(
+            items=[
+                ExerciseClassificationInput(
+                    position=0,
+                    context_before=[],
+                    target_block=SourceBlockContext(
+                        block_type=BlockType.LIST,
+                        material=Material.from_text(
+                            '3. Write the contrapositive of: If n is divisible by 6, then n is even.'
+                        ),
+                    ),
+                    context_after=[],
+                )
+            ],
+            decisions=[
+                ExerciseStartDecision(position=0, is_exercise_start=True)
+            ],
+        ).with_inputs('items'),
+        dspy.Example(
+            items=[
+                ExerciseClassificationInput(
+                    position=0,
+                    context_before=[],
+                    target_block=SourceBlockContext(
+                        block_type=BlockType.LIST,
+                        material=Material.from_text(
+                            '1. An integer is even exactly when it is divisible by two.'
+                        ),
+                    ),
+                    context_after=[],
+                ),
+                ExerciseClassificationInput(
+                    position=1,
+                    context_before=[],
+                    target_block=SourceBlockContext(
+                        block_type=BlockType.LIST,
+                        material=Material.from_text(
+                            '2. If a square has equal sides then it is a rhombus, and conversely.'
+                        ),
+                    ),
+                    context_after=[],
+                ),
+            ],
+            decisions=[
+                ExerciseStartDecision(position=0, is_exercise_start=True),
+                ExerciseStartDecision(position=1, is_exercise_start=True),
+            ],
+        ).with_inputs('items'),
+        dspy.Example(
+            items=[
+                ExerciseClassificationInput(
+                    position=0,
+                    context_before=[
+                        SourceBlockContext(
+                            block_type=BlockType.LIST,
+                            material=Material.from_text('1. Solve x + 1 = 3.'),
+                        )
+                    ],
+                    target_block=SourceBlockContext(
+                        block_type=BlockType.LIST,
+                        material=Material.from_text('2. Solve x + 2 = 5.'),
+                    ),
+                    context_after=[
+                        SourceBlockContext(
+                            block_type=BlockType.LIST,
+                            material=Material.from_text('3. Solve x + 3 = 7.'),
+                        )
+                    ],
+                ),
+                ExerciseClassificationInput(
+                    position=1,
+                    context_before=[
+                        SourceBlockContext(
+                            block_type=BlockType.LIST,
+                            material=Material.from_text('2. Solve x + 2 = 5.'),
+                        )
+                    ],
+                    target_block=SourceBlockContext(
+                        block_type=BlockType.LIST,
+                        material=Material.from_text('3. Solve x + 3 = 7.'),
+                    ),
+                    context_after=[
+                        SourceBlockContext(
+                            block_type=BlockType.LIST,
+                            material=Material.from_text('4. Solve x + 4 = 9.'),
+                        )
+                    ],
+                ),
+            ],
+            decisions=[
+                ExerciseStartDecision(position=0, is_exercise_start=True),
+                ExerciseStartDecision(position=1, is_exercise_start=True),
+            ],
+        ).with_inputs('items'),
+        dspy.Example(
+            items=[
+                ExerciseClassificationInput(
+                    position=0,
+                    context_before=[],
+                    target_block=SourceBlockContext(
+                        block_type=BlockType.PARAGRAPH,
+                        material=Material.from_text(
+                            'The truth table shows that the two statements are equivalent.'
+                        ),
+                    ),
+                    context_after=[],
+                )
+            ],
+            decisions=[
+                ExerciseStartDecision(position=0, is_exercise_start=False)
+            ],
+        ).with_inputs('items'),
     ]
 
 
@@ -709,6 +821,136 @@ def exercise_boundary_examples() -> list[dspy.Example]:
                 ExerciseBoundaryDecision(position=0, is_exercise_boundary=True),
                 ExerciseBoundaryDecision(position=1, is_exercise_boundary=True),
                 ExerciseBoundaryDecision(position=2, is_exercise_boundary=True),
+            ],
+        ).with_inputs('start_block', 'items'),
+        dspy.Example(
+            start_block=SourceBlockContext(
+                block_type=BlockType.PARAGRAPH,
+                material=Material.from_text(
+                    '1. Construct a truth table for P if and only if Q.'
+                ),
+            ),
+            items=[
+                ExerciseClassificationInput(
+                    position=0,
+                    context_before=[],
+                    target_block=SourceBlockContext(
+                        block_type=BlockType.LIST,
+                        material=Material.from_text(
+                            'a. List all possible truth-value pairs for P and Q.'
+                        ),
+                    ),
+                    context_after=[],
+                ),
+                ExerciseClassificationInput(
+                    position=1,
+                    context_before=[],
+                    target_block=SourceBlockContext(
+                        block_type=BlockType.LIST,
+                        material=Material.from_text(
+                            '2. Determine when P implies Q is false.'
+                        ),
+                    ),
+                    context_after=[],
+                ),
+            ],
+            decisions=[
+                ExerciseBoundaryDecision(
+                    position=0, is_exercise_boundary=False
+                ),
+                ExerciseBoundaryDecision(position=1, is_exercise_boundary=True),
+            ],
+        ).with_inputs('start_block', 'items'),
+        dspy.Example(
+            start_block=SourceBlockContext(
+                block_type=BlockType.LIST,
+                material=Material.from_text(
+                    '1. An integer is even exactly when it is divisible by two.'
+                ),
+            ),
+            items=[
+                ExerciseClassificationInput(
+                    position=0,
+                    context_before=[
+                        SourceBlockContext(
+                            block_type=BlockType.PARAGRAPH,
+                            material=Material.from_text(
+                                'Rewrite each of the following statements as an if and only if statement.'
+                            ),
+                        ),
+                        SourceBlockContext(
+                            block_type=BlockType.LIST,
+                            material=Material.from_text(
+                                '1. An integer is even exactly when it is divisible by two.'
+                            ),
+                        ),
+                    ],
+                    target_block=SourceBlockContext(
+                        block_type=BlockType.LIST,
+                        material=Material.from_text(
+                            '2. If a square has equal sides then it is a rhombus, and conversely.'
+                        ),
+                    ),
+                    context_after=[],
+                ),
+                ExerciseClassificationInput(
+                    position=1,
+                    context_before=[
+                        SourceBlockContext(
+                            block_type=BlockType.PARAGRAPH,
+                            material=Material.from_text(
+                                'Rewrite each of the following statements as an if and only if statement.'
+                            ),
+                        ),
+                        SourceBlockContext(
+                            block_type=BlockType.LIST,
+                            material=Material.from_text(
+                                '2. If a square has equal sides then it is a rhombus, and conversely.'
+                            ),
+                        ),
+                    ],
+                    target_block=SourceBlockContext(
+                        block_type=BlockType.LIST,
+                        material=Material.from_text(
+                            '3. An integer is odd if and only if its successor is even.'
+                        ),
+                    ),
+                    context_after=[],
+                ),
+            ],
+            decisions=[
+                ExerciseBoundaryDecision(position=0, is_exercise_boundary=True),
+                ExerciseBoundaryDecision(position=1, is_exercise_boundary=True),
+            ],
+        ).with_inputs('start_block', 'items'),
+        dspy.Example(
+            start_block=SourceBlockContext(
+                block_type=BlockType.LIST,
+                material=Material.from_text('1. Solve x + 1 = 3.'),
+            ),
+            items=[
+                ExerciseClassificationInput(
+                    position=0,
+                    context_before=[
+                        SourceBlockContext(
+                            block_type=BlockType.LIST,
+                            material=Material.from_text('1. Solve x + 1 = 3.'),
+                        )
+                    ],
+                    target_block=SourceBlockContext(
+                        block_type=BlockType.LIST,
+                        material=Material.from_text('2. Solve x + 2 = 5.'),
+                    ),
+                    context_after=[
+                        SourceBlockContext(
+                            block_type=BlockType.LIST,
+                            material=Material.from_text('3. Solve x + 3 = 7.'),
+                        )
+                    ],
+                )
+            ],
+            decisions=[
+                ExerciseBoundaryDecision(position=0, is_exercise_boundary=True)
             ],
         ).with_inputs('start_block', 'items'),
     ]

@@ -14,12 +14,14 @@ class ExerciseSplitterSignature(dspy.Signature):
     r"""
     Split each candidate into ordered source fragments at exercise entry and
     exit boundaries. Include learner tasks and worked-example problems, but
-    keep a task's shared setup and lettered subparts together. Separate its
-    authored solution/proof, another independent task, a new shared directive,
-    or unrelated exposition. Preserve every character exactly once and in
-    order; boundary whitespace belongs to the preceding piece. Do not rewrite,
-    answer, paraphrase, or repeat content. Keep structural source evidence and
-    use reference blocks only for context.
+    keep a task's shared setup and lettered subparts together. A list block may
+    contain either continuation steps for one task or multiple independently
+    answerable numbered tasks; use the wording and structure to distinguish
+    them. Separate independent tasks, authored solutions/proofs, new shared
+    directives, or unrelated exposition. Preserve every character exactly
+    once and in order; boundary whitespace belongs to the preceding piece. Do
+    not rewrite, answer, paraphrase, or repeat content. Keep structural source
+    evidence and use reference blocks only for context.
     """
 
     context_before: list[SourceBlockContext] = dspy.InputField()
@@ -75,9 +77,11 @@ class ExerciseSplitRouterSignature(dspy.Signature):
     context. Set requires_split when the block contains any boundary needed to
     isolate an exercise task from shared setup, other tasks, authored solutions,
     proofs, or unrelated exposition. A task with common setup or lettered
-    subparts is one exercise. Include unnumbered tasks and worked-example
-    problems. Image blocks are indivisible: always return false for them.
-    Return a decision for each target position.
+    subparts is one exercise. A list block may be continuation steps for one
+    task or several independently answerable numbered tasks; use its content
+    to distinguish them, not the list format alone. Include unnumbered tasks
+    and worked-example problems. Image blocks are indivisible: always return
+    false for them. Return a decision for each target position.
     """
 
     context_before: list[SourceBlockContext] = dspy.InputField()

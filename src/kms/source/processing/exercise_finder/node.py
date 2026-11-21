@@ -78,49 +78,54 @@ class ExerciseFinderNode:
         units: list[SourceUnit] = []
         for run in self._runs(eligible):
             cursor = 0
+            start_decisions: dict[int, bool] = {}
             while cursor < len(run):
-                stop = min(cursor + self._settings.start_batch_size, len(run))
-                targets = run[cursor:stop]
-                windows = {
-                    position: self._window(
-                        blocks,
-                        starts_costs,
-                        position,
-                        self._settings.start_context_window,
+                if run[cursor] not in start_decisions:
+                    stop = min(
+                        cursor + self._settings.start_batch_size, len(run)
                     )
-                    for position in targets
-                }
-
-                def project_starts(
-                    packet: list[int], windows=windows
-                ) -> dict[str, object]:
-                    return {
-                        'items': [
-                            self._item(local, windows[position])
-                            for local, position in enumerate(packet)
-                        ]
+                    targets = run[cursor:stop]
+                    windows = {
+                        position: self._window(
+                            blocks,
+                            starts_costs,
+                            position,
+                            self._settings.start_context_window,
+                        )
+                        for position in targets
                     }
 
-                packet = (
-                    await pack_content_batches(
-                        [targets],
-                        project=project_starts,
-                        budget=self._start_budget,
-                        image_budget=self._image_budget,
+                    def project_starts(
+                        packet: list[int], windows=windows
+                    ) -> dict[str, object]:
+                        return {
+                            'items': [
+                                self._item(local, windows[position])
+                                for local, position in enumerate(packet)
+                            ]
+                        }
+
+                    packet = (
+                        await pack_content_batches(
+                            [targets],
+                            project=project_starts,
+                            budget=self._start_budget,
+                            image_budget=self._image_budget,
+                        )
+                    )[0]
+                    decisions = await self._start_router.acall(
+                        **project_starts(packet)
                     )
-                )[0]
-                decisions = await self._start_router.acall(
-                    **project_starts(packet)
-                )
-                matches = [
-                    packet[item.position]
-                    for item in decisions
-                    if item.is_exercise_start
-                ]
-                if not matches:
-                    cursor += len(packet)
+                    start_decisions.update(
+                        {
+                            packet[item.position]: item.is_exercise_start
+                            for item in decisions
+                        }
+                    )
+                if not start_decisions[run[cursor]]:
+                    cursor += 1
                     continue
-                start = min(matches)
+                start = run[cursor]
                 anchor = blocks[start]
                 candidate = run.index(start) + 1
                 run_end = len(run)

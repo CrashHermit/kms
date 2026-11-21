@@ -151,6 +151,55 @@ def exercise_splitter_examples() -> list[dspy.Example]:
         ).with_inputs(
             'context_before', 'candidates', 'reference_blocks', 'context_after'
         ),
+        dspy.Example(
+            context_before=[
+                _context(
+                    'Without changing their meanings, convert each statement '
+                    'to the form “P if and only if Q.”'
+                )
+            ],
+            candidates=[
+                SplitCandidate(
+                    position=5,
+                    source_block=SourceBlockContext(
+                        block_type=BlockType.LIST,
+                        material=Material.from_text(
+                            '1. If a figure is a square, then it is a rectangle.\n'
+                            '2. If an integer is divisible by 4, then it is even.\n'
+                            '3. If a number is positive, then its square is positive.\n'
+                            '4. If two angles are vertical, then they are congruent.\n'
+                            '5. If a shape is an equilateral triangle, then it is an isosceles triangle.'
+                        ),
+                    ),
+                )
+            ],
+            reference_blocks=[],
+            context_after=[],
+            splits=[
+                SplitDecision(
+                    position=5,
+                    pieces=[
+                        SplitPiece(
+                            content='1. If a figure is a square, then it is a rectangle.\n'
+                        ),
+                        SplitPiece(
+                            content='2. If an integer is divisible by 4, then it is even.\n'
+                        ),
+                        SplitPiece(
+                            content='3. If a number is positive, then its square is positive.\n'
+                        ),
+                        SplitPiece(
+                            content='4. If two angles are vertical, then they are congruent.\n'
+                        ),
+                        SplitPiece(
+                            content='5. If a shape is an equilateral triangle, then it is an isosceles triangle.'
+                        ),
+                    ],
+                )
+            ],
+        ).with_inputs(
+            'context_before', 'candidates', 'reference_blocks', 'context_after'
+        ),
     ]
 
 
@@ -235,5 +284,30 @@ def exercise_split_router_examples() -> list[dspy.Example]:
                 SplitRouteDecision(position=0, requires_split=False),
                 SplitRouteDecision(position=1, requires_split=True),
             ],
+        ).with_inputs('context_before', 'targets', 'context_after'),
+        dspy.Example(
+            context_before=[
+                _context(
+                    'Without changing their meanings, convert each statement '
+                    'to the form “P if and only if Q.”'
+                )
+            ],
+            targets=[
+                PositionedSourceBlock(
+                    position=5,
+                    source_block=SourceBlockContext(
+                        block_type=BlockType.LIST,
+                        material=Material.from_text(
+                            '1. If a figure is a square, then it is a rectangle.\n'
+                            '2. If an integer is divisible by 4, then it is even.\n'
+                            '3. If a number is positive, then its square is positive.\n'
+                            '4. If two angles are vertical, then they are congruent.\n'
+                            '5. If a shape is an equilateral triangle, then it is an isosceles triangle.'
+                        ),
+                    ),
+                )
+            ],
+            context_after=[],
+            decisions=[SplitRouteDecision(position=5, requires_split=True)],
         ).with_inputs('context_before', 'targets', 'context_after'),
     ]

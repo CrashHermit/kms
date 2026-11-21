@@ -14,7 +14,9 @@ class ProcedureStartRouterSignature(dspy.Signature):
     r"""
     Classify each target with only its own context and native images. Mark a
     start for an authored complete method, worked solution, calculation,
-    derivation, or proof. A learner-facing exercise that asks the learner to
+    derivation, or proof. Step-by-step construction of a truth table is a
+    procedure; narrating or interpreting an already-given table is exposition,
+    not a procedure. A learner-facing exercise that asks the learner to
     describe or find a method is an exercise, not an authored procedure. Do not
     classify standalone steps or incidental equations as starts. Return one
     position-addressed decision for every independent item.

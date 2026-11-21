@@ -8,6 +8,8 @@ Physical page indexes and rendered page images are transient processing context,
 
 Units have content, exercise or procedure kinds. Each residual block becomes a content unit; shared instructions and supporting figures are copied into each applicable exercise. A unit's content is its ordered blocks, composed as native multimodal material without generated image descriptions or reconstructed text.
 
+Exercise start and boundary classification use bounded neighboring source blocks as per-target context, including shared instructions reserved for redistribution. The finder reuses each block's start decision within a run when later boundaries revisit it. Context helps identify exercise boundaries but is not automatically included in an exercise unit.
+
 Image-consuming processing stages use vision inference settings, independently of the application's text-profile default. Text-only formatting and text-seam stages keep text settings. Per-stage profile overrides must select an image-capable model for native-image stages.
 
 Source block and unit search is owner-scoped. Search uses multimodal embeddings and vector retrieval followed directly by bounded final relevance selection; there is no dedicated reranking stage. Candidates reach the selector in vector-similarity order up to `candidate_limit`. The selector examines the largest whole-candidate prefix fitting its token and image budgets, retaining native images. Results follow the selector's usefulness order and are capped by `result_limit` after selection. A block hit identifies its owning unit; unit reads can include neighboring units.
